@@ -1,0 +1,20 @@
+[project]
+name = "cognirepo"
+version = "0.1.0"
+description = "Local cognitive infrastructure for repositories"
+
+dependencies = [
+    "faiss-cpu",
+    "numpy",
+    "sentence-transformers",
+]
+
+[project.scripts]
+cognirepo = "cli.main:main"
+
+[tool.setuptools]
+packages = ["cli", "cron", "config", "memory", "server", "retrieval", "tools", "vector_db"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
