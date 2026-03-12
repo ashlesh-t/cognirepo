@@ -81,6 +81,38 @@ Cognirepo is being built to provide a multi-layered memory system:
 
 ---
 
+## Getting Staeted
+
+* Install  requirements
+`python pip install -r requirements.txt`
+
+nitialize project
+cognirepo init
+
+Creates:
+
+.cognirepo/
+Store memory
+cognirepo store-memory "chain reaction logic implemented"
+Retrieve memory
+cognirepo retrieve-memory chain
+
+Output example:
+
+Memory results:
+chain reaction logic implemented
+Search docs
+
+Create a test file:
+
+test.md
+Chain reaction game rules
+
+Then run:
+
+cognirepo search-docs chain
+Run server
+cognirepo serve
 ## Project Status
 
 **Status:** `Early Development`
