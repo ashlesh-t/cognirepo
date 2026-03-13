@@ -4,6 +4,7 @@ Local vector database module using FAISS for storing and searching semantic embe
 
 import os
 import json
+# pylint: disable=import-error
 import faiss
 import numpy as np
 

@@ -1,3 +1,6 @@
+"""
+Main entry point for the cognirepo CLI.
+"""
 import argparse
 
 from cli.init_project import init_project
@@ -8,6 +11,9 @@ from tools.retrieve_memory import retrieve_memory
 
 
 def main():
+    """
+    Parse command line arguments and execute the corresponding command.
+    """
     vector_db = None
 
     parser = argparse.ArgumentParser(prog="cognirepo")
@@ -31,9 +37,9 @@ def main():
     def initialize_vector_db():
         nonlocal vector_db
         if vector_db is None:
+            # pylint: disable=import-outside-toplevel
             from vector_db.local_vector_db import LocalVectorDB
             vector_db = LocalVectorDB()
-        
 
     if args.command == "init":
         init_project()
@@ -49,10 +55,10 @@ def main():
 
     elif args.command == "retrieve-memory":
         retrieve_memory(args.query)
-    elif args.command is "store-vector":
+    elif args.command == "store-vector":
         initialize_vector_db()
         vector_db.add_documents([args.text])
-    elif args.command is "search-vector":
+    elif args.command == "search-vector":
         initialize_vector_db()
         vector_db.search(args.query)
 

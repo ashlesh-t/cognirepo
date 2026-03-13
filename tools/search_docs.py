@@ -1,9 +1,14 @@
+"""
+Tool to search for a query in the markdown documentation.
+"""
 import sys
 from retrieval.docs_search import search_docs as ds
 
 
 def search_docs(query):
-
+    """
+    Search for a query in documentation and print the results.
+    """
     results = ds(query)
 
     print("Docs found:")

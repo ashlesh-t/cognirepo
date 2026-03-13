@@ -1,17 +1,25 @@
-from sentence_transformers import SentenceTransformer
+"""
+Module for managing and retrieving semantic memories using vector embeddings.
+"""
 from vector_db.local_vector_db import LocalVectorDB
 from memory.embeddings import get_model
-import time
 
 
 class SemanticMemory:
-
+    """
+    Handles storing and retrieving semantic memories.
+    """
     def __init__(self):
+        """
+        Initialize the embedding model and vector database.
+        """
         self.model = get_model()
         self.db = LocalVectorDB()
 
     def compute_importance(self, text):
-
+        """
+        Calculates importance score based on length and keywords.
+        """
         length_score = min(len(text) / 100, 1)
 
         keywords = ["bug", "fix", "error", "important"]
@@ -25,7 +33,9 @@ class SemanticMemory:
         return min(length_score + keyword_score, 1)
 
     def store(self, text):
-
+        """
+        Store a text memory with its calculated importance.
+        """
         vector = self.model.encode(text)
 
         importance = self.compute_importance(text)
@@ -35,7 +45,9 @@ class SemanticMemory:
         print("Stored semantic memory with importance:", importance)
 
     def retrieve(self, query):
-
+        """
+        Search for memories similar to the query.
+        """
         vector = self.model.encode(query)
 
         results = self.db.search(vector)
