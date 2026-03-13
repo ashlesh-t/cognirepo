@@ -1,9 +1,14 @@
+"""
+Tool to retrieve semantic memory based on a query.
+"""
 import sys
 from memory.semantic_memory import SemanticMemory
 
 
 def retrieve_memory(query):
-
+    """
+    Search for a query in semantic memory and print the results.
+    """
     mem = SemanticMemory()
 
     results = mem.retrieve(query)
