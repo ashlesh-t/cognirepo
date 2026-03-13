@@ -1,14 +1,20 @@
+"""
+Utility to load and retrieve the embedding model.
+"""
+# pylint: disable=import-error
 from sentence_transformers import SentenceTransformer
 
-_model = None
+MODEL = None
 
 
 def get_model():
+    """
+    Returns the SentenceTransformer model, loading it if necessary.
+    """
+    global MODEL  # pylint: disable=global-statement
 
-    global _model
-
-    if _model is None:
+    if MODEL is None:
         print("Loading embedding model once...")
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
+        MODEL = SentenceTransformer("all-MiniLM-L6-v2")
 
-    return _model
+    return MODEL

@@ -1,0 +1,24 @@
+name: Lint
+
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install pylint
+          pip install -r requirements.txt
+
+      - name: Run pylint
+        run: |
+          pylint $(git ls-files '*.py')
