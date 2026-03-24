@@ -1,0 +1,86 @@
+{
+  "name": "cognirepo",
+  "version": "0.1.0",
+  "transport": "stdio",
+  "tools": [
+    {
+      "name": "store_memory",
+      "description": "Store a semantic memory with an optional source label.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Memory text to store"
+          },
+          "source": {
+            "type": "string",
+            "description": "Origin label (file, url, \u2026)",
+            "default": ""
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    {
+      "name": "retrieve_memory",
+      "description": "Retrieve the top-k memories most similar to the query.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query"
+          },
+          "top_k": {
+            "type": "integer",
+            "description": "Number of results",
+            "default": 5
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "search_docs",
+      "description": "Search all markdown documentation files for the given query string.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Text to search for in .md files"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "log_episode",
+      "description": "Append an episodic event with optional metadata to the event log.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "string",
+            "description": "Event description"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Arbitrary key-value metadata",
+            "default": {}
+          }
+        },
+        "required": [
+          "event"
+        ]
+      }
+    }
+  ]
+}

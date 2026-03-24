@@ -44,12 +44,9 @@ class SemanticMemory:
 
         print("Stored semantic memory with importance:", importance)
 
-    def retrieve(self, query):
+    def retrieve(self, query: str, top_k: int = 5) -> list:
         """
         Search for memories similar to the query.
         """
         vector = self.model.encode(query)
-
-        results = self.db.search(vector)
-
-        return results
+        return self.db.search(vector, k=top_k)
