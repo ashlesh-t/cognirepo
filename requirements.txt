@@ -1,3 +1,31 @@
-faiss-cpu
-numpy
-sentence-transformers
+# Generated from: pip freeze (Python 3.14 venv)
+# Install: pip install -r requirements.txt
+
+# core
+faiss-cpu==1.13.2
+numpy==2.4.3
+sentence-transformers==5.3.0
+
+# MCP server
+mcp[cli]==1.26.0
+httpx-sse==0.4.3
+
+# REST API
+fastapi==0.135.2
+uvicorn[standard]==0.42.0
+starlette==1.0.0
+python-multipart==0.0.22
+
+# auth
+PyJWT==2.12.1
+bcrypt==5.0.0
+passlib[bcrypt]==1.7.4
+
+# HTTP client (CLI --via-api)
+httpx==0.28.1
+
+# shared / transitive
+pydantic==2.12.5
+pydantic-core==2.41.5
+pydantic-settings==2.13.1
+anyio==4.12.1

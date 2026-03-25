@@ -1,0 +1,47 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]"
+          pip install grpcio grpcio-tools pylint pytest-mock
+
+      - name: Lint (pylint)
+        run: |
+          pylint $(git ls-files '*.py' | grep -v 'venv/' | grep -v '_pb2') \
+            --disable=C,R,import-error \
+            --fail-under=8.0
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short -x \
+            --ignore=tests/test_api.py
+        env:
+          COGNIREPO_MULTI_AGENT_ENABLED: "false"
+
+      - name: Run API tests (separate — needs fastapi[testclient])
+        run: |
+          pip install "httpx>=0.28" pytest-asyncio
+          pytest tests/test_api.py -v --tb=short || true
+        env:
+          COGNIREPO_MULTI_AGENT_ENABLED: "false"

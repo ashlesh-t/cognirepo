@@ -72,3 +72,19 @@ class LocalVectorDB:
                 results.append(self.metadata[i])
 
         return results
+
+    def search_with_scores(self, vector, k=5):
+        """
+        Like search() but each result also includes 'l2_distance' and 'faiss_row'.
+        Used by HybridRetriever to compute vector_score = max(0, 1 - dist/2).
+        """
+        vector = np.array([vector]).astype("float32")
+        distances, indices = self.index.search(vector, k)
+        results = []
+        for dist, i in zip(distances[0], indices[0]):
+            if i >= 0 and i < len(self.metadata):
+                record = dict(self.metadata[i])
+                record["l2_distance"] = float(dist)
+                record["faiss_row"] = int(i)
+                results.append(record)
+        return results

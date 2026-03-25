@@ -1,20 +1,63 @@
 [project]
 name = "cognirepo"
 version = "0.1.0"
-description = "Local cognitive infrastructure for repositories"
+description = "Local cognitive infrastructure layer for AI agents"
+requires-python = ">=3.11"
 
 dependencies = [
-    "faiss-cpu",
-    "numpy",
-    "sentence-transformers",
+    # core
+    "faiss-cpu==1.13.2",
+    "numpy==2.4.3",
+    "sentence-transformers==5.3.0",
+    # MCP server
+    "mcp[cli]==1.26.0",
+    # REST API
+    "fastapi==0.135.2",
+    "uvicorn[standard]==0.42.0",
+    "python-multipart==0.0.22",
+    "starlette==1.0.0",
+    # auth
+    "PyJWT==2.12.1",
+    "bcrypt==5.0.0",
+    "passlib[bcrypt]==1.7.4",
+    # HTTP client (CLI --via-api)
+    "httpx==0.28.1",
+    # graph + indexer
+    "networkx>=3.3",
+    "watchdog>=4.0",
+    # shared
+    "pydantic==2.12.5",
+    "anyio==4.12.1",
+    # gRPC
+    "grpcio>=1.60",
+    "grpcio-tools>=1.60",
+    # model providers
+    "anthropic>=0.50",
+    "google-generativeai>=0.8",
+    "openai>=1.0",
+    # env loading
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-mock>=3.12",
+    "httpx>=0.28",          # for FastAPI TestClient
 ]
 
 [project.scripts]
 cognirepo = "cli.main:main"
 
-[tool.setuptools]
-packages = ["cli", "cron", "config", "memory", "server", "retrieval", "tools", "vector_db"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["adapters*", "api*", "cli*", "cron*", "graph*", "indexer*", "memory*", "orchestrator*", "retrieval*", "rpc*", "server*", "tools*", "vector_db*"]
+exclude = ["venv*", "*.egg-info*"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.pylint.messages_control]
+disable = ["import-error"]

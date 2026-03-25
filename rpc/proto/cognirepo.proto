@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package cognirepo;
+
+// ─── QueryService ────────────────────────────────────────────────────────────
+// Used by any model adapter to delegate sub-queries to other models.
+// Pattern: DEEP query → Claude reasons → calls SubQuery(Gemini Flash) → resumes.
+
+service QueryService {
+  // Fire a sub-query at a specific model tier; returns result + confidence.
+  rpc SubQuery(QueryRequest) returns (QueryResponse);
+
+  // Streaming version — model sends result tokens incrementally.
+  rpc SubQueryStream(QueryRequest) returns (stream QueryResponse);
+}
+
+// ─── ContextService ──────────────────────────────────────────────────────────
+// Shared session context — any model can push/pull partial reasoning state.
+
+service ContextService {
+  // Push partial context (intermediate reasoning, sub-results) to shared store.
+  rpc PushContext(ContextSyncRequest) returns (ContextSyncResponse);
+
+  // Pull current context for a session.
+  rpc GetContext(ContextGetRequest) returns (ContextGetResponse);
+
+  // List all active session IDs.
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+}
+
+// ─── Messages: Query ─────────────────────────────────────────────────────────
+
+message QueryRequest {
+  string query        = 1;  // the sub-query text
+  string context_id   = 2;  // session/context identifier
+  string source_model = 3;  // which model is asking (e.g. "claude-sonnet-4-6")
+  string target_tier  = 4;  // "FAST" | "BALANCED" | "DEEP" — hint for routing
+  int32  max_tokens   = 5;  // 0 = use adapter default
+  map<string, string> metadata = 6;  // arbitrary key-value hints
+}
+
+message QueryResponse {
+  string result             = 1;  // response text
+  float  confidence         = 2;  // [0, 1] — 0 = unknown/not provided
+  string suggested_followup = 3;  // optional: what to ask next
+  string model_used         = 4;  // actual model that handled it
+  string provider_used      = 5;  // "anthropic" | "gemini" | "openai"
+  int32  tokens_used        = 6;
+  bool   error              = 7;
+  string error_message      = 8;
+}
+
+// ─── Messages: Context ───────────────────────────────────────────────────────
+
+message ContextSyncRequest {
+  string context_id  = 1;  // session ID (uuid or q_xxx)
+  string author      = 2;  // which model is writing ("claude-sonnet-4-6")
+  string key         = 3;  // logical key within session ("reasoning_step_1")
+  string value       = 4;  // serialised content (text or JSON string)
+  int64  timestamp   = 5;  // unix millis
+}
+
+message ContextSyncResponse {
+  bool   ok      = 1;
+  string version = 2;  // opaque version token for optimistic concurrency
+}
+
+message ContextGetRequest {
+  string context_id = 1;
+  string key        = 2;  // empty = return all keys for this session
+}
+
+message ContextGetResponse {
+  string context_id              = 1;
+  map<string, string> entries    = 2;  // key → value
+  int64  last_updated            = 3;  // unix millis
+}
+
+message ListSessionsRequest {
+  int32 limit = 1;  // 0 = return all
+}
+
+message ListSessionsResponse {
+  repeated string context_ids = 1;
+}
