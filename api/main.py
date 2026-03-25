@@ -7,6 +7,7 @@ Run with:
 All routes except /login require a Bearer JWT obtained from POST /login.
 """
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from api.auth import router as auth_router
 from api.middleware import JWTMiddleware
@@ -24,3 +25,14 @@ app.add_middleware(JWTMiddleware)
 app.include_router(auth_router)
 app.include_router(memory_router)
 app.include_router(episodic_router)
+
+
+@app.get("/health")
+async def health() -> JSONResponse:
+    """Health check endpoint — used by Docker HEALTHCHECK and load balancers."""
+    from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+    breaker = get_breaker()
+    return JSONResponse({
+        "status": "ok",
+        "circuit_breaker": breaker.state.value,
+    })

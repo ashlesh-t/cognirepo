@@ -1,135 +1,166 @@
-# Cognirepo
+# CogniRepo
 
-> Making repositories cognitively accessible to AI agents.
-
-**Cognirepo** is a local cognitive infrastructure layer for AI coding agents. It provides persistent repository intelligence—including semantic memory, documentation retrieval, and contextual knowledge—so agents no longer need to repeatedly consume large token contexts.
-
-The goal is to transform codebases from static folders into **queryable knowledge systems**.
+A local cognitive infrastructure layer for AI agents. Any AI tool — Claude, Gemini, Cursor, Copilot, Codex — can plug into CogniRepo to get semantic memory, episodic history, codebase understanding, and intelligent query routing, all stored privately on your machine.
 
 ---
 
-## Why Cognirepo?
+## Architecture
 
-Current agentic workflows often send large portions of a repository to an LLM repeatedly. This "brute-force" context injection results in:
-
-* **High Token Usage:** Expensive and inefficient.
-* **Slow Reasoning:** Larger contexts increase processing time.
-* **Loss of Historical Context:** Agents often "forget" previous fixes or experiments.
-* **Limited Project Awareness:** Difficulty grasping the "big picture" of complex architectures.
-
-Cognirepo introduces a **local memory and retrieval layer** that agents query *before* interacting with an LLM.
-
-### The Impact
-* **Smaller Prompts:** Only the most relevant context is sent.
-* **Persistent Knowledge:** Knowledge stays local and reusable.
-* **Faster Reasoning:** Reduced noise allows the model to focus on the task.
-* **Improved Understanding:** Better situational awareness for the agent.
-
----
-
-## Core Idea
-
-### Traditional Workflow
-`Agent` → `Send large code context` → `LLM`
-
-### Cognirepo Workflow
-`Agent`  
-  ↓  
-`Cognirepo MCP Tools`  
-  ↓  
-`Relevant Repository Knowledge`  
-  ↓  
-`LLM` (Only receives context that actually matters)
-
----
-
-## Planned Capabilities
-
-Cognirepo is being built to provide a multi-layered memory system:
-
-### 🧠 Repository Intelligence
-* **Documentation Search:** Quickly find relevant internal guides.
-* **Context Retrieval:** Fetch specific logic blocks related to a task.
-* **Structured Knowledge:** Understanding the project hierarchy and dependencies.
-
-### 💾 Semantic Memory
-* Store and retrieve deep knowledge about the codebase.
-* Vector-based search for high-relevance context matching.
-
-### ⏳ Episodic Memory
-* Record events like previous bug fixes, experiments, or developer feedback.
-* Enable agents to "learn" from past interactions within the same repo.
-
-### 🔌 MCP Integration
-* Expose tools compatible with the **Model Context Protocol (MCP)**.
-* Seamless interaction with popular agent CLIs and IDE extensions.
-
-### ✂️ Memory Pruning
-* Automated cleanup to maintain a bounded local memory footprint without losing essential data.
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                          Client Layer                            │
+│  Claude Desktop (MCP) │ Cursor/Copilot (OpenAI spec) │ CLI/REST │
+└───────────────┬─────────────────────────┬────────────────────────┘
+                │ stdio (MCP)             │ HTTP/JWT (FastAPI)
+┌───────────────▼─────────────────────────▼────────────────────────┐
+│                          tools/ layer                            │
+│   store_memory │ retrieve_memory │ search_docs │ log_episode     │
+└───┬────────────┬────────────────────────┬─────────────────────────┘
+    │            │                        │
+    ▼            ▼                        ▼
+┌────────┐ ┌──────────────┐    ┌─────────────────────────────┐
+│ FAISS  │ │ Knowledge    │    │ Orchestrator                │
+│ index  │ │ Graph        │    │  classifier → FAST          │──▶ Gemini Flash
+│(vector)│ │ (NetworkX)   │    │              BALANCED       │──▶ Gemini Flash
+│        │ │              │    │              DEEP           │──▶ Claude Sonnet
+│        │ │ Behaviour    │    │                             │
+│        │ │ Tracker      │    │  [gRPC sub-queries]         │
+└────────┘ └──────────────┘    │  COGNIREPO_MULTI_AGENT=true │
+    │            │             └─────────────────────────────┘
+    └──────┬─────┘
+           ▼
+┌──────────────────────┐
+│ retrieval/hybrid.py  │  score = 0.5·vector + 0.3·graph + 0.2·behaviour
+└──────────────────────┘
+           │
+           ▼
+┌──────────────────────────────────────────────┐
+│              .cognirepo/                     │
+│  memory/  graph/  index/  sessions/          │
+│  archive/  (all local, never leaves disk)    │
+└──────────────────────────────────────────────┘
+```
 
 ---
 
-## Example Use Case
+## Quick Start
 
-**Agent Task:** *"How does the chain reaction logic work?"*
+### Local
 
-**Cognirepo Action:**
-1.  Searches **Source Files** for logic patterns.
-2.  Queries **Documentation** for architecture overviews.
-3.  Retrieves **Previous Memory** (e.g., a note from a fix made two weeks ago).
-4.  **Result:** Returns a condensed, highly relevant context package to the LLM.
+```bash
+git clone <repo> && cd cognirepo
+python -m venv venv && source venv/bin/activate
+pip install -e ".[dev]"
 
----
+cognirepo init --password mypassword
+cognirepo index-repo .
+cognirepo store-memory "fixed JWT expiry bug in verify_token"
+cognirepo retrieve-memory "auth bug"
 
-## Getting Staeted
+# Multi-model ask (requires API keys in .env)
+cp .env.example .env          # fill in ANTHROPIC_API_KEY / GEMINI_API_KEY
+cognirepo ask "why is verify_token slow?" --verbose
 
-* Install  requirements
-`python pip install -r requirements.txt`
+# Export specs for Cursor/Copilot
+cognirepo export-spec
+```
 
-nitialize project
-cognirepo init
+### Docker
 
-Creates:
+```bash
+cp .env.example .env          # fill in API keys + COGNIREPO_PASSWORD
 
-.cognirepo/
-Store memory
-cognirepo store-memory "chain reaction logic implemented"
-Retrieve memory
-cognirepo retrieve-memory chain
+docker compose up api          # REST API on :8080
+docker compose --profile grpc up          # + gRPC on :50051
+docker compose --profile pruner up        # + daily memory pruner
+docker compose --profile grpc --profile pruner up   # everything
+```
 
-Output example:
-
-Memory results:
-chain reaction logic implemented
-Search docs
-
-Create a test file:
-
-test.md
-Chain reaction game rules
-
-Then run:
-
-cognirepo search-docs chain
-Run server
-cognirepo serve
-## Project Status
-
-**Status:** `Early Development`
-
-The initial milestone is a minimal MCP-based system focusing on:
-* Documentation search
-* Semantic & Episodic memory
-* Basic repository context retrieval
+Docs at `http://localhost:8080/docs`
 
 ---
 
-## Contributing
+## MCP Setup (Claude Desktop)
 
-Contributions, ideas, and discussions are welcome! Once the project stabilizes and the core architecture is set, I will be looking for community input and PRs.
+`~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "cognirepo": {
+      "command": "/path/to/venv/bin/cognirepo",
+      "args": ["serve"]
+    }
+  }
+}
+```
 
 ---
 
-## Disclaimer
+## Cursor / Copilot Setup
 
-This project is a personal open-source initiative and is not affiliated with any employer.
+```bash
+cognirepo export-spec
+cp adapters/cursor_mcp_config.json .cursor/mcp.json
+# Restart Cursor — CogniRepo tools appear in the tool selector
+```
+
+For OpenAI-compatible tools, reference `adapters/openai_tools.json`.
+
+---
+
+## Configuration
+
+`.cognirepo/config.json` — written by `cognirepo init`:
+
+```json
+{
+  "password_hash": "...",
+  "api_port": 8080,
+  "retrieval_weights": { "vector": 0.5, "graph": 0.3, "behaviour": 0.2 },
+  "models": {
+    "FAST":     { "provider": "gemini",    "model": "gemini-2.0-flash" },
+    "BALANCED": { "provider": "gemini",    "model": "gemini-2.0-flash" },
+    "DEEP":     { "provider": "anthropic", "model": "claude-sonnet-4-6" }
+  }
+}
+```
+
+Key environment variables (see `.env.example`):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | Claude models |
+| `GEMINI_API_KEY` | — | Gemini models |
+| `OPENAI_API_KEY` | — | OpenAI / Cursor |
+| `COGNIREPO_MULTI_AGENT_ENABLED` | `false` | gRPC sub-query delegation |
+| `COGNIREPO_CB_RSS_LIMIT_MB` | 80% RAM | OOM circuit breaker |
+
+---
+
+## Multi-Agent Mode
+
+Off by default. Set `COGNIREPO_MULTI_AGENT_ENABLED=true`.
+
+DEEP queries spawn up to 2 FAST sub-queries via gRPC (Gemini Flash) before
+calling the primary model. Sub-results land in `.cognirepo/sessions/`.
+Depth is one level — sub-agents do not chain.
+Requires `cognirepo serve-grpc` (or `--profile grpc`).
+
+---
+
+## Memory Pruning
+
+```bash
+cognirepo prune --dry-run --verbose      # preview
+cognirepo prune --archive                # prune + save to .cognirepo/archive/
+cognirepo prune --aggressive --archive   # lower threshold (0.05)
+```
+
+Score formula: `importance × e^(−0.1 × days_old)`. Default threshold: 0.15.
+
+---
+
+## Stack
+
+Python 3.11 · FastAPI · FAISS · NetworkX · sentence-transformers · MCP SDK · gRPC · JWT

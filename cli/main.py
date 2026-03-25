@@ -152,6 +152,27 @@ def main():
     p_idx = sub.add_parser("index-repo", help="AST-index a codebase for hybrid retrieval")
     p_idx.add_argument("path", nargs="?", default=".", help="Repo root to index (default: current dir)")
 
+    # serve-api
+    p_api = sub.add_parser("serve-api", help="Start the FastAPI REST server")
+    p_api.add_argument("--host", default="0.0.0.0")
+    p_api.add_argument("--port", type=int, default=8080)
+    p_api.add_argument("--reload", action="store_true")
+
+    # serve-grpc
+    p_grpc = sub.add_parser("serve-grpc", help="Start the gRPC inter-model server")
+    p_grpc.add_argument("--port", type=int, default=50051)
+
+    # export-spec
+    sub.add_parser("export-spec", help="Export OpenAI/Cursor tool specs to adapters/")
+
+    # prune
+    p_prune = sub.add_parser("prune", help="Prune low-score memories")
+    p_prune.add_argument("--dry-run", action="store_true")
+    p_prune.add_argument("--aggressive", action="store_true")
+    p_prune.add_argument("--archive", action="store_true")
+    p_prune.add_argument("--threshold", type=float, default=None)
+    p_prune.add_argument("--verbose", action="store_true")
+
     # ask
     p_ask = sub.add_parser("ask", help="Route a query through the multi-model orchestrator")
     p_ask.add_argument("query", help="Natural language query")
@@ -179,6 +200,36 @@ def main():
 
     if args.command == "index-repo":
         _print_results(_direct_index(args.path))
+        return
+
+    if args.command == "serve-api":
+        import uvicorn  # pylint: disable=import-outside-toplevel
+        uvicorn.run("api.main:app", host=args.host, port=args.port, reload=args.reload)
+        return
+
+    if args.command == "serve-grpc":
+        from rpc.server import start_server  # pylint: disable=import-outside-toplevel
+        start_server(port=args.port, block=True)
+        return
+
+    if args.command == "export-spec":
+        from adapters.openai_spec import export  # pylint: disable=import-outside-toplevel
+        export()
+        return
+
+    if args.command == "prune":
+        from cron.prune_memory import prune  # pylint: disable=import-outside-toplevel
+        result = prune(
+            threshold=args.threshold,
+            dry_run=args.dry_run,
+            archive=args.archive,
+            verbose=args.verbose or args.dry_run,
+        )
+        if args.aggressive and args.threshold is None:
+            from cron.prune_memory import AGGRESSIVE_THRESHOLD  # pylint: disable=import-outside-toplevel
+            result = prune(threshold=AGGRESSIVE_THRESHOLD, dry_run=args.dry_run,
+                           archive=args.archive, verbose=args.verbose or args.dry_run)
+        _print_results(result)
         return
 
     if args.command == "ask":

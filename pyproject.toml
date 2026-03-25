@@ -28,12 +28,22 @@ dependencies = [
     # shared
     "pydantic==2.12.5",
     "anyio==4.12.1",
+    # gRPC
+    "grpcio>=1.60",
+    "grpcio-tools>=1.60",
+    # model providers
+    "anthropic>=0.50",
+    "google-generativeai>=0.8",
+    "openai>=1.0",
+    # env loading
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "pytest-mock>=3.12",
     "httpx>=0.28",          # for FastAPI TestClient
 ]
 
@@ -42,7 +52,7 @@ cognirepo = "cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["api*", "cli*", "graph*", "indexer*", "memory*", "retrieval*", "server*", "tools*", "vector_db*"]
+include = ["adapters*", "api*", "cli*", "cron*", "graph*", "indexer*", "memory*", "orchestrator*", "retrieval*", "rpc*", "server*", "tools*", "vector_db*"]
 exclude = ["venv*", "*.egg-info*"]
 
 [build-system]
