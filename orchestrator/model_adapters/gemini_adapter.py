@@ -1,15 +1,27 @@
 """
-Gemini adapter — calls gemini-* models via google-generativeai SDK.
+Gemini adapter — calls gemini-* models via google-genai SDK (v1+).
 
-Converts CogniRepo's ContextBundle + tool manifest into the contents/tools
-payload expected by the GenerativeModel API.
+Uses the new Client-based API:
+    client = genai.Client(api_key=...)
+    client.models.generate_content(model=..., contents=..., config=...)
+
+Wraps every API call with exponential-backoff retry via :mod:`retry`.
+
+Streaming
+---------
+When ``stream=True``, :func:`call` returns a generator that yields ``str``
+text chunks.  Uses ``client.models.generate_content_stream()`` (falls back
+to a single-chunk generator if the method is unavailable in the installed
+version).  The generator's ``StopIteration.value`` carries usage metadata.
 """
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Generator, Union
 
 from orchestrator.model_adapters.anthropic_adapter import ModelResponse
+from orchestrator.model_adapters.errors import ModelCallError
+from orchestrator.model_adapters.retry import with_retry
 
 
 def call(
@@ -18,7 +30,10 @@ def call(
     tool_manifest: list[dict],
     model_id: str = "gemini-2.0-flash",
     max_tokens: int = 2048,
-) -> ModelResponse:
+    verbose: bool = False,
+    stream: bool = False,
+    messages_history: list[dict] | None = None,
+) -> Union[ModelResponse, Generator[str, None, dict]]:
     """
     Send query + context to a Gemini model.
 
@@ -29,38 +44,59 @@ def call(
     tool_manifest : list of CogniRepo tool schemas (from server/manifest.json)
     model_id      : Gemini model identifier
     max_tokens    : maximum output tokens
+    verbose       : if True, print retry messages (passed from CLI --verbose)
+    stream        : if True, return a generator that yields text chunks;
+                    the generator's StopIteration.value is a usage dict
     """
     try:
-        import google.generativeai as genai  # pylint: disable=import-outside-toplevel
+        from google import genai  # pylint: disable=import-outside-toplevel
+        from google.genai import types as genai_types  # pylint: disable=import-outside-toplevel
+        from google.genai import errors as genai_errors  # pylint: disable=import-outside-toplevel
     except ImportError as exc:
         raise ImportError(
-            "google-generativeai package required: pip install google-generativeai"
+            "google-genai package required: pip install google-genai"
         ) from exc
 
     api_key = os.environ.get("GEMINI_API_KEY", os.environ.get("GOOGLE_API_KEY", ""))
-    if api_key:
-        genai.configure(api_key=api_key)
+    client = genai.Client(api_key=api_key) if api_key else genai.Client()
 
-    # Build function declarations from manifest
-    function_declarations = _manifest_to_function_declarations(tool_manifest)
-
-    generation_config = genai.GenerationConfig(max_output_tokens=max_tokens)
-
-    model_kwargs: dict[str, Any] = {
-        "model_name": model_id,
+    config_kwargs: dict[str, Any] = {
         "system_instruction": system_prompt,
-        "generation_config": generation_config,
+        "max_output_tokens": max_tokens,
     }
-    if function_declarations:
-        model_kwargs["tools"] = [genai.protos.Tool(function_declarations=function_declarations)]
+    tool_list = _manifest_to_tools(tool_manifest, genai_types)
+    if tool_list:
+        config_kwargs["tools"] = tool_list
+    config = genai_types.GenerateContentConfig(**config_kwargs)
 
-    model = genai.GenerativeModel(**model_kwargs)
-    response = model.generate_content(query)
+    # Build Gemini contents (string for single-turn, list for multi-turn)
+    contents = _build_contents(query, messages_history)
 
-    # Extract text and function calls
+    if stream:
+        return _stream_call(client, model_id, contents, config, genai_errors)
+
+    # ── non-streaming path (with retry) ─────────────────────────────────────
+    def _do_call():
+        try:
+            return client.models.generate_content(
+                model=model_id,
+                contents=contents,
+                config=config,
+            )
+        except genai_errors.ClientError as exc:
+            code = _extract_code(exc, default=400)
+            raise ModelCallError("gemini", code, str(exc)) from exc
+        except genai_errors.ServerError as exc:
+            code = _extract_code(exc, default=500)
+            raise ModelCallError("gemini", code, str(exc)) from exc
+        except genai_errors.APIError as exc:
+            code = _extract_code(exc, default=500)
+            raise ModelCallError("gemini", code, str(exc)) from exc
+
+    response = with_retry(_do_call, provider="gemini", verbose=verbose)
+
     text_parts: list[str] = []
     tool_calls: list[dict] = []
-    usage: dict = {}
 
     try:
         for candidate in response.candidates:
@@ -71,20 +107,20 @@ def call(
                     fc = part.function_call
                     tool_calls.append({
                         "name": fc.name,
-                        "args": dict(fc.args),
+                        "args": dict(fc.args) if fc.args else {},
                     })
     except (AttributeError, IndexError):
-        # Fallback: try response.text
         try:
-            text_parts.append(response.text)
-        except ValueError:
+            text_parts.append(response.text or "")
+        except (AttributeError, ValueError):
             text_parts.append("")
 
+    usage: dict = {}
     try:
-        if hasattr(response, "usage_metadata"):
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
             usage = {
-                "input_tokens": response.usage_metadata.prompt_token_count,
-                "output_tokens": response.usage_metadata.candidates_token_count,
+                "input_tokens": response.usage_metadata.prompt_token_count or 0,
+                "output_tokens": response.usage_metadata.candidates_token_count or 0,
             }
     except AttributeError:
         pass
@@ -99,13 +135,112 @@ def call(
     )
 
 
-def _manifest_to_function_declarations(manifest: list[dict]) -> list:
-    """Convert CogniRepo manifest entries to Gemini FunctionDeclaration objects."""
-    try:
-        import google.generativeai as genai  # pylint: disable=import-outside-toplevel
-    except ImportError:
-        return []
+def _build_contents(query: str, messages_history: list[dict] | None):
+    """
+    Build Gemini ``contents`` from conversation history + current query.
 
+    Single-turn (no history): returns a plain string (Gemini handles it natively).
+    Multi-turn (with history): returns a list of role/parts dicts, converting
+    ``"assistant"`` → ``"model"`` as Gemini requires.
+    """
+    if not messages_history:
+        return query  # simple string for single-turn
+
+    contents = []
+    for msg in messages_history:
+        role = "model" if msg["role"] == "assistant" else "user"
+        contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+    contents.append({"role": "user", "parts": [{"text": query}]})
+    return contents
+
+
+def _stream_call(
+    client,
+    model_id: str,
+    contents,           # str or list[dict] — result of _build_contents()
+    config,
+    genai_errors,
+) -> Generator[str, None, dict]:
+    """
+    Generator: yields text chunk strings from Gemini streaming API.
+    Returns (via StopIteration.value) a usage dict.
+    """
+    usage: dict = {}
+
+    # Use generate_content_stream if available; fall back to blocking call
+    stream_fn = getattr(client.models, "generate_content_stream", None)
+    if stream_fn is None:
+        # Fallback: call blocking and yield the full text as one chunk
+        try:
+            response = client.models.generate_content(
+                model=model_id, contents=contents, config=config
+            )
+            text = getattr(response, "text", "") or ""
+            if text:
+                yield text
+            try:
+                if response.usage_metadata:
+                    usage = {
+                        "input_tokens": response.usage_metadata.prompt_token_count or 0,
+                        "output_tokens": response.usage_metadata.candidates_token_count or 0,
+                    }
+            except AttributeError:
+                pass
+        except genai_errors.APIError as exc:
+            code = _extract_code(exc, default=500)
+            raise ModelCallError("gemini", code, str(exc)) from exc
+        return usage
+
+    try:
+        for chunk in stream_fn(model=model_id, contents=contents, config=config):
+            # Extract text from chunk
+            chunk_text = ""
+            try:
+                chunk_text = chunk.text or ""
+            except (AttributeError, ValueError):
+                try:
+                    for cand in chunk.candidates:
+                        for part in cand.content.parts:
+                            if hasattr(part, "text") and part.text:
+                                chunk_text += part.text
+                except (AttributeError, IndexError):
+                    pass
+            if chunk_text:
+                yield chunk_text
+            # Try to capture usage from each chunk (last one wins)
+            try:
+                if chunk.usage_metadata:
+                    usage = {
+                        "input_tokens": chunk.usage_metadata.prompt_token_count or 0,
+                        "output_tokens": chunk.usage_metadata.candidates_token_count or 0,
+                    }
+            except AttributeError:
+                pass
+    except genai_errors.ClientError as exc:
+        raise ModelCallError("gemini", _extract_code(exc, 400), str(exc)) from exc
+    except genai_errors.ServerError as exc:
+        raise ModelCallError("gemini", _extract_code(exc, 500), str(exc)) from exc
+    except genai_errors.APIError as exc:
+        raise ModelCallError("gemini", _extract_code(exc, 500), str(exc)) from exc
+
+    return usage  # becomes StopIteration.value
+
+
+def _extract_code(exc: Exception, default: int) -> int:
+    """Extract HTTP status code from a google-genai error."""
+    for attr in ("code", "status_code", "http_code"):
+        val = getattr(exc, attr, None)
+        if isinstance(val, int):
+            return val
+    msg = str(exc)
+    for candidate in ("429", "500", "503", "400", "401", "404"):
+        if candidate in msg:
+            return int(candidate)
+    return default
+
+
+def _manifest_to_tools(manifest: list[dict], genai_types) -> list:
+    """Convert CogniRepo manifest entries to google-genai Tool objects."""
     declarations = []
     for entry in manifest:
         name = entry.get("name", "")
@@ -113,42 +248,41 @@ def _manifest_to_function_declarations(manifest: list[dict]) -> list:
         parameters = entry.get("parameters", entry.get("inputSchema", {}))
         if not name:
             continue
-        # Gemini expects parameters as a Schema dict
-        schema_dict = parameters if isinstance(parameters, dict) else {}
         try:
-            fd = genai.protos.FunctionDeclaration(
-                name=name,
-                description=description,
-                parameters=_dict_to_schema(schema_dict),
-            )
-            declarations.append(fd)
+            schema = _dict_to_schema(parameters, genai_types) if parameters else None
+            fd_kwargs: dict[str, Any] = {"name": name, "description": description}
+            if schema is not None:
+                fd_kwargs["parameters"] = schema
+            declarations.append(genai_types.FunctionDeclaration(**fd_kwargs))
         except Exception:  # pylint: disable=broad-except
             continue
-    return declarations
+
+    if not declarations:
+        return []
+    return [genai_types.Tool(function_declarations=declarations)]
 
 
-def _dict_to_schema(schema: dict):
-    """Recursively convert a JSON Schema dict to a Gemini Schema proto."""
-    try:
-        import google.generativeai as genai  # pylint: disable=import-outside-toplevel
-
-        type_map = {
-            "string": genai.protos.Type.STRING,
-            "number": genai.protos.Type.NUMBER,
-            "integer": genai.protos.Type.INTEGER,
-            "boolean": genai.protos.Type.BOOLEAN,
-            "array": genai.protos.Type.ARRAY,
-            "object": genai.protos.Type.OBJECT,
-        }
-        gtype = type_map.get(schema.get("type", "object"), genai.protos.Type.OBJECT)
-        props = {}
-        for k, v in schema.get("properties", {}).items():
-            props[k] = _dict_to_schema(v)
-        return genai.protos.Schema(
-            type_=gtype,
-            description=schema.get("description", ""),
-            properties=props,
-            required=schema.get("required", []),
-        )
-    except Exception:  # pylint: disable=broad-except
-        return None
+def _dict_to_schema(schema: dict, genai_types):
+    """Recursively convert a JSON Schema dict to a google-genai Schema."""
+    type_map = {
+        "string": "STRING",
+        "number": "NUMBER",
+        "integer": "INTEGER",
+        "boolean": "BOOLEAN",
+        "array": "ARRAY",
+        "object": "OBJECT",
+    }
+    gtype = type_map.get(schema.get("type", "object"), "OBJECT")
+    props = {}
+    for k, v in schema.get("properties", {}).items():
+        props[k] = _dict_to_schema(v, genai_types)
+    kwargs: dict[str, Any] = {
+        "type": gtype,
+        "description": schema.get("description", ""),
+    }
+    if props:
+        kwargs["properties"] = props
+    required = schema.get("required", [])
+    if required:
+        kwargs["required"] = required
+    return genai_types.Schema(**kwargs)

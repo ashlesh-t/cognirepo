@@ -8,10 +8,23 @@ Sources:
   • Episodic log       — recent N events
   • AST reverse index  — symbol locations matching query entities
   • Tool manifest      — CogniRepo tool schemas for function-calling
+
+Token budget
+  • FAST      6 000 tokens
+  • BALANCED 12 000 tokens  (default)
+  • DEEP     24 000 tokens
+
+When over budget, sources are trimmed in this priority order (least → most
+important):
+  1. Episodic events  — oldest events removed first
+  2. Graph context    — lines removed from end (furthest nodes first)
+  3. Semantic memories— lowest-scored memories removed first
+  Protected (never trimmed): AST symbol hits, system header
 """
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 
@@ -21,7 +34,16 @@ from indexer.ast_indexer import ASTIndexer
 from memory.episodic_memory import get_history
 from retrieval.hybrid import HybridRetriever
 
+logger = logging.getLogger(__name__)
+
 MANIFEST_PATH = "server/manifest.json"
+
+#: Token budget per classifier tier (rough: 1 token ≈ 4 chars)
+TIER_BUDGETS: dict[str, int] = {
+    "FAST":     6_000,
+    "BALANCED": 12_000,
+    "DEEP":     24_000,
+}
 
 # lazily-shared retriever instance for context_builder calls within one session
 _shared_retriever: HybridRetriever | None = None
@@ -34,6 +56,11 @@ def _get_retriever() -> HybridRetriever:
     return _shared_retriever
 
 
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: 1 token ≈ 4 characters."""
+    return max(0, len(text) // 4)
+
+
 @dataclass
 class ContextBundle:
     query: str
@@ -43,6 +70,10 @@ class ContextBundle:
     ast_hits: list[dict] = field(default_factory=list)        # reverse-index symbol hits
     tool_manifest: list[dict] = field(default_factory=list)   # CogniRepo tool schemas
     system_prompt: str = ""                                   # assembled for model
+    # token budget tracking
+    max_tokens: int = TIER_BUDGETS["BALANCED"]
+    token_count: int = 0                                      # tokens after trimming
+    was_trimmed: bool = False
 
     def to_system_prompt(self) -> str:
         """Assemble all context sources into a single system prompt string."""
@@ -79,17 +110,22 @@ def build(
     query: str,
     top_k: int = 5,
     episode_limit: int = 10,
+    tier: str = "BALANCED",
 ) -> ContextBundle:
     """
-    Build a ContextBundle for the given query.
+    Build a ContextBundle for the given query, trimmed to the tier's token budget.
 
     Parameters
     ----------
     query         : the raw user query
     top_k         : how many memories to retrieve
     episode_limit : how many recent episodic events to include
+    tier          : classifier tier — controls token budget (FAST/BALANCED/DEEP)
     """
-    bundle = ContextBundle(query=query)
+    bundle = ContextBundle(
+        query=query,
+        max_tokens=TIER_BUDGETS.get(tier, TIER_BUDGETS["BALANCED"]),
+    )
 
     # ── 1. hybrid memory retrieval ────────────────────────────────────────────
     try:
@@ -163,10 +199,67 @@ def build(
     # ── 5. tool manifest ─────────────────────────────────────────────────────
     bundle.tool_manifest = _load_manifest()
 
-    # ── 6. assemble system prompt ─────────────────────────────────────────────
+    # ── 6. assemble + trim to budget ─────────────────────────────────────────
     bundle.system_prompt = bundle.to_system_prompt()
+    _trim_to_budget(bundle)
 
     return bundle
+
+
+# ── token budget trimming ─────────────────────────────────────────────────────
+
+def _trim_to_budget(bundle: ContextBundle) -> None:
+    """
+    Trim bundle sources until system_prompt fits within bundle.max_tokens.
+
+    Trim order (least to most important):
+      1. Episodic events — oldest first (last items in the list, which is newest-first)
+      2. Graph context   — lines from end (furthest nodes)
+      3. Memories        — lowest final_score first
+    Never trimmed: AST hits, system header.
+    """
+    original_tokens = _estimate_tokens(bundle.to_system_prompt())
+    if original_tokens <= bundle.max_tokens:
+        bundle.token_count = original_tokens
+        return
+
+    budget = bundle.max_tokens
+
+    # ── step 1: trim episodic events (oldest = last item) ────────────────────
+    while bundle.recent_episodes:
+        if _estimate_tokens(bundle.to_system_prompt()) <= budget:
+            break
+        bundle.recent_episodes.pop()  # remove oldest episode
+
+    # ── step 2: trim graph context (remove lines from end = furthest nodes) ──
+    if _estimate_tokens(bundle.to_system_prompt()) > budget and bundle.graph_context:
+        lines = bundle.graph_context.split("\n")
+        while lines and _estimate_tokens(bundle.to_system_prompt()) > budget:
+            lines.pop()
+            bundle.graph_context = "\n".join(lines)
+
+    # ── step 3: trim memories (lowest score first) ────────────────────────────
+    if _estimate_tokens(bundle.to_system_prompt()) > budget and bundle.memories:
+        # sort descending by score so we can pop() the lowest
+        bundle.memories = sorted(
+            bundle.memories,
+            key=lambda m: float(m.get("final_score", m.get("importance", 0)) or 0),
+            reverse=True,
+        )
+        while bundle.memories and _estimate_tokens(bundle.to_system_prompt()) > budget:
+            bundle.memories.pop()
+
+    final_tokens = _estimate_tokens(bundle.to_system_prompt())
+    bundle.token_count = final_tokens
+    bundle.was_trimmed = True
+
+    logger.debug(
+        "Context trimmed: %d → %d tokens (budget: %d)",
+        original_tokens, final_tokens, budget,
+    )
+
+    # Re-assemble system_prompt with trimmed sources
+    bundle.system_prompt = bundle.to_system_prompt()
 
 
 def _load_manifest() -> list[dict]:
