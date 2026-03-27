@@ -81,6 +81,89 @@
           "event"
         ]
       }
+    },
+    {
+      "name": "lookup_symbol",
+      "description": "Return all locations where a symbol is defined or called, with file, line, and type.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Symbol name to look up"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "who_calls",
+      "description": "Return every caller of a function across the indexed repo.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "function_name": {
+            "type": "string",
+            "description": "Name of the function to look up callers for"
+          }
+        },
+        "required": [
+          "function_name"
+        ]
+      }
+    },
+    {
+      "name": "subgraph",
+      "description": "Return the local neighbourhood of a concept or symbol as {nodes, edges}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "entity": {
+            "type": "string",
+            "description": "Entity name or node ID to centre the subgraph on"
+          },
+          "depth": {
+            "type": "integer",
+            "description": "BFS radius",
+            "default": 2
+          }
+        },
+        "required": [
+          "entity"
+        ]
+      }
+    },
+    {
+      "name": "episodic_search",
+      "description": "Return past episodic events matching a keyword query.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Keyword to search for in event log"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results",
+            "default": 10
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "graph_stats",
+      "description": "Return a health summary of the current graph state.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
     }
   ]
 }

@@ -10,7 +10,12 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from watchdog.events import FileCreatedEvent, FileModifiedEvent, FileSystemEventHandler
+from watchdog.events import (
+    FileCreatedEvent,
+    FileDeletedEvent,
+    FileModifiedEvent,
+    FileSystemEventHandler,
+)
 from watchdog.observers import Observer
 
 if TYPE_CHECKING:
@@ -44,6 +49,33 @@ class RepoFileHandler(FileSystemEventHandler):
     def on_created(self, event: FileCreatedEvent) -> None:
         if not event.is_directory and str(event.src_path).endswith(".py"):
             self._reindex(str(event.src_path))
+
+    def on_deleted(self, event: FileDeletedEvent) -> None:
+        if not event.is_directory and str(event.src_path).endswith(".py"):
+            self._remove(str(event.src_path))
+
+    def _remove(self, abs_path: str) -> None:
+        """
+        Remove a deleted file from the index:
+        1. Drop all graph nodes whose 'file' attr matches.
+        2. Remove the file entry from index_data["files"].
+        3. Rebuild reverse index and save.
+        """
+        try:
+            rel_path = os.path.relpath(abs_path, self.repo_root)
+
+            stale_nodes = self.graph.nodes_for_file(rel_path)
+            for node_id in stale_nodes:
+                self.graph.remove_node_edges(node_id)
+
+            self.indexer.index_data["files"].pop(rel_path, None)
+            self.indexer._build_reverse_index()
+            self.indexer.save()
+            self.graph.save()
+
+            print(f"[watcher] removed {rel_path} from index")
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"[watcher] error removing {abs_path}: {exc}")
 
     def _reindex(self, abs_path: str) -> None:
         """

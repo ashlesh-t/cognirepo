@@ -24,6 +24,11 @@ passlib[bcrypt]==1.7.4
 # HTTP client (CLI --via-api)
 httpx==0.28.1
 
+# model providers
+anthropic==0.86.0
+openai==2.29.0
+google-genai==1.68.0
+
 # shared / transitive
 pydantic==2.12.5
 pydantic-core==2.41.5

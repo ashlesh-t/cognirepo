@@ -99,3 +99,129 @@ class TestEpisodicRoutes:
         resp = client.get("/episodic/history?limit=5", headers=auth_headers)
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
+
+    def test_episodic_search_returns_200(self, client, auth_headers):
+        client.post(
+            "/episodic/log",
+            json={"event": "rest_api_search_target event"},
+            headers=auth_headers,
+        )
+        resp = client.get("/episodic/search?q=rest_api_search_target", headers=auth_headers)
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+
+    def test_episodic_search_matches_keyword(self, client, auth_headers):
+        client.post(
+            "/episodic/log",
+            json={"event": "unique_rest_keyword_xyz logged"},
+            headers=auth_headers,
+        )
+        resp = client.get("/episodic/search?q=unique_rest_keyword_xyz&limit=5", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert any("unique_rest_keyword_xyz" in json.dumps(e) for e in data)
+
+    def test_episodic_search_requires_auth(self, client):
+        resp = client.get("/episodic/search?q=anything")
+        assert resp.status_code == 401
+
+
+class TestGraphRoutes:
+    def test_symbol_lookup_returns_200(self, client, auth_headers):
+        """Route always returns 200 — either a list (graph populated) or warning dict."""
+        resp = client.get("/graph/symbol/log_event", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, (list, dict))
+
+    def test_symbol_lookup_entry_shape(self, client, auth_headers):
+        """When graph has data, each entry has file/line/type; empty graph → warning dict."""
+        resp = client.get("/graph/symbol/log_event", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        if isinstance(data, list):
+            for entry in data:
+                assert "file" in entry
+                assert "line" in entry
+                assert "type" in entry
+        else:
+            assert "warning" in data
+
+    def test_symbol_lookup_requires_auth(self, client):
+        resp = client.get("/graph/symbol/anything")
+        assert resp.status_code == 401
+
+    def test_callers_returns_200(self, client, auth_headers):
+        """Route always returns 200 — either a list or a warning dict."""
+        resp = client.get("/graph/callers/nonexistent_fn_xyz", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, (list, dict))
+
+    def test_callers_requires_auth(self, client):
+        resp = client.get("/graph/callers/anything")
+        assert resp.status_code == 401
+
+    def test_subgraph_returns_200(self, client, auth_headers):
+        """Route always returns 200 — {nodes,edges} when graph populated, warning dict otherwise."""
+        resp = client.get("/graph/subgraph/nonexistent_entity_xyz", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, dict)
+        assert ("nodes" in data and "edges" in data) or "warning" in data
+
+    def test_subgraph_depth_param(self, client, auth_headers):
+        resp = client.get("/graph/subgraph/jwt_auth?depth=2", headers=auth_headers)
+        assert resp.status_code == 200
+
+    def test_subgraph_is_json_serialisable(self, client, auth_headers):
+        resp = client.get("/graph/subgraph/nonexistent_entity_xyz", headers=auth_headers)
+        assert resp.status_code == 200
+        assert json.dumps(resp.json()) is not None
+
+    def test_subgraph_requires_auth(self, client):
+        resp = client.get("/graph/subgraph/jwt_auth")
+        assert resp.status_code == 401
+
+    def test_graph_stats_returns_200(self, client, auth_headers):
+        resp = client.get("/graph/stats", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "node_count" in data
+        assert "edge_count" in data
+        assert "top_concepts" in data
+
+    def test_graph_stats_counts_non_negative(self, client, auth_headers):
+        resp = client.get("/graph/stats", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["node_count"] >= 0
+        assert data["edge_count"] >= 0
+
+    def test_graph_stats_requires_auth(self, client):
+        resp = client.get("/graph/stats")
+        assert resp.status_code == 401
+
+    def test_symbol_lookup_returns_warning_when_graph_empty(self, client, auth_headers):
+        """A2.3: symbol lookup returns 200 + warning dict on empty graph."""
+        resp = client.get("/graph/symbol/anything", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        # graph is empty in test fixture → expect warning
+        assert isinstance(data, dict)
+        assert "warning" in data
+        assert "results" in data
+
+    def test_callers_returns_warning_when_graph_empty(self, client, auth_headers):
+        resp = client.get("/graph/callers/anything", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, dict)
+        assert "warning" in data
+
+    def test_subgraph_returns_warning_when_graph_empty(self, client, auth_headers):
+        resp = client.get("/graph/subgraph/jwt_auth?depth=2", headers=auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, dict)
+        assert "warning" in data
