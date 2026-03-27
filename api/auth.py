@@ -9,7 +9,7 @@
 
 Secret resolution order (both jwt_secret and password_hash):
   1. Environment variable   COGNIREPO_JWT_SECRET / COGNIREPO_PASSWORD_HASH
-  2. OS keychain            keyring.get_password("cognirepo", "<project_id>.jwt_secret")
+  2. OS keychain            keyring.get_password("<password>", "<project_id>.jwt_secret")
   3. config.json fallback   password_hash field (backward-compat for existing installs)
 """
 import json
