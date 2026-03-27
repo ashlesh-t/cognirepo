@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
 """
 Knowledge graph for CogniRepo — a directed NetworkX graph tracking relationships
 between files, symbols, concepts, queries, and user actions.
@@ -52,7 +58,13 @@ class KnowledgeGraph:
             return
         try:
             with open(GRAPH_FILE, "rb") as f:
-                self.G = pickle.load(f)
+                raw = f.read()
+            from security import get_storage_config  # pylint: disable=import-outside-toplevel
+            encrypt, project_id = get_storage_config()
+            if encrypt:
+                from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
+                raw = decrypt_bytes(raw, get_or_create_key(project_id))
+            self.G = pickle.loads(raw)  # nosec B301
         except Exception as exc:  # pylint: disable=broad-except
             warnings.warn(
                 f"KnowledgeGraph: could not load {GRAPH_FILE} ({exc}). "
@@ -63,8 +75,14 @@ class KnowledgeGraph:
 
     def save(self) -> None:
         os.makedirs(os.path.dirname(GRAPH_FILE), exist_ok=True)
+        from security import get_storage_config  # pylint: disable=import-outside-toplevel
+        encrypt, project_id = get_storage_config()
+        raw = pickle.dumps(self.G, protocol=pickle.HIGHEST_PROTOCOL)
+        if encrypt:
+            from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+            raw = encrypt_bytes(raw, get_or_create_key(project_id))
         with open(GRAPH_FILE, "wb") as f:
-            pickle.dump(self.G, f, protocol=pickle.HIGHEST_PROTOCOL)
+            f.write(raw)
 
     # ── mutation ──────────────────────────────────────────────────────────────
 

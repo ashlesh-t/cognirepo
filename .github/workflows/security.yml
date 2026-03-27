@@ -1,0 +1,75 @@
+name: Security
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  # ── 1. Bandit — Python SAST ────────────────────────────────────────────────
+  bandit:
+    name: Bandit — Python SAST
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Bandit
+        run: pip install "bandit[toml]>=1.7"
+
+      - name: Run Bandit (HIGH + CRITICAL only)
+        run: |
+          bandit -r cognirepo/ adapters/ api/ cli/ cron/ graph/ indexer/ \
+                    memory/ orchestrator/ retrieval/ rpc/ security/ server/ \
+                    tools/ vector_db/ \
+                 -x tests/ \
+                 -ll \
+                 --exit-zero-on-skipped
+
+  # ── 2. Snyk — dependency vulnerabilities ─────────────────────────────────
+  snyk:
+    name: Snyk — dependency vulnerabilities
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: snyk/actions/python@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --file=pyproject.toml --severity-threshold=high
+
+  # ── 3. Trivy — filesystem scan ────────────────────────────────────────────
+  trivy:
+    name: Trivy — filesystem scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+  # ── 4. TruffleHog — secrets in git history ───────────────────────────────
+  secrets:
+    name: TruffleHog — secrets scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history required
+
+      - uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
