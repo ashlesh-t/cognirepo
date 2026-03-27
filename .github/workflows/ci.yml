@@ -32,6 +32,13 @@ jobs:
             --disable=C,R,import-error \
             --fail-under=8.0
 
+      - name: Smoke-test index-repo (no-watch for CI)
+        run: |
+          cognirepo init --password changeme
+          cognirepo index-repo . --no-watch
+        env:
+          COGNIREPO_MULTI_AGENT_ENABLED: "false"
+
       - name: Run tests
         run: |
           pytest tests/ -v --tb=short -x \

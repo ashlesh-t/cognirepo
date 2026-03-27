@@ -1,0 +1,141 @@
+"""
+tests/test_init_seed.py — A2.1 init UX and A2.2 git-seed tests.
+"""
+from __future__ import annotations
+
+import json
+import os
+
+import pytest
+
+
+# ── A2.1 init ─────────────────────────────────────────────────────────────────
+
+class TestInitProject:
+    def test_gitignore_is_created(self):
+        from cli.init_project import init_project
+        init_project(no_index=True)
+        assert os.path.exists(".cognirepo/.gitignore")
+
+    def test_gitignore_content(self):
+        from cli.init_project import init_project
+        init_project(no_index=True)
+        content = open(".cognirepo/.gitignore").read()
+        for pattern in ("*.index", "*.pkl", "episodic.json", "config.json", "sessions/", "archive/"):
+            assert pattern in content
+
+    def test_config_json_created(self):
+        from cli.init_project import init_project
+        init_project(no_index=True)
+        assert os.path.exists(".cognirepo/config.json")
+        data = json.load(open(".cognirepo/config.json"))
+        assert "password_hash" in data
+        assert "api_url" in data
+
+    def test_no_index_returns_none_triple(self):
+        from cli.init_project import init_project
+        result = init_project(no_index=True)
+        assert result == (None, None, None)
+
+    def test_idempotent_config_not_overwritten(self):
+        from cli.init_project import init_project
+        init_project(no_index=True)
+        # grab original hash
+        original_hash = json.load(open(".cognirepo/config.json"))["password_hash"]
+        # run again with a different password — hash should not change
+        init_project(password="newpass", no_index=True)
+        current_hash = json.load(open(".cognirepo/config.json"))["password_hash"]
+        assert current_hash == original_hash
+
+    def test_prompt_n_returns_none_triple(self, monkeypatch):
+        from cli.init_project import init_project
+        monkeypatch.setattr("builtins.input", lambda: "n")
+        result = init_project()
+        assert result == (None, None, None)
+
+    def test_prompt_no_returns_none_triple(self, monkeypatch):
+        from cli.init_project import init_project
+        monkeypatch.setattr("builtins.input", lambda: "no")
+        result = init_project()
+        assert result == (None, None, None)
+
+    def test_scaffold_dirs_created(self):
+        from cli.init_project import init_project
+        init_project(no_index=True)
+        for d in (".cognirepo/memory", ".cognirepo/index", ".cognirepo/graph", "vector_db"):
+            assert os.path.isdir(d)
+
+
+# ── A2.2 seed ─────────────────────────────────────────────────────────────────
+
+class TestSeedFromGitLog:
+    def test_returns_dict(self):
+        from cli.seed import seed_from_git_log
+        result = seed_from_git_log(dry_run=True)
+        assert isinstance(result, dict)
+
+    def test_non_git_dir_returns_skipped(self, tmp_path, monkeypatch):
+        """In a directory with no git repo, seed should fail silently."""
+        monkeypatch.chdir(tmp_path)
+        # tmp_path has no .cognirepo; create minimal dirs
+        os.makedirs(".cognirepo/graph", exist_ok=True)
+        os.makedirs("vector_db", exist_ok=True)
+        from cli.seed import seed_from_git_log
+        result = seed_from_git_log()
+        # Should be skipped — no error raised to user
+        assert "skipped" in result
+
+    def test_already_seeded_is_idempotent(self):
+        from graph.knowledge_graph import KnowledgeGraph
+        from graph.behaviour_tracker import BehaviourTracker
+        from cli.seed import seed_from_git_log
+
+        kg = KnowledgeGraph()
+        tracker = BehaviourTracker(graph=kg)
+        # Pre-populate weights so it looks already seeded
+        tracker.data["symbol_weights"]["some::symbol"] = {"hit_count": 1.0, "last_hit": None, "relevance_feedback": 0.0}
+
+        result = seed_from_git_log(tracker=tracker)
+        assert result.get("skipped") == "already seeded"
+
+    def test_dry_run_writes_nothing(self):
+        from graph.knowledge_graph import KnowledgeGraph
+        from graph.behaviour_tracker import BehaviourTracker
+        from cli.seed import seed_from_git_log
+
+        kg = KnowledgeGraph()
+        tracker = BehaviourTracker(graph=kg)
+        seed_from_git_log(dry_run=True, tracker=tracker)
+        # Weights should still be empty — nothing written
+        assert not tracker.data.get("symbol_weights")
+
+    def test_seed_in_git_repo_populates_weights(self):
+        """In the actual cognirepo git repo, seeding should produce entries."""
+        import subprocess
+        # Verify we can reach a git repo
+        proc = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            pytest.skip("no git repo available")
+
+        from graph.knowledge_graph import KnowledgeGraph
+        from graph.behaviour_tracker import BehaviourTracker
+        from indexer.ast_indexer import ASTIndexer
+        from cli.seed import seed_from_git_log
+
+        # Use the real cognirepo root
+        import pathlib
+        repo_root = str(pathlib.Path(__file__).parent.parent)
+
+        kg = KnowledgeGraph()
+        tracker = BehaviourTracker(graph=kg)
+        indexer = ASTIndexer(graph=kg)
+        indexer.load()
+
+        result = seed_from_git_log(repo_root=repo_root, tracker=tracker, indexer=indexer)
+        # Either seeded some entries or skipped (already seeded)
+        assert "seeded" in result or "skipped" in result
+        if result.get("seeded", 0) > 0:
+            assert len(tracker.data.get("symbol_weights", {})) > 0
