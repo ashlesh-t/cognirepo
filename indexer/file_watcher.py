@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
 """
 File watcher — uses watchdog to detect .py file changes and trigger
 incremental re-indexing + graph updates.
@@ -10,6 +16,8 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
+from pathlib import Path
+
 from watchdog.events import (
     FileCreatedEvent,
     FileDeletedEvent,
@@ -17,6 +25,8 @@ from watchdog.events import (
     FileSystemEventHandler,
 )
 from watchdog.observers import Observer
+
+from indexer.language_registry import is_supported
 
 if TYPE_CHECKING:
     from graph.behaviour_tracker import BehaviourTracker
@@ -43,15 +53,15 @@ class RepoFileHandler(FileSystemEventHandler):
         self.session_id = session_id
 
     def on_modified(self, event: FileModifiedEvent) -> None:
-        if not event.is_directory and str(event.src_path).endswith(".py"):
+        if not event.is_directory and is_supported(Path(str(event.src_path))):
             self._reindex(str(event.src_path))
 
     def on_created(self, event: FileCreatedEvent) -> None:
-        if not event.is_directory and str(event.src_path).endswith(".py"):
+        if not event.is_directory and is_supported(Path(str(event.src_path))):
             self._reindex(str(event.src_path))
 
     def on_deleted(self, event: FileDeletedEvent) -> None:
-        if not event.is_directory and str(event.src_path).endswith(".py"):
+        if not event.is_directory and is_supported(Path(str(event.src_path))):
             self._remove(str(event.src_path))
 
     def _remove(self, abs_path: str) -> None:

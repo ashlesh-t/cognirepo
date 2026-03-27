@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
 """
 tests/test_context_builder.py — B3.3: token budget and trim logic.
 

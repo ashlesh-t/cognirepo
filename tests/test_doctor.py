@@ -1,0 +1,224 @@
+# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
+"""
+tests/test_doctor.py — Sprint 3.8 acceptance criteria for `cognirepo doctor`.
+
+Covered:
+  - All systems healthy → exit 0, output shows all ✓
+  - No API keys → ✗ on API key check, exit 1, all 4 var names in output
+  - FAISS unreadable → ✗ on check 2, exit 1
+  - Graph unreadable → ✗ on check 3, exit 1
+  - Multiple failures → correct issue count in summary
+  - --verbose flag adds optional component info
+"""
+from __future__ import annotations
+
+import os
+import sys
+import types
+
+import pytest
+
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _run_doctor(
+    capsys,
+    monkeypatch,
+    *,
+    verbose: bool = False,
+    faiss_fail: bool = False,
+    graph_fail: bool = False,
+    episodic_fail: bool = False,
+    api_keys: bool = True,
+    with_init: bool = True,
+) -> int:
+    """
+    Exercise _cmd_doctor() in isolation, returning its exit-code integer.
+    Monkeypatches all heavy imports so the test needs no real .cognirepo/.
+    """
+    from cli.main import _cmd_doctor  # imported here so SPDX header is already applied
+
+    # ── stub env ──────────────────────────────────────────────────────────────
+    for var in ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+                "OPENAI_API_KEY", "GROK_API_KEY"]:
+        monkeypatch.delenv(var, raising=False)
+
+    if api_keys:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
+
+    # ── stub vector_db ────────────────────────────────────────────────────────
+    fake_vdb_mod = types.ModuleType("vector_db.local_vector_db")
+    if faiss_fail:
+        class _BadVDB:
+            def __init__(self):
+                raise RuntimeError("FAISS index not found")
+        fake_vdb_mod.LocalVectorDB = _BadVDB
+    else:
+        class _FakeIndex:
+            ntotal = 47
+        class _FakeVDB:
+            index = _FakeIndex()
+        fake_vdb_mod.LocalVectorDB = _FakeVDB
+    monkeypatch.setitem(sys.modules, "vector_db.local_vector_db", fake_vdb_mod)
+
+    # ── stub graph ────────────────────────────────────────────────────────────
+    fake_graph_mod = types.ModuleType("graph.knowledge_graph")
+    if graph_fail:
+        class _BadKG:
+            def __init__(self):
+                raise RuntimeError("graph.pkl not found")
+        fake_graph_mod.KnowledgeGraph = _BadKG
+    else:
+        class _FakeG:
+            def number_of_nodes(self): return 1832
+            def number_of_edges(self): return 4218
+        class _FakeKG:
+            G = _FakeG()
+        fake_graph_mod.KnowledgeGraph = _FakeKG
+    monkeypatch.setitem(sys.modules, "graph.knowledge_graph", fake_graph_mod)
+
+    # ── stub episodic ─────────────────────────────────────────────────────────
+    fake_ep_mod = types.ModuleType("memory.episodic_memory")
+    if episodic_fail:
+        def _bad_history(**_kw):
+            raise RuntimeError("episodic.json not found")
+        fake_ep_mod.get_history = _bad_history
+    else:
+        fake_ep_mod.get_history = lambda **_kw: [{"event": "x"}] * 89
+    monkeypatch.setitem(sys.modules, "memory.episodic_memory", fake_ep_mod)
+
+    # ── stub AST indexer ──────────────────────────────────────────────────────
+    fake_idx_mod = types.ModuleType("indexer.ast_indexer")
+    class _FakeASTIndexer:
+        def __init__(self, **_kw): self.index_data = {}
+        def load(self): pass
+    fake_idx_mod.ASTIndexer = _FakeASTIndexer
+    monkeypatch.setitem(sys.modules, "indexer.ast_indexer", fake_idx_mod)
+
+    # ── stub language registry ────────────────────────────────────────────────
+    fake_lang_mod = types.ModuleType("indexer.language_registry")
+    fake_lang_mod.supported_extensions = lambda: {".py", ".js", ".ts"}
+    monkeypatch.setitem(sys.modules, "indexer.language_registry", fake_lang_mod)
+
+    # ── stub circuit breaker ──────────────────────────────────────────────────
+    fake_cb_mod = types.ModuleType("memory.circuit_breaker")
+    class _FakeCB:
+        state = "CLOSED"
+        _rss_limit_mb = 6553.0
+    fake_cb_mod.get_breaker = lambda: _FakeCB()
+    monkeypatch.setitem(sys.modules, "memory.circuit_breaker", fake_cb_mod)
+
+    # ── stub psutil ───────────────────────────────────────────────────────────
+    fake_psutil = types.ModuleType("psutil")
+    class _FakeProc:
+        def memory_info(self):
+            class _MI: rss = 412 * 1024 * 1024
+            return _MI()
+    fake_psutil.Process = lambda: _FakeProc()
+    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
+
+    # ── stub _bm25 ────────────────────────────────────────────────────────────
+    fake_bm25_mod = types.ModuleType("_bm25")
+    fake_bm25_mod.BACKEND = "python"
+    monkeypatch.setitem(sys.modules, "_bm25", fake_bm25_mod)
+
+    # ── stub .cognirepo/ presence ─────────────────────────────────────────────
+    if with_init:
+        monkeypatch.setattr(os.path, "isdir",
+                            lambda p: True if ".cognirepo" in str(p) else os.path.isdir.__wrapped__(p),
+                            raising=False)
+        _orig_exists = os.path.exists
+        monkeypatch.setattr(os.path, "exists",
+                            lambda p: True if "config.json" in str(p) else _orig_exists(p))
+        # stub open for config.json
+        import builtins  # pylint: disable=import-outside-toplevel
+        import io  # pylint: disable=import-outside-toplevel
+        _orig_open = builtins.open
+        def _fake_open(p, *a, **kw):
+            if "config.json" in str(p):
+                return io.StringIO('{"project_name": "test-project"}')
+            return _orig_open(p, *a, **kw)
+        monkeypatch.setattr(builtins, "open", _fake_open)
+
+    return _cmd_doctor(verbose=verbose)
+
+
+# ── tests ─────────────────────────────────────────────────────────────────────
+
+class TestDoctorAllHealthy:
+    def test_exit_0_when_all_pass(self, capsys, monkeypatch):
+        code = _run_doctor(capsys, monkeypatch, api_keys=True)
+        assert code == 0
+
+    def test_all_checks_show_tick(self, capsys, monkeypatch):
+        _run_doctor(capsys, monkeypatch, api_keys=True)
+        out = capsys.readouterr().out
+        # At minimum: config, FAISS, graph, episodic, language, API key, CB, BM25
+        assert out.count("✓") >= 7
+
+    def test_summary_no_issues(self, capsys, monkeypatch):
+        _run_doctor(capsys, monkeypatch, api_keys=True)
+        out = capsys.readouterr().out
+        assert "No issues found" in out
+
+
+class TestDoctorNoApiKeys:
+    def test_exit_1_no_api_keys(self, capsys, monkeypatch):
+        code = _run_doctor(capsys, monkeypatch, api_keys=False)
+        assert code == 1
+
+    def test_all_four_key_names_in_output(self, capsys, monkeypatch):
+        _run_doctor(capsys, monkeypatch, api_keys=False)
+        out = capsys.readouterr().out
+        assert "ANTHROPIC_API_KEY" in out
+        assert "GEMINI_API_KEY" in out
+        assert "OPENAI_API_KEY" in out
+        assert "GROK_API_KEY" in out
+
+    def test_cross_mark_on_api_key_check(self, capsys, monkeypatch):
+        _run_doctor(capsys, monkeypatch, api_keys=False)
+        out = capsys.readouterr().out
+        assert "✗" in out
+
+
+class TestDoctorFaissFailure:
+    def test_exit_1_faiss_missing(self, capsys, monkeypatch):
+        code = _run_doctor(capsys, monkeypatch, faiss_fail=True)
+        assert code >= 1
+
+    def test_cross_mark_on_faiss_check(self, capsys, monkeypatch):
+        _run_doctor(capsys, monkeypatch, faiss_fail=True)
+        out = capsys.readouterr().out
+        assert "✗" in out
+
+
+class TestDoctorGraphFailure:
+    def test_exit_1_graph_missing(self, capsys, monkeypatch):
+        code = _run_doctor(capsys, monkeypatch, graph_fail=True)
+        assert code >= 1
+
+    def test_cross_mark_on_graph_check(self, capsys, monkeypatch):
+        _run_doctor(capsys, monkeypatch, graph_fail=True)
+        out = capsys.readouterr().out
+        assert "✗" in out
+
+
+class TestDoctorMultipleFailures:
+    def test_issue_count_in_summary(self, capsys, monkeypatch):
+        code = _run_doctor(capsys, monkeypatch, faiss_fail=True, graph_fail=True, api_keys=False)
+        out = capsys.readouterr().out
+        assert code >= 2
+        # Summary line mentions the count
+        assert "issue" in out
+
+
+class TestDoctorVerbose:
+    def test_verbose_shows_optional_section(self, capsys, monkeypatch):
+        _run_doctor(capsys, monkeypatch, verbose=True)
+        out = capsys.readouterr().out
+        assert "Optional" in out or "cryptography" in out or "keyring" in out

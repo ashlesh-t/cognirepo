@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
 """
 Functions for logging and managing episodic memory.
 """
@@ -13,13 +19,26 @@ def _load() -> list:
     if not os.path.exists(FILE):
         os.makedirs(os.path.dirname(FILE), exist_ok=True)
         return []
-    with open(FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    with open(FILE, "rb") as f:
+        raw = f.read()
+    from security import get_storage_config  # pylint: disable=import-outside-toplevel
+    encrypt, project_id = get_storage_config()
+    if encrypt:
+        from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
+        raw = decrypt_bytes(raw, get_or_create_key(project_id))
+    return json.loads(raw)
 
 
 def _save(data: list) -> None:
-    with open(FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    from security import get_storage_config  # pylint: disable=import-outside-toplevel
+    encrypt, project_id = get_storage_config()
+    content = json.dumps(data, indent=2).encode()
+    if encrypt:
+        from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+        content = encrypt_bytes(content, get_or_create_key(project_id))
+    os.makedirs(os.path.dirname(FILE), exist_ok=True)
+    with open(FILE, "wb") as f:
+        f.write(content)
 
 
 def log_event(event: str, metadata: dict = None) -> None:

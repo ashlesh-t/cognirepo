@@ -22,13 +22,22 @@ Complete documentation for every command, API endpoint, Docker service, and conf
 
 ## Installation
 
-### Local
+### pip (recommended)
 
 ```bash
-git clone <repo> && cd cognirepo
+pip install cognirepo                      # core — Python only, no extras
+pip install cognirepo[languages]           # + multi-language AST indexing (JS, TS, Java, Go, Rust, C++)
+pip install cognirepo[security]            # + encryption at rest (Fernet + OS keychain)
+pip install cognirepo[dev]                 # + dev tools (pytest, bandit, etc.)
+pip install cognirepo[languages,security]  # everything
+```
+
+### From source
+
+```bash
+git clone https://github.com/your-username/cognirepo && cd cognirepo
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -e ".[dev]"
-pip install grpcio grpcio-tools python-dotenv
+pip install -e ".[dev,languages]"
 
 # One-time setup
 cognirepo init --password yourpassword --port 8080
@@ -146,7 +155,7 @@ cognirepo history --limit 50
 
 ### `cognirepo index-repo`
 
-Walk a Python codebase, extract AST symbols (functions, classes), embed them,
+Walk a codebase, extract AST symbols (functions, classes), embed them,
 and store in FAISS + knowledge graph.
 
 ```bash
@@ -154,8 +163,11 @@ cognirepo index-repo .
 cognirepo index-repo /path/to/other/project
 ```
 
+Indexes all supported file types automatically. Install `cognirepo[languages]` for
+JS, TS, Java, Go, Rust, and C++ support beyond Python.
+
 Skips: `venv/`, `.git/`, `__pycache__/`, `node_modules/`, `.tox/`, `dist/`, `build/`.
-Output: `{"status": "indexed", "files_indexed": 42, "symbols_found": 387}`
+Output: `{"status": "indexed", "files_indexed": 42, "symbols_found": 387, "languages": {...}}`
 
 Re-running is safe — unchanged files (same SHA-256) are skipped.
 
@@ -258,6 +270,38 @@ cognirepo serve-grpc --port 50052
 ```
 
 Services: `QueryService` (SubQuery, SubQueryStream), `ContextService` (PushContext, GetContext, ListSessions).
+
+---
+
+### `cognirepo doctor`
+
+Run a system health check and report the status of all CogniRepo components.
+
+```bash
+cognirepo doctor              # run health check
+cognirepo doctor --verbose    # show file paths and optional component details
+```
+
+Example output:
+
+```
+CogniRepo doctor — v0.1.0
+
+  ✓  .cognirepo/ — config valid · project: my-project
+  ✓  FAISS index — 47 memories
+  ✓  Knowledge graph — 1,832 nodes · 4,218 edges
+  ✓  AST index — 312 symbols across 23 files
+  ✓  Episodic log — 89 events
+  ✓  Language support — Python, JS, TS, Java, Go, Rust, C++
+  ✗  Model API keys — no keys configured
+       Set at least one: ANTHROPIC_API_KEY · GEMINI_API_KEY · OPENAI_API_KEY · GROK_API_KEY
+  ✓  Circuit breaker — CLOSED (RSS: 412 MB / 6,553 MB limit)
+  ✓  BM25 backend — python
+
+  1 issue found.
+```
+
+Exit code: `0` = all checks pass, `1` = at least one issue found.
 
 ---
 
@@ -576,6 +620,8 @@ get_breaker().reset()
 | `GEMINI_API_KEY` | — | Gemini API key (for FAST/BALANCED tier) |
 | `OPENAI_API_KEY` | — | OpenAI API key or `"ollama"` for local |
 | `OPENAI_BASE_URL` | — | Override endpoint (Ollama: `http://localhost:11434/v1`) |
+| `COGNIREPO_JWT_SECRET` | — | JWT signing secret — replaces OS keychain in CI/Docker |
+| `COGNIREPO_PASSWORD_HASH` | — | Bcrypt password hash — replaces OS keychain in CI/Docker |
 | `COGNIREPO_MULTI_AGENT_ENABLED` | `false` | Enable gRPC sub-query delegation |
 | `COGNIREPO_GRPC_HOST` | `localhost` | gRPC server host |
 | `COGNIREPO_GRPC_PORT` | `50051` | gRPC server port |
@@ -585,6 +631,60 @@ get_breaker().reset()
 | `COGNIREPO_API_URL` | `http://localhost:8080` | REST base URL for `--via-api` |
 | `COGNIREPO_TOKEN` | — | Pre-set JWT (skips password prompt) |
 | `COGNIREPO_PASSWORD` | — | Plain password for auto-login (dev only) |
+
+**Docker note:** The OS keychain is not available in containers. Pass secrets via environment variables:
+
+```yaml
+# docker-compose.yml
+environment:
+  - COGNIREPO_JWT_SECRET=${COGNIREPO_JWT_SECRET}
+  - COGNIREPO_PASSWORD_HASH=${COGNIREPO_PASSWORD_HASH}
+```
+
+---
+
+## Storage Encryption
+
+CogniRepo can encrypt all data under `.cognirepo/` at rest using Fernet symmetric
+encryption. The key is stored in your OS keychain — never written to disk.
+
+### Enable
+
+Set in `.cognirepo/config.json`:
+
+```json
+{ "storage": { "encrypt": true } }
+```
+
+### Requirements
+
+```bash
+pip install cognirepo[security]
+```
+
+### What gets encrypted
+
+- `.cognirepo/vector_db/metadata.json`
+- `.cognirepo/graph/graph.pkl`
+- `.cognirepo/episodic/episodic.json`
+- `.cognirepo/sessions/*.json`
+
+FAISS index files (`.index`) are binary and not encrypted in v0.1.0 — planned for v0.2.0.
+
+### Key management
+
+The encryption key is stored in your OS keychain under service name `cognirepo`.
+In CI or Docker where no keychain is available, set:
+
+```bash
+COGNIREPO_ENCRYPTION_KEY=<base64-fernet-key>
+```
+
+Generate a key:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
 
 ---
 

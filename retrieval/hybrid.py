@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
 """
 Hybrid retrieval — merges three signals into a single ranked result list.
 
@@ -22,6 +28,7 @@ import os
 
 import numpy as np
 
+from _bm25 import BM25 as _BM25, Document as _Document
 from graph.behaviour_tracker import BehaviourTracker
 from graph.graph_utils import extract_entities_from_text, make_node_id
 from graph.knowledge_graph import KnowledgeGraph
@@ -253,39 +260,46 @@ def episodic_bm25_filter(
     top_k: int = 10,
 ) -> list[dict]:
     """
-    TF-ratio keyword match on the episodic event log.
+    BM25-ranked keyword search over the episodic event log.
 
-    query      — search string (tokenized on whitespace)
+    Uses the _bm25 package (C++ extension when built, pure-Python fallback
+    otherwise) — the backend is transparent to callers.
+
+    query      — free-text search string
     time_range — optional (iso_start, iso_end) to restrict events by timestamp
     top_k      — max events to return
-
-    No external BM25 library needed at episodic log scale.
-    Replace inner scorer with rank-bm25 if log exceeds ~10k events.
     """
     events = get_history(limit=10_000)
 
     if time_range:
         start_str, end_str = time_range
-        filtered = []
-        for ev in events:
-            ts = ev.get("time", "")
-            if start_str <= ts <= end_str:
-                filtered.append(ev)
-        events = filtered
+        events = [
+            ev for ev in events
+            if start_str <= ev.get("time", "") <= end_str
+        ]
 
-    query_tokens = query.lower().split()
-    if not query_tokens:
-        return events[:top_k]
+    if not events:
+        return []
 
-    scored: list[tuple[float, dict]] = []
-    for ev in events:
-        event_text = ev.get("event", "").lower()
-        event_tokens = event_text.split()
-        if not event_tokens:
-            continue
-        score = sum(event_tokens.count(t) for t in query_tokens) / len(event_tokens)
-        if score > 0:
-            scored.append((score, ev))
+    # Build a BM25 corpus from the event log
+    # Document text = event string + serialised metadata for richer matching
+    docs = [
+        _Document(
+            id=ev.get("id", str(i)),
+            text=ev.get("event", "") + " " + " ".join(
+                str(v) for v in ev.get("metadata", {}).values()
+            ),
+        )
+        for i, ev in enumerate(events)
+    ]
 
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [ev for _, ev in scored[:top_k]]
+    bm25 = _BM25()
+    bm25.index(docs)
+    ranked = bm25.search(query, top_k=top_k)
+
+    if not ranked:
+        return []
+
+    # Map document ids back to event dicts
+    id_to_event = {ev.get("id", str(i)): ev for i, ev in enumerate(events)}
+    return [id_to_event[doc_id] for doc_id, _ in ranked if doc_id in id_to_event]

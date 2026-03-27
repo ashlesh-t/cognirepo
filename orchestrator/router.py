@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
 """
 Model Router — the top-level orchestration entry point.
 
@@ -94,7 +100,7 @@ def _maybe_autostart_grpc(host: str, port: int) -> None:
         return
 
     try:
-        proc = subprocess.Popen(  # pylint: disable=consider-using-with
+        proc = subprocess.Popen(  # pylint: disable=consider-using-with  # nosec B603
             ["cognirepo", "serve-grpc", "--port", str(port)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
