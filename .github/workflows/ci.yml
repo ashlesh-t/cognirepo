@@ -31,7 +31,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e ".[dev]"
+          pip install -e ".[dev,security]"
           pip install grpcio grpcio-tools pylint pytest-mock
 
       - name: Lint (pylint)
