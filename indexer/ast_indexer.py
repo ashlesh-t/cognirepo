@@ -475,6 +475,7 @@ class ASTIndexer:
     # ── persistence ───────────────────────────────────────────────────────────
 
     def save(self) -> None:
+        """Persist AST index, FAISS index, and metadata to disk."""
         os.makedirs(os.path.dirname(AST_INDEX_FILE), exist_ok=True)
         with open(AST_INDEX_FILE, "w", encoding="utf-8") as f:
             json.dump(self.index_data, f, indent=2)

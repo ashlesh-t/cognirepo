@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class SymbolRecord:
+    """A single symbol's metadata extracted from AST parsing."""
     name: str
     symbol_type: str        # "FUNCTION" | "CLASS"
     start_line: int
@@ -67,6 +68,7 @@ class SymbolTable:
         return None
 
     def all_symbols(self) -> list[SymbolRecord]:
+        """Return all symbol records in this table."""
         return list(self._symbols)
 
     def __len__(self) -> int:

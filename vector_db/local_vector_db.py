@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code
 # SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
@@ -108,7 +109,7 @@ class LocalVectorDB:
         distances, indices = self.index.search(vector, k)
         results = []
         for dist, i in zip(distances[0], indices[0]):
-            if i >= 0 and i < len(self.metadata):
+            if 0 <= i < len(self.metadata):
                 record = dict(self.metadata[i])
                 record["l2_distance"] = float(dist)
                 record["faiss_row"] = int(i)

@@ -46,7 +46,7 @@ jobs:
       - name: Run pip-audit
         run: |
           pip install . --quiet
-          pip-audit --severity high --no-deps
+          pip-audit --no-deps
 
   # ── 3. Trivy — filesystem scan ────────────────────────────────────────────
   trivy:

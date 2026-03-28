@@ -56,7 +56,7 @@ def _load_weights() -> dict[str, float]:
     return DEFAULT_WEIGHTS
 
 
-class HybridRetriever:
+class HybridRetriever:  # pylint: disable=too-few-public-methods
     """
     Single entry point for all memory retrieval in CogniRepo.
     Instantiate once; call retrieve() repeatedly.

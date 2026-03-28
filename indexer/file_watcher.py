@@ -53,14 +53,17 @@ class RepoFileHandler(FileSystemEventHandler):
         self.session_id = session_id
 
     def on_modified(self, event: FileModifiedEvent) -> None:
+        """Trigger re-indexing when a supported file is modified."""
         if not event.is_directory and is_supported(Path(str(event.src_path))):
             self._reindex(str(event.src_path))
 
     def on_created(self, event: FileCreatedEvent) -> None:
+        """Trigger re-indexing when a new supported file is created."""
         if not event.is_directory and is_supported(Path(str(event.src_path))):
             self._reindex(str(event.src_path))
 
     def on_deleted(self, event: FileDeletedEvent) -> None:
+        """Remove file from index when it is deleted from disk."""
         if not event.is_directory and is_supported(Path(str(event.src_path))):
             self._remove(str(event.src_path))
 

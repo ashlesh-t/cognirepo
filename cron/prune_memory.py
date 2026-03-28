@@ -194,7 +194,11 @@ def prune(
     pruned = [e for e, _ in pruned_pairs]
 
     if verbose or dry_run:
-        print(f"[prune] total={total}  kept={len(kept)}  pruned={len(pruned)}  threshold={threshold}")
+        msg = (
+            f"[prune] total={total}  kept={len(kept)}  "
+            f"pruned={len(pruned)}  threshold={threshold}"
+        )
+        print(msg)
         for e, s in sorted(pruned_pairs, key=lambda x: x[1]):
             age = _days_old(e)
             print(f"  PRUNE score={s:.3f}  age={age:.1f}d  text={e.get('text','')[:60]}")
@@ -228,6 +232,7 @@ def prune(
 # ── CLI entry ─────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    """CLI entry point for pruning semantic memory."""
     parser = argparse.ArgumentParser(description="Prune CogniRepo semantic memory")
     parser.add_argument("--dry-run", action="store_true",
                         help="Report only — do not modify any files")

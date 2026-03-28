@@ -31,6 +31,8 @@ SESSIONS_DIR = ".cognirepo/sessions"
 
 
 class ContextStore:
+    """Thread-safe persistence for cross-model reasoning context."""
+
     def __init__(self, sessions_dir: str = SESSIONS_DIR) -> None:
         self._dir = sessions_dir
         os.makedirs(self._dir, exist_ok=True)
@@ -67,6 +69,7 @@ class ContextStore:
         return dict(entries)
 
     def last_updated(self, context_id: str) -> int:
+        """Return the unix-millis timestamp of the last write to this session."""
         lock = self._get_lock(context_id)
         with lock:
             data = self._load(context_id)
@@ -116,11 +119,12 @@ class ContextStore:
 
 
 # Module-level singleton — shared by server and any in-process callers.
-_store: ContextStore | None = None
+_STORE: ContextStore | None = None
 
 
 def get_store() -> ContextStore:
-    global _store  # pylint: disable=global-statement
-    if _store is None:
-        _store = ContextStore()
-    return _store
+    """Return the shared ContextStore instance."""
+    global _STORE  # pylint: disable=global-statement
+    if _STORE is None:
+        _STORE = ContextStore()
+    return _STORE

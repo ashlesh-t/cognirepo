@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code
 # SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
@@ -42,18 +43,8 @@ def call(
 ) -> Union[ModelResponse, Generator[str, None, dict]]:
     """
     Send query + context to a Gemini model.
-
-    Parameters
-    ----------
-    query         : raw user query string
-    system_prompt : assembled context from ContextBundle.to_system_prompt()
-    tool_manifest : list of CogniRepo tool schemas (from server/manifest.json)
-    model_id      : Gemini model identifier
-    max_tokens    : maximum output tokens
-    verbose       : if True, print retry messages (passed from CLI --verbose)
-    stream        : if True, return a generator that yields text chunks;
-                    the generator's StopIteration.value is a usage dict
     """
+    # pylint: disable=too-many-locals
     try:
         from google import genai  # pylint: disable=import-outside-toplevel
         from google.genai import types as genai_types  # pylint: disable=import-outside-toplevel

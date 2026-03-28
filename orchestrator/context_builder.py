@@ -52,14 +52,14 @@ TIER_BUDGETS: dict[str, int] = {
 }
 
 # lazily-shared retriever instance for context_builder calls within one session
-_shared_retriever: HybridRetriever | None = None
+_SHARED_RETRIEVER: HybridRetriever | None = None
 
 
 def _get_retriever() -> HybridRetriever:
-    global _shared_retriever  # pylint: disable=global-statement
-    if _shared_retriever is None:
-        _shared_retriever = HybridRetriever()
-    return _shared_retriever
+    global _SHARED_RETRIEVER  # pylint: disable=global-statement
+    if _SHARED_RETRIEVER is None:
+        _SHARED_RETRIEVER = HybridRetriever()
+    return _SHARED_RETRIEVER
 
 
 def _estimate_tokens(text: str) -> int:
@@ -68,7 +68,8 @@ def _estimate_tokens(text: str) -> int:
 
 
 @dataclass
-class ContextBundle:
+class ContextBundle:  # pylint: disable=too-many-instance-attributes
+    """Container for all context sources to be injected into model prompts."""
     query: str
     memories: list[dict] = field(default_factory=list)       # hybrid retrieval results
     graph_context: str = ""                                   # formatted subgraph text
@@ -120,14 +121,8 @@ def build(
 ) -> ContextBundle:
     """
     Build a ContextBundle for the given query, trimmed to the tier's token budget.
-
-    Parameters
-    ----------
-    query         : the raw user query
-    top_k         : how many memories to retrieve
-    episode_limit : how many recent episodic events to include
-    tier          : classifier tier — controls token budget (FAST/BALANCED/DEEP)
     """
+    # pylint: disable=too-many-locals
     bundle = ContextBundle(
         query=query,
         max_tokens=TIER_BUDGETS.get(tier, TIER_BUDGETS["BALANCED"]),
@@ -272,7 +267,7 @@ def _load_manifest() -> list[dict]:
     """Load tool schemas from server/manifest.json, generating it if absent."""
     if not os.path.exists(MANIFEST_PATH):
         try:
-            from server.mcp_server import _write_manifest  # lazy import
+            from server.mcp_server import _write_manifest  # pylint: disable=import-outside-toplevel
             _write_manifest()
         except Exception:  # pylint: disable=broad-except
             return []

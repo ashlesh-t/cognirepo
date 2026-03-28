@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code
 # SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
@@ -51,21 +52,8 @@ def call(
 ) -> Union[ModelResponse, Generator[str, None, dict]]:
     """
     Send query + context to an OpenAI-compatible endpoint.
-
-    Parameters
-    ----------
-    query         : raw user query string
-    system_prompt : assembled context from ContextBundle.to_system_prompt()
-    tool_manifest : list of CogniRepo tool schemas (from server/manifest.json)
-    model_id      : model identifier (e.g. "gpt-4o", "gpt-3.5-turbo", "mistral")
-    max_tokens    : maximum tokens in response
-    verbose       : if True, print retry messages (passed from CLI --verbose)
-    stream        : if True, return a generator that yields text chunks;
-                    the generator's StopIteration.value is a usage dict
-    _api_key      : override API key (used by grok_adapter)
-    _base_url     : override base URL (used by grok_adapter)
-    _provider     : provider label in ModelResponse (default: "openai")
     """
+    # pylint: disable=too-many-locals
     try:
         from openai import OpenAI  # pylint: disable=import-outside-toplevel
         from openai import RateLimitError, AuthenticationError  # pylint: disable=import-outside-toplevel
@@ -73,7 +61,9 @@ def call(
     except ImportError as exc:
         raise ImportError("openai package required: pip install openai") from exc
 
-    api_key = _api_key if _api_key is not None else os.environ.get("OPENAI_API_KEY", "sk-placeholder")
+    api_key = _api_key if _api_key is not None else os.environ.get(
+        "OPENAI_API_KEY", "sk-placeholder"
+    )
     base_url = _base_url if _base_url is not None else os.environ.get("OPENAI_BASE_URL")
 
     client_kwargs: dict[str, Any] = {"api_key": api_key}
@@ -155,10 +145,10 @@ def _stream_call(
     client,
     create_kwargs: dict,
     provider: str,
-    RateLimitError,
-    AuthenticationError,
-    APIStatusError,
-    APIConnectionError,
+    rate_limit_err,
+    auth_err,
+    status_err,
+    conn_err,
 ) -> Generator[str, None, dict]:
     """
     Generator: yields text delta strings from streaming Chat Completions.
@@ -192,13 +182,13 @@ def _stream_call(
                     }
             except AttributeError:
                 pass
-    except RateLimitError as exc:
+    except rate_limit_err as exc:
         raise ModelCallError(provider, 429, str(exc)) from exc
-    except AuthenticationError as exc:
+    except auth_err as exc:
         raise ModelCallError(provider, 401, str(exc)) from exc
-    except APIStatusError as exc:
+    except status_err as exc:
         raise ModelCallError(provider, exc.status_code, str(exc)) from exc
-    except APIConnectionError as exc:
+    except conn_err as exc:
         raise ModelCallError(provider, None, str(exc)) from exc
 
     return usage  # becomes StopIteration.value
