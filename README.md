@@ -2,8 +2,8 @@
 
 > Persistent memory and context for any AI tool. Not a chatbot — infrastructure.
 
-[![CI](https://github.com/your-username/cognirepo/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/cognirepo/actions/workflows/ci.yml)
-[![Security](https://github.com/your-username/cognirepo/actions/workflows/security.yml/badge.svg)](https://github.com/your-username/cognirepo/actions/workflows/security.yml)
+[![CI](https://github.com/ashlesh-t/cognirepo/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlesh-t/cognirepo/actions/workflows/ci.yml)
+[![Security](https://github.com/ashlesh-t/cognirepo/actions/workflows/security.yml/badge.svg)](https://github.com/ashlesh-t/cognirepo/actions/workflows/security.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
@@ -222,6 +222,6 @@ CogniRepo is licensed under the **GNU Affero General Public License v3.0 (AGPL-3
 
 **Commercial licensing:**
 If you need to use CogniRepo in a proprietary product or hosted service without open
-sourcing your application, a commercial license is available. Contact: [your email]
+sourcing your application, a commercial license is available. Contact: ashleshat5@gmail.com
 
 See [LICENSE](LICENSE) and [NOTICE](NOTICE) for full details.

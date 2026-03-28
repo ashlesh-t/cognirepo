@@ -1,7 +1,7 @@
-# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
 # Licensed under AGPL v3. See LICENSE file in repository root.
 
 """
@@ -87,14 +87,13 @@ def _cmd_doctor(verbose: bool = False) -> int:
     # ── Check 1: config ───────────────────────────────────────────────────────
     nonlocal_config: dict = {}
     try:
-        import json as _json  # pylint: disable=import-outside-toplevel,redefined-outer-name
         _cfg_path = ".cognirepo/config.json"
         if not os.path.isdir(".cognirepo"):
             raise FileNotFoundError(".cognirepo/ not found")
         if not os.path.exists(_cfg_path):
             raise FileNotFoundError("config.json missing")
         with open(_cfg_path, encoding="utf-8") as _f:
-            nonlocal_config = _json.load(_f)
+            nonlocal_config = json.load(_f)
         _pname = nonlocal_config.get("project_name", "unknown")
         _ok(f".cognirepo/ — config valid · project: {_pname}")
         if verbose:
@@ -413,7 +412,6 @@ def _direct_ask(
         if result.error:
             print(f"ERROR: {result.error}", file=sys.stderr)
         if result.response.tool_calls:
-            import json  # pylint: disable=import-outside-toplevel,redefined-outer-name
             print("\n[tool calls]")
             for tc in result.response.tool_calls:
                 print(" ", json.dumps(tc))

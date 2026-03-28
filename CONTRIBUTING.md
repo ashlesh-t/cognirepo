@@ -7,7 +7,7 @@ Thank you for contributing. This guide covers everything you need in 5 minutes.
 ## Dev setup
 
 ```bash
-git clone https://github.com/your-username/cognirepo
+git clone https://github.com/ashlesh-t/cognirepo
 cd cognirepo
 python -m venv venv && source venv/bin/activate
 pip install -e ".[dev,languages]"

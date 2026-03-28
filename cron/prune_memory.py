@@ -1,7 +1,7 @@
-# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
 # Licensed under AGPL v3. See LICENSE file in repository root.
 
 """
@@ -34,7 +34,6 @@ import argparse
 import json
 import math
 import os
-import shutil
 import sys
 from datetime import datetime, timezone
 from typing import Any
@@ -54,7 +53,7 @@ AGGRESSIVE_THRESHOLD = 0.05
 def _check_memory_pressure() -> bool:
     """Return True if it is safe to proceed (circuit CLOSED)."""
     try:
-        from memory.circuit_breaker import get_breaker, CircuitOpenError  # pylint: disable=import-outside-toplevel
+        from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
         get_breaker().check()
         return True
     except Exception:  # pylint: disable=broad-except
@@ -100,7 +99,6 @@ def _rebuild_faiss(kept: list[dict[str, Any]], dry_run: bool) -> int:
         return len(kept)
     try:
         import faiss  # pylint: disable=import-outside-toplevel
-        import numpy as np  # pylint: disable=import-outside-toplevel
         from memory.embeddings import get_model  # pylint: disable=import-outside-toplevel
 
         model = get_model()
@@ -108,7 +106,7 @@ def _rebuild_faiss(kept: list[dict[str, Any]], dry_run: bool) -> int:
         vectors = model.encode(texts, normalize_embeddings=True).astype("float32")
         dim = vectors.shape[1]
         index = faiss.IndexFlatL2(dim)
-        index.add(vectors)
+        index.add(vectors)  # pylint: disable=no-value-for-parameter
         faiss.write_index(index, SEMANTIC_INDEX)
         # rewrite metadata with contiguous row IDs
         for i, entry in enumerate(kept):

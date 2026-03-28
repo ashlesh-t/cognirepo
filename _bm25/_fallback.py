@@ -1,7 +1,7 @@
-# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
 # Licensed under AGPL v3. See LICENSE file in repository root.
 
 """
@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from collections import Counter
 
 

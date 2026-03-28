@@ -1,7 +1,7 @@
-# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
 # Licensed under AGPL v3. See LICENSE file in repository root.
 
 """
@@ -39,13 +39,12 @@ import numpy as np
 
 from graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
 from graph.graph_utils import make_node_id, node_id_from_symbol_record
-from indexer.index_utils import SymbolRecord, SymbolTable, build_symbol_table_from_index
+from indexer.index_utils import SymbolTable, build_symbol_table_from_index
 from indexer.language_registry import (
     _get_language,
     is_supported,
     lang_label,
     lang_name,
-    supported_extensions,
 )
 from memory.embeddings import get_model
 

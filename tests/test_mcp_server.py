@@ -1,7 +1,7 @@
-# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
 # Licensed under AGPL v3. See LICENSE file in repository root.
 
 """
@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import json
 import os
-
-import pytest
 
 
 class TestMCPToolFunctions:
@@ -258,14 +256,13 @@ class TestManifestFormat:
         import server.mcp_server as _mod
         import adapters.openai_spec as _spec
         orig = _spec.MANIFEST_PATH
-        import os
         _spec.MANIFEST_PATH = os.path.join(os.path.dirname(_mod.__file__), "manifest.json")
         try:
             paths = export(out_dir="adapters")
         finally:
             _spec.MANIFEST_PATH = orig
         assert os.path.exists(paths["openai_tools"])
-        with open(paths["openai_tools"]) as f:
+        with open(paths["openai_tools"], encoding="utf-8") as f:
             tools = json.load(f)
         assert isinstance(tools, list)
         assert all(t["type"] == "function" for t in tools)

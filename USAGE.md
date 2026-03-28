@@ -35,7 +35,7 @@ pip install cognirepo[languages,security]  # everything
 ### From source
 
 ```bash
-git clone https://github.com/your-username/cognirepo && cd cognirepo
+git clone https://github.com/ashlesh-t/cognirepo && cd cognirepo
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -e ".[dev,languages]"
 

@@ -1,7 +1,7 @@
-# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
 # Licensed under AGPL v3. See LICENSE file in repository root.
 
 """
@@ -18,13 +18,7 @@ try:
 except ImportError:
     _KEYRING_AVAILABLE = False
 
-try:
-    from passlib.context import CryptContext  # pylint: disable=import-error
-    _pwd_ctx = CryptContext(schemes=["bcrypt"])
-    _PASSLIB_AVAILABLE = True
-except ImportError:
-    import bcrypt as _bcrypt  # type: ignore
-    _PASSLIB_AVAILABLE = False
+import bcrypt as _bcrypt
 
 
 _KEYCHAIN_SERVICE = "cognirepo"
@@ -48,8 +42,6 @@ DEFAULT_MODELS = {
 # ── internal helpers ──────────────────────────────────────────────────────────
 
 def _hash_password(password: str) -> str:
-    if _PASSLIB_AVAILABLE:
-        return _pwd_ctx.hash(password)
     return _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
 
 
