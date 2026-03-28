@@ -7,8 +7,16 @@
 """
 Utility to load and retrieve the embedding model.
 """
+import logging
 # pylint: disable=import-error
 from sentence_transformers import SentenceTransformer
+
+# Silence harmless "UNEXPECTED" weight loading reports from transformers
+try:
+    import transformers.utils.logging as tf_logging
+    tf_logging.set_verbosity_error()
+except ImportError:
+    pass
 
 MODEL = None
 

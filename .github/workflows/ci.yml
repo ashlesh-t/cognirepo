@@ -42,7 +42,7 @@ jobs:
 
       - name: Smoke-test index-repo (no-watch for CI)
         run: |
-          cognirepo init --password changeme
+          cognirepo init --password changeme --no-index
           cognirepo index-repo . --no-watch
         env:
           COGNIREPO_MULTI_AGENT_ENABLED: "false"

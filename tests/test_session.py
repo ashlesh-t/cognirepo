@@ -202,7 +202,7 @@ class TestAppendExchange:
 class TestListSessions:
     def test_empty_when_no_sessions(self):
         from orchestrator.session import list_sessions
-        assert list_sessions() == []
+        assert not list_sessions()
 
     def test_returns_created_sessions(self):
         from orchestrator.session import create_session, list_sessions

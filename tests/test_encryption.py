@@ -18,9 +18,8 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
 import sys
-import unittest.mock as mock
+from unittest import mock
 
 import pytest
 
@@ -37,7 +36,7 @@ def _enable_encryption(tmp_path):
         "retrieval_weights": {"vector": 0.5, "graph": 0.3, "behaviour": 0.2},
         "models": {},
     }
-    with open(".cognirepo/config.json", "w") as f:
+    with open(".cognirepo/config.json", "w", encoding="utf-8") as f:
         json.dump(config, f)
 
 
@@ -51,7 +50,7 @@ def _disable_encryption(tmp_path):
         "retrieval_weights": {"vector": 0.5, "graph": 0.3, "behaviour": 0.2},
         "models": {},
     }
-    with open(".cognirepo/config.json", "w") as f:
+    with open(".cognirepo/config.json", "w", encoding="utf-8") as f:
         json.dump(config, f)
 
 
@@ -219,6 +218,7 @@ class TestGitignoreBlanket:
         with mock.patch("builtins.input", return_value="n"):
             init_project(no_index=True)
 
-        content = open(".cognirepo/.gitignore").read()
+        with open(".cognirepo/.gitignore", encoding="utf-8") as f:
+            content = f.read()
         assert "*" in content
         assert "!.gitignore" in content
