@@ -2,7 +2,20 @@
 name = "cognirepo"
 version = "0.1.0"
 description = "Local cognitive infrastructure layer for AI agents"
+readme = "README.md"
 requires-python = ">=3.11"
+license = {text = "AGPL-3.0-or-later"}
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 
 dependencies = [
     # core
@@ -19,12 +32,12 @@ dependencies = [
     # auth
     "PyJWT==2.12.1",
     "bcrypt==5.0.0",
-    "passlib[bcrypt]==1.7.4",
     # HTTP client (CLI --via-api)
     "httpx==0.28.1",
     # graph + indexer
     "networkx>=3.3",
     "watchdog>=4.0",
+    "tree-sitter>=0.23",          # multi-language AST parsing (core, always installed)
     # shared
     "pydantic==2.12.5",
     "anyio==4.12.1",
@@ -40,6 +53,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+languages = [
+    "tree-sitter-python>=0.23",
+    "tree-sitter-javascript>=0.23",
+    "tree-sitter-java>=0.23",
+    "tree-sitter-cpp>=0.23",
+    "tree-sitter-go>=0.23",
+    "tree-sitter-rust>=0.23",
+]
+cpp = [
+    "pybind11>=2.12",
+    "scikit-build-core>=0.9",
+]
+security = [
+    "cryptography>=42.0",
+    "keyring>=25.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
@@ -52,12 +81,37 @@ cognirepo = "cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["adapters*", "api*", "cli*", "cron*", "graph*", "indexer*", "memory*", "orchestrator*", "retrieval*", "rpc*", "server*", "tools*", "vector_db*"]
+include = ["_bm25*", "adapters*", "api*", "cli*", "cron*", "graph*", "indexer*", "memory*", "orchestrator*", "retrieval*", "rpc*", "security*", "server*", "tools*", "vector_db*"]
 exclude = ["venv*", "*.egg-info*"]
 
 [build-system]
+# Default: setuptools (pure Python, no cmake needed)
+# To compile the optional C++ BM25 extension instead:
+#   pip install 'cognirepo[cpp]'   (uses scikit-build-core + cmake)
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+# ── optional C++ build (scikit-build-core) ────────────────────────────────────
+# Activate by swapping the [build-system] block above to:
+#   requires = ["scikit-build-core>=0.9", "pybind11>=2.12"]
+#   build-backend = "scikit_build_core.build"
+# and running: pip install . --config-settings=cmake.args=-DBUILD_EXT=ON
+# [tool.scikit-build]
+# cmake.source-dir = "cognirepo/_bm25"
+# cmake.build-type = "Release"
+
 [tool.pylint.messages_control]
-disable = ["import-error"]
+disable = [
+    "import-error",          # optional heavy deps not installed in lint env
+    "no-member",             # false positives on FAISS/protobuf dynamic attrs
+    "subprocess-run-check",  # intentional: seed command checks returncode manually
+]
+
+[tool.pylint.design]
+max-locals = 25
+max-branches = 20
+max-statements = 80
+max-returns = 8
+max-args = 10
+max-positional-arguments = 10
+max-instance-attributes = 12

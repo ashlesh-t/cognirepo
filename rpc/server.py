@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Ashlesha T
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
 """
 CogniRepo gRPC server — runs on a separate port from FastAPI (default 50051).
 
@@ -19,7 +25,6 @@ Or call from code:
 from __future__ import annotations
 
 import argparse
-import sys
 import time
 from concurrent import futures
 

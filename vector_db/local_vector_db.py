@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Ashlesha T
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
 """
 Local vector database module using FAISS for storing and searching semantic embeddings.
 """
@@ -28,19 +34,39 @@ class LocalVectorDB:
             self.index = faiss.IndexFlatL2(dim)
 
         if os.path.exists(META_FILE):
-            with open(META_FILE, encoding="utf-8") as f:
-                self.metadata = json.load(f)
+            self.metadata = self._load_meta()
         else:
             self.metadata = []
+
+    # ── metadata persistence (with optional encryption) ───────────────────────
+
+    def _load_meta(self) -> list:
+        with open(META_FILE, "rb") as f:
+            raw = f.read()
+        from security import get_storage_config  # pylint: disable=import-outside-toplevel
+        encrypt, project_id = get_storage_config()
+        if encrypt:
+            from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
+            raw = decrypt_bytes(raw, get_or_create_key(project_id))
+        return json.loads(raw)
+
+    def _save_meta(self) -> None:
+        from security import get_storage_config  # pylint: disable=import-outside-toplevel
+        encrypt, project_id = get_storage_config()
+        content = json.dumps(self.metadata, indent=2).encode()
+        if encrypt:
+            from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+            content = encrypt_bytes(content, get_or_create_key(project_id))
+        os.makedirs(os.path.dirname(META_FILE), exist_ok=True)
+        with open(META_FILE, "wb") as f:
+            f.write(content)
 
     def save(self):
         """
         Saves the FAISS index and metadata to disk.
         """
         faiss.write_index(self.index, INDEX_FILE)
-
-        with open(META_FILE, "w", encoding="utf-8") as f:
-            json.dump(self.metadata, f, indent=2)
+        self._save_meta()
 
     def add(self, vector, text, importance):
         """

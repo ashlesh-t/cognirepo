@@ -1,0 +1,16 @@
+CogniRepo — Local AI Memory and Context Infrastructure
+Copyright (c) 2026 Ashlesha T
+
+Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-or-later).
+See LICENSE file for full license text.
+
+AGPL summary:
+  - Free to use, modify, and distribute under the same license.
+  - Modifications must be published under AGPL v3.
+  - Offering this software as a network service (SaaS, hosted product)
+    requires open sourcing your entire application stack.
+
+Commercial licensing:
+  For use in closed-source products or hosted services without AGPL obligations,
+  contact: [your email address]
+  A separate commercial license can be arranged.

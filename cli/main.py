@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Ashlesha T
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
 """
 Main entry point for the cognirepo CLI.
 
@@ -18,7 +24,6 @@ import sys
 import time
 
 from cli.init_project import init_project
-from server.mcp_server import run_server
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -51,6 +56,200 @@ def _direct_retrieve(query, top_k):
 def _direct_search(query):
     from retrieval.docs_search import search_docs
     return search_docs(query)
+
+
+def _cmd_doctor(verbose: bool = False) -> int:
+    """
+    Run system health checks. Returns exit code 0 (all pass) or 1 (any fail).
+    """
+    import importlib  # pylint: disable=import-outside-toplevel,redefined-outer-name
+    import os  # pylint: disable=import-outside-toplevel,redefined-outer-name
+
+    # ── version ───────────────────────────────────────────────────────────────
+    try:
+        from importlib.metadata import version as _pkg_version  # pylint: disable=import-outside-toplevel
+        _ver = _pkg_version("cognirepo")
+    except Exception:  # pylint: disable=broad-except
+        _ver = "dev"
+
+    print(f"CogniRepo doctor — v{_ver}\n")
+
+    issues = 0
+
+    def _ok(msg: str) -> None:
+        print(f"  \u2713  {msg}")
+
+    def _fail(msg: str, hint: str = "") -> None:
+        print(f"  \u2717  {msg}")
+        if hint:
+            print(f"       {hint}")
+
+    # ── Check 1: config ───────────────────────────────────────────────────────
+    nonlocal_config: dict = {}
+    try:
+        _cfg_path = ".cognirepo/config.json"
+        if not os.path.isdir(".cognirepo"):
+            raise FileNotFoundError(".cognirepo/ not found")
+        if not os.path.exists(_cfg_path):
+            raise FileNotFoundError("config.json missing")
+        with open(_cfg_path, encoding="utf-8") as _f:
+            nonlocal_config = json.load(_f)
+        _pname = nonlocal_config.get("project_name", "unknown")
+        _ok(f".cognirepo/ — config valid · project: {_pname}")
+        if verbose:
+            print(f"       {os.path.abspath(_cfg_path)}")
+    except Exception as exc:  # pylint: disable=broad-except
+        _fail(f".cognirepo/ — {exc}", "Run: cognirepo init")
+        issues += 1
+
+    # ── Check 2: FAISS index ──────────────────────────────────────────────────
+    try:
+        from vector_db.local_vector_db import LocalVectorDB  # pylint: disable=import-outside-toplevel
+        _vdb = LocalVectorDB()
+        _count = _vdb.index.ntotal
+        _ok(f"FAISS index — {_count} memories")
+        if verbose:
+            _idx_path = os.path.abspath(os.path.join(".cognirepo", "vector_db", "faiss.index"))
+            print(f"       {_idx_path}")
+    except Exception as exc:  # pylint: disable=broad-except
+        _fail(f"FAISS index — {exc}", "Run: cognirepo init")
+        issues += 1
+
+    # ── Check 3: Knowledge graph ──────────────────────────────────────────────
+    try:
+        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        _kg = KnowledgeGraph()
+        _nodes = _kg.G.number_of_nodes()
+        _edges = _kg.G.number_of_edges()
+        _ok(f"Knowledge graph — {_nodes:,} nodes · {_edges:,} edges")
+        if verbose:
+            _gpath = os.path.abspath(os.path.join(".cognirepo", "graph", "graph.pkl"))
+            print(f"       {_gpath}")
+    except Exception as exc:  # pylint: disable=broad-except
+        _fail(f"Knowledge graph — {exc}", "Run: cognirepo index-repo .")
+        issues += 1
+
+    # ── Check 4: AST index ────────────────────────────────────────────────────
+    try:
+        from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+        from graph.knowledge_graph import KnowledgeGraph as _KG2  # pylint: disable=import-outside-toplevel
+        _idx = ASTIndexer(graph=_KG2())
+        _idx.load()
+        _files = _idx.index_data.get("files", {})
+        _file_count = len(_files)
+        _sym_count = sum(len(v.get("symbols", [])) for v in _files.values())
+        _ok(f"AST index — {_sym_count} symbols across {_file_count} files")
+        if verbose:
+            _ipath = os.path.abspath(os.path.join(".cognirepo", "index", "ast_index.json"))
+            print(f"       {_ipath}")
+    except Exception as exc:  # pylint: disable=broad-except
+        _fail(f"AST index — {exc}", "Run: cognirepo index-repo .")
+        issues += 1
+
+    # ── Check 5: Episodic log ─────────────────────────────────────────────────
+    try:
+        from memory.episodic_memory import get_history  # pylint: disable=import-outside-toplevel
+        _ep_count = len(get_history(limit=100_000))
+        _ok(f"Episodic log — {_ep_count} events")
+        if verbose:
+            _epath = os.path.abspath(os.path.join(".cognirepo", "episodic", "episodic.json"))
+            print(f"       {_epath}")
+    except Exception as exc:  # pylint: disable=broad-except
+        _fail(f"Episodic log — {exc}", "Run: cognirepo init")
+        issues += 1
+
+    # ── Check 6: Language support ─────────────────────────────────────────────
+    try:
+        from indexer.language_registry import supported_extensions  # pylint: disable=import-outside-toplevel
+        _exts = supported_extensions()
+        _EXT_NAMES = {
+            ".py": "Python", ".js": "JS", ".jsx": "JS",
+            ".ts": "TS", ".tsx": "TS", ".java": "Java",
+            ".go": "Go", ".rs": "Rust", ".c": "C",
+            ".cpp": "C++", ".cc": "C++", ".h": "C/C++",
+        }
+        _seen: set[str] = set()
+        _lang_list: list[str] = []
+        for ext in sorted(_exts):
+            name = _EXT_NAMES.get(ext, ext)
+            if name not in _seen:
+                _seen.add(name)
+                _lang_list.append(name)
+        _ok(f"Language support — {', '.join(_lang_list) if _lang_list else 'Python (built-in)'}")
+    except Exception as exc:  # pylint: disable=broad-except
+        _ok(f"Language support — Python (built-in) [{exc}]")
+
+    # ── Check 7: API keys ─────────────────────────────────────────────────────
+    _PROVIDERS = {
+        "ANTHROPIC_API_KEY": "Anthropic",
+        "GEMINI_API_KEY": "Gemini",
+        "GOOGLE_API_KEY": "Gemini (alt)",
+        "OPENAI_API_KEY": "OpenAI",
+        "GROK_API_KEY": "Grok",
+    }
+    _found = [name for var, name in _PROVIDERS.items() if os.environ.get(var)]
+    if _found:
+        _ok(f"Model API keys — {', '.join(_found)}")
+    else:
+        _fail(
+            "Model API keys — no keys configured",
+            "Set at least one: ANTHROPIC_API_KEY · GEMINI_API_KEY · OPENAI_API_KEY · GROK_API_KEY",
+        )
+        issues += 1
+
+    # ── Check 8: Circuit breaker ──────────────────────────────────────────────
+    try:
+        from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+        import psutil  # pylint: disable=import-outside-toplevel
+        _cb = get_breaker()
+        _rss_mb = psutil.Process().memory_info().rss / 1024 / 1024
+        _limit_mb = _cb._rss_limit_mb  # pylint: disable=protected-access
+        _ok(f"Circuit breaker — {_cb.state} (RSS: {_rss_mb:.0f} MB / {_limit_mb:.0f} MB limit)")
+    except Exception:  # pylint: disable=broad-except
+        _ok("Circuit breaker — OK (psutil not available for RSS check)")
+
+    # ── Check 9: BM25 backend (always shown) ──────────────────────────────────
+    try:
+        from _bm25 import BACKEND  # pylint: disable=import-outside-toplevel
+        _ok(f"BM25 backend — {BACKEND}")
+    except Exception as exc:  # pylint: disable=broad-except
+        _fail(f"BM25 backend — {exc}")
+        issues += 1
+
+    # ── Check 10: gRPC (only if multi-agent enabled) ──────────────────────────
+    if os.environ.get("COGNIREPO_MULTI_AGENT_ENABLED", "").lower() == "true":
+        _grpc_port = int(nonlocal_config.get("multi_agent", {}).get("grpc_port", 50051))
+        try:
+            import socket  # pylint: disable=import-outside-toplevel
+            with socket.create_connection(("localhost", _grpc_port), timeout=1):
+                pass
+            _ok(f"gRPC server — reachable on port {_grpc_port}")
+        except Exception:  # pylint: disable=broad-except
+            _fail(
+                f"gRPC server — not reachable on port {_grpc_port}",
+                f"Run: cognirepo serve-grpc --port {_grpc_port}",
+            )
+            issues += 1
+
+    # ── Optional verbose extras ───────────────────────────────────────────────
+    if verbose:
+        print("\n  Optional components:")
+        for _pkg, _label in [
+            ("cryptography", "cryptography (encryption at rest)"),
+            ("keyring", "keyring (OS keychain)"),
+        ]:
+            try:
+                importlib.import_module(_pkg)
+                print(f"  \u25cb  {_label}: installed")
+            except ImportError:
+                print(f"  \u25cb  {_label}: not installed (pip install cognirepo[security])")
+
+    # ── Summary ───────────────────────────────────────────────────────────────
+    if issues == 0:
+        print("\n  No issues found.")
+    else:
+        print(f"\n  {issues} issue(s) found.")
+    return issues
 
 
 def _maybe_tip_index_repo() -> None:
@@ -213,7 +412,6 @@ def _direct_ask(
         if result.error:
             print(f"ERROR: {result.error}", file=sys.stderr)
         if result.response.tool_calls:
-            import json  # pylint: disable=import-outside-toplevel,redefined-outer-name
             print("\n[tool calls]")
             for tc in result.response.tool_calls:
                 print(" ", json.dumps(tc))
@@ -291,7 +489,7 @@ def main():
 
     # init
     p_init = sub.add_parser("init", help="Scaffold .cognirepo/ and config")
-    p_init.add_argument("--password", default="changeme",
+    p_init.add_argument("--password", default="changeme",  # nosec B105
                         help="Initial API password (default: changeme)")
     p_init.add_argument("--port", type=int, default=8000,
                         help="API port to record in config (default: 8000)")
@@ -425,6 +623,15 @@ def main():
     # chat — interactive REPL
     sub.add_parser("chat", help="Start interactive REPL (default when no args given)")
 
+    # doctor — environment health check
+    p_doctor = sub.add_parser("doctor", help="Check CogniRepo installation health")
+    p_doctor.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        default=False,
+        help="Show all checks including optional components.",
+    )
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -451,6 +658,7 @@ def main():
         return
 
     if args.command == "serve":
+        from server.mcp_server import run_server  # pylint: disable=import-outside-toplevel
         run_server()
         return
 
@@ -533,6 +741,9 @@ def main():
         from cli.repl import run_repl  # pylint: disable=import-outside-toplevel
         run_repl()
         return
+
+    if args.command == "doctor":
+        sys.exit(_cmd_doctor(verbose=args.verbose))
 
     if args.command == "ask":
         text = _direct_ask(

@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Ashlesha T
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
 """
 Grok adapter — thin wrapper over :mod:`openai_adapter` using the x.ai endpoint.
 
@@ -12,7 +18,6 @@ from __future__ import annotations
 
 import os
 
-from orchestrator.model_adapters.anthropic_adapter import ModelResponse
 from orchestrator.model_adapters import openai_adapter
 
 _GROK_BASE_URL = "https://api.x.ai/v1"

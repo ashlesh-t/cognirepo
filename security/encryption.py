@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: 2026 Ashlesha T
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
+"""
+Fernet-based encryption helpers for CogniRepo at-rest storage.
+
+Keys are stored in the OS keychain (via keyring) — never written to disk.
+Both  cryptography  and  keyring  are optional deps:
+  pip install 'cognirepo[security]'
+
+Usage:
+  from security.encryption import get_or_create_key, encrypt_bytes, decrypt_bytes
+"""
+
+SERVICE_NAME = "cognirepo"
+
+
+def _require_deps():
+    """Import and return (Fernet, keyring), raising a clear error if missing."""
+    try:
+        from cryptography.fernet import Fernet  # pylint: disable=import-outside-toplevel
+        import keyring  # pylint: disable=import-outside-toplevel
+        return Fernet, keyring
+    except ImportError as exc:
+        raise ImportError(
+            "Encryption requires additional packages. "
+            "Run: pip install 'cognirepo[security]'"
+        ) from exc
+
+
+def get_or_create_key(project_id: str) -> bytes:
+    """
+    Retrieve the Fernet encryption key for *project_id* from the OS keychain.
+    If no key exists yet, generate one, persist it, and return it.
+    The key is NEVER written to any file on disk.
+    """
+    Fernet, keyring = _require_deps()
+    stored = keyring.get_password(SERVICE_NAME, project_id)
+    if stored:
+        return stored.encode()
+    key = Fernet.generate_key()
+    keyring.set_password(SERVICE_NAME, project_id, key.decode())
+    return key
+
+
+def encrypt_bytes(data: bytes, key: bytes) -> bytes:
+    """Encrypt *data* with the given Fernet *key*."""
+    Fernet, _ = _require_deps()
+    return Fernet(key).encrypt(data)
+
+
+def decrypt_bytes(data: bytes, key: bytes) -> bytes:
+    """Decrypt *data* with the given Fernet *key*."""
+    Fernet, _ = _require_deps()
+    return Fernet(key).decrypt(data)

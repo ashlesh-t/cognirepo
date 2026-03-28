@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Ashlesha T
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
 """
 Model Router — the top-level orchestration entry point.
 
@@ -39,12 +45,12 @@ import traceback
 from dataclasses import dataclass
 from typing import Generator
 
-logger = logging.getLogger(__name__)
-
 from orchestrator.classifier import ClassifierResult, classify
 from orchestrator.context_builder import ContextBundle, build as build_context
 from orchestrator.model_adapters.anthropic_adapter import ModelResponse
 from orchestrator.model_adapters.errors import ModelCallError
+
+logger = logging.getLogger(__name__)
 
 _CONFIG_FILE = ".cognirepo/config.json"
 _PID_FILE = ".cognirepo/grpc.pid"
@@ -94,7 +100,7 @@ def _maybe_autostart_grpc(host: str, port: int) -> None:
         return
 
     try:
-        proc = subprocess.Popen(  # pylint: disable=consider-using-with
+        proc = subprocess.Popen(  # pylint: disable=consider-using-with  # nosec B603
             ["cognirepo", "serve-grpc", "--port", str(port)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -459,7 +465,6 @@ def try_local_resolve(query: str, context_bundle) -> str | None:
 def _lookup_symbol(symbol: str, _bundle) -> str | None:
     """Reverse-index lookup for a symbol name."""
     try:
-        import os  # pylint: disable=import-outside-toplevel
         from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
 
@@ -493,7 +498,6 @@ def _lookup_symbol(symbol: str, _bundle) -> str | None:
 def _who_calls(func_name: str, _bundle) -> str | None:
     """Return callers of a function from the call graph."""
     try:
-        import os  # pylint: disable=import-outside-toplevel
         from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
 
         if not os.path.exists(".cognirepo/graph/graph.pkl"):
@@ -528,9 +532,6 @@ def _who_calls(func_name: str, _bundle) -> str | None:
 def _list_files() -> str | None:
     """Return indexed file list from the AST index."""
     try:
-        import json  # pylint: disable=import-outside-toplevel
-        import os  # pylint: disable=import-outside-toplevel
-
         if not os.path.exists(".cognirepo/index/ast_index.json"):
             return None
 

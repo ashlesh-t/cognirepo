@@ -1,3 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Ashlesha T
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
 """
 Seed the CogniRepo behaviour tracker from git log.
 
@@ -53,7 +59,7 @@ def seed_from_git_log(
     # ── 2. parse git log ──────────────────────────────────────────────────────
     abs_root = os.path.abspath(repo_root)
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # nosec B603
             ["git", "-C", abs_root, "log", "--name-only",
              "--pretty=format:%aI", "-n", "100"],
             capture_output=True,
