@@ -72,5 +72,5 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - README.md — complete project documentation with badges
 - USAGE.md — complete CLI, REST, MCP, Docker, and security reference
 
-[Unreleased]: https://github.com/your-username/cognirepo/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/your-username/cognirepo/releases/tag/v0.1.0
+[Unreleased]: https://github.com/ashlesh-t/cognirepo/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ashlesh-t/cognirepo/releases/tag/v0.1.0

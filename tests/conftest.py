@@ -1,7 +1,7 @@
-# SPDX-FileCopyrightText: 2026 Ashlesh
+# SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# This file is part of CogniRepo — https://github.com/your-username/cognirepo
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
 # Licensed under AGPL v3. See LICENSE file in repository root.
 
 """
@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 
+import bcrypt
 import pytest
 
-# bcrypt hash of "changeme" — used for auth tests
-_TEST_PASSWORD_HASH = "$2b$12$t45Vid98P7hCZYno6x/CreyrkCdaFohPSc37fDq9lfRLUb5Ypre6e"
+# Secrets generated at import time — never stored as literals in source.
+_TEST_PASSWORD = "changeme-test"
+_TEST_PASSWORD_HASH = bcrypt.hashpw(_TEST_PASSWORD.encode(), bcrypt.gensalt(rounds=4)).decode()
 _TEST_JWT_SECRET = "test-jwt-secret-32chars-for-tests"
 _TEST_PROJECT_ID = "test-project-00000000-0000-0000-0000"
 
@@ -67,7 +68,7 @@ def isolated_cognirepo(tmp_path, monkeypatch):
             "DEEP":     {"provider": "anthropic", "model": "claude-sonnet-4-6"},
         },
     }
-    with open(".cognirepo/config.json", "w") as f:
+    with open(".cognirepo/config.json", "w", encoding="utf-8") as f:
         json.dump(config, f)
 
     yield tmp_path

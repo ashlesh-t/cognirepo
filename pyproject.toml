@@ -32,7 +32,6 @@ dependencies = [
     # auth
     "PyJWT==2.12.1",
     "bcrypt==5.0.0",
-    "passlib[bcrypt]==1.7.4",
     # HTTP client (CLI --via-api)
     "httpx==0.28.1",
     # graph + indexer
@@ -102,4 +101,17 @@ build-backend = "setuptools.build_meta"
 # cmake.build-type = "Release"
 
 [tool.pylint.messages_control]
-disable = ["import-error"]
+disable = [
+    "import-error",          # optional heavy deps not installed in lint env
+    "no-member",             # false positives on FAISS/protobuf dynamic attrs
+    "subprocess-run-check",  # intentional: seed command checks returncode manually
+]
+
+[tool.pylint.design]
+max-locals = 25
+max-branches = 20
+max-statements = 80
+max-returns = 8
+max-args = 10
+max-positional-arguments = 10
+max-instance-attributes = 12
