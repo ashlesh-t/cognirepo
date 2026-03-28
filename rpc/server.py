@@ -43,7 +43,11 @@ _MAX_WORKERS = 10
 class QueryServiceServicer(pb2_grpc.QueryServiceServicer):
     """Delegates sub-queries to the model router."""
 
-    def SubQuery(self, request: pb2.QueryRequest, context: grpc.ServicerContext) -> pb2.QueryResponse:
+    def SubQuery(
+        self,
+        request: pb2.QueryRequest,
+        context: grpc.ServicerContext,
+    ) -> pb2.QueryResponse:
         try:
             from orchestrator.router import route  # pylint: disable=import-outside-toplevel
             result = route(
@@ -195,6 +199,7 @@ def start_server(port: int = DEFAULT_PORT, block: bool = True) -> grpc.Server:
 
 
 def stop_server(server: grpc.Server, grace: float = 5.0) -> None:
+    """Stop the gRPC server with a grace period."""
     server.stop(grace=grace)
 
 

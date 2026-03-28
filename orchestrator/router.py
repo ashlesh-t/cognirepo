@@ -57,9 +57,9 @@ _PID_FILE = ".cognirepo/grpc.pid"
 
 # ── multi-agent state (module-level, one per process) ─────────────────────────
 
-_grpc_warned: bool = False           # warning shown this session?
-_grpc_process: subprocess.Popen | None = None  # auto-started gRPC subprocess
-_grpc_autostart_done: bool = False   # autostart attempted this session?
+_GRPC_WARNED: bool = False           # warning shown this session?
+_GRPC_PROCESS: subprocess.Popen | None = None  # auto-started gRPC subprocess
+_GRPC_AUTOSTART_DONE: bool = False   # autostart attempted this session?
 
 
 def _multi_agent_enabled() -> bool:
@@ -87,10 +87,10 @@ def _maybe_autostart_grpc(host: str, port: int) -> None:
     spawn 'cognirepo serve-grpc' as a subprocess and record its PID.
     Called at most once per session.
     """
-    global _grpc_process, _grpc_autostart_done  # pylint: disable=global-statement
-    if _grpc_autostart_done:
+    global _GRPC_PROCESS, _GRPC_AUTOSTART_DONE  # pylint: disable=global-statement
+    if _GRPC_AUTOSTART_DONE:
         return
-    _grpc_autostart_done = True
+    _GRPC_AUTOSTART_DONE = True
 
     cfg = _load_config()
     if not cfg.get("multi_agent", {}).get("auto_start_grpc", False):
@@ -105,7 +105,7 @@ def _maybe_autostart_grpc(host: str, port: int) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        _grpc_process = proc
+        _GRPC_PROCESS = proc
         os.makedirs(".cognirepo", exist_ok=True)
         with open(_PID_FILE, "w", encoding="utf-8") as f:
             f.write(str(proc.pid))
@@ -117,14 +117,14 @@ def _maybe_autostart_grpc(host: str, port: int) -> None:
 
 def _shutdown_grpc() -> None:
     """atexit handler: stop auto-started gRPC subprocess and remove PID file."""
-    global _grpc_process  # pylint: disable=global-statement
-    if _grpc_process is not None:
+    global _GRPC_PROCESS  # pylint: disable=global-statement
+    if _GRPC_PROCESS is not None:
         try:
-            _grpc_process.terminate()
-            _grpc_process.wait(timeout=5)
+            _GRPC_PROCESS.terminate()
+            _GRPC_PROCESS.wait(timeout=5)
         except Exception:  # pylint: disable=broad-except
             pass
-        _grpc_process = None
+        _GRPC_PROCESS = None
     try:
         os.remove(_PID_FILE)
     except OSError:
@@ -135,6 +135,7 @@ def _shutdown_grpc() -> None:
 
 @dataclass
 class RouteResult:
+    """Container for the primary model response and all orchestration metadata."""
     response: ModelResponse
     classifier: ClassifierResult
     bundle: ContextBundle
@@ -255,7 +256,8 @@ def _run_sub_queries(query: str, bundle: ContextBundle) -> list[dict]:
     (not silently discarded).  Supports auto-starting the server when
     config.json has multi_agent.auto_start_grpc=true.
     """
-    global _grpc_warned  # pylint: disable=global-statement
+    # pylint: disable=unused-argument
+    global _GRPC_WARNED  # pylint: disable=global-statement
 
     results: list[dict] = []
     try:
@@ -274,8 +276,8 @@ def _run_sub_queries(query: str, bundle: ContextBundle) -> list[dict]:
 
         # Verify gRPC is reachable — warn once if not
         if not _is_port_open(grpc_host, grpc_port):
-            if not _grpc_warned:
-                _grpc_warned = True
+            if not _GRPC_WARNED:
+                _GRPC_WARNED = True
                 logger.warning(
                     "Multi-agent enabled but gRPC server is not reachable on port %d. "
                     "Sub-queries disabled. Start with: cognirepo serve-grpc",
@@ -367,7 +369,10 @@ def _dispatch_with_fallback(
 
     last_exc: Exception | None = None
     for i, provider in enumerate(ordered):
-        model_id = primary_model if provider == primary_provider else _PROVIDER_DEFAULT_MODELS.get(provider, primary_model)
+        model_id = (
+            primary_model if provider == primary_provider
+            else _PROVIDER_DEFAULT_MODELS.get(provider, primary_model)
+        )
         is_fallback = i > 0
         if is_fallback:
             logger.debug("Falling back from %s to %s/%s", ordered[i - 1], provider, model_id)
@@ -396,10 +401,14 @@ def _call_adapter(
     messages_history: list[dict] | None = None,
 ) -> ModelResponse:
     """Dispatch to the correct adapter module."""
-    kwargs = dict(
-        query=query, system_prompt=system_prompt, tool_manifest=tool_manifest,
-        model_id=model_id, max_tokens=max_tokens, messages_history=messages_history,
-    )
+    kwargs = {
+        "query": query,
+        "system_prompt": system_prompt,
+        "tool_manifest": tool_manifest,
+        "model_id": model_id,
+        "max_tokens": max_tokens,
+        "messages_history": messages_history,
+    }
     if provider == "anthropic":
         from orchestrator.model_adapters import anthropic_adapter  # pylint: disable=import-outside-toplevel
         return anthropic_adapter.call(**kwargs)
@@ -504,12 +513,12 @@ def _who_calls(func_name: str, _bundle) -> str | None:
             return None
 
         kg = KnowledgeGraph()
-        G = kg.G
+        graph = kg.G
         target = f"symbol::{func_name}"
 
-        if not G.has_node(target):
+        if not graph.has_node(target):
             lower_f = func_name.lower()
-            for n in G.nodes():
+            for n in graph.nodes():
                 if n.startswith("symbol::") and n[8:].lower() == lower_f:
                     target = n
                     func_name = n[8:]
@@ -517,7 +526,7 @@ def _who_calls(func_name: str, _bundle) -> str | None:
             else:
                 return f"No call graph data for `{func_name}`."
 
-        callers = list(G.predecessors(target))
+        callers = list(graph.predecessors(target))
         if not callers:
             return f"No recorded callers for `{func_name}`."
         lines = [f"Callers of `{func_name}`:"]
@@ -553,8 +562,8 @@ def _graph_stats() -> str | None:
     try:
         from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         kg = KnowledgeGraph()
-        G = kg.G
-        return f"Knowledge graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges."
+        graph = kg.G
+        return f"Knowledge graph: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges."
     except Exception:  # pylint: disable=broad-except
         return None
 
@@ -666,11 +675,15 @@ def _stream_dispatch(
     messages_history: list[dict] | None = None,
 ) -> Generator[str, None, dict]:
     """Route to the correct adapter in streaming mode."""
-    kwargs = dict(
-        query=query, system_prompt=system_prompt, tool_manifest=tool_manifest,
-        model_id=model_id, max_tokens=max_tokens, stream=True,
-        messages_history=messages_history,
-    )
+    kwargs = {
+        "query": query,
+        "system_prompt": system_prompt,
+        "tool_manifest": tool_manifest,
+        "model_id": model_id,
+        "max_tokens": max_tokens,
+        "stream": True,
+        "messages_history": messages_history,
+    }
     if provider == "anthropic":
         from orchestrator.model_adapters import anthropic_adapter  # pylint: disable=import-outside-toplevel
         return (yield from anthropic_adapter.call(**kwargs))

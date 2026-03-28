@@ -114,4 +114,4 @@ max-statements = 80
 max-returns = 8
 max-args = 10
 max-positional-arguments = 10
-max-instance-attributes = 12
+max-attributes = 12

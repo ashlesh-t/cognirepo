@@ -19,8 +19,11 @@ ALGORITHM = "HS256"
 EXEMPT_PATHS = {"/login", "/docs", "/openapi.json", "/redoc"}
 
 
-class JWTMiddleware(BaseHTTPMiddleware):
+class JWTMiddleware(BaseHTTPMiddleware):  # pylint: disable=too-few-public-methods
+    """Protect non-exempt routes with HS256 JWT validation."""
+
     async def dispatch(self, request: Request, call_next):
+        """Verify the Bearer token in the Authorization header."""
         if request.url.path in EXEMPT_PATHS:
             return await call_next(request)
 

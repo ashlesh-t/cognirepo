@@ -26,7 +26,8 @@ import networkx as nx
 GRAPH_FILE = ".cognirepo/graph/graph.pkl"
 
 
-class NodeType:
+class NodeType:  # pylint: disable=too-few-public-methods
+    """Node types for the knowledge graph."""
     FILE = "FILE"
     FUNCTION = "FUNCTION"
     CLASS = "CLASS"
@@ -36,7 +37,8 @@ class NodeType:
     USER_ACTION = "USER_ACTION"
 
 
-class EdgeType:
+class EdgeType:  # pylint: disable=too-few-public-methods
+    """Relationship types between nodes."""
     RELATES_TO = "RELATES_TO"
     DEFINED_IN = "DEFINED_IN"
     CALLED_BY = "CALLED_BY"
@@ -48,12 +50,13 @@ class KnowledgeGraph:
     """Thin wrapper around a networkx DiGraph with CogniRepo-specific conventions."""
 
     def __init__(self) -> None:
-        self.G: nx.DiGraph = nx.DiGraph()
+        self.G: nx.DiGraph = nx.DiGraph()  # pylint: disable=invalid-name
         self._load()
 
     # ── persistence ───────────────────────────────────────────────────────────
 
     def _load(self) -> None:
+        """Load graph from disk; decrypt if needed."""
         if not os.path.exists(GRAPH_FILE):
             return
         try:
@@ -74,6 +77,7 @@ class KnowledgeGraph:
             self.G = nx.DiGraph()
 
     def save(self) -> None:
+        """Serialize the graph to a pickle file; encrypt if needed."""
         os.makedirs(os.path.dirname(GRAPH_FILE), exist_ok=True)
         from security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
@@ -122,6 +126,7 @@ class KnowledgeGraph:
     # ── queries ───────────────────────────────────────────────────────────────
 
     def node_exists(self, node_id: str) -> bool:
+        """Return True if node_id is present in the graph."""
         return self.G.has_node(node_id)
 
     def get_neighbours(
@@ -197,13 +202,18 @@ class KnowledgeGraph:
 
         edges = []
         for u, v, d in ego.edges(data=True):
-            edges.append({"src": u, "dst": v, "rel": d.get("rel", "?"), "weight": d.get("weight", 1.0)})
+            edges.append({
+                "src": u, "dst": v,
+                "rel": d.get("rel", "?"),
+                "weight": d.get("weight", 1.0)
+            })
 
         return {"nodes": nodes, "edges": edges}
 
     # ── stats ─────────────────────────────────────────────────────────────────
 
     def stats(self) -> dict:
+        """Return basic node and edge counts."""
         return {
             "nodes": self.G.number_of_nodes(),
             "edges": self.G.number_of_edges(),

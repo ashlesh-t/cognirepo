@@ -43,7 +43,11 @@ def _acquire_token(api_url: str) -> str:
     try:
         resp = httpx.post(f"{api_url}/login", json={"password": password}, timeout=10)
     except httpx.ConnectError:
-        print(f"Cannot reach CogniRepo API at {api_url} — is `uvicorn api.main:app` running?", file=sys.stderr)
+        msg = (
+            f"Cannot reach CogniRepo API at {api_url} — "
+            "is `uvicorn api.main:app` running?"
+        )
+        print(msg, file=sys.stderr)
         sys.exit(1)
 
     if resp.status_code != 200:
@@ -77,26 +81,32 @@ class ApiClient:
 
     @property
     def token(self) -> str:
+        """Resolve and return the Bearer token."""
         if not self._token:
             self._token = _acquire_token(self.url)
         return self._token
 
     def store_memory(self, text: str, source: str = "") -> dict:
+        """Send a semantic memory storage request via API."""
         return _req("POST", f"{self.url}/memory/store", self.token,
                     json={"text": text, "source": source})
 
     def retrieve_memory(self, query: str, top_k: int = 5) -> list:
+        """Retrieve memories by similarity via API."""
         return _req("POST", f"{self.url}/memory/retrieve", self.token,
                     json={"query": query, "top_k": top_k})
 
     def search_docs(self, query: str) -> list:
+        """Search repository documentation via API."""
         return _req("GET", f"{self.url}/memory/search", self.token,
                     params={"q": query})
 
     def log_episode(self, event: str, metadata: dict = None) -> dict:
+        """Append an event to the episodic log via API."""
         return _req("POST", f"{self.url}/episodic/log", self.token,
                     json={"event": event, "metadata": metadata or {}})
 
     def get_history(self, limit: int = 100) -> list:
+        """Fetch recent episodic event history via API."""
         return _req("GET", f"{self.url}/episodic/history", self.token,
                     params={"limit": limit})

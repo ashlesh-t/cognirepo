@@ -36,16 +36,8 @@ def seed_from_git_log(
 ) -> dict:
     """
     Seed behaviour weights from recent git history.
-
-    Parameters
-    ----------
-    repo_root : directory to treat as the git repo root (default: cwd)
-    dry_run   : if True, print what would be written but write nothing
-    tracker   : optional pre-built BehaviourTracker; created from disk if None
-    indexer   : optional pre-built ASTIndexer; loaded from disk if None
-
-    Returns a dict with "seeded" (count written) or "skipped" (reason).
     """
+    # pylint: disable=too-many-locals, too-many-branches
     # ── 1. resolve tracker ────────────────────────────────────────────────────
     if tracker is None:
         from graph.knowledge_graph import KnowledgeGraph        # pylint: disable=import-outside-toplevel

@@ -23,7 +23,10 @@ from api.routes.memory import router as memory_router
 
 app = FastAPI(
     title="CogniRepo API",
-    description="REST adapter over the CogniRepo tools layer (FAISS semantic memory + episodic log + docs search).",
+    description=(
+        "REST adapter over the CogniRepo tools layer "
+        "(FAISS semantic memory + episodic log + docs search)."
+    ),
     version="0.1.0",
 )
 

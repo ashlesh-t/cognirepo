@@ -21,12 +21,14 @@ from retrieval.docs_search import search_docs
 router = APIRouter(prefix="/memory", tags=["memory"])
 
 
-class StoreRequest(BaseModel):
+class StoreRequest(BaseModel):  # pylint: disable=too-few-public-methods
+    """Request body for storing a semantic memory."""
     text: str
     source: str = ""
 
 
-class RetrieveRequest(BaseModel):
+class RetrieveRequest(BaseModel):  # pylint: disable=too-few-public-methods
+    """Request body for semantic similarity search."""
     query: str
     top_k: int = 5
 
