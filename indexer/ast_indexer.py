@@ -188,7 +188,7 @@ def _extract_symbols_ts(tree, source: bytes, ext: str) -> list[dict]:
 
 # ── stdlib-ast extraction (Python fallback) ───────────────────────────────────
 
-def _extract_symbols_py(tree: ast.AST, file_path: str) -> list[dict]:
+def _extract_symbols_py(tree: ast.AST, _file_path: str) -> list[dict]:
     """
     Walk a Python stdlib AST and collect FunctionDef, AsyncFunctionDef,
     ClassDef nodes.  Used when tree-sitter-python is not installed.

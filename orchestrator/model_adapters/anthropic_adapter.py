@@ -138,7 +138,7 @@ def call(
 def _stream_call(
     client,
     create_kwargs: dict,
-    model_id: str,
+    _model_id: str,
     anthropic_mod,
 ) -> Generator[str, None, dict]:
     """
