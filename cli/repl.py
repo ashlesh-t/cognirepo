@@ -170,7 +170,7 @@ def run_repl() -> None:
             bundle = build_context(query, tier="FAST", episode_limit=0)
             local_answer = try_local_resolve(query, bundle)
             if local_answer is not None:
-                print(f"[FAST → local] ", end="", flush=True)
+                print("[FAST → local] ", end="", flush=True)
                 print(local_answer)
                 messages_history.append({"role": "user", "content": query})
                 messages_history.append({"role": "assistant", "content": local_answer})

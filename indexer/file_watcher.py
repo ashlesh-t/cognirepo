@@ -79,7 +79,7 @@ class RepoFileHandler(FileSystemEventHandler):
                 self.graph.remove_node_edges(node_id)
 
             self.indexer.index_data["files"].pop(rel_path, None)
-            self.indexer._build_reverse_index()
+            self.indexer._build_reverse_index()  # pylint: disable=protected-access
             self.indexer.save()
             self.graph.save()
 
@@ -106,7 +106,7 @@ class RepoFileHandler(FileSystemEventHandler):
 
             # re-index the file
             self.indexer.index_file(rel_path, abs_path)
-            self.indexer._build_reverse_index()  # rebuild top-level dict
+            self.indexer._build_reverse_index()  # pylint: disable=protected-access  # rebuild top-level dict
             self.indexer.save()
             self.graph.save()
 
