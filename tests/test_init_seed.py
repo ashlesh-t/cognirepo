@@ -1,3 +1,5 @@
+# pylint: disable=missing-docstring, unnecessary-lambda, import-outside-toplevel, too-few-public-methods, duplicate-code
+# pylint: disable=redefined-outer-name, unused-argument, broad-exception-caught, protected-access
 # SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
@@ -26,7 +28,8 @@ class TestInitProject:
     def test_gitignore_content(self):
         from cli.init_project import init_project
         init_project(no_index=True)
-        content = open(".cognirepo/.gitignore").read()
+        with open(".cognirepo/.gitignore", encoding="utf-8") as f:
+            content = f.read()
         # Blanket pattern: everything is excluded, only .gitignore is whitelisted
         assert "*" in content
         assert "!.gitignore" in content
@@ -35,7 +38,8 @@ class TestInitProject:
         from cli.init_project import init_project
         init_project(no_index=True)
         assert os.path.exists(".cognirepo/config.json")
-        data = json.load(open(".cognirepo/config.json"))
+        with open(".cognirepo/config.json", encoding="utf-8") as f:
+            data = json.load(f)
         # Secrets no longer live in config — project_id and api_url must be present
         assert "project_id" in data
         assert "api_url" in data
@@ -50,21 +54,24 @@ class TestInitProject:
         """Re-running init must not regenerate the project_id."""
         from cli.init_project import init_project
         init_project(no_index=True)
-        original_id = json.load(open(".cognirepo/config.json"))["project_id"]
+        with open(".cognirepo/config.json", encoding="utf-8") as f:
+            original_id = json.load(f)["project_id"]
         init_project(password="newpass", no_index=True)  # nosec B105
-        current_id = json.load(open(".cognirepo/config.json"))["project_id"]
+        with open(".cognirepo/config.json", encoding="utf-8") as f:
+            current_id = json.load(f)["project_id"]
         assert current_id == original_id
 
     def test_no_secrets_in_config_when_keyring_available(self, monkeypatch):
         """When keyring is present, jwt_secret and password_hash must not be in config."""
-        import unittest.mock as mock
+        from unittest import mock
         from cli.init_project import init_project
 
         with mock.patch("cli.init_project._KEYRING_AVAILABLE", True), \
              mock.patch("cli.init_project._store_secret", return_value=True):
             init_project(no_index=True)
 
-        data = json.load(open(".cognirepo/config.json"))
+        with open(".cognirepo/config.json", encoding="utf-8") as f:
+            data = json.load(f)
         assert "password_hash" not in data
         assert "jwt_secret" not in data
 
@@ -114,7 +121,9 @@ class TestSeedFromGitLog:
         kg = KnowledgeGraph()
         tracker = BehaviourTracker(graph=kg)
         # Pre-populate weights so it looks already seeded
-        tracker.data["symbol_weights"]["some::symbol"] = {"hit_count": 1.0, "last_hit": None, "relevance_feedback": 0.0}
+        tracker.data["symbol_weights"]["some::symbol"] = {
+            "hit_count": 1.0, "last_hit": None, "relevance_feedback": 0.0
+        }
 
         result = seed_from_git_log(tracker=tracker)
         assert result.get("skipped") == "already seeded"

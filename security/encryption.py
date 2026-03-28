@@ -37,22 +37,22 @@ def get_or_create_key(project_id: str) -> bytes:
     If no key exists yet, generate one, persist it, and return it.
     The key is NEVER written to any file on disk.
     """
-    Fernet, keyring = _require_deps()
+    fernet_cls, keyring = _require_deps()
     stored = keyring.get_password(SERVICE_NAME, project_id)
     if stored:
         return stored.encode()
-    key = Fernet.generate_key()
+    key = fernet_cls.generate_key()
     keyring.set_password(SERVICE_NAME, project_id, key.decode())
     return key
 
 
 def encrypt_bytes(data: bytes, key: bytes) -> bytes:
     """Encrypt *data* with the given Fernet *key*."""
-    Fernet, _ = _require_deps()
-    return Fernet(key).encrypt(data)
+    fernet_cls, _ = _require_deps()
+    return fernet_cls(key).encrypt(data)
 
 
 def decrypt_bytes(data: bytes, key: bytes) -> bytes:
     """Decrypt *data* with the given Fernet *key*."""
-    Fernet, _ = _require_deps()
-    return Fernet(key).decrypt(data)
+    fernet_cls, _ = _require_deps()
+    return fernet_cls(key).decrypt(data)

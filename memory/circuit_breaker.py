@@ -53,6 +53,7 @@ _F = TypeVar("_F", bound=Callable)
 # ── state machine ─────────────────────────────────────────────────────────────
 
 class State(str, Enum):
+    """Possible states for the CircuitBreaker."""
     CLOSED = "CLOSED"
     OPEN = "OPEN"
     HALF_OPEN = "HALF_OPEN"
@@ -139,6 +140,7 @@ class CircuitBreaker:
 
     @property
     def state(self) -> State:
+        """Return the current circuit state (CLOSED, OPEN, HALF_OPEN)."""
         return self._state
 
     def check(self) -> None:
@@ -179,12 +181,14 @@ class CircuitBreaker:
                 )
 
     def record_success(self) -> None:
+        """Inform the breaker that a call succeeded; closes the circuit."""
         with self._lock:
             if self._state != State.CLOSED:
                 logger.info("[CB:%s] → CLOSED", self._name)
             self._state = State.CLOSED
 
     def record_failure(self) -> None:
+        """Inform the breaker that a call failed; trips the circuit OPEN."""
         with self._lock:
             self._trip(_rss_mb())
 
@@ -229,14 +233,14 @@ class CircuitBreaker:
 
 # ── module-level singleton ────────────────────────────────────────────────────
 
-_breaker: CircuitBreaker | None = None
-_breaker_lock = threading.Lock()
+_BREAKER: CircuitBreaker | None = None
+_BREAKER_LOCK = threading.Lock()
 
 
 def get_breaker(name: str = "cognirepo") -> CircuitBreaker:
     """Return the shared CircuitBreaker instance (created once)."""
-    global _breaker  # pylint: disable=global-statement
-    with _breaker_lock:
-        if _breaker is None:
-            _breaker = CircuitBreaker(name=name)
-    return _breaker
+    global _BREAKER  # pylint: disable=global-statement
+    with _BREAKER_LOCK:
+        if _BREAKER is None:
+            _BREAKER = CircuitBreaker(name=name)
+    return _BREAKER

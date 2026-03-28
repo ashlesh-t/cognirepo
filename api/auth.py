@@ -21,6 +21,8 @@ import jwt
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from security import get_project_id
+
 ALGORITHM = "HS256"
 CONFIG_FILE = ".cognirepo/config.json"
 _KEYCHAIN_SERVICE = "cognirepo"
@@ -28,22 +30,12 @@ _KEYCHAIN_SERVICE = "cognirepo"
 router = APIRouter(tags=["auth"])
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(BaseModel):  # pylint: disable=too-few-public-methods
+    """Request body for /login — just a password."""
     password: str
 
 
 # ── secret resolution helpers ─────────────────────────────────────────────────
-
-def _get_project_id() -> str:
-    try:
-        with open(CONFIG_FILE, encoding="utf-8") as f:
-            return json.load(f).get(
-                "project_id",
-                os.path.basename(os.path.abspath(os.getcwd())),
-            )
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return os.path.basename(os.path.abspath(os.getcwd()))
-
 
 def _keychain_get(key: str) -> str | None:
     try:
@@ -58,7 +50,7 @@ def get_jwt_secret() -> str:
     secret = os.getenv("COGNIREPO_JWT_SECRET")
     if secret:
         return secret
-    stored = _keychain_get(f"{_get_project_id()}.jwt_secret")
+    stored = _keychain_get(f"{get_project_id()}.jwt_secret")
     if stored:
         return stored
     raise RuntimeError(
@@ -69,10 +61,10 @@ def get_jwt_secret() -> str:
 
 def _get_password_hash() -> str:
     """Resolve the bcrypt password hash from env → keychain → config fallback."""
-    pw_hash = os.getenv("COGNIREPO_PASSWORD_HASH")
+    pw_hash = os.environ.get("COGNIREPO_PASSWORD_HASH")
     if pw_hash:
         return pw_hash
-    stored = _keychain_get(f"{_get_project_id()}.password_hash")
+    stored = _keychain_get(f"{get_project_id()}.password_hash")
     if stored:
         return stored
     # Backward-compat: some existing installs still have hash in config.json

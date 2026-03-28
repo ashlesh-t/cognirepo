@@ -1,3 +1,5 @@
+# pylint: disable=missing-docstring, unnecessary-lambda, import-outside-toplevel, too-few-public-methods, duplicate-code
+# pylint: disable=redefined-outer-name, unused-argument, broad-exception-caught, protected-access
 # SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
@@ -44,7 +46,6 @@ class TestMCPToolFunctions:
         assert "store_memory" in history[0]["event"]
 
     def test_manifest_written(self):
-        import importlib.util
         from server.mcp_server import _write_manifest, _build_manifest
         _write_manifest()
         # manifest.json is written next to mcp_server.py (not CWD)

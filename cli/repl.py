@@ -21,6 +21,8 @@ Features
 """
 from __future__ import annotations
 
+import json
+import os
 import sys
 
 VERSION = "0.1.0"
@@ -40,9 +42,6 @@ Any other input is sent to the model router."""
 
 def _get_project_stats() -> tuple[str, int, int]:
     """Return (project_name, memory_count, graph_node_count)."""
-    import json
-    import os
-
     project_name = os.path.basename(os.getcwd()) or "."
     memory_count = 0
     graph_nodes = 0
@@ -114,7 +113,7 @@ def run_repl() -> None:
 
     # Enable readline history + arrow-key navigation (no extra deps)
     try:
-        import readline  # noqa: F401  (side-effect: enables line editing)
+        import readline  # pylint: disable=import-outside-toplevel
         readline.parse_and_bind("tab: complete")
     except ImportError:
         pass
@@ -170,7 +169,7 @@ def run_repl() -> None:
             bundle = build_context(query, tier="FAST", episode_limit=0)
             local_answer = try_local_resolve(query, bundle)
             if local_answer is not None:
-                print(f"[FAST → local] ", end="", flush=True)
+                print("[FAST → local] ", end="", flush=True)
                 print(local_answer)
                 messages_history.append({"role": "user", "content": query})
                 messages_history.append({"role": "assistant", "content": local_answer})

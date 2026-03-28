@@ -69,6 +69,7 @@ _TIER_BALANCED = 14.0
 
 @dataclass
 class ClassifierResult:
+    """Result of the query complexity classification."""
     tier: str                          # "FAST" | "BALANCED" | "DEEP"
     score: float
     model: str                         # resolved model ID
@@ -221,7 +222,7 @@ def _count_vague_referents(tokens: list[str]) -> int:
         if tok in vague:
             # check if previous token is a noun-like (contains letter + underscore or camelCase)
             prev = tokens[i - 1] if i > 0 else ""
-            if not (re.search(r"[a-zA-Z_]{3,}", prev)):
+            if not re.search(r"[a-zA-Z_]{3,}", prev):
                 count += 1
     return count
 

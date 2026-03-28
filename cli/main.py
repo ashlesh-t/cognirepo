@@ -44,17 +44,20 @@ def _print_results(results):
 # ── command implementations (direct) ─────────────────────────────────────────
 
 def _direct_store(text, source):
-    from tools.store_memory import store_memory
+    """Call store_memory tool directly."""
+    from tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
     return store_memory(text, source)
 
 
 def _direct_retrieve(query, top_k):
-    from tools.retrieve_memory import retrieve_memory
+    """Call retrieve_memory tool directly."""
+    from tools.retrieve_memory import retrieve_memory  # pylint: disable=import-outside-toplevel
     return retrieve_memory(query, top_k)
 
 
 def _direct_search(query):
-    from retrieval.docs_search import search_docs
+    """Call search_docs tool directly."""
+    from retrieval.docs_search import search_docs  # pylint: disable=import-outside-toplevel
     return search_docs(query)
 
 
@@ -62,8 +65,11 @@ def _cmd_doctor(verbose: bool = False) -> int:
     """
     Run system health checks. Returns exit code 0 (all pass) or 1 (any fail).
     """
-    import importlib  # pylint: disable=import-outside-toplevel,redefined-outer-name
-    import os  # pylint: disable=import-outside-toplevel,redefined-outer-name
+    # pylint: disable=too-many-locals, too-many-branches, too-many-statements
+    # pylint: disable=too-many-return-statements
+    # pylint: disable=import-outside-toplevel
+    import importlib  # pylint: disable=redefined-outer-name
+    import os  # pylint: disable=redefined-outer-name
 
     # ── version ───────────────────────────────────────────────────────────────
     try:
@@ -162,7 +168,7 @@ def _cmd_doctor(verbose: bool = False) -> int:
     try:
         from indexer.language_registry import supported_extensions  # pylint: disable=import-outside-toplevel
         _exts = supported_extensions()
-        _EXT_NAMES = {
+        _ext_names = {
             ".py": "Python", ".js": "JS", ".jsx": "JS",
             ".ts": "TS", ".tsx": "TS", ".java": "Java",
             ".go": "Go", ".rs": "Rust", ".c": "C",
@@ -171,7 +177,7 @@ def _cmd_doctor(verbose: bool = False) -> int:
         _seen: set[str] = set()
         _lang_list: list[str] = []
         for ext in sorted(_exts):
-            name = _EXT_NAMES.get(ext, ext)
+            name = _ext_names.get(ext, ext)
             if name not in _seen:
                 _seen.add(name)
                 _lang_list.append(name)
@@ -180,14 +186,14 @@ def _cmd_doctor(verbose: bool = False) -> int:
         _ok(f"Language support — Python (built-in) [{exc}]")
 
     # ── Check 7: API keys ─────────────────────────────────────────────────────
-    _PROVIDERS = {
+    _providers = {
         "ANTHROPIC_API_KEY": "Anthropic",
         "GEMINI_API_KEY": "Gemini",
         "GOOGLE_API_KEY": "Gemini (alt)",
         "OPENAI_API_KEY": "OpenAI",
         "GROK_API_KEY": "Grok",
     }
-    _found = [name for var, name in _PROVIDERS.items() if os.environ.get(var)]
+    _found = [name for var, name in _providers.items() if os.environ.get(var)]
     if _found:
         _ok(f"Model API keys — {', '.join(_found)}")
     else:
@@ -255,7 +261,7 @@ def _cmd_doctor(verbose: bool = False) -> int:
 def _maybe_tip_index_repo() -> None:
     """Print an index-repo tip when the graph is empty (cold-start hint)."""
     try:
-        from graph.knowledge_graph import KnowledgeGraph
+        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         if KnowledgeGraph().G.number_of_nodes() == 0:
             print("Tip: run 'cognirepo index-repo .' to enable graph-based retrieval.")
     except Exception:  # pylint: disable=broad-except
@@ -263,19 +269,22 @@ def _maybe_tip_index_repo() -> None:
 
 
 def _direct_log(event, metadata):
-    from memory.episodic_memory import log_event
+    """Log an episodic event directly."""
+    from memory.episodic_memory import log_event  # pylint: disable=import-outside-toplevel
     log_event(event, metadata)
     return {"status": "logged", "event": event}
 
 
 def _direct_history(limit):
-    from memory.episodic_memory import get_history
+    """Fetch episodic history directly."""
+    from memory.episodic_memory import get_history  # pylint: disable=import-outside-toplevel
     return get_history(limit)
 
 
 def _direct_index(path):
-    from graph.knowledge_graph import KnowledgeGraph
-    from indexer.ast_indexer import ASTIndexer
+    """Index a repository directly."""
+    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+    from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
     kg = KnowledgeGraph()
     indexer = ASTIndexer(graph=kg)
     summary = indexer.index_repo(path)
@@ -285,9 +294,9 @@ def _direct_index(path):
 
 def _start_watcher(path: str, kg, indexer) -> None:
     """Start the file watcher daemon and block until Ctrl+C."""
-    import os
-    from graph.behaviour_tracker import BehaviourTracker
-    from indexer.file_watcher import create_watcher
+    import os  # pylint: disable=import-outside-toplevel
+    from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+    from indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
 
     abs_path = os.path.abspath(path)
     session_id = f"watch_{int(time.time())}"
@@ -330,10 +339,13 @@ def _test_connection(provider: str) -> dict:
             from orchestrator.model_adapters import grok_adapter  # pylint: disable=import-outside-toplevel
             resp = grok_adapter.call(query, system, manifest, max_tokens=10)
         elif provider == "openai":
-            from orchestrator.model_adapters import openai_adapter  # pylint: disable=import-outside-toplevel
-            resp = openai_adapter.call(query, system, manifest, max_tokens=10)
+            from orchestrator.model_adapters import openai_adapter as oa  # pylint: disable=import-outside-toplevel
+            resp = oa.call(query, system, manifest, max_tokens=10)
         else:
-            return {"status": "error", "provider": provider, "error": f"Unknown provider '{provider}'"}
+            return {
+                "status": "error", "provider": provider,
+                "error": f"Unknown provider '{provider}'"
+            }
         return {
             "status": "ok",
             "provider": provider,
@@ -466,6 +478,10 @@ def _cmd_sessions(limit: int = 20) -> None:
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
+    """CLI entry point — parse args and route to commands."""
+    # pylint: disable=too-many-locals, too-many-branches, too-many-statements
+    # pylint: disable=too-many-return-statements
+    # pylint: disable=import-outside-toplevel
     parser = argparse.ArgumentParser(
         prog="cognirepo",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -482,7 +498,10 @@ def main():
         "--api-url",
         default=None,
         metavar="URL",
-        help="Override REST API base URL (default: from .cognirepo/config.json or http://localhost:8000).",
+        help=(
+            "Override REST API base URL "
+            "(default: from .cognirepo/config.json or http://localhost:8000)."
+        ),
     )
 
     sub = parser.add_subparsers(dest="command")
@@ -529,7 +548,10 @@ def main():
 
     # index-repo
     p_idx = sub.add_parser("index-repo", help="AST-index a codebase for hybrid retrieval")
-    p_idx.add_argument("path", nargs="?", default=".", help="Repo root to index (default: current dir)")
+    p_idx.add_argument(
+        "path", nargs="?", default=".",
+        help="Repo root to index (default: current dir)"
+    )
     p_idx.add_argument(
         "--no-watch",
         action="store_true",
@@ -539,7 +561,7 @@ def main():
 
     # serve-api
     p_api = sub.add_parser("serve-api", help="Start the FastAPI REST server")
-    p_api.add_argument("--host", default="0.0.0.0")
+    p_api.add_argument("--host", default="127.0.0.1")
     p_api.add_argument("--port", type=int, default=8080)
     p_api.add_argument("--reload", action="store_true")
 
@@ -706,8 +728,8 @@ def main():
         return
 
     if args.command == "test-connection":
-        import os  # pylint: disable=import-outside-toplevel,redefined-outer-name
-        _KEY_ENV = {
+        import os  # pylint: disable=redefined-outer-name
+        _key_env = {
             "anthropic": "ANTHROPIC_API_KEY",
             "gemini": "GEMINI_API_KEY",
             "grok": "GROK_API_KEY",
@@ -715,7 +737,7 @@ def main():
         }
         providers_to_test = (
             [args.provider] if args.provider
-            else [p for p, env in _KEY_ENV.items() if os.environ.get(env)]
+            else [p for p, env in _key_env.items() if os.environ.get(env)]
         )
         if not providers_to_test:
             print("No API keys found. Set ANTHROPIC_API_KEY, GEMINI_API_KEY, "

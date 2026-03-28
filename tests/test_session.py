@@ -1,3 +1,5 @@
+# pylint: disable=missing-docstring, unnecessary-lambda, import-outside-toplevel, too-few-public-methods, duplicate-code
+# pylint: disable=redefined-outer-name, unused-argument, broad-exception-caught, protected-access
 # SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
@@ -200,7 +202,7 @@ class TestAppendExchange:
 class TestListSessions:
     def test_empty_when_no_sessions(self):
         from orchestrator.session import list_sessions
-        assert list_sessions() == []
+        assert not list_sessions()
 
     def test_returns_created_sessions(self):
         from orchestrator.session import create_session, list_sessions

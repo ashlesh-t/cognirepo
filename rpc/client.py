@@ -61,12 +61,14 @@ class CogniRepoClient:
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
     def connect(self) -> "CogniRepoClient":
+        """Initialize the gRPC channel and stubs."""
         self._channel = grpc.insecure_channel(self._address)
         self._query_stub = pb2_grpc.QueryServiceStub(self._channel)
         self._ctx_stub = pb2_grpc.ContextServiceStub(self._channel)
         return self
 
     def close(self) -> None:
+        """Close the underlying gRPC channel."""
         if self._channel:
             self._channel.close()
             self._channel = None

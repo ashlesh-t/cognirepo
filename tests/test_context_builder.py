@@ -1,3 +1,5 @@
+# pylint: disable=missing-docstring, unnecessary-lambda, import-outside-toplevel, too-few-public-methods, duplicate-code
+# pylint: disable=redefined-outer-name, unused-argument, broad-exception-caught, protected-access
 # SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
@@ -10,8 +12,6 @@ tests/test_context_builder.py — B3.3: token budget and trim logic.
 All tests work on ContextBundle directly to avoid loading real models/storage.
 """
 from __future__ import annotations
-
-import pytest
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

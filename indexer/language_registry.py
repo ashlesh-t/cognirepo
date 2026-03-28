@@ -74,20 +74,21 @@ _LANG_NAMES: dict[str, str] = {
 # Python can be indexed via stdlib ast even without tree-sitter-python
 _PYTHON_FALLBACK_EXTS: frozenset[str] = frozenset({".py"})
 
-# Module-level cache: ext → Language object or None
+# Module level cache: ext → Language object or None
 _lang_cache: dict[str, object] = {}
-_ts_available: bool | None = None  # lazy: None = unchecked
+_TS_AVAILABLE: bool | None = None  # pylint: disable=invalid-name  # lazy: None = unchecked
 
 
 def _tree_sitter_available() -> bool:
-    global _ts_available  # pylint: disable=global-statement
-    if _ts_available is None:
+    global _TS_AVAILABLE  # pylint: disable=global-statement
+    if _TS_AVAILABLE is None:
         try:
             importlib.import_module("tree_sitter")
-            _ts_available = True
+            _TS_AVAILABLE = True
         except ImportError:
-            _ts_available = False
-    return _ts_available
+            _TS_AVAILABLE = False
+    return _TS_AVAILABLE
+
 
 
 def _get_language(ext: str):
@@ -168,5 +169,5 @@ def lang_name(ext: str) -> str:
 def clear_cache() -> None:
     """Reset the language cache (useful in tests that monkeypatch importlib)."""
     _lang_cache.clear()
-    global _ts_available  # pylint: disable=global-statement
-    _ts_available = None
+    global _TS_AVAILABLE  # pylint: disable=global-statement
+    _TS_AVAILABLE = None

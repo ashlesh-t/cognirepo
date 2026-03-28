@@ -21,7 +21,8 @@ from memory.episodic_memory import log_event, get_history
 router = APIRouter(prefix="/episodic", tags=["episodic"])
 
 
-class LogRequest(BaseModel):
+class LogRequest(BaseModel):  # pylint: disable=too-few-public-methods
+    """Request body for logging an episodic event."""
     event: str
     metadata: dict = {}
 

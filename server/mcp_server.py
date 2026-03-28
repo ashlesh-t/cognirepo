@@ -8,6 +8,7 @@
 Real MCP server for CogniRepo — stdio transport, works with Claude Desktop
 and any stdio MCP client.
 """
+# pylint: disable=duplicate-code
 import json
 import os
 from mcp.server.fastmcp import FastMCP
@@ -20,25 +21,27 @@ from memory.episodic_memory import log_event, get_history
 mcp = FastMCP("cognirepo")
 
 # ── lazy singletons for graph + indexer ──────────────────────────────────────
-_graph = None
-_indexer = None
+_GRAPH = None  # pylint: disable=invalid-name
+_INDEXER = None  # pylint: disable=invalid-name
 
 
 def _get_graph():
-    global _graph
-    if _graph is None:
-        from graph.knowledge_graph import KnowledgeGraph
-        _graph = KnowledgeGraph()
-    return _graph
+    """Lazily load KnowledgeGraph."""
+    global _GRAPH  # pylint: disable=global-statement
+    if _GRAPH is None:
+        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        _GRAPH = KnowledgeGraph()
+    return _GRAPH
 
 
 def _get_indexer():
-    global _indexer
-    if _indexer is None:
-        from indexer.ast_indexer import ASTIndexer
-        _indexer = ASTIndexer(_get_graph())
-        _indexer.load()
-    return _indexer
+    """Lazily load ASTIndexer."""
+    global _INDEXER  # pylint: disable=global-statement
+    if _INDEXER is None:
+        from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+        _INDEXER = ASTIndexer(_get_graph())
+        _INDEXER.load()
+    return _INDEXER
 
 
 _EMPTY_GRAPH_WARNING = {
@@ -78,7 +81,10 @@ def log_episode(event: str, metadata: dict = None) -> dict:
 
 @mcp.tool()
 def lookup_symbol(name: str) -> dict:
-    """Return all locations where a symbol is defined or called, with file, line, and type."""
+    """
+    Return all locations where a symbol is defined or called,
+    with file, line, and type.
+    """
     if _graph_is_empty():
         return _EMPTY_GRAPH_WARNING
     indexer = _get_indexer()
@@ -102,7 +108,7 @@ def who_calls(function_name: str) -> dict:
     """Return every caller of a function across the indexed repo."""
     if _graph_is_empty():
         return _EMPTY_GRAPH_WARNING
-    from graph.knowledge_graph import EdgeType
+    from graph.knowledge_graph import EdgeType  # pylint: disable=import-outside-toplevel
     graph = _get_graph()
     callee_node = f"symbol::{function_name}"
     if not graph.node_exists(callee_node):
@@ -157,7 +163,7 @@ def graph_stats() -> dict:
     ]
     top_concepts = sorted(
         concept_nodes,
-        key=lambda n: graph.G.degree(n),
+        key=graph.G.degree,
         reverse=True,
     )[:5]
     last_indexed = None
@@ -187,7 +193,11 @@ def _build_manifest() -> dict:
                     "type": "object",
                     "properties": {
                         "text":   {"type": "string", "description": "Memory text to store"},
-                        "source": {"type": "string", "description": "Origin label (file, url, …)", "default": ""},
+                        "source": {
+                            "type": "string",
+                            "description": "Origin label (file, url, …)",
+                            "default": ""
+                        },
                     },
                     "required": ["text"],
                 },
@@ -199,18 +209,27 @@ def _build_manifest() -> dict:
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "Search query"},
-                        "top_k": {"type": "integer", "description": "Number of results", "default": 5},
+                        "top_k": {
+                            "type": "integer",
+                            "description": "Number of results",
+                            "default": 5
+                        },
                     },
                     "required": ["query"],
                 },
             },
             {
                 "name": "search_docs",
-                "description": "Search all markdown documentation files for the given query string.",
+                "description": (
+                    "Search all markdown documentation files for the given query string."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Text to search for in .md files"},
+                        "query": {
+                            "type": "string",
+                            "description": "Text to search for in .md files"
+                        },
                     },
                     "required": ["query"],
                 },
@@ -222,14 +241,21 @@ def _build_manifest() -> dict:
                     "type": "object",
                     "properties": {
                         "event":    {"type": "string", "description": "Event description"},
-                        "metadata": {"type": "object", "description": "Arbitrary key-value metadata", "default": {}},
+                        "metadata": {
+                            "type": "object",
+                            "description": "Arbitrary key-value metadata",
+                            "default": {}
+                        },
                     },
                     "required": ["event"],
                 },
             },
             {
                 "name": "lookup_symbol",
-                "description": "Return all locations where a symbol is defined or called, with file, line, and type.",
+                "description": (
+                    "Return all locations where a symbol is defined or called, "
+                    "with file, line, and type."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -244,18 +270,26 @@ def _build_manifest() -> dict:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "function_name": {"type": "string", "description": "Name of the function to look up callers for"},
+                        "function_name": {
+                            "type": "string",
+                            "description": "Name of the function to look up callers for"
+                        },
                     },
                     "required": ["function_name"],
                 },
             },
             {
                 "name": "subgraph",
-                "description": "Return the local neighbourhood of a concept or symbol as {nodes, edges}.",
+                "description": (
+                    "Return the local neighbourhood of a concept or symbol as {nodes, edges}."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "entity": {"type": "string", "description": "Entity name or node ID to centre the subgraph on"},
+                        "entity": {
+                            "type": "string",
+                            "description": "Entity name or node ID to centre the subgraph on"
+                        },
                         "depth":  {"type": "integer", "description": "BFS radius", "default": 2},
                     },
                     "required": ["entity"],
@@ -267,8 +301,15 @@ def _build_manifest() -> dict:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Keyword to search for in event log"},
-                        "limit": {"type": "integer", "description": "Maximum number of results", "default": 10},
+                        "query": {
+                            "type": "string",
+                            "description": "Keyword to search for in event log"
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of results",
+                            "default": 10
+                        },
                     },
                     "required": ["query"],
                 },

@@ -21,9 +21,17 @@ jobs:
           key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
           restore-keys: ${{ runner.os }}-pip-
 
+      - name: Cache sentence-transformers model
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/torch/sentence_transformers
+            ~/.cache/huggingface
+          key: ${{ runner.os }}-st-all-MiniLM-L6-v2
+
       - name: Install dependencies
         run: |
-          pip install -e ".[dev]"
+          pip install -e ".[dev,security]"
           pip install grpcio grpcio-tools pylint pytest-mock
 
       - name: Lint (pylint)
@@ -34,7 +42,7 @@ jobs:
 
       - name: Smoke-test index-repo (no-watch for CI)
         run: |
-          cognirepo init --password changeme
+          cognirepo init --password changeme --no-index
           cognirepo index-repo . --no-watch
         env:
           COGNIREPO_MULTI_AGENT_ENABLED: "false"

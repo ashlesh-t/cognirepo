@@ -53,14 +53,17 @@ class RepoFileHandler(FileSystemEventHandler):
         self.session_id = session_id
 
     def on_modified(self, event: FileModifiedEvent) -> None:
+        """Trigger re-indexing when a supported file is modified."""
         if not event.is_directory and is_supported(Path(str(event.src_path))):
             self._reindex(str(event.src_path))
 
     def on_created(self, event: FileCreatedEvent) -> None:
+        """Trigger re-indexing when a new supported file is created."""
         if not event.is_directory and is_supported(Path(str(event.src_path))):
             self._reindex(str(event.src_path))
 
     def on_deleted(self, event: FileDeletedEvent) -> None:
+        """Remove file from index when it is deleted from disk."""
         if not event.is_directory and is_supported(Path(str(event.src_path))):
             self._remove(str(event.src_path))
 
@@ -79,7 +82,7 @@ class RepoFileHandler(FileSystemEventHandler):
                 self.graph.remove_node_edges(node_id)
 
             self.indexer.index_data["files"].pop(rel_path, None)
-            self.indexer._build_reverse_index()
+            self.indexer._build_reverse_index()  # pylint: disable=protected-access
             self.indexer.save()
             self.graph.save()
 
@@ -106,7 +109,7 @@ class RepoFileHandler(FileSystemEventHandler):
 
             # re-index the file
             self.indexer.index_file(rel_path, abs_path)
-            self.indexer._build_reverse_index()  # rebuild top-level dict
+            self.indexer._build_reverse_index()  # pylint: disable=protected-access  # rebuild top-level dict
             self.indexer.save()
             self.graph.save()
 

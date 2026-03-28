@@ -6,12 +6,8 @@
 
 """
 Graph and AST routes — thin HTTP wrappers around KnowledgeGraph and ASTIndexer.
-
-GET /graph/symbol/{name}           — lookup all locations for a symbol
-GET /graph/callers/{function_name} — find every caller of a function
-GET /graph/subgraph/{entity}       — local neighbourhood of a concept / symbol
-GET /graph/stats                   — node count, edge count, top concepts
 """
+# pylint: disable=duplicate-code
 import json
 import os
 
@@ -23,22 +19,24 @@ router = APIRouter(prefix="/graph", tags=["graph"])
 
 # ── lazy singletons ───────────────────────────────────────────────────────────
 
-_graph = None
-_indexer = None
+_graph = None  # pylint: disable=invalid-name
+_indexer = None  # pylint: disable=invalid-name
 
 
 def _get_graph():
-    global _graph
+    """Lazily load KnowledgeGraph."""
+    global _graph  # pylint: disable=global-statement
     if _graph is None:
-        from graph.knowledge_graph import KnowledgeGraph
+        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         _graph = KnowledgeGraph()
     return _graph
 
 
 def _get_indexer():
-    global _indexer
+    """Lazily load ASTIndexer."""
+    global _indexer  # pylint: disable=global-statement
     if _indexer is None:
-        from indexer.ast_indexer import ASTIndexer
+        from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
         _indexer = ASTIndexer(_get_graph())
         _indexer.load()
     return _indexer
@@ -122,7 +120,7 @@ def stats():
     ]
     top_concepts = sorted(
         concept_nodes,
-        key=lambda n: graph.G.degree(n),
+        key=graph.G.degree,
         reverse=True,
     )[:5]
     last_indexed = None

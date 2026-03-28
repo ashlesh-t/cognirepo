@@ -19,29 +19,36 @@ jobs:
           python-version: "3.11"
 
       - name: Install Bandit
-        run: pip install "bandit[toml]>=1.7"
+        run: pip install "bandit[toml]>=1.8"
 
       - name: Run Bandit (HIGH + CRITICAL only)
         run: |
-          bandit -r cognirepo/ adapters/ api/ cli/ cron/ graph/ indexer/ \
+          bandit -r adapters/ api/ cli/ cron/ graph/ indexer/ \
                     memory/ orchestrator/ retrieval/ rpc/ security/ server/ \
                     tools/ vector_db/ \
                  -x tests/ \
-                 -ll \
-                 --exit-zero-on-skipped
+                 -ll
 
-  # ── 2. Snyk — dependency vulnerabilities ─────────────────────────────────
-  snyk:
-    name: Snyk — dependency vulnerabilities
+  # ── 2. pip-audit — dependency vulnerabilities ─────────────────────────────
+  pip-audit:
+    name: pip-audit — dependency vulnerabilities
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: snyk/actions/python@master
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      - uses: actions/setup-python@v5
         with:
-          args: --file=pyproject.toml --severity-threshold=high
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Run pip-audit
+        run: |
+          pip install . --quiet
+          # Ignore CVE-2026-4539 (Pygments ReDoS in AdlLexer): no fix version available as of 2026-03-28,
+          # and CogniRepo does not process untrusted code snippets with that lexer.
+          pip-audit --ignore-vuln CVE-2026-4539
 
   # ── 3. Trivy — filesystem scan ────────────────────────────────────────────
   trivy:
@@ -70,6 +77,4 @@ jobs:
       - uses: trufflesecurity/trufflehog@main
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
           extra_args: --only-verified

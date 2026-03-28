@@ -1,3 +1,5 @@
+# pylint: disable=missing-docstring, unnecessary-lambda, import-outside-toplevel, too-few-public-methods, duplicate-code
+# pylint: disable=redefined-outer-name, unused-argument, broad-exception-caught, protected-access
 # SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
@@ -12,8 +14,6 @@ Graph and behaviour scores default to 0 (cold start) — tests the
 formula degrades correctly to pure vector retrieval.
 """
 from __future__ import annotations
-
-import pytest
 
 
 class TestHybridRetriever:

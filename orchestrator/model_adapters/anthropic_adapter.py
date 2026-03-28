@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code
 # SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
@@ -31,6 +32,7 @@ from orchestrator.model_adapters.retry import with_retry
 
 @dataclass
 class ModelResponse:
+    """Standardized response container for all model adapters."""
     text: str
     model: str
     provider: str
@@ -138,7 +140,7 @@ def call(
 def _stream_call(
     client,
     create_kwargs: dict,
-    model_id: str,
+    _model_id: str,
     anthropic_mod,
 ) -> Generator[str, None, dict]:
     """
@@ -148,8 +150,7 @@ def _stream_call(
     usage: dict = {}
     try:
         with client.messages.stream(**create_kwargs) as stream:
-            for text in stream.text_stream:
-                yield text
+            yield from stream.text_stream
             # Collect usage from the completed message
             try:
                 final_msg = stream.get_final_message()

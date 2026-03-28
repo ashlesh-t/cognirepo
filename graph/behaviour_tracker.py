@@ -62,6 +62,7 @@ class BehaviourTracker:
                 pass  # start fresh
 
     def save(self) -> None:
+        """Persist the behaviour data to behaviour.json."""
         os.makedirs(os.path.dirname(BEHAVIOUR_FILE), exist_ok=True)
         self.data["updated_at"] = _now()
         with open(BEHAVIOUR_FILE, "w", encoding="utf-8") as f:
@@ -162,9 +163,13 @@ class BehaviourTracker:
             except (KeyError, ValueError):
                 continue
             if qts >= cutoff:
-                self.record_feedback(qid, useful=True, user_action="FILE_EDIT", file_edited=file_path)
+                self.record_feedback(
+                    qid, useful=True, user_action="FILE_EDIT",
+                    file_edited=file_path,
+                )
 
     def record_error(self, error_type: str, file_path: str) -> None:
+        """Log a syntax or runtime error associated with a file."""
         ep = self.data["error_patterns"]
         if error_type not in ep:
             ep[error_type] = {"count": 0, "files": [], "last_seen": None}
@@ -192,11 +197,12 @@ class BehaviourTracker:
         indexer: "ASTIndexer",
     ) -> None:
         """Start a watchdog Observer for the given repo path."""
-        from indexer.file_watcher import create_watcher  # local import avoids circular
+        from indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
 
         self._observer = create_watcher(path, indexer, self.graph, self, session_id)
 
     def stop_watching(self) -> None:
+        """Stop and join the file watcher thread."""
         if self._observer is not None:
             self._observer.stop()
             self._observer.join()
