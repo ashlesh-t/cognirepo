@@ -12,7 +12,6 @@ tests/test_graph.py — knowledge graph node/edge/traversal/serialise tests.
 from __future__ import annotations
 
 import os
-import pytest
 
 
 class TestKnowledgeGraph:

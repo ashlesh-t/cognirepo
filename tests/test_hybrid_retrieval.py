@@ -15,8 +15,6 @@ formula degrades correctly to pure vector retrieval.
 """
 from __future__ import annotations
 
-import pytest
-
 
 class TestHybridRetriever:
     def test_returns_list(self):

@@ -46,7 +46,6 @@ class TestMCPToolFunctions:
         assert "store_memory" in history[0]["event"]
 
     def test_manifest_written(self):
-        import importlib.util
         from server.mcp_server import _write_manifest, _build_manifest
         _write_manifest()
         # manifest.json is written next to mcp_server.py (not CWD)

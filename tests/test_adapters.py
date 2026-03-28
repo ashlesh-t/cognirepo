@@ -14,8 +14,7 @@ All external API calls are mocked — no real network calls are made.
 """
 from __future__ import annotations
 
-import json
-from unittest.mock import MagicMock, patch, call as mock_call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -430,7 +429,7 @@ class TestProviderFallback:
             monkeypatch.delenv(key, raising=False)
 
         from orchestrator.router import _available_providers
-        assert _available_providers() == []
+        assert not _available_providers()
 
     def test_fallback_skips_failed_provider(self, monkeypatch):
         """If the primary provider fails with a retryable error, the next is tried."""
@@ -453,11 +452,17 @@ class TestProviderFallback:
             calls.append("grok")
             return ModelResponse(text="fallback-ok", model="grok-beta", provider="grok")
 
-        with patch("orchestrator.model_adapters.gemini_adapter.call", side_effect=fake_gemini_call), \
-             patch("orchestrator.model_adapters.grok_adapter.call", side_effect=fake_grok_call):
+        p_gem = patch(
+            "orchestrator.model_adapters.gemini_adapter.call",
+            side_effect=fake_gemini_call
+        )
+        p_grk = patch("orchestrator.model_adapters.grok_adapter.call", side_effect=fake_grok_call)
+
+        with p_gem, p_grk:
             from orchestrator import router
             result = router._dispatch_with_fallback(
-                query="test", primary_provider="gemini", primary_model="gemini-2.0-flash",
+                query="test", primary_provider="gemini",
+                primary_model="gemini-2.0-flash",
                 system_prompt="sys", tool_manifest=[], max_tokens=100,
             )
 
@@ -496,7 +501,7 @@ def _make_anthropic_stream_ctx(chunks, input_tokens=5, output_tokens=7):
 def _make_openai_stream_chunks(texts, include_usage=False):
     """Build a list of mock OpenAI streaming chunks."""
     result = []
-    for i, text in enumerate(texts):
+    for text in texts:
         chunk = MagicMock()
         chunk.choices = [MagicMock()]
         chunk.choices[0].delta.content = text

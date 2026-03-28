@@ -13,8 +13,6 @@ All tests work on ContextBundle directly to avoid loading real models/storage.
 """
 from __future__ import annotations
 
-import pytest
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 

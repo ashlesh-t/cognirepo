@@ -23,8 +23,6 @@ import os
 import sys
 import types
 
-import pytest
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -43,6 +41,7 @@ def _run_doctor(
     Exercise _cmd_doctor() in isolation, returning its exit-code integer.
     Monkeypatches all heavy imports so the test needs no real .cognirepo/.
     """
+    # pylint: disable=too-many-locals
     from cli.main import _cmd_doctor  # imported here so SPDX header is already applied
 
     # ── stub env ──────────────────────────────────────────────────────────────
@@ -77,8 +76,10 @@ def _run_doctor(
         fake_graph_mod.KnowledgeGraph = _BadKG
     else:
         class _FakeG:
-            def number_of_nodes(self): return 1832
-            def number_of_edges(self): return 4218
+            def number_of_nodes(self):
+                return 1832
+            def number_of_edges(self):
+                return 4218
         class _FakeKG:
             G = _FakeG()
         fake_graph_mod.KnowledgeGraph = _FakeKG
@@ -97,8 +98,10 @@ def _run_doctor(
     # ── stub AST indexer ──────────────────────────────────────────────────────
     fake_idx_mod = types.ModuleType("indexer.ast_indexer")
     class _FakeASTIndexer:
-        def __init__(self, **_kw): self.index_data = {}
-        def load(self): pass
+        def __init__(self, **_kw):
+            self.index_data = {}
+        def load(self):
+            pass
     fake_idx_mod.ASTIndexer = _FakeASTIndexer
     monkeypatch.setitem(sys.modules, "indexer.ast_indexer", fake_idx_mod)
 
@@ -119,7 +122,8 @@ def _run_doctor(
     fake_psutil = types.ModuleType("psutil")
     class _FakeProc:
         def memory_info(self):
-            class _MI: rss = 412 * 1024 * 1024
+            class _MI:
+                rss = 412 * 1024 * 1024
             return _MI()
     fake_psutil.Process = lambda: _FakeProc()
     monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
@@ -131,9 +135,12 @@ def _run_doctor(
 
     # ── stub .cognirepo/ presence ─────────────────────────────────────────────
     if with_init:
-        monkeypatch.setattr(os.path, "isdir",
-                            lambda p: True if ".cognirepo" in str(p) else os.path.isdir.__wrapped__(p),
-                            raising=False)
+        def _fake_isdir(p):
+            if ".cognirepo" in str(p):
+                return True
+            return os.path.isdir.__wrapped__(p)
+
+        monkeypatch.setattr(os.path, "isdir", _fake_isdir, raising=False)
         _orig_exists = os.path.exists
         monkeypatch.setattr(os.path, "exists",
                             lambda p: True if "config.json" in str(p) else _orig_exists(p))

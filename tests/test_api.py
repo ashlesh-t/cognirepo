@@ -124,7 +124,8 @@ class TestEpisodicRoutes:
             json={"event": "unique_rest_keyword_xyz logged"},
             headers=auth_headers,
         )
-        resp = client.get("/episodic/search?q=unique_rest_keyword_xyz&limit=5", headers=auth_headers)
+        url = "/episodic/search?q=unique_rest_keyword_xyz&limit=5"
+        resp = client.get(url, headers=auth_headers)
         assert resp.status_code == 200
         data = resp.json()
         assert any("unique_rest_keyword_xyz" in json.dumps(e) for e in data)
