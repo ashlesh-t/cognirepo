@@ -98,7 +98,8 @@ def _default_limit_mb() -> float:
             pass
     # Try config.json
     try:
-        with open(".cognirepo/config.json", encoding="utf-8") as f:
+        from config.paths import get_path
+        with open(get_path("config.json"), encoding="utf-8") as f:
             cfg = json.load(f)
         limit = cfg.get("circuit_breaker", {}).get("rss_limit_mb")
         if limit:

@@ -50,9 +50,16 @@ from memory.embeddings import get_model
 
 log = logging.getLogger(__name__)
 
-AST_INDEX_FILE = ".cognirepo/index/ast_index.json"
-AST_FAISS_FILE = ".cognirepo/index/ast.index"
-AST_META_FILE  = ".cognirepo/index/ast_metadata.json"
+from config.paths import get_path
+
+def _ast_index_file() -> str:
+    return get_path("index/ast_index.json")
+
+def _ast_faiss_file() -> str:
+    return get_path("index/ast.index")
+
+def _ast_meta_file() -> str:
+    return get_path("index/ast_metadata.json")
 
 _SKIP_DIRS = {
     ".git", "venv", "__pycache__", ".cognirepo", "node_modules",
@@ -250,7 +257,7 @@ class ASTIndexer:
             "repo_root": "",
             "files": {},
             "reverse_index": {},
-            "faiss_index_file": AST_FAISS_FILE,
+            "faiss_index_file": _ast_faiss_file(),
             "total_symbols": 0,
         }
         self._loaded = False
@@ -476,24 +483,24 @@ class ASTIndexer:
 
     def save(self) -> None:
         """Persist AST index, FAISS index, and metadata to disk."""
-        os.makedirs(os.path.dirname(AST_INDEX_FILE), exist_ok=True)
-        with open(AST_INDEX_FILE, "w", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(_ast_index_file()), exist_ok=True)
+        with open(_ast_index_file(), "w", encoding="utf-8") as f:
             json.dump(self.index_data, f, indent=2)
         if self.faiss_index is not None:
-            faiss.write_index(self.faiss_index, AST_FAISS_FILE)
-        with open(AST_META_FILE, "w", encoding="utf-8") as f:
+            faiss.write_index(self.faiss_index, _ast_faiss_file())
+        with open(_ast_meta_file(), "w", encoding="utf-8") as f:
             json.dump(self.faiss_meta, f, indent=2)
 
     def load(self) -> None:
         """Load existing index from disk. Silently does nothing if not present."""
-        if os.path.exists(AST_INDEX_FILE):
-            with open(AST_INDEX_FILE, encoding="utf-8") as f:
+        if os.path.exists(_ast_index_file()):
+            with open(_ast_index_file(), encoding="utf-8") as f:
                 self.index_data = json.load(f)
-        if os.path.exists(AST_FAISS_FILE):
-            self.faiss_index = faiss.read_index(AST_FAISS_FILE)
+        if os.path.exists(_ast_faiss_file()):
+            self.faiss_index = faiss.read_index(_ast_faiss_file())
         else:
             self._ensure_faiss()
-        if os.path.exists(AST_META_FILE):
-            with open(AST_META_FILE, encoding="utf-8") as f:
+        if os.path.exists(_ast_meta_file()):
+            with open(_ast_meta_file(), encoding="utf-8") as f:
                 self.faiss_meta = json.load(f)
         self._loaded = True

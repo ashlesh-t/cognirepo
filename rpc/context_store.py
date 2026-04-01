@@ -27,13 +27,16 @@ import threading
 import time
 from pathlib import Path
 
-SESSIONS_DIR = ".cognirepo/sessions"
+from config.paths import get_path
+
+def _sessions_dir() -> str:
+    return get_path("sessions")
 
 
 class ContextStore:
     """Thread-safe persistence for cross-model reasoning context."""
 
-    def __init__(self, sessions_dir: str = SESSIONS_DIR) -> None:
+    def __init__(self, sessions_dir: str = _sessions_dir()) -> None:
         self._dir = sessions_dir
         os.makedirs(self._dir, exist_ok=True)
         self._locks: dict[str, threading.RLock] = {}

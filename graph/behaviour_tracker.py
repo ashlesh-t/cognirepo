@@ -23,7 +23,10 @@ from graph.graph_utils import make_node_id
 if TYPE_CHECKING:
     from indexer.ast_indexer import ASTIndexer
 
-BEHAVIOUR_FILE = ".cognirepo/graph/behaviour.json"
+from config.paths import get_path
+
+def _behaviour_file() -> str:
+    return get_path("graph/behaviour.json")
 _USEFUL_WINDOW = timedelta(minutes=5)
 
 
@@ -54,18 +57,18 @@ class BehaviourTracker:
     # ── persistence ───────────────────────────────────────────────────────────
 
     def _load(self) -> None:
-        if os.path.exists(BEHAVIOUR_FILE):
+        if os.path.exists(_behaviour_file()):
             try:
-                with open(BEHAVIOUR_FILE, encoding="utf-8") as f:
+                with open(_behaviour_file(), encoding="utf-8") as f:
                     self.data = json.load(f)
             except (json.JSONDecodeError, OSError):
                 pass  # start fresh
 
     def save(self) -> None:
         """Persist the behaviour data to behaviour.json."""
-        os.makedirs(os.path.dirname(BEHAVIOUR_FILE), exist_ok=True)
+        os.makedirs(os.path.dirname(_behaviour_file()), exist_ok=True)
         self.data["updated_at"] = _now()
-        with open(BEHAVIOUR_FILE, "w", encoding="utf-8") as f:
+        with open(_behaviour_file(), "w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=2)
 
     # ── query tracking ────────────────────────────────────────────────────────

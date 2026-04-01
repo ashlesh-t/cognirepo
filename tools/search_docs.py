@@ -6,21 +6,35 @@
 
 """
 Tool to search for a query in the markdown documentation.
+Returns file paths with context snippets (grep -C 2 style).
 """
 import sys
 from retrieval.docs_search import search_docs as ds
 
 
-def search_docs(query):
+def search_docs(query: str) -> list[dict]:
     """
-    Search for a query in documentation and print the results.
+    Search for *query* in all .md files recursively and print context snippets.
+    Returns the raw list of match dicts for programmatic use.
     """
     results = ds(query)
 
-    print("Docs found:")
+    if not results:
+        print(f"No docs found matching: {query!r}")
+        return results
 
+    # Group by file for cleaner display
+    current_path = None
     for r in results:
-        print(r)
+        if r["path"] != current_path:
+            current_path = r["path"]
+            print(f"\n{r['path']}")
+            print("─" * len(r["path"]))
+        print(f"  Line {r['line']}:")
+        for line in r["context"].splitlines():
+            print(f"    {line}")
+
+    return results
 
 
 if __name__ == "__main__":

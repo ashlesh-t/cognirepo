@@ -23,12 +23,12 @@ def classify():
 class TestHardOverrides:
     def test_single_token_fast(self, classify):
         r = classify("x")
-        assert r.tier == "FAST"
+        assert r.tier == "QUICK"
         assert "single_token" in r.overrides
 
     def test_empty_single_token(self, classify):
         r = classify("auth")
-        assert r.tier == "FAST"
+        assert r.tier == "QUICK"
 
     def test_full_context_phrase_deep(self, classify):
         r = classify("give me full context on this")
@@ -90,7 +90,7 @@ class TestSignals:
 class TestTierBoundaries:
     def test_fast_tier(self, classify):
         r = classify("list all files")
-        assert r.tier == "FAST"
+        assert r.tier == "QUICK"
 
     def test_balanced_tier(self, classify):
         r = classify("why is verify_token slow compared to check_session")
@@ -112,4 +112,4 @@ class TestTierBoundaries:
     def test_force_model_overrides_model_id(self, classify):
         r = classify("show me files", force_model="claude-opus-4-6")
         assert r.model == "claude-opus-4-6"
-        assert r.tier == "FAST"  # tier still computed
+        assert r.tier == "QUICK"  # tier still computed

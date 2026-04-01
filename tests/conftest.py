@@ -38,7 +38,10 @@ def isolated_cognirepo(tmp_path, monkeypatch):
 
     Secrets are injected as env vars — no keychain access required in tests.
     """
-    # Change CWD so relative paths (.cognirepo/, vector_db/) land in tmp
+    from config.paths import set_cognirepo_dir
+    set_cognirepo_dir(str(tmp_path / ".cognirepo"))
+
+    # Change CWD so relative paths land in tmp
     monkeypatch.chdir(tmp_path)
 
     # Inject secrets via env vars (mirrors CI / Docker behaviour)
@@ -51,7 +54,7 @@ def isolated_cognirepo(tmp_path, monkeypatch):
         ".cognirepo/graph",
         ".cognirepo/index",
         ".cognirepo/sessions",
-        "vector_db",
+        ".cognirepo/vector_db",
         "server",
         "adapters",
     ]:

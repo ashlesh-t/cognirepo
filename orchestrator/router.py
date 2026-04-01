@@ -52,8 +52,37 @@ from orchestrator.model_adapters.errors import ModelCallError
 
 logger = logging.getLogger(__name__)
 
-_CONFIG_FILE = ".cognirepo/config.json"
-_PID_FILE = ".cognirepo/grpc.pid"
+from config.paths import get_path
+
+def _config_file() -> str:
+    return get_path("config.json")
+
+def _error_log_dir() -> str:
+    return get_path("errors")
+
+
+def _write_error_log(error_msg: str, query: str = "") -> str:
+    """
+    Append a timestamped error entry to ``.cognirepo/errors/<date>.log``.
+    Returns the log file path (for display to the user).
+    Never raises.
+    """
+    import datetime  # pylint: disable=import-outside-toplevel
+    try:
+        os.makedirs(_error_log_dir(), exist_ok=True)
+        date_str = datetime.date.today().isoformat()
+        log_path = os.path.join(_error_log_dir(), f"{date_str}.log")
+        ts = datetime.datetime.now().isoformat(timespec="seconds")
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(f"\n[{ts}]")
+            if query:
+                fh.write(f" query={query[:80]!r}")
+            fh.write(f"\n{error_msg}\n{'─' * 60}\n")
+        return log_path
+    except Exception:  # pylint: disable=broad-except
+        return _error_log_dir()
+def _pid_file() -> str:
+    return get_path("grpc.pid")
 
 # ── multi-agent state (module-level, one per process) ─────────────────────────
 
@@ -68,7 +97,7 @@ def _multi_agent_enabled() -> bool:
 
 def _load_config() -> dict:
     try:
-        with open(_CONFIG_FILE, encoding="utf-8") as f:
+        with open(_config_file(), encoding="utf-8") as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return {}
@@ -93,7 +122,8 @@ def _maybe_autostart_grpc(host: str, port: int) -> None:
     _GRPC_AUTOSTART_DONE = True
 
     cfg = _load_config()
-    if not cfg.get("multi_agent", {}).get("auto_start_grpc", False):
+    # auto_start_grpc=true in config OR COGNIREPO_MULTI_AGENT_ENABLED=true both trigger auto-start
+    if not (cfg.get("multi_agent", {}).get("auto_start_grpc", False) or _multi_agent_enabled()):
         return
     if _is_port_open(host, port):
         logger.debug("gRPC port %d already in use — skipping auto-start", port)
@@ -106,8 +136,8 @@ def _maybe_autostart_grpc(host: str, port: int) -> None:
             stderr=subprocess.DEVNULL,
         )
         _GRPC_PROCESS = proc
-        os.makedirs(".cognirepo", exist_ok=True)
-        with open(_PID_FILE, "w", encoding="utf-8") as f:
+        os.makedirs(get_path(""), exist_ok=True)
+        with open(_pid_file(), "w", encoding="utf-8") as f:
             f.write(str(proc.pid))
         logger.info("Auto-started gRPC server (pid=%d) on port %d", proc.pid, port)
         atexit.register(_shutdown_grpc)
@@ -126,7 +156,7 @@ def _shutdown_grpc() -> None:
             pass
         _GRPC_PROCESS = None
     try:
-        os.remove(_PID_FILE)
+        os.remove(_pid_file())
     except OSError:
         pass
 
@@ -173,8 +203,8 @@ def route(
     # ── 1. classify ──────────────────────────────────────────────────────────
     clf = classify(query, context=context, force_model=force_model)
 
-    # ── 1.5 local resolver (FAST, no force_model) ────────────────────────────
-    if clf.tier == "FAST" and not force_model:
+    # ── 1.5 local resolver (QUICK/FAST, no force_model) ─────────────────────
+    if clf.tier in ("QUICK", "FAST") and not force_model:
         _fast_bundle = build_context(query, top_k=0, episode_limit=0, tier="FAST")
         local_answer = try_local_resolve(query, _fast_bundle)
         if local_answer is not None:
@@ -214,10 +244,13 @@ def route(
             messages_history=messages_history,
         )
     except ModelCallError as exc:
-        # Human-readable error — no raw traceback shown to user
-        error_msg = str(exc)
+        error_msg = f"ModelCallError [{clf.provider}/{clf.model}]: {exc.message}"
+        log_path = _write_error_log(error_msg, query=query)
         response = ModelResponse(
-            text=f"Model error: {exc.message}",
+            text=(
+                f"[!] API error with {clf.provider}. "
+                f"Details logged to {log_path}\n{exc.message}"
+            ),
             model=clf.model,
             provider=clf.provider,
         )
@@ -226,9 +259,14 @@ def route(
             error=error_msg, sub_queries=sub_queries,
         )
     except Exception as exc:  # pylint: disable=broad-except
-        error_msg = f"[{clf.provider}/{clf.model}] {exc}\n{traceback.format_exc()}"
+        full_tb = traceback.format_exc()
+        error_msg = f"[{clf.provider}/{clf.model}] {exc}\n{full_tb}"
+        log_path = _write_error_log(error_msg, query=query)
         response = ModelResponse(
-            text=f"Error: {exc}",
+            text=(
+                f"[!] Unexpected error. "
+                f"Details logged to {log_path}"
+            ),
             model=clf.model,
             provider=clf.provider,
         )
@@ -616,8 +654,8 @@ def stream_route(
     """
     clf = classify(query, context=context, force_model=force_model)
 
-    # local resolver (FAST, no force_model) — yield answer directly
-    if clf.tier == "FAST" and not force_model:
+    # local resolver (QUICK/FAST, no force_model) — yield answer directly
+    if clf.tier in ("QUICK", "FAST") and not force_model:
         _fast_bundle = build_context(query, top_k=0, episode_limit=0, tier="FAST")
         local_answer = try_local_resolve(query, _fast_bundle)
         if local_answer is not None:

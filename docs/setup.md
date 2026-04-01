@@ -1,0 +1,1 @@
+# Setup\nRun `cognirepo init` to scaffold the project.

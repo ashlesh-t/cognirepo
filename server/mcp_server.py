@@ -16,7 +16,7 @@ from mcp.server.fastmcp import FastMCP
 from tools.store_memory import store_memory as _store_memory
 from tools.retrieve_memory import retrieve_memory as _retrieve_memory
 from retrieval.docs_search import search_docs as _search_docs
-from memory.episodic_memory import log_event, get_history
+from memory.episodic_memory import log_event, get_history, search_episodes
 
 mcp = FastMCP("cognirepo")
 
@@ -142,15 +142,7 @@ def subgraph(entity: str, depth: int = 2) -> dict:
 @mcp.tool()
 def episodic_search(query: str, limit: int = 10) -> list:
     """Return past episodic events matching a keyword query."""
-    query_lower = query.lower()
-    events = get_history(limit=10000)
-    matches = []
-    for event in events:
-        if query_lower in json.dumps(event).lower():
-            matches.append(event)
-            if len(matches) >= limit:
-                break
-    return matches
+    return search_episodes(query, limit)
 
 
 @mcp.tool()
@@ -167,7 +159,8 @@ def graph_stats() -> dict:
         reverse=True,
     )[:5]
     last_indexed = None
-    ast_index_path = ".cognirepo/index/ast_index.json"
+    from config.paths import get_path
+    ast_index_path = get_path("index/ast_index.json")
     if os.path.exists(ast_index_path):
         with open(ast_index_path, encoding="utf-8") as f:
             last_indexed = json.load(f).get("indexed_at")
@@ -333,8 +326,32 @@ def _write_manifest() -> None:
         json.dump(_build_manifest(), f, indent=2)
 
 
-def run_server() -> None:
-    """Entry point called by the CLI — writes manifest then starts stdio MCP server."""
+def run_server(project_dir: str | None = None) -> None:
+    """
+    Entry point called by the CLI — writes manifest then starts stdio MCP server.
+
+    Parameters
+    ----------
+    project_dir
+        Lock this server instance to a specific project directory.
+        When provided, all tools will read/write storage inside *project_dir*.
+        When None, defaults to the current working directory (or global storage).
+
+    Project isolation
+    -----------------
+    Each project should run its own cognirepo MCP server instance.
+    Storage defaults to ``~/.cognirepo/storage/<project_hash>/`` to ensure
+    isolation between projects even when started without flags.
+    """
+    from dotenv import load_dotenv  # pylint: disable=import-outside-toplevel
+    load_dotenv()
+    if project_dir:
+        from config.paths import set_cognirepo_dir  # pylint: disable=import-outside-toplevel
+        abs_dir = os.path.abspath(project_dir)
+        if not os.path.isdir(abs_dir):
+            raise SystemExit(f"cognirepo serve: project-dir not found: {abs_dir}")
+        cognirepo_subdir = os.path.join(abs_dir, ".cognirepo")
+        set_cognirepo_dir(cognirepo_subdir)
     _write_manifest()
     mcp.run(transport="stdio")
 

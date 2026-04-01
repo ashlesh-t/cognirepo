@@ -28,6 +28,8 @@ def get_model():
 
     if MODEL is None:
         print("Loading embedding model once...")
+        import os  # pylint: disable=import-outside-toplevel
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
         MODEL = SentenceTransformer("all-MiniLM-L6-v2")
 
     return MODEL

@@ -1,6 +1,6 @@
 [project]
 name = "cognirepo"
-version = "0.1.0"
+version = "0.1.1"
 description = "Local cognitive infrastructure layer for AI agents"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -81,7 +81,7 @@ cognirepo = "cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["_bm25*", "adapters*", "api*", "cli*", "cron*", "graph*", "indexer*", "memory*", "orchestrator*", "retrieval*", "rpc*", "security*", "server*", "tools*", "vector_db*"]
+include = ["_bm25*", "adapters*", "api*", "cli*", "config*", "cron*", "graph*", "indexer*", "memory*", "orchestrator*", "retrieval*", "rpc*", "security*", "server*", "tools*", "vector_db*"]
 exclude = ["venv*", "*.egg-info*"]
 
 [build-system]

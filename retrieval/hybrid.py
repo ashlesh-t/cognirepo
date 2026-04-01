@@ -37,14 +37,17 @@ from memory.embeddings import get_model
 from memory.episodic_memory import get_history
 from vector_db.local_vector_db import LocalVectorDB
 
-CONFIG_FILE = ".cognirepo/config.json"
+from config.paths import get_path
+
+def _config_file() -> str:
+    return get_path("config.json")
 DEFAULT_WEIGHTS = {"vector": 0.5, "graph": 0.3, "behaviour": 0.2}
 
 
 def _load_weights() -> dict[str, float]:
-    if os.path.exists(CONFIG_FILE):
+    if os.path.exists(_config_file()):
         try:
-            with open(CONFIG_FILE, encoding="utf-8") as f:
+            with open(_config_file(), encoding="utf-8") as f:
                 cfg = json.load(f)
             w = cfg.get("retrieval_weights", DEFAULT_WEIGHTS)
             total = sum(w.values())

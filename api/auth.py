@@ -24,7 +24,10 @@ from pydantic import BaseModel
 from security import get_project_id
 
 ALGORITHM = "HS256"
-CONFIG_FILE = ".cognirepo/config.json"
+from config.paths import get_path
+
+def _config_file() -> str:
+    return get_path("config.json")
 _KEYCHAIN_SERVICE = "cognirepo"
 
 router = APIRouter(tags=["auth"])
@@ -69,7 +72,7 @@ def _get_password_hash() -> str:
         return stored
     # Backward-compat: some existing installs still have hash in config.json
     try:
-        with open(CONFIG_FILE, encoding="utf-8") as f:
+        with open(_config_file(), encoding="utf-8") as f:
             cfg = json.load(f)
         pw_hash = cfg.get("password_hash", "")
         if pw_hash:

@@ -61,18 +61,36 @@ All commands support `--via-api` (routes through REST instead of in-process) and
 
 Scaffold `.cognirepo/` directory structure and write `config.json`.
 
+**Interactive mode (default):** launches a powerlevel10k-style wizard that asks:
+
+1. Project name (used to namespace your data in Claude/Gemini)
+2. Multi-model routing (QUICK→Grok, FAST→Gemini, BALANCED→Gemini, DEEP→Claude)
+3. Lazy gRPC auto-start for sub-agent delegation
+4. Redis session cache
+5. Encryption at rest (Fernet — auto-installs `cognirepo[security]`)
+6. Extended language parsers (auto-installs `cognirepo[languages]`)
+7. **MCP integration** — Claude, Gemini, Both, or Skip
+   - Writes `.claude/CLAUDE.md` + `.claude/settings.json` (project-locked connector)
+   - Writes `.gemini/COGNIREPO.md` + `.gemini/settings.json`
+8. REST API port + password
+
 ```bash
-cognirepo init
-cognirepo init --password mypassword --port 8080
+cognirepo init                   # interactive wizard (default when TTY)
+cognirepo init --no-index        # skip wizard + indexing (CI / scripting)
+cognirepo init --password mypassword --port 8080   # non-interactive flags
+cognirepo init --daemon          # run post-init file watcher in background
 ```
 
-Safe to re-run — only backfills missing keys, never overwrites `password_hash`.
+Safe to re-run — only backfills missing keys.
 
 Creates:
 - `.cognirepo/memory/` — semantic + episodic storage
 - `.cognirepo/graph/` — knowledge graph pickle + behaviour JSON
 - `.cognirepo/index/` — AST index + FAISS symbol index
-- `.cognirepo/sessions/` — gRPC shared session context
+- `.cognirepo/sessions/` — conversation sessions
+- `.cognirepo/errors/` — timestamped error logs
+- `.claude/` — Claude Code project config (if MCP target selected)
+- `.gemini/` — Gemini CLI project config (if MCP target selected)
 - `vector_db/` — FAISS semantic index
 
 ---
@@ -116,15 +134,32 @@ Score formula: `final = 0.5·vector + 0.3·graph + 0.2·behaviour`
 
 ### `cognirepo search-docs`
 
-Search indexed Markdown documentation files.
+Search all Markdown documentation files recursively for the query string.
+Returns **content snippets** (±2 lines of context) alongside the file path and line number
+— similar to `grep -C 2`.
 
 ```bash
 cognirepo search-docs "authentication"
-cognirepo search-docs "FAISS index format"
+cognirepo search-docs "JWT expiry"
 ```
 
-Fast path: AST reverse index lookup (O(1)).
-Fallback: full-text scan of `.md` files under `.cognirepo/docs/`.
+**Output:**
+```
+./docs/auth.md
+──────────────
+  Line 42:
+    ## Token Expiry
+    JWT tokens expire after 24 hours. Use Bearer scheme.
+    Refresh tokens are not supported in v0.1.
+
+./USAGE.md
+──────────
+  Line 18:
+    TOKEN=$(curl ... | jq -r .access_token)
+```
+
+**Search strategy:** AST reverse-index fast path for known tokens, then full recursive
+`os.walk` from the project root (covers the entire repo tree, not just `.cognirepo/docs/`).
 
 ---
 
@@ -158,9 +193,22 @@ cognirepo history --limit 50
 Walk a codebase, extract AST symbols (functions, classes), embed them,
 and store in FAISS + knowledge graph.
 
+**Path validation:** exits with code 1 and a clear error message if the directory
+does not exist — no silent 0-file success.
+
 ```bash
 cognirepo index-repo .
 cognirepo index-repo /path/to/other/project
+
+# Invalid path — explicit error, non-zero exit:
+cognirepo index-repo /nonexistent   # Error: Directory does not exist: /nonexistent
+
+# Run the file watcher in the background (returns immediately):
+cognirepo index-repo . --daemon
+cognirepo index-repo . -d
+
+# Index only, no watcher (useful in CI):
+cognirepo index-repo . --no-watch
 ```
 
 Indexes all supported file types automatically. Install `cognirepo[languages]` for
@@ -170,6 +218,119 @@ Skips: `venv/`, `.git/`, `__pycache__/`, `node_modules/`, `.tox/`, `dist/`, `bui
 Output: `{"status": "indexed", "files_indexed": 42, "symbols_found": 387, "languages": {...}}`
 
 Re-running is safe — unchanged files (same SHA-256) are skipped.
+
+**Flags**
+
+| Flag | Description |
+|------|-------------|
+| `--no-watch` | Exit immediately after indexing (no watcher) |
+| `--daemon` / `-d` | Fork watcher to background; prints PID and log path |
+
+---
+
+### `cognirepo serve`
+
+Start the MCP stdio server (connects to Claude Code, Gemini CLI, Cursor, etc.).
+
+```bash
+# Simple start (uses current directory as project root):
+cognirepo serve
+
+# Project-locked start (required for multi-project / multi-team setups):
+cognirepo serve --project-dir /abs/path/to/project
+```
+
+The `--project-dir` flag is the key to data isolation. When you have two projects open in
+Claude simultaneously, each must have its own MCP server instance locked to its directory:
+
+```json
+// .claude/settings.json  (generated automatically by cognirepo init)
+{
+  "mcpServers": {
+    "cognirepo-alpha": {
+      "command": "cognirepo",
+      "args": ["serve", "--project-dir", "/projects/alpha"],
+      "env": {}
+    },
+    "cognirepo-beta": {
+      "command": "cognirepo",
+      "args": ["serve", "--project-dir", "/projects/beta"],
+      "env": {}
+    }
+  }
+}
+```
+
+`cognirepo init` writes this automatically — you do not need to edit it manually.
+
+---
+
+### `cognirepo wait-api`
+
+Poll the REST API's `/ready` endpoint until the server is accepting connections.
+Use this before cURLing `/login` to avoid `JSONDecodeError` from hitting the server
+before it has fully started.
+
+```bash
+# Start server in background, then wait before curling:
+cognirepo serve-api --port 8080 &
+cognirepo wait-api --timeout 30
+
+TOKEN=$(curl -s -X POST http://localhost:8080/login \
+  -H "Content-Type: application/json" \
+  -d '{"password":"changeme"}' | python3 -c \
+  "import sys,json; print(json.load(sys.stdin)['access_token'])")
+```
+
+**Options:**
+- `--timeout N` — max seconds to wait (default: 30)
+- `--interval N` — poll interval in seconds (default: 0.3)
+
+Exits 0 when ready, 1 on timeout.
+
+---
+
+### `cognirepo list`
+
+Manage background watcher daemon processes.
+
+```bash
+# Show all running watchers:
+cognirepo list
+cognirepo list -p
+
+# Interactively tail a watcher's log (Ctrl+C to stop viewing):
+cognirepo list -n <PID_OR_NAME> --view
+
+# Stop a watcher:
+cognirepo list -n <PID_OR_NAME> --stop
+```
+
+**Example workflow**
+
+```bash
+$ cognirepo index-repo . --daemon
+[cognirepo] Watcher started in background (PID 94312)
+[cognirepo] Name : watcher-cognirepo-1743350400
+[cognirepo] Log  : .cognirepo/watchers/watch_1743350400.log
+[cognirepo] View : cognirepo list -n 94312 --view
+
+$ cognirepo list
+PID      NAME                                 PATH                                     STARTED              STATUS
+94312    watcher-cognirepo-1743350400         /home/user/my_works/cognirepo            2026-03-30 12:00:00  running
+
+$ cognirepo list -n 94312 --view
+[cognirepo] Viewing logs for watcher 'watcher-cognirepo-1743350400' (PID 94312)
+[cognirepo] Log: .cognirepo/watchers/watch_1743350400.log  |  Ctrl+C to stop viewing
+
+[watcher] re-indexed api/routes/graph.py
+...
+
+$ cognirepo list -n 94312 --stop
+[cognirepo] Sent SIGTERM to watcher '94312'.
+```
+
+PID files are stored under `.cognirepo/watchers/<pid>.json` and cleaned up automatically when the process exits.
 
 ---
 
@@ -192,12 +353,14 @@ cognirepo ask "list all functions in auth.py" --top-k 10
 
 **Tier routing (default models):**
 
-| Tier | Score | Default Model |
-|---|---|---|
-| FAST | 0–6 | gemini-2.0-flash |
-| BALANCED | 7–14 | gemini-2.0-flash |
-| DEEP | 15+ | claude-sonnet-4-6 |
+| Tier | Score | Default Model | Provider | Use case |
+|------|-------|---------------|----------|----------|
+| QUICK | 0–2 | grok-beta | Grok | Single-token / trivial — fastest |
+| FAST | 3–6 | gemini-2.0-flash | Gemini | Factual lookup, single symbol |
+| BALANCED | 7–14 | gemini-2.0-flash | Gemini | Moderate reasoning |
+| DEEP | 15+ | claude-sonnet-4-6 | Anthropic | Cross-file, architectural |
 
+On API error: user sees a friendly one-liner; full traceback saved to `.cognirepo/errors/<date>.log`.
 Override models in `.cognirepo/config.json` → `models` block.
 
 **Requires:** at least one API key set (`ANTHROPIC_API_KEY` or `GEMINI_API_KEY`).
@@ -228,18 +391,6 @@ Blocked automatically if the circuit breaker is OPEN (RSS too high).
 
 ---
 
-### `cognirepo serve`
-
-Start the MCP stdio server (for Claude Desktop).
-
-```bash
-cognirepo serve
-```
-
-Reads from stdin, writes to stdout. Claude Desktop manages the process lifecycle.
-
----
-
 ### `cognirepo serve-api`
 
 Start the FastAPI REST server.
@@ -250,13 +401,24 @@ cognirepo serve-api --host 0.0.0.0 --port 8080 --reload
 ```
 
 Endpoints:
-- `POST /login` — get JWT token
+- `POST /login` — get JWT token (returns `{"access_token": "...", "token_type": "bearer"}`)
+- `GET /ready` — lightweight readiness probe (no auth, poll before `/login`)
+- `GET /health` — health check with circuit breaker state (no auth required)
 - `POST /memory/store` — store memory
 - `POST /memory/retrieve` — retrieve memories
 - `POST /episodic/log` — log event
 - `GET /episodic/history` — get history
-- `GET /health` — health check (no auth required)
 - `GET /docs` — Swagger UI
+
+**Safe curl pattern** (use `cognirepo wait-api` or poll `/ready`):
+```bash
+cognirepo serve-api --port 8080 &
+cognirepo wait-api                   # blocks until /ready returns 200
+TOKEN=$(curl -s -X POST http://localhost:8080/login \
+  -H "Content-Type: application/json" \
+  -d '{"password":"changeme"}' | python3 -c \
+  "import sys,json; print(json.load(sys.stdin)['access_token'])")
+```
 
 ---
 

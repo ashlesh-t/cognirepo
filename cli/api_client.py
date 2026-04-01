@@ -20,15 +20,18 @@ import sys
 
 import httpx
 
-CONFIG_FILE = ".cognirepo/config.json"
+from config.paths import get_path
+
+def _config_file() -> str:
+    return get_path("config.json")
 DEFAULT_URL = "http://localhost:8000"
 
 
 def _get_api_url(override: str = None) -> str:
     if override:
         return override.rstrip("/")
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, encoding="utf-8") as f:
+    if os.path.exists(_config_file()):
+        with open(_config_file(), encoding="utf-8") as f:
             cfg = json.load(f)
         return cfg.get("api_url", DEFAULT_URL).rstrip("/")
     return DEFAULT_URL

@@ -124,7 +124,8 @@ def stats():
         reverse=True,
     )[:5]
     last_indexed = None
-    ast_index_path = ".cognirepo/index/ast_index.json"
+    from config.paths import get_path
+    ast_index_path = get_path("index/ast_index.json")
     if os.path.exists(ast_index_path):
         with open(ast_index_path, encoding="utf-8") as f:
             last_indexed = json.load(f).get("indexed_at")

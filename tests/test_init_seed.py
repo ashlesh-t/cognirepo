@@ -77,20 +77,24 @@ class TestInitProject:
 
     def test_prompt_n_returns_none_triple(self, monkeypatch):
         from cli.init_project import init_project
-        monkeypatch.setattr("builtins.input", lambda: "n")
+        # Provide enough inputs for all wizard steps + indexing prompt
+        inputs = iter(["myproj", "y", "y", "n", "n", "n", "1", "8000", "pass", "y", "n"])
+        monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
         result = init_project()
         assert result == (None, None, None)
 
     def test_prompt_no_returns_none_triple(self, monkeypatch):
         from cli.init_project import init_project
-        monkeypatch.setattr("builtins.input", lambda: "no")
+        # Provide enough inputs for all wizard steps + indexing prompt
+        inputs = iter(["myproj", "y", "y", "n", "n", "n", "1", "8000", "pass", "y", "no"])
+        monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
         result = init_project()
         assert result == (None, None, None)
 
     def test_scaffold_dirs_created(self):
         from cli.init_project import init_project
         init_project(no_index=True)
-        for d in (".cognirepo/memory", ".cognirepo/index", ".cognirepo/graph", "vector_db"):
+        for d in (".cognirepo/memory", ".cognirepo/index", ".cognirepo/graph", ".cognirepo/vector_db"):
             assert os.path.isdir(d)
 
 

@@ -89,9 +89,20 @@ pip install cognirepo[security]
 ### Run
 
 ```bash
-cognirepo init                          # scaffold .cognirepo/ and config
-cognirepo index-repo .                  # index your codebase
+# Interactive wizard — asks about multi-model, Redis, encryption, Claude/Gemini MCP:
+cognirepo init
+
+# Non-interactive (CI / scripting):
+cognirepo init --no-index --password mypass --port 8080
+
+cognirepo index-repo .                  # index your codebase (watcher runs in foreground)
+cognirepo index-repo . --daemon         # index and run watcher in background
 cognirepo ask "why is auth slow?"       # route a query through the orchestrator
+
+# Manage background watchers:
+cognirepo list                          # show all running watcher daemons
+cognirepo list -n <PID> --view          # tail the log of a specific watcher
+cognirepo list -n <PID> --stop          # stop a watcher
 
 # Interactive REPL:
 cognirepo chat
@@ -104,23 +115,36 @@ cognirepo doctor
 
 ## Connect your AI tools
 
-### Claude Desktop
+### Claude Code / Claude Desktop (recommended — project-scoped)
 
-Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Run `cognirepo init` inside your project — it asks if you want to configure Claude and
+automatically writes `.claude/CLAUDE.md` and `.claude/settings.json` with the correct
+project-locked connector.
+
+Each project gets its **own isolated connector** named `cognirepo-<project>`:
 
 ```json
 {
   "mcpServers": {
-    "cognirepo": {
+    "cognirepo-myproject": {
       "command": "cognirepo",
-      "args": ["serve"]
+      "args": ["serve", "--project-dir", "/abs/path/to/myproject"],
+      "env": {}
     }
   }
 }
 ```
 
-CogniRepo's 8 memory tools appear automatically in Claude's tool list. Every conversation
-now has access to your project's semantic memory, code structure, and event history.
+The `--project-dir` flag locks the MCP server to that project's `.cognirepo/` directory.
+When Claude has multiple projects open simultaneously, each connector reads only its own
+memories, graph, and index — **never mixing data across projects or teams**.
+
+> **Manual setup:** copy the block above into `.claude/settings.json` in your project root,
+> replacing the path and project name.
+
+CogniRepo's 9 memory tools (`retrieve_memory`, `lookup_symbol`, `search_docs`, `store_memory`,
+`who_calls`, `log_episode`, `subgraph`, `graph_stats`, `episodic_search`) appear in Claude's
+tool list. The `.claude/CLAUDE.md` file instructs Claude when and how to use each tool.
 
 ### Cursor / Copilot
 
@@ -167,11 +191,12 @@ docker compose up api  # REST API on :8080
 
 `cognirepo ask` automatically picks the right model for each query:
 
-| Tier | Score | Use case |
-|------|-------|----------|
-| FAST | 0–6 | Quick lookup, factual, single symbol — answered from local index when possible |
-| BALANCED | 7–14 | Moderate reasoning |
-| DEEP | 15+ | Cross-file, architectural, ambiguous — full context, best model |
+| Tier | Score | Default model | Use case |
+|------|-------|---------------|----------|
+| **QUICK** | 0–2 | Grok | Single-token / trivial — fastest path |
+| **FAST** | 3–6 | Gemini Flash | Quick lookup, factual, single symbol — answered from local index when possible |
+| **BALANCED** | 7–14 | Gemini Flash | Moderate reasoning |
+| **DEEP** | 15+ | Claude | Cross-file, architectural, ambiguous — full context, best model |
 
 ```bash
 cognirepo ask "where is verify_token defined?"       # → FAST, answered locally
@@ -179,7 +204,7 @@ cognirepo ask "why is auth slow?"                    # → DEEP, Claude with ful
 cognirepo ask --verbose "explain the circuit breaker"  # show tier/score/signals
 ```
 
-Provider fallback chain: Anthropic → Gemini → Grok → OpenAI. Configure in `.cognirepo/config.json`.
+Provider fallback chain: Grok → Gemini → Anthropic → OpenAI. All errors are logged to `.cognirepo/errors/<date>.log` — no raw tracebacks shown to users. Configure tiers in `.cognirepo/config.json`.
 
 ---
 

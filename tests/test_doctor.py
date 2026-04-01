@@ -46,7 +46,7 @@ def _run_doctor(
 
     # ── stub env ──────────────────────────────────────────────────────────────
     for var in ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
-                "OPENAI_API_KEY", "GROK_API_KEY"]:
+                "OPENAI_API_KEY", "GROK_API_KEY", "COGNIREPO_MULTI_AGENT_ENABLED"]:
         monkeypatch.delenv(var, raising=False)
 
     if api_keys:
@@ -128,6 +128,17 @@ def _run_doctor(
     fake_psutil.Process = lambda: _FakeProc()
     monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
 
+    # ── stub faiss ────────────────────────────────────────────────────────────
+    fake_faiss = types.ModuleType("faiss")
+    class _FakeIndex:
+        ntotal = 47
+    def _fake_read_index(_):
+        if faiss_fail:
+            raise RuntimeError("FAISS index not found")
+        return _FakeIndex()
+    fake_faiss.read_index = _fake_read_index
+    monkeypatch.setitem(sys.modules, "faiss", fake_faiss)
+
     # ── stub _bm25 ────────────────────────────────────────────────────────────
     fake_bm25_mod = types.ModuleType("_bm25")
     fake_bm25_mod.BACKEND = "python"
@@ -136,21 +147,37 @@ def _run_doctor(
     # ── stub .cognirepo/ presence ─────────────────────────────────────────────
     if with_init:
         def _fake_isdir(p):
+            # doctor checks get_path(""), which may be global or local
             if ".cognirepo" in str(p):
                 return True
             return os.path.isdir.__wrapped__(p)
 
         monkeypatch.setattr(os.path, "isdir", _fake_isdir, raising=False)
+        
         _orig_exists = os.path.exists
-        monkeypatch.setattr(os.path, "exists",
-                            lambda p: True if "config.json" in str(p) else _orig_exists(p))
-        # stub open for config.json
+        def _fake_exists(p):
+            ps = str(p)
+            # Match files checked by doctor
+            if "config.json" in ps or "semantic.index" in ps or \
+               "graph.pkl" in ps or "ast_index.json" in ps or \
+               "episodic.json" in ps:
+                return True
+            return _orig_exists(p)
+            
+        monkeypatch.setattr(os.path, "exists", _fake_exists)
+        # stub open for check files
         import builtins  # pylint: disable=import-outside-toplevel
         import io  # pylint: disable=import-outside-toplevel
         _orig_open = builtins.open
         def _fake_open(p, *a, **kw):
-            if "config.json" in str(p):
+            ps = str(p)
+            if "config.json" in ps:
                 return io.StringIO('{"project_name": "test-project"}')
+            if "ast_index.json" in ps:
+                return io.StringIO('{"files": {"f1.py": {"symbols": [{"name": "s1"}]}}}')
+            if "episodic.json" in ps:
+                # episodic is opened in "rb" mode
+                return io.BytesIO(b'[]')
             return _orig_open(p, *a, **kw)
         monkeypatch.setattr(builtins, "open", _fake_open)
 

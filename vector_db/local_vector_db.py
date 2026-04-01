@@ -15,8 +15,13 @@ import json
 import faiss
 import numpy as np
 
-INDEX_FILE = "vector_db/semantic.index"
-META_FILE = ".cognirepo/memory/semantic_metadata.json"
+from config.paths import get_path
+
+def _index_file() -> str:
+    return get_path("vector_db/semantic.index")
+
+def _meta_file() -> str:
+    return get_path("memory/semantic_metadata.json")
 
 
 class LocalVectorDB:
@@ -29,12 +34,12 @@ class LocalVectorDB:
         Initializes the LocalVectorDB with the specified dimensionality.
         """
         self.dim = dim
-        if os.path.exists(INDEX_FILE):
-            self.index = faiss.read_index(INDEX_FILE)
+        if os.path.exists(_index_file()):
+            self.index = faiss.read_index(_index_file())
         else:
             self.index = faiss.IndexFlatL2(dim)
 
-        if os.path.exists(META_FILE):
+        if os.path.exists(_meta_file()):
             self.metadata = self._load_meta()
         else:
             self.metadata = []
@@ -42,7 +47,7 @@ class LocalVectorDB:
     # ── metadata persistence (with optional encryption) ───────────────────────
 
     def _load_meta(self) -> list:
-        with open(META_FILE, "rb") as f:
+        with open(_meta_file(), "rb") as f:
             raw = f.read()
         from security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
@@ -58,15 +63,15 @@ class LocalVectorDB:
         if encrypt:
             from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
             content = encrypt_bytes(content, get_or_create_key(project_id))
-        os.makedirs(os.path.dirname(META_FILE), exist_ok=True)
-        with open(META_FILE, "wb") as f:
+        os.makedirs(os.path.dirname(_meta_file()), exist_ok=True)
+        with open(_meta_file(), "wb") as f:
             f.write(content)
 
     def save(self):
         """
         Saves the FAISS index and metadata to disk.
         """
-        faiss.write_index(self.index, INDEX_FILE)
+        faiss.write_index(self.index, _index_file())
         self._save_meta()
 
     def add(self, vector, text, importance):

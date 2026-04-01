@@ -9,6 +9,7 @@ Tool to store a text memory into semantic memory.
 """
 import sys
 from memory.semantic_memory import SemanticMemory
+from memory.episodic_memory import log_event
 
 
 def store_memory(text: str, source: str = "") -> dict:
@@ -18,6 +19,13 @@ def store_memory(text: str, source: str = "") -> dict:
     mem = SemanticMemory()
     importance = mem.compute_importance(text)
     mem.store(text)
+
+    # Log the event in episodic memory
+    log_event(
+        event=f"store-memory: {text[:50]}...",
+        metadata={"source": source, "importance": importance, "type": "semantic_storage"}
+    )
+
     return {"status": "stored", "text": text, "source": source, "importance": importance}
 
 

@@ -29,6 +29,11 @@ Typical usage (inside anthropic_adapter.py or router.py):
 """
 from __future__ import annotations
 
+import os
+import socket
+import subprocess
+import time
+
 import grpc
 
 from rpc.proto import cognirepo_pb2 as pb2
@@ -36,6 +41,7 @@ from rpc.proto import cognirepo_pb2_grpc as pb2_grpc
 
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 50051
+DEFAULT_IDLE_TIMEOUT = 900  # 15 minutes
 
 
 class CogniRepoClient:
@@ -53,6 +59,8 @@ class CogniRepoClient:
     """
 
     def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT) -> None:
+        self._host = host
+        self._port = port
         self._address = f"{host}:{port}"
         self._channel: grpc.Channel | None = None
         self._query_stub: pb2_grpc.QueryServiceStub | None = None
@@ -62,10 +70,43 @@ class CogniRepoClient:
 
     def connect(self) -> "CogniRepoClient":
         """Initialize the gRPC channel and stubs."""
+        if self._host in ("localhost", "127.0.0.1"):
+            self._ensure_server_running()
+
         self._channel = grpc.insecure_channel(self._address)
         self._query_stub = pb2_grpc.QueryServiceStub(self._channel)
         self._ctx_stub = pb2_grpc.ContextServiceStub(self._channel)
         return self
+
+    def _ensure_server_running(self) -> None:
+        """Check if port is open; if not, spawn the server in the background."""
+        if self._is_port_open():
+            return
+
+        print(f"[gRPC] Server not found on port {self._port}. Starting on-demand...")
+        try:
+            # Start server with 15-min idle timeout
+            subprocess.Popen(  # pylint: disable=consider-using-with  # nosec B603
+                ["cognirepo", "serve-grpc", "--port", str(self._port),
+                 "--idle-timeout", str(DEFAULT_IDLE_TIMEOUT)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,  # ensure it survives client exit
+            )
+            # Wait up to 5s for the server to bind the port
+            for _ in range(25):
+                time.sleep(0.2)
+                if self._is_port_open():
+                    print(f"[gRPC] Server started on port {self._port}.")
+                    return
+            print("[gRPC] Warning: server start timed out. Connection may fail.")
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"[gRPC] Failed to auto-start server: {exc}")
+
+    def _is_port_open(self) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1.0)
+            return s.connect_ex((self._host, self._port)) == 0
 
     def close(self) -> None:
         """Close the underlying gRPC channel."""

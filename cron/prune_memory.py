@@ -233,6 +233,8 @@ def prune(
 
 def main() -> None:
     """CLI entry point for pruning semantic memory."""
+    from dotenv import load_dotenv  # pylint: disable=import-outside-toplevel
+    load_dotenv()
     parser = argparse.ArgumentParser(description="Prune CogniRepo semantic memory")
     parser.add_argument("--dry-run", action="store_true",
                         help="Report only — do not modify any files")

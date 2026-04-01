@@ -25,6 +25,8 @@ Or call from code:
 from __future__ import annotations
 
 import argparse
+import os
+import threading
 import time
 from concurrent import futures
 
@@ -37,6 +39,32 @@ from rpc.proto import cognirepo_pb2_grpc as pb2_grpc
 DEFAULT_PORT = 50051
 _MAX_WORKERS = 10
 
+# Inactivity management
+_last_activity = time.time()
+_activity_lock = threading.Lock()
+
+
+def _update_activity():
+    global _last_activity
+    with _activity_lock:
+        _last_activity = time.time()
+
+
+def _check_inactivity(server: grpc.Server, timeout: int):
+    """Background thread that stops the server after 'timeout' seconds of silence."""
+    if timeout <= 0:
+        return
+    while True:
+        time.sleep(30)
+        with _activity_lock:
+            elapsed = time.time() - _last_activity
+        if elapsed > timeout:
+            print(f"[gRPC] Inactive for {timeout}s. Shutting down automatically.")
+            # We use os._exit(0) for a hard exit of the daemon process
+            # because server.stop() doesn't always break the block loop cleanly.
+            server.stop(grace=2)
+            os._exit(0)
+
 
 # ── QueryService implementation ───────────────────────────────────────────────
 
@@ -48,6 +76,7 @@ class QueryServiceServicer(pb2_grpc.QueryServiceServicer):
         request: pb2.QueryRequest,
         context: grpc.ServicerContext,
     ) -> pb2.QueryResponse:
+        _update_activity()
         try:
             from orchestrator.router import route  # pylint: disable=import-outside-toplevel
             result = route(
@@ -89,6 +118,7 @@ class QueryServiceServicer(pb2_grpc.QueryServiceServicer):
         doesn't stream yet).  Yields partial tokens once streaming is added
         to model adapters.
         """
+        _update_activity()
         response = self.SubQuery(request, context)
         # Split by sentence for a realistic streaming feel when adapters upgrade.
         import re  # pylint: disable=import-outside-toplevel
@@ -118,6 +148,7 @@ class ContextServiceServicer(pb2_grpc.ContextServiceServicer):
         request: pb2.ContextSyncRequest,
         context: grpc.ServicerContext,
     ) -> pb2.ContextSyncResponse:
+        _update_activity()
         try:
             store = get_store()
             version = store.push(request.context_id, request.key, request.value)
@@ -132,6 +163,7 @@ class ContextServiceServicer(pb2_grpc.ContextServiceServicer):
         request: pb2.ContextGetRequest,
         context: grpc.ServicerContext,
     ) -> pb2.ContextGetResponse:
+        _update_activity()
         try:
             store = get_store()
             entries = store.get(request.context_id, request.key)
@@ -151,6 +183,7 @@ class ContextServiceServicer(pb2_grpc.ContextServiceServicer):
         request: pb2.ListSessionsRequest,
         context: grpc.ServicerContext,
     ) -> pb2.ListSessionsResponse:
+        _update_activity()
         try:
             store = get_store()
             ids = store.list_sessions(limit=request.limit)
@@ -170,22 +203,38 @@ def _confidence_from_tier(tier: str) -> float:
 
 # ── server lifecycle ──────────────────────────────────────────────────────────
 
-def start_server(port: int = DEFAULT_PORT, block: bool = True) -> grpc.Server:
+def start_server(
+    port: int = DEFAULT_PORT,
+    block: bool = True,
+    idle_timeout: int = 0,
+) -> grpc.Server:
     """
     Create, register services, and start the gRPC server.
 
     Parameters
     ----------
-    port  : TCP port to listen on
-    block : if True, blocks until KeyboardInterrupt (CLI mode);
-            if False, returns the server object for programmatic control.
+    port         : TCP port to listen on
+    block        : if True, blocks until KeyboardInterrupt (CLI mode);
+                   if False, returns the server object for programmatic control.
+    idle_timeout : shutdown after this many seconds of inactivity (0 to disable).
     """
+    from dotenv import load_dotenv  # pylint: disable=import-outside-toplevel
+    load_dotenv()
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=_MAX_WORKERS))
     pb2_grpc.add_QueryServiceServicer_to_server(QueryServiceServicer(), server)
     pb2_grpc.add_ContextServiceServicer_to_server(ContextServiceServicer(), server)
     server.add_insecure_port(f"[::]:{port}")
     server.start()
     print(f"[gRPC] CogniRepo server listening on port {port}", flush=True)
+
+    if idle_timeout > 0:
+        print(f"[gRPC] Idle timeout set to {idle_timeout}s")
+        t = threading.Thread(
+            target=_check_inactivity,
+            args=(server, idle_timeout),
+            daemon=True,
+        )
+        t.start()
 
     if block:
         try:
@@ -208,5 +257,11 @@ def stop_server(server: grpc.Server, grace: float = 5.0) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="CogniRepo gRPC server")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument(
+        "--idle-timeout",
+        type=int,
+        default=0,
+        help="Shut down after N seconds of inactivity (0 to disable)",
+    )
     args = parser.parse_args()
-    start_server(port=args.port, block=True)
+    start_server(port=args.port, block=True, idle_timeout=args.idle_timeout)

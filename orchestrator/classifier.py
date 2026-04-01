@@ -6,7 +6,7 @@
 
 """
 Complexity Classifier — rule-based, multi-signal weighted scorer.
-No ML training required. Decides FAST / BALANCED / DEEP tier for every query.
+No ML training required. Decides QUICK / FAST / BALANCED / DEEP tier for every query.
 
 Signal table (from ARCHITECTURE.md):
 ┌────────────────────────────────────────────────┬────────┬──────────────────────────┐
@@ -21,11 +21,11 @@ Signal table (from ARCHITECTURE.md):
 │ Imperative+abstract combo (implement,build,…) │  +4    │ binary                   │
 └────────────────────────────────────────────────┴────────┴──────────────────────────┘
 
-Tiers:   0–6 → FAST    7–14 → BALANCED    15+ → DEEP
+Tiers:   0–2 → QUICK (Grok)   3–6 → FAST   7–14 → BALANCED   15+ → DEEP
 
 Hard overrides (bypass score):
   "full context" / "everything related"   → DEEP
-  single word / single symbol             → FAST
+  single word / single symbol             → QUICK (fastest path)
   error trace in query                    → BALANCED minimum
 """
 import json
@@ -33,7 +33,10 @@ import os
 import re
 from dataclasses import dataclass, field
 
-CONFIG_FILE = ".cognirepo/config.json"
+from config.paths import get_path
+
+def _config_file() -> str:
+    return get_path("config.json")
 
 # ── keyword sets ──────────────────────────────────────────────────────────────
 _REASONING_KW = {
@@ -63,31 +66,33 @@ _ERROR_PATTERNS = re.compile(
 )
 
 # ── tier → score boundaries ───────────────────────────────────────────────────
-_TIER_FAST = 6.0
+_TIER_QUICK    = 2.0
+_TIER_FAST     = 6.0
 _TIER_BALANCED = 14.0
 
 
 @dataclass
 class ClassifierResult:
     """Result of the query complexity classification."""
-    tier: str                          # "FAST" | "BALANCED" | "DEEP"
+    tier: str                          # "QUICK" | "FAST" | "BALANCED" | "DEEP"
     score: float
     model: str                         # resolved model ID
-    provider: str                      # "anthropic" | "gemini" | "openai"
+    provider: str                      # "anthropic" | "gemini" | "grok" | "openai"
     signals: dict[str, float] = field(default_factory=dict)
     overrides: list[str] = field(default_factory=list)
 
 
 def _load_model_registry() -> dict:
     default = {
+        "QUICK":    {"provider": "grok",      "model": "grok-beta"},
         "FAST":     {"provider": "gemini",    "model": "gemini-2.0-flash"},
         "BALANCED": {"provider": "gemini",    "model": "gemini-2.0-flash"},
         "DEEP":     {"provider": "anthropic", "model": "claude-sonnet-4-6"},
     }
-    if not os.path.exists(CONFIG_FILE):
+    if not os.path.exists(_config_file()):
         return default
     try:
-        with open(CONFIG_FILE, encoding="utf-8") as f:
+        with open(_config_file(), encoding="utf-8") as f:
             cfg = json.load(f)
         return cfg.get("models", default)
     except (json.JSONDecodeError, OSError):
@@ -118,7 +123,7 @@ def classify(
 
     # ── hard overrides ────────────────────────────────────────────────────────
     if len(tokens) <= 1:
-        tier = "FAST"
+        tier = "QUICK"
         overrides.append("single_token")
         score = 0.0
     elif any(p in q_lower for p in _FULL_CONTEXT):
@@ -207,6 +212,8 @@ def _compute_score(
 
 
 def _score_to_tier(score: float) -> str:
+    if score <= _TIER_QUICK:
+        return "QUICK"
     if score <= _TIER_FAST:
         return "FAST"
     if score <= _TIER_BALANCED:

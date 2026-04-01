@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: 2026 Ashlesha T
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
+# Licensed under AGPL v3. See LICENSE file in repository root.
+
+"""
+Centralized path management for CogniRepo storage.
+"""
+import hashlib
+import os
+from pathlib import Path
+
+def get_project_hash(project_path: str) -> str:
+    """Generate a stable 8-character hash for a project path."""
+    abs_path = os.path.abspath(project_path)
+    return hashlib.sha256(abs_path.encode()).hexdigest()[:8]
+
+_OVERRIDE_DIR = None
+
+def set_cognirepo_dir(path: str):
+    """Explicitly override the .cognirepo directory (e.g. from CLI flag)."""
+    global _OVERRIDE_DIR
+    _OVERRIDE_DIR = os.path.abspath(path)
+
+def get_cognirepo_dir() -> str:
+    """
+    Determine the base directory for .cognirepo storage.
+    
+    Priority:
+    1. Explicit override via set_cognirepo_dir()
+    2. COGNIREPO_DIR environment variable
+    3. Local .cognirepo/ directory in CWD (if it exists)
+    4. Global ~/.cognirepo/storage/<hash_of_cwd>/
+    """
+    if _OVERRIDE_DIR:
+        return _OVERRIDE_DIR
+
+    # 1. Environment variable override
+    env_dir = os.environ.get("COGNIREPO_DIR")
+    if env_dir:
+        return os.path.abspath(env_dir)
+
+    # 2. Local directory (backward compatibility / explicit local)
+    local_dir = os.path.join(os.getcwd(), ".cognirepo")
+    if os.path.isdir(local_dir):
+        return local_dir
+
+    # 3. Global directory (Issue 2)
+    home_dir = str(Path.home())
+    project_path = os.getcwd()
+    project_hash = get_project_hash(project_path)
+    project_name = os.path.basename(project_path)
+    
+    global_base = os.path.join(home_dir, ".cognirepo", "storage")
+    project_storage = os.path.join(global_base, f"{project_name}_{project_hash}")
+    
+    return project_storage
+
+def get_path(subpath: str) -> str:
+    """
+    Get the absolute path for a file or directory under .cognirepo.
+    Automatically ensures the parent directory exists.
+    """
+    base = get_cognirepo_dir()
+    # If subpath is absolute, it might be a mistake or intended. 
+    # Usually subpaths are relative like 'graph/graph.pkl'.
+    if os.path.isabs(subpath):
+        full_path = subpath
+    else:
+        full_path = os.path.join(base, subpath)
+    
+    # Ensure directory exists for files
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    return full_path

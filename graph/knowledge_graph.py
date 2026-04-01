@@ -23,7 +23,10 @@ from typing import Any
 import networkx as nx
 
 
-GRAPH_FILE = ".cognirepo/graph/graph.pkl"
+from config.paths import get_path
+
+def _graph_file() -> str:
+    return get_path("graph/graph.pkl")
 
 
 class NodeType:  # pylint: disable=too-few-public-methods
@@ -57,10 +60,10 @@ class KnowledgeGraph:
 
     def _load(self) -> None:
         """Load graph from disk; decrypt if needed."""
-        if not os.path.exists(GRAPH_FILE):
+        if not os.path.exists(_graph_file()):
             return
         try:
-            with open(GRAPH_FILE, "rb") as f:
+            with open(_graph_file(), "rb") as f:
                 raw = f.read()
             from security import get_storage_config  # pylint: disable=import-outside-toplevel
             encrypt, project_id = get_storage_config()
@@ -70,7 +73,7 @@ class KnowledgeGraph:
             self.G = pickle.loads(raw)  # nosec B301
         except Exception as exc:  # pylint: disable=broad-except
             warnings.warn(
-                f"KnowledgeGraph: could not load {GRAPH_FILE} ({exc}). "
+                f"KnowledgeGraph: could not load {_graph_file()} ({exc}). "
                 "Starting with an empty graph. Re-run `cognirepo index-repo` to rebuild.",
                 stacklevel=2,
             )
@@ -78,14 +81,14 @@ class KnowledgeGraph:
 
     def save(self) -> None:
         """Serialize the graph to a pickle file; encrypt if needed."""
-        os.makedirs(os.path.dirname(GRAPH_FILE), exist_ok=True)
+        os.makedirs(os.path.dirname(_graph_file()), exist_ok=True)
         from security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
         raw = pickle.dumps(self.G, protocol=pickle.HIGHEST_PROTOCOL)
         if encrypt:
             from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
             raw = encrypt_bytes(raw, get_or_create_key(project_id))
-        with open(GRAPH_FILE, "wb") as f:
+        with open(_graph_file(), "wb") as f:
             f.write(raw)
 
     # ── mutation ──────────────────────────────────────────────────────────────
