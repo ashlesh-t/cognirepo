@@ -25,6 +25,7 @@ Default: {"vector": 0.5, "graph": 0.3, "behaviour": 0.2}
 import json
 import math
 import os
+import time
 
 import numpy as np
 
@@ -246,13 +247,42 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
 
 # ── module-level convenience ──────────────────────────────────────────────────
 
+# TTL cache for hybrid_retrieve: (query, top_k) → (result, timestamp)
+_HYBRID_CACHE: dict[tuple, tuple] = {}
+_HYBRID_CACHE_TTL = 300  # 5 minutes
+_CACHE_HITS = 0
+_CACHE_MISSES = 0
+
+
 def hybrid_retrieve(query: str, top_k: int = 5) -> list[dict]:
     """
     Single entry point used by tools/retrieve_memory.py.
-    Instantiates HybridRetriever on each call (acceptable for CLI use;
-    for server use, keep one instance alive).
+    Caches results for _HYBRID_CACHE_TTL seconds (default 5 min).
+    Call invalidate_hybrid_cache() on file-change events to evict stale entries.
     """
-    return HybridRetriever().retrieve(query, top_k)
+    global _CACHE_HITS, _CACHE_MISSES  # pylint: disable=global-statement
+    cache_key = (query, top_k)
+    now = time.monotonic()
+    cached = _HYBRID_CACHE.get(cache_key)
+    if cached is not None:
+        result, ts = cached
+        if now - ts < _HYBRID_CACHE_TTL:
+            _CACHE_HITS += 1
+            return result
+    _CACHE_MISSES += 1
+    result = HybridRetriever().retrieve(query, top_k)
+    _HYBRID_CACHE[cache_key] = (result, now)
+    return result
+
+
+def invalidate_hybrid_cache() -> None:
+    """Evict all cached results. Call this on any file-change event."""
+    _HYBRID_CACHE.clear()
+
+
+def cache_stats() -> dict:
+    """Return cache hit/miss counts for cognirepo doctor."""
+    return {"hits": _CACHE_HITS, "misses": _CACHE_MISSES}
 
 
 # ── episodic BM25 filter ──────────────────────────────────────────────────────

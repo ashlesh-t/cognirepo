@@ -15,6 +15,7 @@ from mcp.server.fastmcp import FastMCP
 
 from tools.store_memory import store_memory as _store_memory
 from tools.retrieve_memory import retrieve_memory as _retrieve_memory
+from tools.context_pack import context_pack as _context_pack
 from retrieval.docs_search import search_docs as _search_docs
 from memory.episodic_memory import log_event, get_history, search_episodes
 
@@ -172,6 +173,28 @@ def graph_stats() -> dict:
     }
 
 
+@mcp.tool()
+def context_pack(
+    query: str,
+    max_tokens: int = 2000,
+    include_episodic: bool = True,
+    include_symbols: bool = True,
+    window_lines: int = 15,
+) -> dict:
+    """
+    Budget-pack the most relevant code + episodic context into a token-bounded
+    block ready for injection into the next prompt.  Call this BEFORE reading
+    any source file to avoid wasting tokens on raw file reads.
+    """
+    return _context_pack(
+        query=query,
+        max_tokens=max_tokens,
+        include_episodic=include_episodic,
+        include_symbols=include_symbols,
+        window_lines=window_lines,
+    )
+
+
 def _build_manifest() -> dict:
     """Return the tool-schema manifest so non-MCP clients can read it."""
     return {
@@ -314,6 +337,41 @@ def _build_manifest() -> dict:
                     "type": "object",
                     "properties": {},
                     "required": [],
+                },
+            },
+            {
+                "name": "context_pack",
+                "description": (
+                    "Budget-pack the most relevant code + episodic context into a "
+                    "token-bounded block for prompt injection.  Call this BEFORE "
+                    "reading any source file."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search intent or question"},
+                        "max_tokens": {
+                            "type": "integer",
+                            "description": "Hard token budget for output",
+                            "default": 2000,
+                        },
+                        "include_episodic": {
+                            "type": "boolean",
+                            "description": "Include episodic memory hits",
+                            "default": True,
+                        },
+                        "include_symbols": {
+                            "type": "boolean",
+                            "description": "Include AST/symbol hits with code windows",
+                            "default": True,
+                        },
+                        "window_lines": {
+                            "type": "integer",
+                            "description": "Lines of code context above/below each hit",
+                            "default": 15,
+                        },
+                    },
+                    "required": ["query"],
                 },
             },
         ],

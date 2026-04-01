@@ -26,6 +26,7 @@ Persistence:
 from __future__ import annotations
 
 import ast
+import functools
 import hashlib
 import json
 import logging
@@ -448,6 +449,23 @@ class ASTIndexer:
             "symbols": raw_symbols,
         }
         self.index_data["files"][rel_path] = file_record
+
+        # incrementally update reverse_index for this file only
+        rev = self.index_data.setdefault("reverse_index", {})
+        # remove old entries pointing to this file
+        for name, locations in list(rev.items()):
+            rev[name] = [loc for loc in locations if loc[0] != rel_path]
+            if not rev[name]:
+                del rev[name]
+        # add new entries
+        for sym in raw_symbols:
+            entry = [rel_path, sym["start_line"]]
+            rev.setdefault(sym["name"], [])
+            if entry not in rev[sym["name"]]:
+                rev[sym["name"]].append(entry)
+        # invalidate lookup cache so stale results are not served
+        type(self).lookup_symbol.cache_clear()
+
         return file_record
 
     # ── kept for ASTIndexer API compatibility ─────────────────────────────────
@@ -467,9 +485,12 @@ class ASTIndexer:
                 if entry not in rev[name]:
                     rev[name].append(entry)
         self.index_data["reverse_index"] = rev
+        # invalidate lookup cache so fresh results are served
+        type(self).lookup_symbol.cache_clear()
 
     # ── lookup ────────────────────────────────────────────────────────────────
 
+    @functools.lru_cache(maxsize=512)
     def lookup_symbol(self, symbol_name: str) -> list[dict]:
         """O(1) reverse-index lookup. Returns [{'file': str, 'line': int}]."""
         entries = self.index_data["reverse_index"].get(symbol_name, [])

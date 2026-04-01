@@ -53,8 +53,26 @@ class LocalVectorDB:
         encrypt, project_id = get_storage_config()
         if encrypt:
             from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
-            raw = decrypt_bytes(raw, get_or_create_key(project_id))
-        return json.loads(raw)
+            try:
+                raw = decrypt_bytes(raw, get_or_create_key(project_id))
+            except Exception:  # pylint: disable=broad-except
+                # Key mismatch or corrupted file — start with a clean slate.
+                # The stale file will be overwritten on the next save().
+                import logging  # pylint: disable=import-outside-toplevel
+                logging.getLogger(__name__).warning(
+                    "semantic_metadata.json could not be decrypted (key mismatch or "
+                    "corruption). Starting with empty metadata — existing entries will "
+                    "be lost on next store_memory call."
+                )
+                return []
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            import logging  # pylint: disable=import-outside-toplevel
+            logging.getLogger(__name__).warning(
+                "semantic_metadata.json is not valid JSON. Starting with empty metadata."
+            )
+            return []
 
     def _save_meta(self) -> None:
         from security import get_storage_config  # pylint: disable=import-outside-toplevel

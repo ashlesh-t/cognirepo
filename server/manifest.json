@@ -164,6 +164,42 @@
         "properties": {},
         "required": []
       }
+    },
+    {
+      "name": "context_pack",
+      "description": "Budget-pack the most relevant code + episodic context into a token-bounded block for prompt injection.  Call this BEFORE reading any source file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search intent or question"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "description": "Hard token budget for output",
+            "default": 2000
+          },
+          "include_episodic": {
+            "type": "boolean",
+            "description": "Include episodic memory hits",
+            "default": true
+          },
+          "include_symbols": {
+            "type": "boolean",
+            "description": "Include AST/symbol hits with code windows",
+            "default": true
+          },
+          "window_lines": {
+            "type": "integer",
+            "description": "Lines of code context above/below each hit",
+            "default": 15
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
     }
   ]
 }
