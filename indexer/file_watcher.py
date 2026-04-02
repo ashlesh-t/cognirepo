@@ -5,8 +5,12 @@
 # Licensed under AGPL v3. See LICENSE file in repository root.
 
 """
-File watcher — uses watchdog to detect .py file changes and trigger
-incremental re-indexing + graph updates.
+File watcher — uses watchdog to detect changes to any indexed file type
+(.py, .ts, .tsx, .js, .go, .rs, .java, .cpp, …) and trigger incremental
+re-indexing + graph updates.
+
+Extension coverage is driven by language_registry.is_supported() so new
+grammars are automatically watched as soon as they are installed.
 
 NOTE: Do NOT start from `cognirepo index-repo`. The watcher is a daemon
 thread and belongs to the `cognirepo serve` or `cognirepo watch` lifecycle.
@@ -35,7 +39,7 @@ if TYPE_CHECKING:
 
 
 class RepoFileHandler(FileSystemEventHandler):
-    """Watchdog handler that re-indexes changed Python files."""
+    """Watchdog handler that re-indexes any changed file whose extension is supported."""
 
     def __init__(
         self,
@@ -73,6 +77,7 @@ class RepoFileHandler(FileSystemEventHandler):
         1. Drop all graph nodes whose 'file' attr matches.
         2. Remove the file entry from index_data["files"].
         3. Rebuild reverse index and save.
+        4. Invalidate the hybrid-retrieve TTL cache.
         """
         try:
             rel_path = os.path.relpath(abs_path, self.repo_root)
@@ -85,6 +90,13 @@ class RepoFileHandler(FileSystemEventHandler):
             self.indexer._build_reverse_index()  # pylint: disable=protected-access
             self.indexer.save()
             self.graph.save()
+
+            # invalidate retrieval cache so stale results are not served
+            try:
+                from retrieval.hybrid import invalidate_hybrid_cache  # pylint: disable=import-outside-toplevel
+                invalidate_hybrid_cache()
+            except Exception:  # pylint: disable=broad-except
+                pass
 
             print(f"[watcher] removed {rel_path} from index")
         except Exception as exc:  # pylint: disable=broad-except
@@ -116,6 +128,13 @@ class RepoFileHandler(FileSystemEventHandler):
             # behaviour tracking
             self.behaviour.record_file_edit(rel_path, self.session_id)
             self.behaviour.save()
+
+            # invalidate retrieval cache so fresh symbols are served
+            try:
+                from retrieval.hybrid import invalidate_hybrid_cache  # pylint: disable=import-outside-toplevel
+                invalidate_hybrid_cache()
+            except Exception:  # pylint: disable=broad-except
+                pass
 
             print(f"[watcher] re-indexed {rel_path}")
         except Exception as exc:  # pylint: disable=broad-except

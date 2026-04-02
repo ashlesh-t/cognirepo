@@ -69,21 +69,25 @@ _SKIP_DIRS = {
 
 # tree-sitter node types that represent named functions / methods
 _TS_FUNCTION_TYPES = frozenset({
-    "function_definition",   # Python, C++
-    "function_declaration",  # JS, Java, Go, C
-    "function_item",         # Rust
-    "method_declaration",    # Java, C#
-    "method_definition",     # JS class methods
-    "function_expression",   # JS assigned function
+    "function_definition",        # Python, C++
+    "function_declaration",       # JS, TS, Java, Go, C
+    "function_item",              # Rust
+    "method_declaration",         # Java, C#
+    "method_definition",          # JS/TS class methods
+    "function_expression",        # JS assigned function
+    "method_signature",           # TS interface methods
 })
 
 # tree-sitter node types that represent named classes / types
 _TS_CLASS_TYPES = frozenset({
-    "class_definition",      # Python
-    "class_declaration",     # Java, JS
-    "class_specifier",       # C++
-    "struct_item",           # Rust
-    "interface_declaration", # Java, TS
+    "class_definition",           # Python
+    "class_declaration",          # Java, JS, TS
+    "abstract_class_declaration", # TypeScript abstract classes
+    "class_specifier",            # C++
+    "struct_item",                # Rust
+    "interface_declaration",      # Java, TS
+    "type_alias_declaration",     # TypeScript type aliases
+    "enum_declaration",           # TypeScript / Java enums
 })
 
 

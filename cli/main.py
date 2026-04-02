@@ -236,24 +236,45 @@ def _cmd_doctor(verbose: bool = False) -> int:
         _fail("Episodic log — not found", "Run: cognirepo init")
         issues += 1
 
-    # ── Check 6: Language support ─────────────────────────────────────────────
+    # ── Check 6: Language support matrix ─────────────────────────────────────
     try:
-        from indexer.language_registry import supported_extensions  # pylint: disable=import-outside-toplevel
-        _exts = supported_extensions()
-        _ext_names = {
-            ".py": "Python", ".js": "JS", ".jsx": "JS",
-            ".ts": "TS", ".tsx": "TS", ".java": "Java",
-            ".go": "Go", ".rs": "Rust", ".c": "C",
-            ".cpp": "C++", ".cc": "C++", ".h": "C/C++",
+        from indexer.language_registry import _GRAMMAR_MAP, _get_language, clear_cache  # pylint: disable=import-outside-toplevel
+        clear_cache()
+        # canonical per-language check: one representative ext per language
+        _lang_checks = [
+            ("Python",     ".py"),
+            ("TypeScript", ".ts"),
+            ("JavaScript", ".js"),
+            ("Go",         ".go"),
+            ("Rust",       ".rs"),
+            ("Java",       ".java"),
+            ("C++",        ".cpp"),
+        ]
+        _supported_langs: list[str] = []
+        _missing_langs: list[tuple[str, str]] = []  # (lang, install_hint)
+        _pkg_hints = {
+            ".ts":   "tree-sitter-typescript",
+            ".js":   "tree-sitter-javascript",
+            ".go":   "tree-sitter-go",
+            ".rs":   "tree-sitter-rust",
+            ".java": "tree-sitter-java",
+            ".cpp":  "tree-sitter-cpp",
         }
-        _seen: set[str] = set()
-        _lang_list: list[str] = []
-        for ext in sorted(_exts):
-            name = _ext_names.get(ext, ext)
-            if name not in _seen:
-                _seen.add(name)
-                _lang_list.append(name)
-        _ok(f"Language support — {', '.join(_lang_list) if _lang_list else 'Python (built-in)'}")
+        for _lang_name, _ext in _lang_checks:
+            if _ext == ".py":
+                _supported_langs.append(_lang_name)  # always available via stdlib
+            elif _get_language(_ext) is not None:
+                _supported_langs.append(_lang_name)
+            else:
+                _missing_langs.append((_lang_name, _pkg_hints.get(_ext, "")))
+
+        _ok(f"Language support — indexable: {', '.join(_supported_langs)}")
+        for _mlang, _mpkg in _missing_langs:
+            _fail(
+                f"Language support — {_mlang}: grammar not installed",
+                f"Run: pip install {_mpkg}" if _mpkg else "",
+            )
+            issues += 1
     except Exception as exc:  # pylint: disable=broad-except
         _ok(f"Language support — Python (built-in) [{exc}]")
 

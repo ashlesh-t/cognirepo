@@ -27,9 +27,9 @@ log = logging.getLogger(__name__)
 _GRAMMAR_MAP: dict[str, str] = {
     ".py":   "tree_sitter_python",
     ".js":   "tree_sitter_javascript",
-    ".ts":   "tree_sitter_javascript",
     ".jsx":  "tree_sitter_javascript",
-    ".tsx":  "tree_sitter_javascript",
+    ".ts":   "tree_sitter_typescript",
+    ".tsx":  "tree_sitter_typescript",
     ".java": "tree_sitter_java",
     ".cpp":  "tree_sitter_cpp",
     ".cc":   "tree_sitter_cpp",
@@ -37,6 +37,13 @@ _GRAMMAR_MAP: dict[str, str] = {
     ".hpp":  "tree_sitter_cpp",
     ".go":   "tree_sitter_go",
     ".rs":   "tree_sitter_rust",
+}
+
+# Some grammar packages expose multiple language() functions instead of
+# the standard single language() function.  Map ext → (package, func_name).
+_GRAMMAR_FUNC_OVERRIDE: dict[str, tuple[str, str]] = {
+    ".ts":  ("tree_sitter_typescript", "language_typescript"),
+    ".tsx": ("tree_sitter_typescript", "language_tsx"),
 }
 
 # Human-readable language labels (used in index-repo summary output)
@@ -59,9 +66,9 @@ _LANG_LABELS: dict[str, str] = {
 _LANG_NAMES: dict[str, str] = {
     ".py":   "python",
     ".js":   "javascript",
-    ".ts":   "javascript",
     ".jsx":  "javascript",
-    ".tsx":  "javascript",
+    ".ts":   "typescript",
+    ".tsx":  "tsx",
     ".java": "java",
     ".cpp":  "cpp",
     ".cc":   "cpp",
@@ -114,8 +121,14 @@ def _get_language(ext: str):
 
     try:
         from tree_sitter import Language  # pylint: disable=import-outside-toplevel
-        mod = importlib.import_module(pkg)
-        lang = Language(mod.language())
+        override = _GRAMMAR_FUNC_OVERRIDE.get(ext)
+        if override:
+            pkg_name, func_name = override
+            mod = importlib.import_module(pkg_name)
+            lang = Language(getattr(mod, func_name)())
+        else:
+            mod = importlib.import_module(pkg)
+            lang = Language(mod.language())
         _lang_cache[ext] = lang
         return lang
     except ImportError:
