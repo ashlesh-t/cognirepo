@@ -92,9 +92,10 @@ class LocalVectorDB:
         faiss.write_index(self.index, _index_file())
         self._save_meta()
 
-    def add(self, vector, text, importance):
+    def add(self, vector, text, importance, source: str = "memory"):
         """
         Adds a new vector and its associated metadata to the database.
+        source — "memory" for episodic/semantic memories, "symbol" for code symbols.
         """
         vector = np.array([vector]).astype("float32")
 
@@ -102,39 +103,62 @@ class LocalVectorDB:
 
         self.metadata.append({
             "text": text,
-            "importance": importance
+            "importance": importance,
+            "source": source,
         })
 
         self.save()
 
-    def search(self, vector, k=5):
+    def search(self, vector, k=5, source: str | None = None):
         """
         Searches for the k most similar vectors to the given query vector.
+        source — optional filter: "memory" | "symbol". None means no filter.
         """
         vector = np.array([vector]).astype("float32")
 
-        _, indices = self.index.search(vector, k)
+        # fetch more candidates when filtering so we still return up to k
+        fetch_k = min(k * 3 if source else k, self.index.ntotal) if self.index.ntotal > 0 else 0
+        if fetch_k == 0:
+            return []
+
+        _, indices = self.index.search(vector, fetch_k)
 
         results = []
-
         for i in indices[0]:
             if i < len(self.metadata):
-                results.append(self.metadata[i])
+                record = self.metadata[i]
+                # entries without a "source" field are legacy memories
+                if source and record.get("source", "memory") != source:
+                    continue
+                results.append(record)
+                if len(results) == k:
+                    break
 
         return results
 
-    def search_with_scores(self, vector, k=5):
+    def search_with_scores(self, vector, k=5, source: str | None = None):
         """
         Like search() but each result also includes 'l2_distance' and 'faiss_row'.
         Used by HybridRetriever to compute vector_score = max(0, 1 - dist/2).
+        source — optional filter: "memory" | "symbol". None means no filter.
         """
         vector = np.array([vector]).astype("float32")
-        distances, indices = self.index.search(vector, k)
+
+        fetch_k = min(k * 3 if source else k, self.index.ntotal) if self.index.ntotal > 0 else 0
+        if fetch_k == 0:
+            return []
+
+        distances, indices = self.index.search(vector, fetch_k)
         results = []
         for dist, i in zip(distances[0], indices[0]):
             if 0 <= i < len(self.metadata):
-                record = dict(self.metadata[i])
-                record["l2_distance"] = float(dist)
-                record["faiss_row"] = int(i)
-                results.append(record)
+                record = self.metadata[i]
+                if source and record.get("source", "memory") != source:
+                    continue
+                entry = dict(record)
+                entry["l2_distance"] = float(dist)
+                entry["faiss_row"] = int(i)
+                results.append(entry)
+                if len(results) == k:
+                    break
         return results

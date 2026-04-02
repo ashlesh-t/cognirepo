@@ -424,6 +424,7 @@ class ASTIndexer:
                 "file": rel_path,
                 "start_line": sym["start_line"],
                 "docstring": sym.get("docstring", ""),
+                "source": "symbol",
             })
             sym["faiss_id"] = faiss_id
 

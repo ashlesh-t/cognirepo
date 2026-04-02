@@ -166,6 +166,81 @@
       }
     },
     {
+      "name": "semantic_search_code",
+      "description": "Semantic vector search over code symbols only (no episodic entries).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query"
+          },
+          "top_k": {
+            "type": "integer",
+            "default": 5
+          },
+          "language": {
+            "type": "string",
+            "description": "Optional language filter: python, typescript, go, etc.",
+            "default": null
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "dependency_graph",
+      "description": "Return import/dependency relationships for a module.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "module": {
+            "type": "string",
+            "description": "Relative file path"
+          },
+          "direction": {
+            "type": "string",
+            "default": "both",
+            "description": "imports | imported_by | both"
+          },
+          "depth": {
+            "type": "integer",
+            "default": 2
+          }
+        },
+        "required": [
+          "module"
+        ]
+      }
+    },
+    {
+      "name": "explain_change",
+      "description": "Explain recent changes to a file or function via git + episodic memory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "File path or function name"
+          },
+          "since": {
+            "type": "string",
+            "default": "7d",
+            "description": "7d, 30d, or ISO date"
+          },
+          "max_commits": {
+            "type": "integer",
+            "default": 10
+          }
+        },
+        "required": [
+          "target"
+        ]
+      }
+    },
+    {
       "name": "context_pack",
       "description": "Budget-pack the most relevant code + episodic context into a token-bounded block for prompt injection.  Call this BEFORE reading any source file.",
       "parameters": {

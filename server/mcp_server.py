@@ -16,6 +16,9 @@ from mcp.server.fastmcp import FastMCP
 from tools.store_memory import store_memory as _store_memory
 from tools.retrieve_memory import retrieve_memory as _retrieve_memory
 from tools.context_pack import context_pack as _context_pack
+from tools.semantic_search_code import semantic_search_code as _semantic_search_code
+from tools.dependency_graph import dependency_graph as _dependency_graph
+from tools.explain_change import explain_change as _explain_change
 from retrieval.docs_search import search_docs as _search_docs
 from memory.episodic_memory import log_event, get_history, search_episodes
 
@@ -171,6 +174,46 @@ def graph_stats() -> dict:
         "top_concepts": top_concepts,
         "last_indexed": last_indexed,
     }
+
+
+@mcp.tool()
+def semantic_search_code(
+    query: str,
+    top_k: int = 5,
+    language: str = None,
+) -> list:
+    """
+    Semantic vector search over indexed code symbols only (no episodic memory
+    mixed in).  Optionally filter by language: "python", "typescript", "go", etc.
+    """
+    return _semantic_search_code(query=query, top_k=top_k, language=language)
+
+
+@mcp.tool()
+def dependency_graph(
+    module: str,
+    direction: str = "both",
+    depth: int = 2,
+) -> dict:
+    """
+    Return import/dependency relationships for a module.
+    direction: "imports" | "imported_by" | "both".
+    depth: transitive traversal depth (1 = direct only).
+    """
+    return _dependency_graph(module=module, direction=direction, depth=depth)
+
+
+@mcp.tool()
+def explain_change(
+    target: str,
+    since: str = "7d",
+    max_commits: int = 10,
+) -> dict:
+    """
+    Explain what changed in a file or function recently by cross-referencing
+    git history with episodic memory events mentioning the same target.
+    """
+    return _explain_change(target=target, since=since, max_commits=max_commits)
 
 
 @mcp.tool()
@@ -337,6 +380,45 @@ def _build_manifest() -> dict:
                     "type": "object",
                     "properties": {},
                     "required": [],
+                },
+            },
+            {
+                "name": "semantic_search_code",
+                "description": "Semantic vector search over code symbols only (no episodic entries).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query":    {"type": "string", "description": "Search query"},
+                        "top_k":    {"type": "integer", "default": 5},
+                        "language": {"type": "string", "description": "Optional language filter: python, typescript, go, etc.", "default": None},
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "dependency_graph",
+                "description": "Return import/dependency relationships for a module.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "module":    {"type": "string", "description": "Relative file path"},
+                        "direction": {"type": "string", "default": "both", "description": "imports | imported_by | both"},
+                        "depth":     {"type": "integer", "default": 2},
+                    },
+                    "required": ["module"],
+                },
+            },
+            {
+                "name": "explain_change",
+                "description": "Explain recent changes to a file or function via git + episodic memory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "target":      {"type": "string", "description": "File path or function name"},
+                        "since":       {"type": "string", "default": "7d", "description": "7d, 30d, or ISO date"},
+                        "max_commits": {"type": "integer", "default": 10},
+                    },
+                    "required": ["target"],
                 },
             },
             {
