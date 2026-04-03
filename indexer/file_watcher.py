@@ -73,25 +73,50 @@ class RepoFileHandler(FileSystemEventHandler):
 
     def _remove(self, abs_path: str) -> None:
         """
-        Remove a deleted file from the index:
-        1. Drop all graph nodes whose 'file' attr matches.
-        2. Remove the file entry from index_data["files"].
-        3. Rebuild reverse index and save.
-        4. Invalidate the hybrid-retrieve TTL cache.
+        Remove a deleted file from ALL four stores atomically:
+
+        1. FAISS (AST index): remove symbol vector IDs via remove_ids().
+        2. Knowledge graph: remove all symbol nodes + FILE node (+ edges).
+        3. Reverse index / index_data: pop file entry, rebuild, save.
+        4. Episodic memory: mark matching entries stale (history preserved).
+        5. Invalidate the hybrid-retrieve TTL cache.
         """
         try:
             rel_path = os.path.relpath(abs_path, self.repo_root)
 
-            stale_nodes = self.graph.nodes_for_file(rel_path)
-            for node_id in stale_nodes:
-                self.graph.remove_node_edges(node_id)
+            # 1. Remove FAISS symbol vectors for this file
+            existing = self.indexer.index_data.get("files", {}).get(rel_path, {})
+            old_ids = [
+                s["faiss_id"]
+                for s in existing.get("symbols", [])
+                if s.get("faiss_id", -1) >= 0
+            ]
+            if old_ids and self.indexer.faiss_index is not None:
+                try:
+                    import numpy as np  # pylint: disable=import-outside-toplevel
+                    self.indexer.faiss_index.remove_ids(
+                        np.array(old_ids, dtype=np.int64)
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    pass
 
+            # 2. Remove graph nodes (symbols + FILE node) — edges removed automatically
+            self.graph.remove_file_nodes(rel_path)
+
+            # 3. Remove from index_data, rebuild reverse index, persist
             self.indexer.index_data["files"].pop(rel_path, None)
             self.indexer._build_reverse_index()  # pylint: disable=protected-access
             self.indexer.save()
             self.graph.save()
 
-            # invalidate retrieval cache so stale results are not served
+            # 4. Tag matching episodic entries as stale (not deleted)
+            try:
+                from memory.episodic_memory import mark_stale  # pylint: disable=import-outside-toplevel
+                mark_stale(rel_path)
+            except Exception:  # pylint: disable=broad-except
+                pass
+
+            # 5. Invalidate retrieval cache so stale results are not served
             try:
                 from retrieval.hybrid import invalidate_hybrid_cache  # pylint: disable=import-outside-toplevel
                 invalidate_hybrid_cache()

@@ -126,6 +126,27 @@ class KnowledgeGraph:
             n for n, d in self.G.nodes(data=True) if d.get("file") == file_path
         ]
 
+    def remove_file_nodes(self, file_path: str) -> list[str]:
+        """Remove all nodes (and their incident edges) associated with file_path.
+
+        Removes:
+        - Symbol/function/class nodes whose 'file' attribute == file_path
+        - The FILE node whose node_id == file_path (convention from make_node_id)
+
+        NetworkX automatically removes all incident edges when a node is removed.
+        Returns the list of removed node IDs.
+        """
+        removed: list[str] = []
+        for nid in self.nodes_for_file(file_path):
+            if self.G.has_node(nid):
+                self.G.remove_node(nid)
+                removed.append(nid)
+        # FILE node's node_id == rel_path (see make_node_id("FILE", name) → name)
+        if self.G.has_node(file_path):
+            self.G.remove_node(file_path)
+            removed.append(file_path)
+        return removed
+
     # ── queries ───────────────────────────────────────────────────────────────
 
     def node_exists(self, node_id: str) -> bool:

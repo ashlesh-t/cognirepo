@@ -7,20 +7,30 @@
 
 """
 Functions for logging and managing episodic memory.
+
+Search uses BM25Okapi (rank_bm25) for TF-IDF-weighted ranking.
+The BM25 corpus is cached in-process and invalidated on every write.
 """
 import json
 import os
+import re
 from datetime import datetime
-
 
 from config.paths import get_path
 
+# ── BM25 module-level cache ───────────────────────────────────────────────────
+# (event_id, tokenized_text) pairs built on first search; cleared on _save()
+_BM25_CORPUS: list[tuple[str, list[str]]] | None = None
+_BM25_INDEX: object | None = None  # BM25Okapi instance, or None when corpus empty
+
+
+def _tokenize(text: str) -> list[str]:
+    """Split text into lowercase words of length ≥ 3."""
+    return [w for w in re.findall(r"\w+", text.lower()) if len(w) >= 3]
+
+
 def _file_path() -> str:
     return get_path("memory/episodic.json")
-
-
-def _index_file() -> str:
-    return get_path("memory/episodic_index.json")
 
 
 def _load() -> list:
@@ -42,6 +52,7 @@ def _load() -> list:
 
 
 def _save(data: list) -> None:
+    global _BM25_CORPUS, _BM25_INDEX  # pylint: disable=global-statement
     from security import get_storage_config  # pylint: disable=import-outside-toplevel
     encrypt, project_id = get_storage_config()
     content = json.dumps(data, indent=2).encode()
@@ -52,27 +63,31 @@ def _save(data: list) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
         f.write(content)
-    _build_index(data)
+    # Invalidate BM25 cache so the next search reflects the updated corpus
+    _BM25_CORPUS = None
+    _BM25_INDEX = None
 
 
-def _build_index(data: list) -> None:
-    """Build a simple keyword → [event_ids] index for fast search."""
-    index = {}
+def _get_bm25(data: list):
+    """Return (BM25Okapi instance, event_id_list), building from cache if available."""
+    global _BM25_CORPUS, _BM25_INDEX  # pylint: disable=global-statement
+    if _BM25_INDEX is not None and _BM25_CORPUS is not None:
+        return _BM25_INDEX, [eid for eid, _ in _BM25_CORPUS]
+
+    from rank_bm25 import BM25Okapi  # pylint: disable=import-outside-toplevel
+    corpus: list[list[str]] = []
+    event_ids: list[str] = []
     for entry in data:
-        eid = entry["id"]
-        # Index words from event text and metadata
-        text = (entry.get("event", "") + " " + json.dumps(entry.get("metadata", {}))).lower()
-        import re
-        words = set(re.findall(r"\w+", text))
-        for w in words:
-            if len(w) < 3:
-                continue
-            index.setdefault(w, [])
-            if eid not in index[w]:
-                index[w].append(eid)
-    
-    with open(_index_file(), "w", encoding="utf-8") as f:
-        json.dump(index, f)
+        text = entry.get("event", "") + " " + json.dumps(entry.get("metadata", {}))
+        corpus.append(_tokenize(text))
+        event_ids.append(entry["id"])
+
+    if not corpus:
+        return None, []
+
+    _BM25_INDEX = BM25Okapi(corpus)
+    _BM25_CORPUS = list(zip(event_ids, corpus))
+    return _BM25_INDEX, event_ids
 
 
 def log_event(event: str, metadata: dict = None) -> None:
@@ -102,43 +117,54 @@ def get_history(limit: int = 100) -> list:
 
 def search_episodes(query: str, limit: int = 10) -> list:
     """
-    Search episodic events using the keyword index.
-    """
-    if not os.path.exists(_index_file()):
-        # Fallback to full scan if index missing
-        query_lower = query.lower()
-        data = _load()
-        matches = []
-        for entry in reversed(data):
-            if query_lower in entry.get("event", "").lower() or \
-               query_lower in json.dumps(entry.get("metadata", {})).lower():
-                matches.append(entry)
-                if len(matches) >= limit:
-                    break
-        return matches
+    Search episodic events using BM25Okapi (TF-IDF-weighted) ranking.
 
-    with open(_index_file(), "r", encoding="utf-8") as f:
-        index = json.load(f)
-    
-    import re
-    query_words = re.findall(r"\w+", query.lower())
-    if not query_words:
-        return []
-    
-    # Intersection of matches for all words
-    match_ids = None
-    for w in query_words:
-        hits = set(index.get(w, []))
-        if match_ids is None:
-            match_ids = hits
-        else:
-            match_ids &= hits
-    
-    if not match_ids:
-        return []
-    
-    # Load data and filter
+    Episodes with the highest BM25 score for the query tokens are returned
+    first.  Episodes with score 0 (no query term present) are excluded.
+    """
     data = _load()
+    if not data:
+        return []
+
+    tokens = _tokenize(query)
+    if not tokens:
+        return []
+
+    bm25, event_ids = _get_bm25(data)
+    if bm25 is None:
+        return []
+
+    scores = bm25.get_scores(tokens)
+    ranked = sorted(
+        ((score, eid) for score, eid in zip(scores, event_ids) if score > 0),
+        key=lambda x: x[0],
+        reverse=True,
+    )
+
     id_to_entry = {e["id"]: e for e in data}
-    results = [id_to_entry[eid] for eid in sorted(match_ids, key=lambda x: int(x.split("_")[1]), reverse=True)]
-    return results[:limit]
+    return [id_to_entry[eid] for _, eid in ranked[:limit] if eid in id_to_entry]
+
+
+def mark_stale(file_path: str) -> int:
+    """
+    Tag all episodic entries that reference file_path as stale.
+
+    Episodes are NOT deleted — the historical record is preserved and
+    remains queryable.  Entries are marked with:
+        {"stale": True, "stale_reason": "file_deleted"}
+
+    Returns the count of entries tagged.
+    """
+    data = _load()
+    tagged = 0
+    for entry in data:
+        if entry.get("stale"):
+            continue
+        combined = entry.get("event", "") + json.dumps(entry.get("metadata", {}))
+        if file_path in combined:
+            entry["stale"] = True
+            entry["stale_reason"] = "file_deleted"
+            tagged += 1
+    if tagged:
+        _save(data)
+    return tagged
