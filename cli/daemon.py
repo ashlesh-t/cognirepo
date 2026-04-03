@@ -1,14 +1,17 @@
 """Daemon process management for cognirepo watchers.
 
 Handles fork-to-background, PID file storage under .cognirepo/watchers/,
-process listing, and interactive log tailing.
+singleton enforcement (flock + stale-PID detection), heartbeat writing,
+crash-recovery loop, systemd unit generation, and interactive log tailing.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import signal
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +40,225 @@ def _watchers_dir() -> Path:
 
 def _pid_file(pid: int) -> Path:
     return _watchers_dir() / f"{pid}.json"
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat
+# ---------------------------------------------------------------------------
+
+_HEARTBEAT_INTERVAL = 30  # seconds between heartbeat writes
+_HEARTBEAT_STALE_THRESHOLD = 120  # seconds before doctor warns
+
+
+def _heartbeat_file() -> Path:
+    return _watchers_dir() / "heartbeat"
+
+
+def write_heartbeat(pid: int, watcher_path: str) -> None:
+    """Write (overwrite) the heartbeat file with current timestamp and PID."""
+    data = {
+        "pid": pid,
+        "path": watcher_path,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    }
+    _heartbeat_file().write_text(json.dumps(data))
+
+
+def read_heartbeat() -> dict | None:
+    """Return parsed heartbeat dict, or None if the file is absent/corrupt."""
+    hb = _heartbeat_file()
+    if not hb.exists():
+        return None
+    try:
+        return json.loads(hb.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def heartbeat_age_seconds() -> float | None:
+    """Return seconds since the last heartbeat, or None if no heartbeat file."""
+    hb = read_heartbeat()
+    if hb is None:
+        return None
+    try:
+        ts_str = hb.get("timestamp", "")
+        from datetime import timezone  # pylint: disable=import-outside-toplevel
+        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        now = datetime.now(tz=timezone.utc)
+        return (now - ts).total_seconds()
+    except (ValueError, TypeError):
+        return None
+
+
+def start_heartbeat_thread(pid: int, watcher_path: str) -> threading.Thread:
+    """
+    Start a daemon thread that updates the heartbeat file every
+    _HEARTBEAT_INTERVAL seconds.  Thread is automatically killed when the
+    process exits (daemon=True).
+    """
+    def _loop():
+        while True:
+            try:
+                write_heartbeat(pid, watcher_path)
+            except OSError:
+                pass
+            time.sleep(_HEARTBEAT_INTERVAL)
+
+    t = threading.Thread(target=_loop, name="cognirepo-heartbeat", daemon=True)
+    t.start()
+    return t
+
+
+# ---------------------------------------------------------------------------
+# Singleton enforcement (TASK-009)
+# ---------------------------------------------------------------------------
+
+def is_watcher_running_for_path(repo_path: str) -> dict | None:
+    """
+    Return the watcher record if a live daemon is already watching *repo_path*,
+    or None if the path is unwatched (or the PID file is stale).
+
+    Stale PID files (process dead after reboot) are deleted automatically.
+    """
+    abs_path = os.path.abspath(repo_path)
+    for f in sorted(_watchers_dir().glob("*.json")):
+        try:
+            rec = json.loads(f.read_text())
+        except (json.JSONDecodeError, OSError):
+            f.unlink(missing_ok=True)
+            continue
+
+        if os.path.abspath(rec.get("path", "")) != abs_path:
+            continue
+
+        pid = rec.get("pid", -1)
+        if _is_alive(pid):
+            return rec
+
+        # Stale PID file — clean up
+        f.unlink(missing_ok=True)
+    return None
+
+
+def flock_register_watcher(pid: int, name: str, path: str, log_path: str) -> None:
+    """
+    Atomically write a JSON PID file for a running watcher using flock(LOCK_EX).
+    This prevents two concurrent `cognirepo watch` invocations from both
+    thinking they won the race to start.
+    """
+    record = {
+        "pid": pid,
+        "name": name,
+        "path": os.path.abspath(path),
+        "started": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "log": log_path,
+    }
+    pid_path = _pid_file(pid)
+    # Open with O_CREAT|O_WRONLY; flock blocks until we hold exclusive lock
+    fd = os.open(str(pid_path), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        os.write(fd, json.dumps(record, indent=2).encode())
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+# ---------------------------------------------------------------------------
+# Crash-recovery loop (TASK-008)
+# ---------------------------------------------------------------------------
+
+def run_watcher_with_crash_guard(
+    create_fn,           # callable() -> observer
+    stop_fn,             # callable(observer) -> None
+    watcher_path: str,
+    session_id: str,
+    restart_delay: float = 5.0,
+) -> None:
+    """
+    Run *create_fn()* in a while-True crash-recovery loop.
+
+    If the observer raises an unhandled exception it is logged and the watcher
+    is restarted after *restart_delay* seconds.  This prevents silent death
+    after OOM or unexpected errors.
+
+    Parameters
+    ----------
+    create_fn       : zero-argument callable that starts and returns an observer
+    stop_fn         : callable(observer) called to cleanly stop before restart
+    watcher_path    : repo root (for log messages)
+    session_id      : watcher session ID (for log messages)
+    restart_delay   : seconds to wait before restarting after a crash
+    """
+    pid = os.getpid()
+    start_heartbeat_thread(pid, watcher_path)
+
+    while True:
+        observer = None
+        try:
+            observer = create_fn()
+            print(f"[watcher:{session_id}] started (pid={pid}, path={watcher_path})", flush=True)
+            while observer.is_alive():
+                time.sleep(1)
+            print(f"[watcher:{session_id}] observer exited cleanly.", flush=True)
+            break  # clean exit — don't restart
+        except KeyboardInterrupt:
+            print(f"[watcher:{session_id}] stopped by user.", flush=True)
+            break
+        except Exception as exc:  # pylint: disable=broad-except
+            print(
+                f"[watcher:{session_id}] CRASH: {exc} — restarting in {restart_delay}s",
+                flush=True,
+            )
+            if observer is not None:
+                try:
+                    stop_fn(observer)
+                except Exception:  # pylint: disable=broad-except
+                    pass
+            time.sleep(restart_delay)
+
+
+# ---------------------------------------------------------------------------
+# Systemd unit generation (TASK-008 Layer 2)
+# ---------------------------------------------------------------------------
+
+def generate_systemd_unit(repo_path: str) -> str:
+    """
+    Generate a systemd user service unit file content for the watcher daemon.
+
+    Returns the unit file content as a string.  The caller should write it to
+    ``.cognirepo/cognirepo-watcher.service``.
+    """
+    import shutil  # pylint: disable=import-outside-toplevel
+    cognirepo_bin = shutil.which("cognirepo") or "cognirepo"
+    abs_repo = os.path.abspath(repo_path)
+    unit = f"""\
+[Unit]
+Description=CogniRepo file watcher for {abs_repo}
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={cognirepo_bin} watch --path {abs_repo} --daemon-foreground
+Restart=on-failure
+RestartSec=10
+WorkingDirectory={abs_repo}
+
+[Install]
+WantedBy=default.target
+"""
+    return unit
+
+
+def write_systemd_unit(repo_path: str) -> Path:
+    """
+    Write the systemd unit file to ``.cognirepo/cognirepo-watcher.service``.
+    Returns the path to the written file.
+    """
+    cognirepo_dir = _find_cognirepo_dir()
+    unit_path = cognirepo_dir / "cognirepo-watcher.service"
+    unit_path.write_text(generate_systemd_unit(repo_path))
+    return unit_path
 
 
 # ---------------------------------------------------------------------------

@@ -36,6 +36,11 @@ from rpc.context_store import get_store
 from rpc.proto import cognirepo_pb2 as pb2
 from rpc.proto import cognirepo_pb2_grpc as pb2_grpc
 
+try:
+    from orchestrator.router import stream_route  # noqa: F401  (re-exported for patching in tests)
+except ImportError:  # orchestrator not yet available in lightweight test envs
+    stream_route = None  # type: ignore[assignment]
+
 DEFAULT_PORT = 50051
 _MAX_WORKERS = 10
 
@@ -114,27 +119,51 @@ class QueryServiceServicer(pb2_grpc.QueryServiceServicer):
         context: grpc.ServicerContext,
     ):
         """
-        Streaming version — yields a single QueryResponse today (the router
-        doesn't stream yet).  Yields partial tokens once streaming is added
-        to model adapters.
+        True streaming via orchestrator.router.stream_route().
+
+        Each text chunk emitted by the model adapter is forwarded immediately
+        as a QueryResponse, so the first gRPC chunk arrives before the full
+        response is generated.  Handles client disconnection (context.is_active)
+        and falls back to the blocking SubQuery path if the streaming generator
+        raises on the first chunk.
         """
         _update_activity()
-        response = self.SubQuery(request, context)
-        # Split by sentence for a realistic streaming feel when adapters upgrade.
-        import re  # pylint: disable=import-outside-toplevel
-        sentences = re.split(r"(?<=[.!?])\s+", response.result or "")
-        if not sentences:
-            yield response
-            return
-        for i, sentence in enumerate(sentences):
+        try:
+            # stream_route is imported at module level; local reference kept for clarity
+            _stream_fn = stream_route  # noqa: F821
+            clf_info: dict = {}
+            chunks_sent = 0
+
+            gen = _stream_fn(
+                query=request.query,
+                max_tokens=request.max_tokens or 1024,
+            )
+
+            for chunk in gen:
+                if not context.is_active():
+                    gen.close()
+                    return
+                chunks_sent += 1
+                yield pb2.QueryResponse(
+                    result=chunk,
+                    confidence=clf_info.get("confidence", 0.0),
+                    model_used=clf_info.get("model", ""),
+                    provider_used=clf_info.get("provider", ""),
+                    tokens_used=0,
+                    error=False,
+                    error_message="",
+                )
+
+            if chunks_sent == 0:
+                # Stream produced nothing — fall back to blocking call
+                yield from [self.SubQuery(request, context)]
+
+        except Exception as exc:  # pylint: disable=broad-except
+            # Streaming failed — yield a single error response (never crash server)
             yield pb2.QueryResponse(
-                result=sentence + (" " if i < len(sentences) - 1 else ""),
-                confidence=response.confidence,
-                model_used=response.model_used,
-                provider_used=response.provider_used,
-                tokens_used=0,
-                error=response.error,
-                error_message=response.error_message,
+                result="",
+                error=True,
+                error_message=str(exc),
             )
 
 

@@ -296,7 +296,27 @@ def _cmd_doctor(verbose: bool = False) -> int:
         )
         issues += 1
 
-    # ── Check 8: Circuit breaker ──────────────────────────────────────────────
+    # ── Check 8: Daemon heartbeat ─────────────────────────────────────────────
+    try:
+        from cli.daemon import heartbeat_age_seconds, read_heartbeat  # pylint: disable=import-outside-toplevel
+        _hb_age = heartbeat_age_seconds()
+        _hb = read_heartbeat()
+        if _hb_age is None:
+            _ok("Daemon heartbeat — no watcher running (start with: cognirepo watch --ensure-running .)")
+        elif _hb_age < 60:
+            _ok(f"Daemon heartbeat — OK (last beat: {_hb_age:.0f}s ago, PID {_hb.get('pid', '?')})")
+        elif _hb_age < 120:
+            _ok(f"Daemon heartbeat — slow ({_hb_age:.0f}s since last beat)")
+        else:
+            _fail(
+                f"Daemon heartbeat — STALE ({_hb_age:.0f}s since last beat)",
+                "Daemon may be dead. Run: cognirepo watch --ensure-running .",
+            )
+            issues += 1
+    except Exception as exc:  # pylint: disable=broad-except
+        _ok(f"Daemon heartbeat — skipped ({exc})")
+
+    # ── Check 9 (was 8): Circuit breaker ─────────────────────────────────────
     try:
         from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
         import psutil  # pylint: disable=import-outside-toplevel
@@ -307,7 +327,7 @@ def _cmd_doctor(verbose: bool = False) -> int:
     except Exception:  # pylint: disable=broad-except
         _ok("Circuit breaker — OK (psutil not available for RSS check)")
 
-    # ── Check 9: BM25 backend (always shown) ──────────────────────────────────
+    # ── Check 10: BM25 backend (always shown) ────────────────────────────────
     try:
         from _bm25 import BACKEND  # pylint: disable=import-outside-toplevel
         _ok(f"BM25 backend — {BACKEND}")
@@ -422,11 +442,23 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
     from indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
 
     abs_path = os.path.abspath(path)
+
+    # ── TASK-009: Singleton enforcement ──────────────────────────────────────
+    from cli.daemon import is_watcher_running_for_path  # pylint: disable=import-outside-toplevel
+    existing = is_watcher_running_for_path(abs_path)
+    if existing:
+        print(
+            f"[cognirepo] Daemon already running for this path "
+            f"(PID {existing['pid']}, name: {existing['name']}). "
+            f"Use 'cognirepo list' to inspect or 'cognirepo list -n {existing['pid']} --stop' to stop."
+        )
+        return
+
     ts = int(time.time())
     session_id = f"watch_{ts}"
 
     if daemon:
-        from cli.daemon import daemonize, register_watcher  # pylint: disable=import-outside-toplevel
+        from cli.daemon import daemonize, flock_register_watcher  # pylint: disable=import-outside-toplevel
         from pathlib import Path  # pylint: disable=import-outside-toplevel
 
         cognirepo_dir = Path(get_path(""))
@@ -437,36 +469,43 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
         name = f"watcher-{Path(abs_path).name}-{ts}"
         child_pid = daemonize(log_path)
         if child_pid > 0:
-            # We are the parent — register PID file and return to shell
-            register_watcher(child_pid, name, abs_path, log_path)
+            # We are the parent — register PID file atomically and return
+            flock_register_watcher(child_pid, name, abs_path, log_path)
             print(f"[cognirepo] Watcher started in background (PID {child_pid})")
             print(f"[cognirepo] Name : {name}")
             print(f"[cognirepo] Log  : {log_path}")
             print(f"[cognirepo] View : cognirepo list -n {child_pid} --view")
             return
-        # child continues below
+        # child (grandchild) continues below
 
     behaviour = BehaviourTracker(graph=kg)
-    observer = create_watcher(abs_path, indexer, kg, behaviour, session_id)
+
+    # ── TASK-008: Crash-recovery loop ─────────────────────────────────────────
+    from cli.daemon import run_watcher_with_crash_guard  # pylint: disable=import-outside-toplevel
 
     if not daemon:
         print(f"Watching {abs_path} for changes. Ctrl+C to stop.")
+
+    def _make_observer():
+        return create_watcher(abs_path, indexer, kg, behaviour, session_id)
+
+    def _stop_observer(obs):
+        obs.stop()
+        obs.join()
 
     def _stop(signum, frame):  # pylint: disable=unused-argument
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, _stop)
 
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        observer.stop()
-        observer.join()
-        if not daemon:
-            print("[watcher] stopped.")
+    run_watcher_with_crash_guard(
+        create_fn=_make_observer,
+        stop_fn=_stop_observer,
+        watcher_path=abs_path,
+        session_id=session_id,
+    )
+    if not daemon:
+        print("[watcher] stopped.")
 
 
 def _test_connection(provider: str) -> dict:
@@ -974,6 +1013,27 @@ def main():
     # chat — interactive REPL
     sub.add_parser("chat", help="Start interactive REPL (default when no args given)")
 
+    # watch — standalone watcher management (--status, --ensure-running)
+    p_watch_cmd = sub.add_parser("watch", help="Manage the background file-watcher daemon")
+    p_watch_cmd.add_argument(
+        "--status",
+        action="store_true",
+        default=False,
+        help="Print daemon status: PID, heartbeat age, last reindex.",
+    )
+    p_watch_cmd.add_argument(
+        "--ensure-running",
+        action="store_true",
+        default=False,
+        help="Start the watcher if it is not running or its heartbeat is stale (> 60s).",
+    )
+    p_watch_cmd.add_argument(
+        "--path",
+        default=".",
+        metavar="DIR",
+        help="Repo root to watch (default: current dir).",
+    )
+
     # doctor — environment health check
     p_doctor = sub.add_parser("doctor", help="Check CogniRepo installation health")
     p_doctor.add_argument(
@@ -1061,6 +1121,18 @@ def main():
         )
         if kg is not None:
             _start_watcher(".", kg, indexer, daemon=args.daemon)
+        # generate systemd unit file and inform the user
+        try:
+            from cli.daemon import write_systemd_unit  # pylint: disable=import-outside-toplevel
+            _unit_path = write_systemd_unit(".")
+            print(
+                f"\n[cognirepo] systemd unit written to {_unit_path}\n"
+                f"  To auto-restart on crash: run\n"
+                f"    systemctl --user enable {_unit_path}\n"
+                f"    systemctl --user start cognirepo-watcher"
+            )
+        except Exception:  # pylint: disable=broad-except
+            pass
         return
 
     if args.command == "serve":
@@ -1161,6 +1233,51 @@ def main():
 
     if args.command == "doctor":
         sys.exit(_cmd_doctor(verbose=args.verbose))
+
+    if args.command == "watch":
+        from cli.daemon import (  # pylint: disable=import-outside-toplevel
+            heartbeat_age_seconds,
+            read_heartbeat,
+            is_watcher_running_for_path,
+        )
+        abs_watch_path = os.path.abspath(args.path)
+
+        if args.status:
+            hb = read_heartbeat()
+            running = is_watcher_running_for_path(abs_watch_path)
+            if running:
+                print(f"  Daemon     : running (PID {running['pid']}, name: {running['name']})")
+                print(f"  Started    : {running.get('started', 'unknown')}")
+            else:
+                print("  Daemon     : not running")
+            age = heartbeat_age_seconds()
+            if age is None:
+                print("  Heartbeat  : no heartbeat file")
+            elif age < 60:
+                print(f"  Heartbeat  : OK ({age:.0f}s ago)")
+            else:
+                print(f"  Heartbeat  : STALE ({age:.0f}s ago — daemon may be stuck)")
+            if hb:
+                print(f"  Watch path : {hb.get('path', '?')}")
+            return
+
+        if args.ensure_running:
+            age = heartbeat_age_seconds()
+            running = is_watcher_running_for_path(abs_watch_path)
+            if running and (age is None or age < 60):
+                print(f"[cognirepo] Watcher already running (PID {running['pid']}).")
+                return
+            print("[cognirepo] Starting watcher (--ensure-running)...")
+            from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+            from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+            kg = KnowledgeGraph()
+            indexer = ASTIndexer(graph=kg)
+            indexer.load()
+            _start_watcher(abs_watch_path, kg, indexer, daemon=True)
+            return
+
+        print("Use --status or --ensure-running. See: cognirepo watch --help")
+        return
 
     if args.command == "list":
         from cli.daemon import print_watcher_list, view_watcher_logs, stop_watcher  # pylint: disable=import-outside-toplevel
