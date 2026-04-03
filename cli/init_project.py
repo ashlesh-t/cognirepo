@@ -232,7 +232,7 @@ def setup_mcp(
     """
     Generate MCP config files for the requested AI tools.
 
-    targets      : list containing any of "claude", "gemini"
+    targets      : list containing any of "claude", "gemini", "cursor", "vscode"
     project_name : human-readable project label
     project_path : absolute path to the project root
     global_scope : also register in the user-level global config so the server
@@ -246,6 +246,12 @@ def setup_mcp(
 
     if "gemini" in targets:
         _setup_gemini_mcp(project_name, project_path, global_scope=global_scope)
+
+    if "cursor" in targets:
+        _setup_cursor_mcp(project_name, project_path)
+
+    if "vscode" in targets:
+        _setup_vscode_mcp(project_name, project_path)
 
 
 def _setup_claude_mcp(
@@ -424,6 +430,83 @@ def _register_gemini_global(server_name: str, server_entry: dict) -> None:
     with open(global_settings_path, "w", encoding="utf-8") as f:
         json.dump(global_settings, f, indent=2)
     print(f"  Registered globally in ~/.gemini/settings.json  (server: {server_name})")
+
+
+def _setup_cursor_mcp(project_name: str, project_path: str) -> None:
+    """
+    Write .cursor/mcp.json for Cursor IDE MCP integration.
+
+    Cursor reads mcpServers from .cursor/mcp.json in the workspace root.
+    Config generation is idempotent — re-running updates the server entry.
+    """
+    cursor_dir = ".cursor"
+    os.makedirs(cursor_dir, exist_ok=True)
+
+    server_name = f"cognirepo-{project_name}" if project_name else "cognirepo"
+    cognirepo_bin = shutil.which("cognirepo")
+    if cognirepo_bin:
+        cmd, args = cognirepo_bin, ["serve", "--project-dir", project_path]
+    else:
+        cmd = sys.executable
+        args = ["-m", "cli.main", "serve", "--project-dir", project_path]
+
+    mcp_json_path = os.path.join(cursor_dir, "mcp.json")
+    if os.path.exists(mcp_json_path):
+        try:
+            with open(mcp_json_path, encoding="utf-8") as f:
+                mcp_cfg = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            mcp_cfg = {}
+    else:
+        mcp_cfg = {}
+
+    mcp_cfg.setdefault("mcpServers", {})[server_name] = {
+        "command": cmd,
+        "args": args,
+    }
+    with open(mcp_json_path, "w", encoding="utf-8") as f:
+        json.dump(mcp_cfg, f, indent=2)
+    print(f"  Wrote {mcp_json_path}  (Cursor MCP server: {server_name})")
+
+
+def _setup_vscode_mcp(project_name: str, project_path: str) -> None:
+    """
+    Write .vscode/mcp.json for VS Code MCP extension integration.
+
+    VS Code uses a "servers" top-level key with type="stdio" entries,
+    unlike the Claude/Cursor "mcpServers" key format.
+    Config generation is idempotent — re-running updates the server entry.
+    """
+    vscode_dir = ".vscode"
+    os.makedirs(vscode_dir, exist_ok=True)
+
+    server_name = f"cognirepo-{project_name}" if project_name else "cognirepo"
+    cognirepo_bin = shutil.which("cognirepo")
+    if cognirepo_bin:
+        cmd, args = cognirepo_bin, ["serve", "--project-dir", project_path]
+    else:
+        cmd = sys.executable
+        args = ["-m", "cli.main", "serve", "--project-dir", project_path]
+
+    mcp_json_path = os.path.join(vscode_dir, "mcp.json")
+    if os.path.exists(mcp_json_path):
+        try:
+            with open(mcp_json_path, encoding="utf-8") as f:
+                mcp_cfg = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            mcp_cfg = {}
+    else:
+        mcp_cfg = {}
+
+    # VS Code MCP extension format uses "servers" with "type": "stdio"
+    mcp_cfg.setdefault("servers", {})[server_name] = {
+        "type": "stdio",
+        "command": cmd,
+        "args": args,
+    }
+    with open(mcp_json_path, "w", encoding="utf-8") as f:
+        json.dump(mcp_cfg, f, indent=2)
+    print(f"  Wrote {mcp_json_path}  (VS Code MCP server: {server_name})")
 
 
 def _minimal_claude_md(project_name: str, project_path: str) -> str:

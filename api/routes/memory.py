@@ -14,6 +14,7 @@ GET  /memory/search   — full-text search across .md docs
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from api.cache import cache_get, cache_set
 from tools.store_memory import store_memory
 from tools.retrieve_memory import retrieve_memory
 from retrieval.docs_search import search_docs
@@ -41,8 +42,14 @@ def store(req: StoreRequest):
 
 @router.post("/retrieve")
 def retrieve(req: RetrieveRequest):
-    """Return the top-k semantically similar memories."""
-    return retrieve_memory(req.query, req.top_k)
+    """Return the top-k semantically similar memories (Redis-cached for 5 min)."""
+    cache_key = f"retrieve:{hash((req.query, req.top_k))}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+    result = retrieve_memory(req.query, req.top_k)
+    cache_set(cache_key, result)
+    return result
 
 
 @router.get("/search")

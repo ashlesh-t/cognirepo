@@ -8,7 +8,7 @@ certifi==2026.2.25
 cffi==2.0.0
 charset-normalizer==3.4.6
 click==8.3.1
--e git+ssh://git@github.com/ashlesh-t/cognirepo.git@6fc8648ee1f96c597f03c01367e4c83301731fee#egg=cognirepo
+-e git+ssh://git@github.com/ashlesh-t/cognirepo.git@44e5c0a9744c790b9df0eb245c47926274a03c8e#egg=cognirepo
 cryptography==46.0.6
 cuda-bindings==13.2.0
 cuda-pathfinder==1.5.0
@@ -105,11 +105,11 @@ PyJWT==2.12.1
 pyparsing==3.3.2
 pytest==9.0.2
 pytest-mock==3.15.1
-rank-bm25==0.2.2
 python-dotenv==1.2.2
 python-multipart==0.0.22
 PyYAML==6.0.3
 rank-bm25==0.2.2
+redis==7.4.0
 referencing==0.37.0
 regex==2026.3.32
 requests==2.33.0

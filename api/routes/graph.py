@@ -13,6 +13,7 @@ import os
 
 from fastapi import APIRouter, Query
 
+from api.cache import cache_get, cache_set
 from graph.knowledge_graph import EdgeType
 
 router = APIRouter(prefix="/graph", tags=["graph"])
@@ -56,7 +57,14 @@ def _graph_is_empty() -> bool:
 
 @router.get("/symbol/{name}")
 def symbol_lookup(name: str):
-    """Return all locations where *name* is defined, with file, line, and type."""
+    """Return all locations where *name* is defined, with file, line, and type.
+    Results are Redis-cached for 5 minutes to reduce FAISS hits.
+    """
+    cache_key = f"lookup_symbol:{name}"
+    cached = cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     if _graph_is_empty():
         return _EMPTY_GRAPH_WARNING
     indexer = _get_indexer()
@@ -72,6 +80,7 @@ def symbol_lookup(name: str):
                 sym_type = sym["type"]
                 break
         result.append({"file": file_path, "line": line, "type": sym_type})
+    cache_set(cache_key, result)
     return result
 
 

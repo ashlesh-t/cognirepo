@@ -54,6 +54,24 @@ jobs:
         env:
           COGNIREPO_MULTI_AGENT_ENABLED: "false"
 
+      - name: Check proto freshness
+        run: |
+          mkdir -p /tmp/proto_check
+          python -m grpc_tools.protoc \
+            -I rpc/proto \
+            --python_out=/tmp/proto_check \
+            --grpc_python_out=/tmp/proto_check \
+            rpc/proto/cognirepo.proto
+          if ! diff -q rpc/proto/cognirepo_pb2.py /tmp/proto_check/cognirepo_pb2.py > /dev/null 2>&1; then
+            echo "ERROR: cognirepo_pb2.py is stale. Run 'make proto' to regenerate."
+            exit 1
+          fi
+          if ! diff -q rpc/proto/cognirepo_pb2_grpc.py /tmp/proto_check/cognirepo_pb2_grpc.py > /dev/null 2>&1; then
+            echo "ERROR: cognirepo_pb2_grpc.py is stale. Run 'make proto' to regenerate."
+            exit 1
+          fi
+          echo "Proto files are up to date."
+
       - name: Run API tests (separate — needs fastapi[testclient])
         run: |
           pip install "httpx>=0.28" pytest-asyncio
