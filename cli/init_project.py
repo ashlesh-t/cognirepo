@@ -542,6 +542,7 @@ def init_project(
     port: int = DEFAULT_PORT,
     no_index: bool = False,
     interactive: bool = True,
+    non_interactive: bool = False,
     # wizard-supplied overrides (used when interactive=False or wizard ran)
     project_name: str = "",
     encrypt: bool = False,
@@ -553,16 +554,24 @@ def init_project(
 ):
     """
     Scaffold .cognirepo/ directories, write config.json, write .gitignore.
-    Safe to re-run — existing config is preserved.
+    Safe to re-run — existing config is preserved (idempotent).
 
     When *interactive* is True (default), the powerlevel10k-style wizard runs
     and all parameters are sourced from user answers.
 
+    When *non_interactive* is True, all prompts use defaults (for CI/scripting).
+
     Returns (summary_dict, kg, indexer) if indexing was performed,
     otherwise (None, None, None).
     """
+    # ── idempotency check: detect re-run ─────────────────────────────────────
+    _config_path = get_path("config.json")
+    _already_init = _config_path.exists()
+    if _already_init:
+        print("Already initialized — updating config without losing existing index.")
+
     # ── run wizard (interactive mode) ─────────────────────────────────────────
-    if interactive and not no_index:
+    if interactive and not no_index and not non_interactive:
         try:
             from cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
             wizard_cfg = run_wizard()
@@ -622,18 +631,23 @@ def init_project(
         return None, None, None
 
     # ── repo indexing prompt ──────────────────────────────────────────────────
-    print(
-        "\nIndex this repo now? It maps every function and class so AI tools\n"
-        "can look up symbols and understand code structure.\n"
-        "This takes ~5 seconds for most projects. (Y/n): ",
-        end="",
-        flush=True,
-    )
-
-    try:
-        answer = input().strip().lower()
-    except EOFError:
-        answer = ""  # non-interactive environment → default yes
+    if non_interactive:
+        answer = ""  # default = yes
+    else:
+        _index_prompt = (
+            "\nIndex this repo now? It maps every function and class so AI tools\n"
+            "can look up symbols and understand code structure.\n"
+            "This takes ~5 seconds for most projects. (Y/n): "
+        )
+        if _already_init:
+            _index_prompt = (
+                "\nRe-index this repo? (Recommended after code changes.) (Y/n): "
+            )
+        print(_index_prompt, end="", flush=True)
+        try:
+            answer = input().strip().lower()
+        except EOFError:
+            answer = ""  # non-interactive environment → default yes
 
     if answer in ("n", "no"):
         print("Run 'cognirepo index-repo .' when ready.")

@@ -105,5 +105,18 @@ By contributing, you agree that your contributions are licensed under
 
 ## Note for maintainers
 
-The `SNYK_TOKEN` secret must be set in GitHub repo **Settings → Secrets → Actions**
-for the security CI workflow to run Snyk dependency scanning.
+The following GitHub Actions secrets must be set in **Settings → Secrets → Actions**:
+
+| Secret | Purpose |
+|---|---|
+| `SNYK_TOKEN` | Snyk dependency vulnerability scanning |
+| `COGNIREPO_JWT_SECRET` | JWT signing key for the REST API (used in CI adapter tests) |
+| `COGNIREPO_PASSWORD_HASH` | Bcrypt hash of the API password (used in CI integration tests) |
+
+Without `SNYK_TOKEN`, the Snyk step will be skipped. Without `COGNIREPO_JWT_SECRET`,
+adapter tests that require authentication will be skipped (they are mocked in CI).
+
+To generate a JWT secret locally:
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```

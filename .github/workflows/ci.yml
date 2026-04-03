@@ -78,3 +78,60 @@ jobs:
           pytest tests/test_api.py -v --tb=short || true
         env:
           COGNIREPO_MULTI_AGENT_ENABLED: "false"
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for TruffleHog
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Bandit
+        run: pip install bandit[toml]
+
+      - name: Bandit — static security analysis
+        run: |
+          bandit -r . \
+            --exclude ./.venv,./venv,./.cognirepo,./tests \
+            --severity-level high \
+            --confidence-level medium \
+            -f txt
+        # Fails CI on any HIGH severity finding
+
+      - name: TruffleHog — secret scanning
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified
+        continue-on-error: false
+        # Fails CI if any verified secret is found in git history
+
+      - name: Trivy — filesystem vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+          format: table
+        # Fails CI on CRITICAL/HIGH unpatched CVEs
+
+      - name: Snyk — dependency vulnerability scan
+        uses: snyk/actions/python@master
+        continue-on-error: false
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=critical
+        # Fails CI on CRITICAL dep vulnerabilities; requires SNYK_TOKEN secret

@@ -393,6 +393,41 @@ def _cmd_doctor(verbose: bool = False) -> int:
     return issues
 
 
+def _print_ready_summary(summary: dict | None = None) -> None:
+    """Print the 'You're ready!' end-of-init summary."""
+    print("\n" + "─" * 60)
+    print("  You're ready! CogniRepo is set up.\n")
+
+    print("  MCP tools Claude can now call:")
+    tools = [
+        ("context_pack",     "Token-efficient code context (saves 15–25% tokens)"),
+        ("lookup_symbol",    "O(1) symbol lookup across the whole codebase"),
+        ("who_calls",        "Impact analysis — find all callers of a function"),
+        ("subgraph",         "Knowledge graph neighbourhood for any module"),
+        ("retrieve_memory",  "Semantic search over stored decisions and notes"),
+        ("search_docs",      "Full-text search across all .md documentation"),
+        ("store_memory",     "Persist insights for future sessions"),
+        ("log_episode",      "Record milestones and decisions to the event log"),
+    ]
+    for name, desc in tools:
+        print(f"    • {name:<20} {desc}")
+
+    if summary:
+        files  = summary.get("files_indexed", 0)
+        syms   = summary.get("symbols", 0)
+        print(f"\n  Index stats: {files} files · {syms} symbols")
+        # rough token reduction estimate: ~200 tokens saved per retrieval vs raw read
+        est_reduction = min(int(syms * 0.15), 5000)
+        if est_reduction > 0:
+            print(f"  Estimated token reduction: ~{est_reduction} tokens/query")
+
+    print("\n  Next steps:")
+    print("    cognirepo doctor          — check system health")
+    print("    cognirepo retrieve-memory — search your stored context")
+    print("    cognirepo store-memory    — save a new insight")
+    print("─" * 60 + "\n")
+
+
 def _maybe_tip_index_repo() -> None:
     """Print an index-repo tip when the graph is empty (cold-start hint)."""
     try:
@@ -845,6 +880,12 @@ def main():
         default=False,
         help="Run the file watcher in the background as a daemon.",
     )
+    p_init.add_argument(
+        "--non-interactive",
+        action="store_true",
+        default=False,
+        help="Use all defaults without prompting (for CI/scripted setup).",
+    )
 
     # serve
     p_serve = sub.add_parser("serve", help="Start the MCP stdio server")
@@ -1112,27 +1153,66 @@ def main():
 
     if args.command == "init":
         # interactive=True runs the wizard; --no-index or --non-interactive skips it
-        interactive = not args.no_index and sys.stdin.isatty()
+        non_interactive = getattr(args, "non_interactive", False)
+        interactive = not args.no_index and not non_interactive and sys.stdin.isatty()
         summary, kg, indexer = init_project(
             password=args.password,
             port=args.port,
             no_index=args.no_index,
             interactive=interactive,
+            non_interactive=non_interactive,
         )
         if kg is not None:
-            _start_watcher(".", kg, indexer, daemon=args.daemon)
-        # generate systemd unit file and inform the user
-        try:
-            from cli.daemon import write_systemd_unit  # pylint: disable=import-outside-toplevel
-            _unit_path = write_systemd_unit(".")
-            print(
-                f"\n[cognirepo] systemd unit written to {_unit_path}\n"
-                f"  To auto-restart on crash: run\n"
-                f"    systemctl --user enable {_unit_path}\n"
-                f"    systemctl --user start cognirepo-watcher"
-            )
-        except Exception:  # pylint: disable=broad-except
-            pass
+            # prompt to start background watcher (skip in non-interactive mode — default yes)
+            _start_daemon = False
+            if args.daemon or non_interactive:
+                _start_daemon = True
+            elif sys.stdin.isatty():
+                print(
+                    "\nStart background watcher? It monitors file changes and keeps the\n"
+                    "index and graph up to date automatically. (Y/n): ",
+                    end="", flush=True,
+                )
+                try:
+                    _wa = input().strip().lower()
+                    _start_daemon = _wa not in ("n", "no")
+                except EOFError:
+                    _start_daemon = True
+
+            if _start_daemon:
+                _start_watcher(".", kg, indexer, daemon=True)
+
+        # prompt for systemd auto-restart (only on Linux, skip in non-interactive)
+        if sys.platform == "linux":
+            _systemd = False
+            if non_interactive:
+                _systemd = False  # don't auto-enable systemd in scripted mode
+            elif sys.stdin.isatty():
+                print(
+                    "\nEnable systemd auto-restart? CogniRepo will restart automatically\n"
+                    "if the watcher crashes or the machine reboots. (y/N): ",
+                    end="", flush=True,
+                )
+                try:
+                    _sa = input().strip().lower()
+                    _systemd = _sa in ("y", "yes")
+                except EOFError:
+                    _systemd = False
+
+            if _systemd:
+                try:
+                    from cli.daemon import write_systemd_unit  # pylint: disable=import-outside-toplevel
+                    _unit_path = write_systemd_unit(".")
+                    print(
+                        f"\n[cognirepo] systemd unit written to {_unit_path}\n"
+                        f"  To enable:\n"
+                        f"    systemctl --user enable {_unit_path}\n"
+                        f"    systemctl --user start cognirepo-watcher"
+                    )
+                except Exception:  # pylint: disable=broad-except
+                    pass
+
+        _print_ready_summary(summary)
         return
 
     if args.command == "serve":
