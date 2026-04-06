@@ -43,6 +43,9 @@ _REASONING_KW = {
     "why", "compare", "refactor", "design", "tradeoff", "trade-off",
     "architecture", "explain", "difference", "versus", "vs", "pros",
     "cons", "evaluate", "analyse", "analyze", "suggest", "recommend",
+    # depth/quality modifiers
+    "detail", "detailed", "improve", "improvements", "thorough",
+    "comprehensive", "complex", "advanced", "in-depth", "deep dive",
 }
 _LOOKUP_KW = {
     "what is", "what are", "show", "list", "find", "get", "display",
@@ -67,8 +70,8 @@ _ERROR_PATTERNS = re.compile(
 
 # ── tier → score boundaries ───────────────────────────────────────────────────
 _TIER_QUICK    = 2.0
-_TIER_FAST     = 6.0
-_TIER_BALANCED = 14.0
+_TIER_FAST     = 4.0   # was 6 — lowered so explain/compare reach BALANCED
+_TIER_BALANCED = 9.0   # was 14 — was practically unreachable
 
 
 @dataclass
@@ -203,10 +206,10 @@ def _compute_score(
         signals["token_length"] = round(tl, 2)
         score += tl
 
-    # imperative + abstract combo (+4 binary)
+    # imperative + abstract combo (+5 binary)
     if any(kw in q_lower for kw in _IMPERATIVE_ABSTRACT):
-        signals["imperative_abstract"] = 4.0
-        score += 4.0
+        signals["imperative_abstract"] = 5.0
+        score += 5.0
 
     return score
 

@@ -566,7 +566,7 @@ def init_project(
     """
     # ── idempotency check: detect re-run ─────────────────────────────────────
     _config_path = get_path("config.json")
-    _already_init = _config_path.exists()
+    _already_init = os.path.exists(_config_path)
     if _already_init:
         print("Already initialized — updating config without losing existing index.")
 

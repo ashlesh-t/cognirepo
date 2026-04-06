@@ -101,15 +101,37 @@ def _log_error_to_file(exc: Exception, context: str = "") -> str:
 
 # ── command implementations (direct) ─────────────────────────────────────────
 
-def _direct_store(text, source):
+def _direct_store(text, source, global_scope=False):
     """Call store_memory tool directly."""
+    from memory.user_memory import record_action  # pylint: disable=import-outside-toplevel
+    if global_scope:
+        from memory.user_memory import set_preference  # pylint: disable=import-outside-toplevel
+        set_preference(f"memory:{hash(text) & 0xFFFFFF}", {"text": text, "source": source})
+        record_action("store-global")
+        return {"status": "stored", "text": text, "source": source, "scope": "global"}
     from tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
+    record_action("store")
     return store_memory(text, source)
 
 
-def _direct_retrieve(query, top_k):
+def _direct_retrieve(query, top_k, global_scope=False):
     """Call retrieve_memory tool directly."""
+    from memory.user_memory import record_action  # pylint: disable=import-outside-toplevel
+    if global_scope:
+        from memory.user_memory import list_preferences  # pylint: disable=import-outside-toplevel
+        record_action("retrieve-global")
+        prefs = list_preferences()
+        # Simple keyword match over global preferences
+        q = query.lower()
+        results = []
+        for key, val in prefs.items():
+            if key.startswith("memory:") and isinstance(val, dict):
+                text = val.get("text", "")
+                if any(w in text.lower() for w in q.split()):
+                    results.append({"text": text, "source": val.get("source", ""), "scope": "global"})
+        return results[:top_k]
     from tools.retrieve_memory import retrieve_memory  # pylint: disable=import-outside-toplevel
+    record_action("retrieve")
     return retrieve_memory(query, top_k)
 
 
@@ -147,6 +169,8 @@ def _cmd_doctor(verbose: bool = False) -> int:
         print(f"  \u2717  {msg}")
         if hint:
             print(f"       {hint}")
+    def _warn(msg: str):
+        print(msg)
 
     # ── Check 1: config ───────────────────────────────────────────────────────
     nonlocal_config: dict = {}
@@ -354,7 +378,7 @@ def _cmd_doctor(verbose: bool = False) -> int:
             try:
                 from orchestrator.router import _maybe_autostart_grpc  # pylint: disable=import-outside-toplevel
                 _maybe_autostart_grpc("localhost", _grpc_port)
-                time.sleep(1.0)  # give the subprocess a moment to bind
+                time.sleep(3.0)  # give the subprocess a moment to bind
                 try:
                     with socket.create_connection(("localhost", _grpc_port), timeout=2):
                         _grpc_alive = True
@@ -365,6 +389,11 @@ def _cmd_doctor(verbose: bool = False) -> int:
 
             if _grpc_alive:
                 _ok(f"gRPC server — auto-started on port {_grpc_port}")
+            elif _auto_start:
+                # lazy_grpc=true: server starts on first DEEP query — not a hard failure
+                _warn(
+                    f"gRPC server — not running (lazy mode, will start on first DEEP query)"
+                )
             else:
                 _fail(
                     f"gRPC server — failed to start on port {_grpc_port}",
@@ -413,7 +442,7 @@ def _print_ready_summary(summary: dict | None = None) -> None:
         print(f"    • {name:<20} {desc}")
 
     if summary:
-        files  = summary.get("files_indexed", 0)
+        files  = summary.get("files_indexed", summary.get("files", 0))
         syms   = summary.get("symbols", 0)
         print(f"\n  Index stats: {files} files · {syms} symbols")
         # rough token reduction estimate: ~200 tokens saved per retrieval vs raw read
@@ -451,7 +480,7 @@ def _direct_history(limit):
     return get_history(limit)
 
 
-def _direct_index(path):
+def _direct_index(path, embed: bool = True):
     """Index a repository directly. Exits with code 1 if *path* does not exist."""
     import os as _os  # pylint: disable=import-outside-toplevel,redefined-outer-name
     abs_path = _os.path.abspath(path)
@@ -465,7 +494,7 @@ def _direct_index(path):
     from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
     kg = KnowledgeGraph()
     indexer = ASTIndexer(graph=kg)
-    summary = indexer.index_repo(abs_path)
+    summary = indexer.index_repo(abs_path, embed=embed)
     kg.save()
     return {"status": "indexed", "path": abs_path, **summary}, kg, indexer
 
@@ -769,12 +798,15 @@ def _print_help() -> None:
 
     # ── Memory ────────────────────────────────────────────────────────────────
     _hdr("MEMORY")
-    _row("store-memory <txt>", "Save semantic memory to FAISS index")
-    _row("retrieve-memory <q>","Similarity search over stored memories")
-    _row("log-episode <event>","Append an event to the episodic log")
-    _row("history",            "Print recent episodic events")
-    _row("episodic-search <q>","Keyword search in episodic event history")
-    _row("prune",              "Remove low-score / stale memories")
+    _row("store-memory <txt>",      "Save semantic memory to FAISS index")
+    _row("store-memory --global",   "Save to ~/.cognirepo/ user store (cross-project)")
+    _row("retrieve-memory <q>",     "Similarity search over stored memories")
+    _row("retrieve-memory --global","Search ~/.cognirepo/ user store")
+    _row("user-prefs",              "View/set global user preferences and behaviour")
+    _row("log-episode <event>",     "Append an event to the episodic log")
+    _row("history",                 "Print recent episodic events")
+    _row("episodic-search <q>",     "Keyword search in episodic event history")
+    _row("prune",                   "Remove low-score / stale memories")
 
     # ── Search & Code ─────────────────────────────────────────────────────────
     _hdr("SEARCH & CODE")
@@ -923,11 +955,22 @@ def main():
     p_store = sub.add_parser("store-memory", help="Save a semantic memory")
     p_store.add_argument("text")
     p_store.add_argument("--source", default="", help="Origin label")
+    p_store.add_argument("--global", dest="global_scope", action="store_true",
+                         help="Save to ~/.cognirepo/ user store (cross-project)")
 
     # retrieve-memory
     p_ret = sub.add_parser("retrieve-memory", help="Semantic similarity search")
     p_ret.add_argument("query")
     p_ret.add_argument("--top-k", type=int, default=5)
+    p_ret.add_argument("--global", dest="global_scope", action="store_true",
+                       help="Search ~/.cognirepo/ user store instead of project store")
+
+    # user-prefs
+    p_prefs = sub.add_parser("user-prefs", help="View/set global user preferences (~/.cognirepo/)")
+    p_prefs.add_argument("--set", nargs=2, metavar=("KEY", "VALUE"),
+                         help="Set a preference: --set key value")
+    p_prefs.add_argument("--behaviour", action="store_true",
+                         help="Show auto-tracked behaviour pattern counts")
 
     # search-docs
     p_search = sub.add_parser("search-docs", help="Full-text search in .md docs")
@@ -950,6 +993,12 @@ def main():
         help="Repo root to index (default: current dir)"
     )
     p_idx.add_argument(
+        "--no-embed",
+        action="store_true",
+        default=False,
+        help="Skip FAISS embedding (AST/symbol index only). Faster; useful in CI or first-pass indexing.",
+    )
+    p_idx.add_argument(
         "--no-watch",
         action="store_true",
         default=False,
@@ -965,18 +1014,31 @@ def main():
     # serve-api
     p_api = sub.add_parser("serve-api", help="Start the FastAPI REST server")
     p_api.add_argument("--host", default="127.0.0.1")
-    p_api.add_argument("--port", type=int, default=8080)
+    # Default port: read from .cognirepo/config.json api_port, fall back to 8080
+    try:
+        import json as _json
+        with open(get_path("config.json"), encoding="utf-8") as _f:
+            _api_port = _json.load(_f).get("api_port", 8080)
+    except Exception:  # pylint: disable=broad-except
+        _api_port = 8080
+    p_api.add_argument("--port", type=int, default=_api_port)
     p_api.add_argument("--reload", action="store_true")
 
     # serve-grpc
     p_grpc = sub.add_parser("serve-grpc", help="Start the gRPC inter-model server")
     p_grpc.add_argument("--port", type=int, default=50051)
+    p_grpc.add_argument("--daemon", action="store_true", help="Run in background as a daemon")
     p_grpc.add_argument(
         "--idle-timeout",
         type=int,
         default=0,
         help="Shut down after N seconds of inactivity (0 to disable)",
     )
+
+    # benchmark
+    p_bench = sub.add_parser("benchmark", help="Run quantitative value benchmarks")
+    p_bench.add_argument("--json", action="store_true", help="Output raw JSON instead of report")
+    p_bench.add_argument("--compare", action="store_true", help="Compare with previous run")
 
     # export-spec
     sub.add_parser("export-spec", help="Export OpenAI/Cursor tool specs to adapters/")
@@ -1222,7 +1284,7 @@ def main():
 
     if args.command == "index-repo":
         try:
-            summary, kg, indexer = _direct_index(args.path)
+            summary, kg, indexer = _direct_index(args.path, embed=not args.no_embed)
         except SystemExit:
             raise
         except Exception as exc:  # pylint: disable=broad-except
@@ -1244,19 +1306,46 @@ def main():
         return
 
     if args.command == "serve-grpc":
-        from rpc.server import start_server  # pylint: disable=import-outside-toplevel
-        start_server(port=args.port, block=True, idle_timeout=args.idle_timeout)
+        if args.daemon:
+            import subprocess as _sp  # pylint: disable=import-outside-toplevel
+            cmd = [sys.executable, "-m", "cognirepo", "serve-grpc", "--port", str(args.port)]
+            if args.idle_timeout:
+                cmd += ["--idle-timeout", str(args.idle_timeout)]
+            proc = _sp.Popen(cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)  # nosec B603
+            print(f"[gRPC] Daemon started (pid={proc.pid}) on port {args.port}")
+        else:
+            from rpc.server import start_server  # pylint: disable=import-outside-toplevel
+            start_server(port=args.port, block=True, idle_timeout=args.idle_timeout)
+        return
+
+    if args.command == "benchmark":
+        from tools.benchmark import run_benchmark, print_report, load_last_run  # pylint: disable=import-outside-toplevel
+        metrics = run_benchmark()
+        if args.json:
+            import json as _json2  # pylint: disable=import-outside-toplevel,redefined-outer-name
+            print(_json2.dumps({k: v for k, v in metrics.items() if k != "_details"}, indent=2))
+        else:
+            prev = load_last_run() if args.compare else None
+            print_report(metrics, compare=prev)
         return
 
     if args.command == "export-spec":
+        import json as _json  # pylint: disable=import-outside-toplevel,redefined-outer-name
         from adapters.openai_spec import export  # pylint: disable=import-outside-toplevel
-        export()
+        paths = export()
+        # Also write openai_tools.json to stdout so `cognirepo export-spec > /tmp/spec.json` works
+        if paths.get("openai_tools"):
+            with open(paths["openai_tools"], encoding="utf-8") as _f:
+                _json.dump(_json.load(_f), sys.stdout, indent=2)
+            sys.stdout.write("\n")
         return
 
     if args.command == "prune":
         from cron.prune_memory import prune  # pylint: disable=import-outside-toplevel
+        from cron.prune_memory import DEFAULT_THRESHOLD  # pylint: disable=import-outside-toplevel
+        threshold = args.threshold if args.threshold is not None else DEFAULT_THRESHOLD
         result = prune(
-            threshold=args.threshold,
+            threshold=threshold,
             dry_run=args.dry_run,
             archive=args.archive,
             verbose=args.verbose or args.dry_run,
@@ -1420,13 +1509,39 @@ def main():
 
     else:
         if args.command == "store-memory":
-            _print_results(_direct_store(args.text, args.source))
+            _print_results(_direct_store(args.text, args.source, getattr(args, "global_scope", False)))
 
         elif args.command == "retrieve-memory":
-            results = _direct_retrieve(args.query, args.top_k)
+            results = _direct_retrieve(args.query, args.top_k, getattr(args, "global_scope", False))
             _print_results(results)
             if not results:
                 _maybe_tip_index_repo()
+
+        elif args.command == "user-prefs":
+            from memory.user_memory import (  # pylint: disable=import-outside-toplevel
+                set_preference, list_preferences, get_behaviour_summary,
+            )
+            if args.set:
+                key, value = args.set
+                set_preference(key, value)
+                print(f"Set {key} = {value!r}  (stored in ~/.cognirepo/user/behaviour.json)")
+            elif args.behaviour:
+                summary = get_behaviour_summary()
+                if not summary:
+                    print("No behaviour patterns recorded yet.")
+                else:
+                    print("User behaviour patterns (global):")
+                    for action, info in sorted(summary.items()):
+                        print(f"  {action:<25} count={info['count']}  last={info.get('last_seen','?')[:10]}")
+            else:
+                prefs = list_preferences()
+                if not prefs:
+                    print("No preferences set. Use: cognirepo user-prefs --set <key> <value>")
+                else:
+                    print("User preferences (global ~/.cognirepo/):")
+                    for k, v in prefs.items():
+                        if not k.startswith("memory:"):
+                            print(f"  {k}: {v}")
 
         elif args.command == "search-docs":
             results = _direct_search(args.query)

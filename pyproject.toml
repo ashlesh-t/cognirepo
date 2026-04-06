@@ -17,6 +17,13 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+[project.urls]
+Homepage = "https://github.com/ashlesh-t/cognirepo"
+"Bug Tracker" = "https://github.com/ashlesh-t/cognirepo/issues"
+Documentation = "https://github.com/ashlesh-t/cognirepo/blob/main/ARCHITECTURE.md"
+Changelog = "https://github.com/ashlesh-t/cognirepo/blob/main/CHANGELOG.md"
+Discord = "https://discord.com/channels/1488386981917360289/1488387271190380636"
+
 dependencies = [
     # core
     "faiss-cpu==1.13.2",

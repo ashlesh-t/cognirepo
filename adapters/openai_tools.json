@@ -1,0 +1,314 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "store_memory",
+      "description": "Store a semantic memory with an optional source label.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Memory text to store"
+          },
+          "source": {
+            "type": "string",
+            "description": "Origin label (file, url, \u2026)",
+            "default": ""
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "retrieve_memory",
+      "description": "Retrieve the top-k memories most similar to the query.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query"
+          },
+          "top_k": {
+            "type": "integer",
+            "description": "Number of results",
+            "default": 5
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "search_docs",
+      "description": "Search all markdown documentation files for the given query string.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Text to search for in .md files"
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "log_episode",
+      "description": "Append an episodic event with optional metadata to the event log.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "string",
+            "description": "Event description"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Arbitrary key-value metadata",
+            "default": {}
+          }
+        },
+        "required": [
+          "event"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lookup_symbol",
+      "description": "Return all locations where a symbol is defined or called, with file, line, and type.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Symbol name to look up"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "who_calls",
+      "description": "Return every caller of a function across the indexed repo.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "function_name": {
+            "type": "string",
+            "description": "Name of the function to look up callers for"
+          }
+        },
+        "required": [
+          "function_name"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "subgraph",
+      "description": "Return the local neighbourhood of a concept or symbol as {nodes, edges}.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "entity": {
+            "type": "string",
+            "description": "Entity name or node ID to centre the subgraph on"
+          },
+          "depth": {
+            "type": "integer",
+            "description": "BFS radius",
+            "default": 2
+          }
+        },
+        "required": [
+          "entity"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "episodic_search",
+      "description": "Return past episodic events matching a keyword query.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Keyword to search for in event log"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results",
+            "default": 10
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "graph_stats",
+      "description": "Return a health summary of the current graph state.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "semantic_search_code",
+      "description": "Semantic vector search over code symbols only (no episodic entries).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query"
+          },
+          "top_k": {
+            "type": "integer",
+            "default": 5
+          },
+          "language": {
+            "type": "string",
+            "description": "Optional language filter: python, typescript, go, etc.",
+            "default": null
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "dependency_graph",
+      "description": "Return import/dependency relationships for a module.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "module": {
+            "type": "string",
+            "description": "Relative file path"
+          },
+          "direction": {
+            "type": "string",
+            "default": "both",
+            "description": "imports | imported_by | both"
+          },
+          "depth": {
+            "type": "integer",
+            "default": 2
+          }
+        },
+        "required": [
+          "module"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "explain_change",
+      "description": "Explain recent changes to a file or function via git + episodic memory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "File path or function name"
+          },
+          "since": {
+            "type": "string",
+            "default": "7d",
+            "description": "7d, 30d, or ISO date"
+          },
+          "max_commits": {
+            "type": "integer",
+            "default": 10
+          }
+        },
+        "required": [
+          "target"
+        ]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "context_pack",
+      "description": "Budget-pack the most relevant code + episodic context into a token-bounded block for prompt injection.  Call this BEFORE reading any source file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search intent or question"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "description": "Hard token budget for output",
+            "default": 2000
+          },
+          "include_episodic": {
+            "type": "boolean",
+            "description": "Include episodic memory hits",
+            "default": true
+          },
+          "include_symbols": {
+            "type": "boolean",
+            "description": "Include AST/symbol hits with code windows",
+            "default": true
+          },
+          "window_lines": {
+            "type": "integer",
+            "description": "Lines of code context above/below each hit",
+            "default": 15
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    }
+  }
+]

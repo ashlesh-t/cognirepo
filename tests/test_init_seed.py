@@ -78,7 +78,7 @@ class TestInitProject:
     def test_prompt_n_returns_none_triple(self, monkeypatch):
         from cli.init_project import init_project
         # Provide enough inputs for all wizard steps + indexing prompt
-        inputs = iter(["myproj", "y", "y", "n", "n", "n", "1", "8000", "pass", "y", "n"])
+        inputs = iter(["myproj", "y", "y", "n", "n", "n", "1", "n", "8000", "pass", "y", "n"])
         monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
         result = init_project()
         assert result == (None, None, None)
@@ -86,7 +86,7 @@ class TestInitProject:
     def test_prompt_no_returns_none_triple(self, monkeypatch):
         from cli.init_project import init_project
         # Provide enough inputs for all wizard steps + indexing prompt
-        inputs = iter(["myproj", "y", "y", "n", "n", "n", "1", "8000", "pass", "y", "no"])
+        inputs = iter(["myproj", "y", "y", "n", "n", "n", "1", "n", "8000", "pass", "y", "no"])
         monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
         result = init_project()
         assert result == (None, None, None)

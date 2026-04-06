@@ -116,8 +116,8 @@ def export(out_dir: str = DEFAULT_OUT_DIR) -> dict[str, str]:
     with open(cursor_path, "w", encoding="utf-8") as f:
         json.dump(cursor_cfg, f, indent=2)
 
-    print(f"[openai_spec] wrote {tools_path}")
-    print(f"[openai_spec] wrote {cursor_path}")
+    print(f"[openai_spec] wrote {tools_path}", file=sys.stderr)
+    print(f"[openai_spec] wrote {cursor_path}", file=sys.stderr)
     return {"openai_tools": tools_path, "cursor_mcp_config": cursor_path}
 
 

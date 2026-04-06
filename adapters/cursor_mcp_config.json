@@ -1,0 +1,29 @@
+{
+  "mcpServers": {
+    "cognirepo": {
+      "command": "cognirepo",
+      "args": [
+        "serve"
+      ],
+      "env": {
+        "COGNIREPO_API_URL": "http://localhost:9090"
+      }
+    }
+  },
+  "_comment": "Drop this file at .cursor/mcp.json in your project root. Restart Cursor. CogniRepo tools will appear in the tool selector.",
+  "_tools_preview": [
+    "store_memory",
+    "retrieve_memory",
+    "search_docs",
+    "log_episode",
+    "lookup_symbol",
+    "who_calls",
+    "subgraph",
+    "episodic_search",
+    "graph_stats",
+    "semantic_search_code",
+    "dependency_graph",
+    "explain_change",
+    "context_pack"
+  ]
+}

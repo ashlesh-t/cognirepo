@@ -6,6 +6,10 @@
 
 """
 Centralized path management for CogniRepo storage.
+
+Two storage scopes:
+  - Project scope : .cognirepo/ in the project root (FAISS, graph, AST, project config)
+  - Global scope  : ~/.cognirepo/ (user behaviour, preferences, cross-project settings)
 """
 import hashlib
 import os
@@ -22,6 +26,24 @@ def set_cognirepo_dir(path: str):
     """Explicitly override the .cognirepo directory (e.g. from CLI flag)."""
     global _OVERRIDE_DIR
     _OVERRIDE_DIR = os.path.abspath(path)
+
+def get_global_dir() -> str:
+    """
+    Return the global user-level CogniRepo directory: ~/.cognirepo/
+
+    Stores user behaviour, preferences, and cross-project settings.
+    Always available regardless of whether a project has been initialised.
+    """
+    return os.path.join(str(Path.home()), ".cognirepo")
+
+def get_global_path(subpath: str) -> str:
+    """
+    Get an absolute path under the global ~/.cognirepo/ directory.
+    Creates the parent directory if needed.
+    """
+    full_path = os.path.join(get_global_dir(), subpath)
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    return full_path
 
 def get_cognirepo_dir() -> str:
     """

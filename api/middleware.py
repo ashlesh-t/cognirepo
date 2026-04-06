@@ -16,7 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 ALGORITHM = "HS256"
-EXEMPT_PATHS = {"/login", "/docs", "/openapi.json", "/redoc"}
+EXEMPT_PATHS = {"/login", "/health", "/ready", "/docs", "/openapi.json", "/redoc"}
 
 
 class JWTMiddleware(BaseHTTPMiddleware):  # pylint: disable=too-few-public-methods

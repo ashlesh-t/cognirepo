@@ -864,6 +864,111 @@ def run_cross_model(args):
     _test(section, "_available_providers reads env vars", test_available_providers_reads_env)
 
 
+def run_grpc(args):
+    section = "gRPC Inter-Model Comms"
+    print(f"\n{'─'*60}")
+    print(f"  {section}")
+    print(f"{'─'*60}")
+
+    def test_rpc_imports():
+        """Core gRPC modules must import without error."""
+        from rpc.server import start_server, stop_server  # noqa: F401
+        from rpc.client import CogniRepoClient  # noqa: F401
+        from rpc.proto import cognirepo_pb2, cognirepo_pb2_grpc  # noqa: F401
+        return "rpc.server, rpc.client, proto stubs all importable"
+
+    def test_context_store_put_get():
+        """In-process ContextStore: push then retrieve context."""
+        from rpc.context_store import get_store
+        store = get_store()
+        session = f"test-session-grpc-{int(time.time())}"
+        store.push(session, "key1", "test payload from model-a")
+        ctx = store.get(session)
+        assert "key1" in ctx, f"Key not found in store: {ctx}"
+        assert "test payload" in ctx["key1"], f"Value mismatch: {ctx['key1']}"
+        return f"ContextStore push+get verified ({len(ctx)} entries)"
+
+    def test_grpc_server_starts_nonblocking():
+        """gRPC server must start on a free port without hanging."""
+        import socket
+        from rpc.server import start_server, stop_server
+
+        # Find a free port
+        with socket.socket() as s:
+            s.bind(("localhost", 0))
+            free_port = s.getsockname()[1]
+
+        server = start_server(port=free_port, block=False)
+        try:
+            # Verify it's accepting connections
+            with socket.create_connection(("localhost", free_port), timeout=2):
+                pass
+            return f"gRPC server started and accepting on port {free_port}"
+        finally:
+            stop_server(server)
+
+    def test_grpc_client_sub_query():
+        """gRPC client SubQuery RPC: delegate a query to the running server."""
+        import socket
+        from rpc.server import start_server, stop_server
+        from rpc.client import CogniRepoClient
+
+        with socket.socket() as s:
+            s.bind(("localhost", 0))
+            free_port = s.getsockname()[1]
+
+        server = start_server(port=free_port, block=False)
+        try:
+            client = CogniRepoClient(host="localhost", port=free_port)
+            resp = client.sub_query(
+                query="where is context_pack defined",
+                source_model="claude",
+                target_tier="QUICK",
+                timeout=10.0,
+            )
+            assert resp is not None, "SubQuery returned None"
+            # QueryResponse has status + text fields
+            status = getattr(resp, "status", "") or "ok"
+            return f"gRPC SubQuery: status={status}"
+        finally:
+            stop_server(server)
+
+    def test_grpc_context_push_retrieve():
+        """Push context via client, retrieve via GetContext — inter-model scenario."""
+        import socket
+        from rpc.server import start_server, stop_server
+        from rpc.client import CogniRepoClient
+
+        with socket.socket() as s:
+            s.bind(("localhost", 0))
+            free_port = s.getsockname()[1]
+
+        server = start_server(port=free_port, block=False)
+        try:
+            client = CogniRepoClient(host="localhost", port=free_port)
+            session = f"grpc-test-{int(time.time())}"
+            # Push key-value context (author = source model)
+            client.push_context(session, "finding", "gRPC inter-model test payload", author="claude")
+            ctx = client.get_context(session)
+            assert ctx, f"No context returned for session {session}"
+            assert "finding" in ctx, f"Key 'finding' not in context: {ctx}"
+            assert "gRPC inter-model" in ctx["finding"], (
+                f"Value mismatch: {ctx['finding']}"
+            )
+            return "Cross-model context push+retrieve via gRPC verified"
+        finally:
+            stop_server(server)
+
+    _test(section, "rpc modules importable", test_rpc_imports)
+    _test(section, "ContextStore push+get", test_context_store_put_get)
+    if not args.fast:
+        _test(section, "gRPC server starts non-blocking", test_grpc_server_starts_nonblocking)
+        _test(section, "gRPC client SubQuery RPC", test_grpc_client_sub_query)
+        _test(section, "gRPC cross-model context push+retrieve", test_grpc_context_push_retrieve)
+    else:
+        print("  [fast mode] gRPC live server tests skipped")
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 SECTIONS = {
@@ -878,6 +983,7 @@ SECTIONS = {
     "doctor": run_doctor,
     "security": run_security,
     "cross_model": run_cross_model,
+    "grpc": run_grpc,
 }
 
 

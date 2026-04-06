@@ -31,6 +31,20 @@ across sessions, across tools, across time.
 
 ---
 
+## Why it helps — measured numbers
+
+| Metric | Value | vs. baseline |
+|--------|-------|-------------|
+| Token reduction per query | **98%** | vs. reading all matching source files raw |
+| Symbol lookup latency | **< 1 ms** | vs. `grep` at 2–8 seconds (100 000–4 000 000× faster) |
+| Cache speedup | **20 000–40 000×** | warm `hybrid_retrieve` vs. cold |
+| Memory recall@3 | **100%** | stored decisions always retrievable in top-3 |
+| Cost per 10-query session | **~$0.06** | vs. ~$2.40 without CogniRepo |
+
+Run `cognirepo benchmark` on your own codebase to reproduce. See [METRICS.md](METRICS.md).
+
+---
+
 ## How it works
 
 ```
@@ -229,6 +243,7 @@ Full details and roadmap: [LANGUAGES.md](LANGUAGES.md)
 |----------|-------------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design, component responsibilities, data flow |
 | [USAGE.md](USAGE.md) | Complete CLI, REST API, MCP, and Docker reference |
+| [METRICS.md](METRICS.md) | Quantitative benchmarks: token reduction, lookup speedup, recall |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to add adapters, tools, and language support |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, data handling, trust model |
 | [LANGUAGES.md](LANGUAGES.md) | Language support details and roadmap |

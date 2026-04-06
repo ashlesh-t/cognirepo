@@ -38,6 +38,7 @@ class NodeType:  # pylint: disable=too-few-public-methods
     QUERY = "QUERY"
     SESSION = "SESSION"
     USER_ACTION = "USER_ACTION"
+    MEMORY = "MEMORY"          # cross-agent memory nodes (synced from Claude/Gemini/etc.)
 
 
 class EdgeType:  # pylint: disable=too-few-public-methods
@@ -78,6 +79,10 @@ class KnowledgeGraph:
                 stacklevel=2,
             )
             self.G = nx.DiGraph()
+
+    def load(self) -> None:
+        """Public alias for reloading the graph from disk."""
+        self._load()
 
     def save(self) -> None:
         """Serialize the graph to a pickle file; encrypt if needed."""

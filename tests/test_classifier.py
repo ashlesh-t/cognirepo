@@ -80,11 +80,11 @@ class TestSignals:
 
     def test_imperative_abstract_signal(self, classify):
         r = classify("implement a new caching layer")
-        assert r.signals.get("imperative_abstract", 0) == 4.0
+        assert r.signals.get("imperative_abstract", 0) == 5.0
 
     def test_build_keyword_imperative(self, classify):
         r = classify("build a microservice for this")
-        assert r.signals.get("imperative_abstract", 0) == 4.0
+        assert r.signals.get("imperative_abstract", 0) == 5.0
 
 
 class TestTierBoundaries:

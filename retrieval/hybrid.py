@@ -202,7 +202,13 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
         return scored
 
     def _graph_score(self, candidate: dict, query_entities: list[str]) -> float:
-        """1 / (1 + min_hop_distance) across all query entities → [0, 1]."""
+        """1 / (1 + min_hop_distance) across all query entities → [0, 1].
+
+        Uses the AST reverse index to resolve file-qualified node IDs
+        (e.g. `tools/store_memory.py::store_memory`) so same-symbol candidates
+        score 1.0 immediately, and one-hop neighbours score 0.5.
+        Falls back to undirected path search when no directed path exists.
+        """
         if not query_entities or self.graph.G.number_of_nodes() == 0:
             return 0.0
 
@@ -211,20 +217,43 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
         if not cand_node:
             cand_node = f"concept::{candidate.get('text', '')[:40].lower()}"
 
+        # Build undirected view once per call (cheap — same underlying graph)
+        g_undirected = self.graph.G.to_undirected()
+
         min_hops = None
         for entity in query_entities:
-            # try multiple node ID forms for the entity
-            for node_id in [
+            # Collect all candidate node IDs for this entity:
+            # 1. Generic forms (concept/file/symbol prefixes)
+            entity_node_ids = [
                 entity,
                 make_node_id("CONCEPT", entity),
                 make_node_id("FILE", entity),
                 f"symbol::{entity}",
-            ]:
+            ]
+            # 2. File-qualified forms from the AST reverse index — this is the
+            #    key addition: file::entity may be the same node as cand_node,
+            #    giving hop=0 (exact match) instead of the infinite distance
+            #    between the orphan symbol:: stub and the real filepath:: node.
+            for loc in self.indexer.lookup_symbol(entity):
+                entity_node_ids.append(f"{loc['file']}::{entity}")
+
+            for node_id in entity_node_ids:
                 if not self.graph.node_exists(node_id):
                     continue
+                # Try directed first (fast), then undirected
                 hops = self.graph.hop_distance(node_id, cand_node)
+                if hops >= 1_000_000:
+                    try:
+                        import networkx as _nx  # pylint: disable=import-outside-toplevel
+                        hops = _nx.shortest_path_length(g_undirected, node_id, cand_node)
+                    except Exception:  # pylint: disable=broad-except
+                        hops = 1_000_000
                 if min_hops is None or hops < min_hops:
                     min_hops = hops
+                    if min_hops == 0:
+                        break  # exact match — no need to keep searching
+            if min_hops == 0:
+                break
 
         if min_hops is None or min_hops >= 1_000_000:
             return 0.0

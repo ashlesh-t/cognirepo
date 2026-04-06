@@ -44,7 +44,10 @@ def _load() -> list:
     encrypt, project_id = get_storage_config()
     if encrypt:
         from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
-        raw = decrypt_bytes(raw, get_or_create_key(project_id))
+        try:
+            raw = decrypt_bytes(raw, get_or_create_key(project_id))
+        except Exception:  # InvalidToken — file predates encryption; migrate on next save
+            pass
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -74,7 +77,7 @@ def _get_bm25(data: list):
     if _BM25_INDEX is not None and _BM25_CORPUS is not None:
         return _BM25_INDEX, [eid for eid, _ in _BM25_CORPUS]
 
-    from rank_bm25 import BM25Okapi  # pylint: disable=import-outside-toplevel
+    from rank_bm25 import BM25Plus  # pylint: disable=import-outside-toplevel
     corpus: list[list[str]] = []
     event_ids: list[str] = []
     for entry in data:
@@ -85,7 +88,7 @@ def _get_bm25(data: list):
     if not corpus:
         return None, []
 
-    _BM25_INDEX = BM25Okapi(corpus)
+    _BM25_INDEX = BM25Plus(corpus)
     _BM25_CORPUS = list(zip(event_ids, corpus))
     return _BM25_INDEX, event_ids
 
@@ -143,6 +146,22 @@ def search_episodes(query: str, limit: int = 10) -> list:
 
     id_to_entry = {e["id"]: e for e in data}
     return [id_to_entry[eid] for _, eid in ranked[:limit] if eid in id_to_entry]
+
+
+class EpisodicMemory:
+    """Class interface over the module-level episodic memory functions."""
+
+    def log_event(self, event: str, metadata: dict = None) -> None:
+        log_event(event, metadata)
+
+    def get_history(self, limit: int = 100) -> list:
+        return get_history(limit)
+
+    def search_episodes(self, query: str, limit: int = 10) -> list:
+        return search_episodes(query, limit)
+
+    def mark_stale(self, file_path: str) -> int:
+        return mark_stale(file_path)
 
 
 def mark_stale(file_path: str) -> int:

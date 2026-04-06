@@ -314,12 +314,18 @@ class ASTIndexer:
 
     # ── public API ────────────────────────────────────────────────────────────
 
-    def index_repo(self, repo_root: str) -> dict:
+    def index_repo(self, repo_root: str, embed: bool = True) -> dict:
         """
         Walk *repo_root*, index every supported file (skipping _SKIP_DIRS),
         build the reverse index, and save everything to disk.
         Returns a summary dict with per-language file counts.
+
+        Parameters
+        ----------
+        embed : If False, skip FAISS embedding (AST/symbol index + graph only).
+                Faster for CI or when only symbol lookup is needed.
         """
+        self._embed_enabled = embed
         self._ensure_faiss()
         repo_root = os.path.abspath(repo_root)
         self.index_data["repo_root"] = repo_root
@@ -413,24 +419,28 @@ class ASTIndexer:
             except Exception:  # pylint: disable=broad-except
                 pass
 
-        # embed + add to FAISS
+        # embed + add to FAISS (skipped when embed=False / --no-embed)
+        embed_enabled = getattr(self, "_embed_enabled", True)
         for sym in raw_symbols:
-            embed_text = f"{sym['type']} {sym['name']}: {sym.get('docstring', '')}"
-            vec = self.model.encode(embed_text).astype("float32")
-            faiss_id = len(self.faiss_meta)
-            self.faiss_index.add_with_ids(
-                np.array([vec], dtype="float32"),
-                np.array([faiss_id], dtype=np.int64),
-            )
-            self.faiss_meta.append({
-                "name": sym["name"],
-                "type": sym["type"],
-                "file": rel_path,
-                "start_line": sym["start_line"],
-                "docstring": sym.get("docstring", ""),
-                "source": "symbol",
-            })
-            sym["faiss_id"] = faiss_id
+            if embed_enabled:
+                embed_text = f"{sym['type']} {sym['name']}: {sym.get('docstring', '')}"
+                vec = self.model.encode(embed_text).astype("float32")
+                faiss_id = len(self.faiss_meta)
+                self.faiss_index.add_with_ids(
+                    np.array([vec], dtype="float32"),
+                    np.array([faiss_id], dtype=np.int64),
+                )
+                self.faiss_meta.append({
+                    "name": sym["name"],
+                    "type": sym["type"],
+                    "file": rel_path,
+                    "start_line": sym["start_line"],
+                    "docstring": sym.get("docstring", ""),
+                    "source": "symbol",
+                })
+                sym["faiss_id"] = faiss_id
+            else:
+                sym["faiss_id"] = -1  # not embedded
 
             # knowledge graph
             file_node = make_node_id("FILE", rel_path)

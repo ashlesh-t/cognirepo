@@ -23,6 +23,14 @@
         "--project-dir",
         "/home/ashlesh/my_works/cognirepo"
       ]
+    },
+    "cognirepo-cogni-smart": {
+      "command": "/home/ashlesh/my_works/cognirepo/venv/bin/cognirepo",
+      "args": [
+        "serve",
+        "--project-dir",
+        "/home/ashlesh/my_works/cognirepo"
+      ]
     }
   }
 }
