@@ -39,8 +39,25 @@ from datetime import datetime, timezone
 from typing import Any
 
 # ── paths ─────────────────────────────────────────────────────────────────────
-SEMANTIC_META = ".cognirepo/memory/semantic_metadata.json"
-SEMANTIC_INDEX = "vector_db/semantic.index"
+# NOTE: resolved lazily via get_path() to respect --project-dir / COGNIREPO_DIR
+
+def _semantic_meta() -> str:
+    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    return get_path("memory/semantic_metadata.json")
+
+def _semantic_index() -> str:
+    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    return get_path("vector_db/semantic.index")
+
+def _archive_dir() -> str:
+    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    return get_path("archive")
+
+def _graph_pkl() -> str:
+    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    return get_path("graph/graph.pkl")
+
+# Keep module-level names for backward compat (point at legacy hardcoded values only as fallback)
 ARCHIVE_DIR = ".cognirepo/archive"
 GRAPH_PKL = ".cognirepo/graph/graph.pkl"
 
@@ -107,11 +124,11 @@ def _rebuild_faiss(kept: list[dict[str, Any]], dry_run: bool) -> int:
         dim = vectors.shape[1]
         index = faiss.IndexFlatL2(dim)
         index.add(vectors)  # pylint: disable=no-value-for-parameter
-        faiss.write_index(index, SEMANTIC_INDEX)
+        faiss.write_index(index, _semantic_index())
         # rewrite metadata with contiguous row IDs
         for i, entry in enumerate(kept):
             entry["faiss_row"] = i
-        with open(SEMANTIC_META, "w", encoding="utf-8") as f:
+        with open(_semantic_meta(), "w", encoding="utf-8") as f:
             json.dump(kept, f, indent=2)
         return len(kept)
     except Exception as exc:  # pylint: disable=broad-except
@@ -124,7 +141,7 @@ def _rebuild_faiss(kept: list[dict[str, Any]], dry_run: bool) -> int:
 def _prune_graph(dry_run: bool) -> dict[str, int]:
     """Remove orphan nodes (no edges) and very cold concept nodes."""
     stats = {"orphans_removed": 0, "cold_nodes_removed": 0}
-    if not os.path.exists(GRAPH_PKL):
+    if not os.path.exists(_graph_pkl()):
         return stats
     try:
         from graph.knowledge_graph import KnowledgeGraph, NodeType  # pylint: disable=import-outside-toplevel
@@ -151,9 +168,10 @@ def _prune_graph(dry_run: bool) -> dict[str, int]:
 # ── archive helpers ───────────────────────────────────────────────────────────
 
 def _archive_entries(entries: list[dict[str, Any]]) -> str:
-    os.makedirs(ARCHIVE_DIR, exist_ok=True)
+    archive_dir = _archive_dir()
+    os.makedirs(archive_dir, exist_ok=True)
     ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
-    path = os.path.join(ARCHIVE_DIR, f"pruned_{ts}.json")
+    path = os.path.join(archive_dir, f"pruned_{ts}.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(entries, f, indent=2)
     return path
@@ -177,11 +195,11 @@ def prune(
         print("[prune] Memory pressure too high — skipping prune run", file=sys.stderr)
         return {"skipped": True, "reason": "circuit_breaker_open"}
 
-    if not os.path.exists(SEMANTIC_META):
+    if not os.path.exists(_semantic_meta()):
         print("[prune] No semantic metadata found — nothing to prune")
         return {"total": 0, "kept": 0, "pruned": 0}
 
-    with open(SEMANTIC_META, encoding="utf-8") as f:
+    with open(_semantic_meta(), encoding="utf-8") as f:
         entries: list[dict[str, Any]] = json.load(f)
 
     total = len(entries)

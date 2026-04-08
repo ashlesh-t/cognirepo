@@ -8,7 +8,11 @@
 Utility to load and retrieve the embedding model.
 """
 # pylint: disable=import-error
+import logging
+
 from sentence_transformers import SentenceTransformer
+
+logger = logging.getLogger(__name__)
 
 # Silence harmless "UNEXPECTED" weight loading reports from transformers
 try:
@@ -27,7 +31,7 @@ def get_model():
     global MODEL  # pylint: disable=global-statement
 
     if MODEL is None:
-        print("Loading embedding model once...")
+        logger.debug("Loading embedding model once...")
         import os  # pylint: disable=import-outside-toplevel
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
         MODEL = SentenceTransformer("all-MiniLM-L6-v2")

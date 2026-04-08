@@ -43,16 +43,24 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-_SESSIONS_DIR = Path(".cognirepo/sessions")
-_CURRENT_PTR = _SESSIONS_DIR / "current.json"
 DEFAULT_MAX_EXCHANGES = 10
+
+
+def _sessions_dir() -> Path:
+    """Resolve sessions directory lazily from the active project config."""
+    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    return Path(get_path("sessions"))
+
+
+def _current_ptr() -> Path:
+    return _sessions_dir() / "current.json"
 
 
 # ── public API ────────────────────────────────────────────────────────────────
 
 def create_session(model: str = "") -> dict:
     """Create a new empty session, save it, and mark it as the current session."""
-    os.makedirs(_SESSIONS_DIR, exist_ok=True)
+    os.makedirs(_sessions_dir(), exist_ok=True)
     session: dict = {
         "session_id": str(uuid.uuid4()),
         "messages": [],
@@ -66,7 +74,7 @@ def create_session(model: str = "") -> dict:
 
 def load_session(session_id: str) -> dict | None:
     """Load a session by exact ID.  Returns None if not found or unreadable."""
-    path = _SESSIONS_DIR / f"{session_id}.json"
+    path = _sessions_dir() / f"{session_id}.json"
     if not path.exists():
         return None
     try:
@@ -79,7 +87,7 @@ def load_session(session_id: str) -> dict | None:
 def load_current_session() -> dict | None:
     """Load the session pointed to by current.json.  Returns None if none exists."""
     try:
-        with open(_CURRENT_PTR, encoding="utf-8") as f:
+        with open(_current_ptr(), encoding="utf-8") as f:
             ptr = json.load(f)
         return load_session(ptr.get("session_id", ""))
     except (OSError, json.JSONDecodeError):
@@ -143,11 +151,12 @@ def list_sessions(limit: int = 20) -> list[dict]:
     ----------
     limit : Maximum sessions to return.  0 or negative means no limit.
     """
-    if not _SESSIONS_DIR.exists():
+    sd = _sessions_dir()
+    if not sd.exists():
         return []
 
     sessions: list[dict] = []
-    for path in _SESSIONS_DIR.glob("*.json"):
+    for path in sd.glob("*.json"):
         if path.name == "current.json":
             continue
         try:
@@ -165,7 +174,7 @@ def list_sessions(limit: int = 20) -> list[dict]:
 def current_session_id() -> str | None:
     """Return the ID of the current session, or None."""
     try:
-        with open(_CURRENT_PTR, encoding="utf-8") as f:
+        with open(_current_ptr(), encoding="utf-8") as f:
             return json.load(f).get("session_id")
     except (OSError, json.JSONDecodeError):
         return None
@@ -174,7 +183,8 @@ def current_session_id() -> str | None:
 def load_max_exchanges() -> int:
     """Read max_exchanges from config.json, falling back to DEFAULT_MAX_EXCHANGES."""
     try:
-        with open(".cognirepo/config.json", encoding="utf-8") as f:
+        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        with open(get_path("config.json"), encoding="utf-8") as f:
             cfg = json.load(f)
         return int(cfg.get("session", {}).get("max_exchanges", DEFAULT_MAX_EXCHANGES))
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
@@ -184,13 +194,15 @@ def load_max_exchanges() -> int:
 # ── internal helpers ──────────────────────────────────────────────────────────
 
 def _save_session(session: dict) -> None:
-    os.makedirs(_SESSIONS_DIR, exist_ok=True)
-    path = _SESSIONS_DIR / f"{session['session_id']}.json"
+    sd = _sessions_dir()
+    os.makedirs(sd, exist_ok=True)
+    path = sd / f"{session['session_id']}.json"
     with open(path, "w", encoding="utf-8") as f:
         json.dump(session, f, indent=2, ensure_ascii=False)
 
 
 def _set_current(session_id: str) -> None:
-    os.makedirs(_SESSIONS_DIR, exist_ok=True)
-    with open(_CURRENT_PTR, "w", encoding="utf-8") as f:
+    ptr = _current_ptr()
+    os.makedirs(ptr.parent, exist_ok=True)
+    with open(ptr, "w", encoding="utf-8") as f:
         json.dump({"session_id": session_id}, f)

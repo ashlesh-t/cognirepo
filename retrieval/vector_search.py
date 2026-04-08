@@ -7,18 +7,22 @@
 """
 Module for searching the vector database.
 """
+import logging
+
 from vector_db.local_vector_db import LocalVectorDB
+
+logger = logging.getLogger(__name__)
 
 
 def vector_search(query):
     """
-    Search for a query in the vector database and print results.
+    Search for a query in the vector database and return results.
     """
     vector_db_obj = LocalVectorDB()
     try:
         results = vector_db_obj.search(query)
-        print("Vector search results:")
-        for r in results:
-            print(r)
+        logger.debug("Vector search results: %s", results)
+        return results
     except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"Error occurred while searching: {e}")
+        logger.error("Error occurred while searching: %s", e)
+        return []

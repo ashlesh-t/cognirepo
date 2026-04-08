@@ -7,8 +7,12 @@
 """
 Module for managing and retrieving semantic memories using vector embeddings.
 """
+import logging
+
 from vector_db.local_vector_db import LocalVectorDB
 from memory.embeddings import get_model
+
+logger = logging.getLogger(__name__)
 
 
 class SemanticMemory:
@@ -48,7 +52,7 @@ class SemanticMemory:
 
         self.db.add(vector, text, importance)
 
-        print("Stored semantic memory with importance:", importance)
+        logger.debug("Stored semantic memory with importance: %s", importance)
 
     def retrieve(self, query: str, top_k: int = 5) -> list:
         """

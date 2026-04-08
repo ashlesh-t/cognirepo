@@ -57,6 +57,8 @@ dependencies = [
     "openai>=1.0",
     # env loading
     "python-dotenv>=1.0",
+    # BM25 keyword retrieval (episodic search)
+    "rank-bm25>=0.2.2",
 ]
 
 [project.optional-dependencies]

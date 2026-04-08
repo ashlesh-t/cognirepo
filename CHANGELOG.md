@@ -8,6 +8,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Fixed
+
+- **Task 1.1** — Declared `rank-bm25>=0.2.2` as a hard dependency in `pyproject.toml`; `episodic_search` no longer raises `ModuleNotFoundError` on a fresh install.
+- **Task 1.2** — Removed `print()` from `memory/semantic_memory.py` (replaced with `logger.debug`); also fixed `memory/embeddings.py` and `retrieval/vector_search.py`. Added `scripts/check_no_stdout_pollution.py` CI guard that fails on any stdout-going `print()` in MCP-critical modules.
+- **Task 1.3** — `orchestrator/session.py` no longer captures `.cognirepo/sessions` at module-load time; all path resolution is now lazy via `config.paths.get_path()`, so `--project-dir` and `COGNIREPO_DIR` are correctly honoured for session storage.
+- **Task 1.4** — `cron/prune_memory.py` FAISS rebuild now writes to the configured project path (via `config.paths.get_path("vector_db/semantic.index")`) instead of a hard-coded relative `./vector_db/` path.
+
 ---
 
 ## [0.1.0] — 2026-04-05
