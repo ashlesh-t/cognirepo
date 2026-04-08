@@ -26,12 +26,13 @@ def client():
 
 
 @pytest.fixture
-def auth_headers(client):
-    """Return Authorization headers for the default 'changeme' password."""
-    resp = client.post("/login", json={"password": "changeme"})
-    # If login fails (hash mismatch in temp config), skip auth tests gracefully
-    if resp.status_code != 200:
-        pytest.skip("login failed — password hash mismatch in test config")
+def auth_headers(client, test_password):
+    """Return Authorization headers using the test-config password."""
+    resp = client.post("/login", json={"password": test_password})
+    assert resp.status_code == 200, (
+        f"Login failed ({resp.status_code}): {resp.text}. "
+        "Check that COGNIREPO_PASSWORD_HASH env var matches test_password."
+    )
     token = resp.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
 

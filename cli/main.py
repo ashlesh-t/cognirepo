@@ -1404,6 +1404,14 @@ def main():
         sys.exit(_cmd_doctor(verbose=args.verbose))
 
     if args.command == "watch":
+        if sys.platform not in ("linux", "linux2"):
+            print(
+                "ERROR: The CogniRepo background daemon currently supports Linux only.\n"
+                "On macOS/Windows, run 'cognirepo serve' for foreground MCP server mode,\n"
+                "or use 'cognirepo index-repo --no-watch' to index without a watcher.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         from cli.daemon import (  # pylint: disable=import-outside-toplevel
             heartbeat_age_seconds,
             read_heartbeat,

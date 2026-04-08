@@ -12,7 +12,6 @@ crash-recovery loop, systemd unit generation, and interactive log tailing.
 """
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import signal
@@ -21,6 +20,9 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+
+# fcntl is Linux/macOS only — imported lazily inside functions that need it
+# so that importing this module on Windows does not raise ImportError.
 
 
 # ---------------------------------------------------------------------------
@@ -163,10 +165,12 @@ def flock_register_watcher(pid: int, name: str, path: str, log_path: str) -> Non
     # Open with O_CREAT|O_WRONLY; flock blocks until we hold exclusive lock
     fd = os.open(str(pid_path), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        import fcntl as _fcntl  # pylint: disable=import-outside-toplevel
+        _fcntl.flock(fd, _fcntl.LOCK_EX)
         os.write(fd, json.dumps(record, indent=2).encode())
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        import fcntl as _fcntl  # pylint: disable=import-outside-toplevel
+        _fcntl.flock(fd, _fcntl.LOCK_UN)
         os.close(fd)
 
 

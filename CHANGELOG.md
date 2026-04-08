@@ -15,6 +15,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **Task 1.3** — `orchestrator/session.py` no longer captures `.cognirepo/sessions` at module-load time; all path resolution is now lazy via `config.paths.get_path()`, so `--project-dir` and `COGNIREPO_DIR` are correctly honoured for session storage.
 - **Task 1.4** — `cron/prune_memory.py` FAISS rebuild now writes to the configured project path (via `config.paths.get_path("vector_db/semantic.index")`) instead of a hard-coded relative `./vector_db/` path.
 
+### Changed
+
+- **Task 3.1** — `test_api.py` now actually runs (was silently skipped due to password mismatch). Fixed `auth_headers` fixture to use `test_password` from conftest. Removed `--ignore=tests/test_api.py` from the main CI pytest step and removed `|| true` from the separate API step (replaced with stdout-pollution guard). All 26 API tests pass.
+- **Task 3.2** — `config/paths.py`: added `set_global_dir()` / `get_global_dir()` override so tests redirect `user_memory` writes to tmp; also respects `COGNIREPO_GLOBAL_DIR` env var. Conftest updated to call `set_global_dir()`. `tests/test_isolation.py` added.
+- **Task 3.3** — `cli/daemon.py`: moved `import fcntl` from module-level to inside the two functions that use it (lazy import). Added platform guard to the `watch` command handler: non-Linux gets a friendly message + exit code 2. `tests/test_cli_daemon.py` added.
+- **Task 3.4** — `cli/init_project.py`: removed the "Index this repo now? (Y/n)" prompt. `init` now runs index-repo automatically by default; `--no-index` flag skips it. Progress message shown during indexing; tqdm used when available. `tests/test_e2e_init.py` added.
+
 ### Documentation
 
 - **Task 2.1** — Corrected all "4-signal retrieval" claims to "3-signal" across `ARCHITECTURE.md`, `README.md`, `docs/ARCHITECTURE.md`. Added `docs/architecture/retrieval.md` with the canonical pipeline diagram explaining the actual merge formula and why AST is a pre-scorer (not a merge signal) and episodic is a side-channel.

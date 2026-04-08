@@ -38,8 +38,9 @@ def isolated_cognirepo(tmp_path, monkeypatch):
 
     Secrets are injected as env vars — no keychain access required in tests.
     """
-    from config.paths import set_cognirepo_dir
+    from config.paths import set_cognirepo_dir, set_global_dir
     set_cognirepo_dir(str(tmp_path / ".cognirepo"))
+    set_global_dir(str(tmp_path / ".cognirepo-global"))
 
     # Change CWD so relative paths land in tmp
     monkeypatch.chdir(tmp_path)
@@ -77,3 +78,9 @@ def isolated_cognirepo(tmp_path, monkeypatch):
         json.dump(config, f)
 
     yield tmp_path
+
+
+@pytest.fixture
+def test_password():
+    """Return the plaintext password used in the isolated test config."""
+    return _TEST_PASSWORD

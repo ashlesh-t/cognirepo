@@ -21,19 +21,40 @@ def get_project_hash(project_path: str) -> str:
     return hashlib.sha256(abs_path.encode()).hexdigest()[:8]
 
 _OVERRIDE_DIR = None
+_OVERRIDE_GLOBAL_DIR = None
+
 
 def set_cognirepo_dir(path: str):
     """Explicitly override the .cognirepo directory (e.g. from CLI flag)."""
     global _OVERRIDE_DIR
     _OVERRIDE_DIR = os.path.abspath(path)
 
+
+def set_global_dir(path: str):
+    """
+    Override the global ~/.cognirepo directory.
+
+    Use in tests to redirect user_memory writes away from the real home directory:
+        from config.paths import set_global_dir
+        set_global_dir(str(tmp_path / ".cognirepo-global"))
+    """
+    global _OVERRIDE_GLOBAL_DIR  # pylint: disable=global-statement
+    _OVERRIDE_GLOBAL_DIR = os.path.abspath(path)
+
 def get_global_dir() -> str:
     """
-    Return the global user-level CogniRepo directory: ~/.cognirepo/
+    Return the global user-level CogniRepo directory.
 
-    Stores user behaviour, preferences, and cross-project settings.
-    Always available regardless of whether a project has been initialised.
+    Priority:
+    1. Explicit override via set_global_dir() (used in tests)
+    2. COGNIREPO_GLOBAL_DIR environment variable
+    3. Default: ~/.cognirepo/
     """
+    if _OVERRIDE_GLOBAL_DIR:
+        return _OVERRIDE_GLOBAL_DIR
+    env_dir = os.environ.get("COGNIREPO_GLOBAL_DIR")
+    if env_dir:
+        return os.path.abspath(env_dir)
     return os.path.join(str(Path.home()), ".cognirepo")
 
 def get_global_path(subpath: str) -> str:

@@ -628,30 +628,12 @@ def init_project(
         print("  → Enable: set storage.encrypt: true in .cognirepo/config.json")
 
     if no_index:
+        print("Skipping index (--no-index). Run 'cognirepo index-repo .' when ready.")
         return None, None, None
 
-    # ── repo indexing prompt ──────────────────────────────────────────────────
-    if non_interactive:
-        answer = ""  # default = yes
-    else:
-        _index_prompt = (
-            "\nIndex this repo now? It maps every function and class so AI tools\n"
-            "can look up symbols and understand code structure.\n"
-            "This takes ~5 seconds for most projects. (Y/n): "
-        )
-        if _already_init:
-            _index_prompt = (
-                "\nRe-index this repo? (Recommended after code changes.) (Y/n): "
-            )
-        print(_index_prompt, end="", flush=True)
-        try:
-            answer = input().strip().lower()
-        except EOFError:
-            answer = ""  # non-interactive environment → default yes
-
-    if answer in ("n", "no"):
-        print("Run 'cognirepo index-repo .' when ready.")
-        return None, None, None
+    # ── repo indexing (automatic — use --no-index to skip) ───────────────────
+    _verb = "Re-indexing" if _already_init else "Indexing"
+    print(f"\n{_verb} repo …  (use --no-index to skip)")
 
     from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
     from indexer.ast_indexer import ASTIndexer        # pylint: disable=import-outside-toplevel
@@ -659,7 +641,18 @@ def init_project(
     cwd = os.getcwd()
     kg = KnowledgeGraph()
     indexer = ASTIndexer(graph=kg)
+
+    # Show progress if tqdm is available, otherwise fall back silently
+    try:
+        from tqdm import tqdm as _tqdm  # pylint: disable=import-outside-toplevel
+        _ctx = _tqdm(desc="  indexing", unit="files", leave=False)
+    except ImportError:
+        _ctx = None
+
     summary = indexer.index_repo(cwd)
+    if _ctx is not None:
+        _ctx.close()
+
     kg.save()
 
     # seed behaviour from git history

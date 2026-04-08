@@ -49,8 +49,7 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest tests/ -v --tb=short -x \
-            --ignore=tests/test_api.py
+          pytest tests/ -v --tb=short -x
         env:
           COGNIREPO_MULTI_AGENT_ENABLED: "false"
 
@@ -72,12 +71,8 @@ jobs:
           fi
           echo "Proto files are up to date."
 
-      - name: Run API tests (separate — needs fastapi[testclient])
-        run: |
-          pip install "httpx>=0.28" pytest-asyncio
-          pytest tests/test_api.py -v --tb=short || true
-        env:
-          COGNIREPO_MULTI_AGENT_ENABLED: "false"
+      - name: Stdout pollution guard
+        run: python scripts/check_no_stdout_pollution.py
 
   security:
     name: Security Scan
