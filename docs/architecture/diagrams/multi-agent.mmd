@@ -1,0 +1,18 @@
+graph LR
+    subgraph Primary["Primary Agent (DEEP tier)"]
+        PA[router.py<br/>DEEP query]
+        PA -->|delegates fast sub-lookups| GRPC_C[gRPC client<br/>rpc/client.py]
+    end
+
+    subgraph Secondary["Secondary Agent (FAST tier)"]
+        GRPC_S[gRPC server<br/>rpc/server.py]
+        SA[router.py<br/>FAST lookup]
+        GRPC_S --> SA
+    end
+
+    GRPC_C -->|port 50051| GRPC_S
+    SA -->|result| GRPC_C
+    GRPC_C -->|sub-results| PA
+    PA -->|full response| User([User])
+
+    note1[/"Multi-agent mode is OFF by default.<br/>Enable: multi_agent: true in config.json"\]

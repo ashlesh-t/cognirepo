@@ -1,0 +1,26 @@
+sequenceDiagram
+    participant User as User / AI Tool
+    participant MCP as MCP Server<br/>(server/mcp_server.py)
+    participant Tools as tools/
+    participant Cls as classifier.py
+    participant Ctx as context_builder.py
+    participant Rtr as router.py
+    participant Mem as memory/ + retrieval/
+    participant Model as Model API<br/>(Claude / Gemini / Grok)
+    participant Store as .cognirepo/
+
+    User->>MCP: JSON-RPC tool call
+    MCP->>Tools: route to tool function
+    Tools->>Mem: retrieve / store
+    Mem->>Store: read/write FAISS + graph + episodic
+
+    Note over User,MCP: CLI ask path
+    User->>Cls: cognirepo ask "..."
+    Cls-->>User: tier = QUICK|FAST|BALANCED|DEEP
+    Cls->>Ctx: hydrate ContextBundle
+    Ctx->>Mem: semantic + graph + AST + episodic + session
+    Ctx->>Rtr: ContextBundle + tier
+    Rtr->>Model: prompt + context
+    Model-->>Rtr: response
+    Rtr->>Store: session.append_exchange()
+    Rtr-->>User: answer

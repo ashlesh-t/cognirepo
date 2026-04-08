@@ -25,7 +25,7 @@ all three transports consistent and testable.
 | `memory/` | FAISS store/retrieve, episodic log, embeddings, circuit breaker | Retrieval scoring |
 | `graph/` | NetworkX graph structure, behaviour tracker | Embedding, retrieval |
 | `indexer/` | tree-sitter parsing, file watching, reverse index | Graph building |
-| `retrieval/` | Hybrid 4-signal scoring | Direct FAISS calls |
+| `retrieval/` | Hybrid 3-signal scoring (vector + graph + behaviour); AST is a pre-scorer | Direct FAISS calls |
 | `tools/` | Architecture rule enforcement — all callers go through here | Business logic |
 | `orchestrator/` | Classify, build context, route to model, post-process | Storage |
 | `server/` | MCP stdio adapter only | Any logic |
@@ -50,9 +50,12 @@ User / AI Tool
     ┌─────────┼──────────────────────┐
     ▼         ▼                      ▼
 memory/    retrieval/hybrid.py    graph/
-FAISS      (4-signal merge:       NetworkX
+FAISS      (3-signal merge:       NetworkX
 episodic   vector + graph         behaviour
-embeddings + AST + episodic)      tracker
+embeddings + behaviour)           tracker
+              │
+         ↑ AST pre-scorer (expands candidates)
+         ↑ Episodic side-channel (separate BM25 pipeline)
               │
          indexer/
          tree-sitter parser
@@ -177,13 +180,14 @@ STD_PROMPTS/                   — bundled markdown templates (inside the cognir
 | Cross-entity count (fn/file/class mentions) | +1.5 | per entity above 2 |
 | Context dependency (episodic/graph history ref) | +3 | binary |
 | Query token length | +0.5 | per 10 tokens after first 20 |
-| Imperative + abstract combo (implement, build, …) | +4 | binary |
+| Imperative + abstract combo (implement, build, …) | +5 | binary |
 
+<!-- Thresholds are authoritative here. See _TIER_* constants in orchestrator/classifier.py -->
 **Score thresholds:**
-- 0–2   → **QUICK** — single-token, trivial — routed to Grok (fastest)
-- 3–6   → **FAST** — quick lookup, factual, single-entity — Gemini Flash
-- 7–14  → **BALANCED** — moderate reasoning — Gemini Flash
-- 15+   → **DEEP** — cross-file, architectural, ambiguous — Claude
+- ≤2    → **QUICK** — single-token, trivial — routed to Grok (fastest)
+- ≤4    → **FAST** — quick lookup, factual, single-entity — Gemini Flash
+- ≤9    → **BALANCED** — moderate reasoning — Gemini Flash
+- >9    → **DEEP** — cross-file, architectural, ambiguous — Claude
 
 **Hard overrides** (bypass score):
 - `"full context"` / `"everything related"` → always DEEP
@@ -248,5 +252,5 @@ for v0.1.0 — they will be replaced with proper diagrams before v0.2.0.
 |------|-------------|
 | `system-overview.png` | Full component map |
 | `data-flow.png` | Request path from tool call to model response |
-| `retrieval-pipeline.png` | Hybrid 4-signal retrieval detail |
+| `retrieval-pipeline.png` | Hybrid 3-signal retrieval pipeline (AST pre-scorer → vector+graph+behaviour merge) |
 | `multi-agent.png` | gRPC-based multi-agent topology |

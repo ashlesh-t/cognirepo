@@ -1,0 +1,18 @@
+flowchart TD
+    Q([Query string]) --> AST[AST Pre-scorer<br/>extract_entities + O&#40;1&#41; reverse-index lookup]
+    Q --> VEC[Vector Search<br/>FAISS IndexFlatL2<br/>top_k × 3 candidates]
+    AST --> MERGE[Merge + Dedup<br/>by _id key]
+    VEC --> MERGE
+    MERGE --> SCORE{3-Signal Scoring}
+    SCORE -->|w=0.5| VS[vector_score<br/>max&#40;0, 1 − dist/2&#41;]
+    SCORE -->|w=0.3| GS[graph_score<br/>1 / &#40;1 + hop_distance&#41;]
+    SCORE -->|w=0.2| BS[behaviour_score<br/>log&#40;1+count&#41; / log&#40;1+max&#41;]
+    VS --> FINAL[final_score = Σ weight × signal]
+    GS --> FINAL
+    BS --> FINAL
+    FINAL --> SORT[Sort + truncate → top_k]
+    SORT --> OUT([Results])
+
+    Q -.->|separate pipeline| EPI[Episodic Side-channel<br/>BM25 keyword search<br/>episodic_bm25_filter&#40;&#41;]
+    EPI -.-> CTX[Context Builder]
+    OUT --> CTX

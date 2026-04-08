@@ -69,9 +69,12 @@ _ERROR_PATTERNS = re.compile(
 )
 
 # ── tier → score boundaries ───────────────────────────────────────────────────
+# These constants are the single source of truth for tier thresholds.
+# The table in ARCHITECTURE.md § "Complexity Classifier Signals" mirrors them.
+# Update both together — a sync test enforces parity: tests/test_docs_sync.py
 _TIER_QUICK    = 2.0
-_TIER_FAST     = 4.0   # was 6 — lowered so explain/compare reach BALANCED
-_TIER_BALANCED = 9.0   # was 14 — was practically unreachable
+_TIER_FAST     = 4.0
+_TIER_BALANCED = 9.0
 
 
 @dataclass

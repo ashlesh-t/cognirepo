@@ -15,6 +15,14 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **Task 1.3** — `orchestrator/session.py` no longer captures `.cognirepo/sessions` at module-load time; all path resolution is now lazy via `config.paths.get_path()`, so `--project-dir` and `COGNIREPO_DIR` are correctly honoured for session storage.
 - **Task 1.4** — `cron/prune_memory.py` FAISS rebuild now writes to the configured project path (via `config.paths.get_path("vector_db/semantic.index")`) instead of a hard-coded relative `./vector_db/` path.
 
+### Documentation
+
+- **Task 2.1** — Corrected all "4-signal retrieval" claims to "3-signal" across `ARCHITECTURE.md`, `README.md`, `docs/ARCHITECTURE.md`. Added `docs/architecture/retrieval.md` with the canonical pipeline diagram explaining the actual merge formula and why AST is a pre-scorer (not a merge signal) and episodic is a side-channel.
+- **Task 2.2** — Refreshed classifier tier thresholds in `ARCHITECTURE.md` to match `_TIER_QUICK=2.0`, `_TIER_FAST=4.0`, `_TIER_BALANCED=9.0` in code; corrected imperative signal weight from +4 to +5. Added pointer comment in `classifier.py` linking to the doc section. `tests/test_docs_sync.py` enforces parity automatically.
+- **Task 2.3** — Aligned edge type names in `FEATURE.md` from `CONTAINS, CALLS, USES` to the actual `EdgeType` constants: `RELATES_TO, DEFINED_IN, CALLED_BY, QUERIED_WITH, CO_OCCURS`. Added `docs/architecture/graph.md` with a full edge type glossary and example queries. Sync test added.
+- **Task 2.4** — Verified `faiss-cpu==1.13.2` and `starlette==1.0.0` exist on PyPI and install correctly; no version corrections required.
+- **Task 2.5** — Replaced 40-byte stub PNGs with valid PNG files (800×400 white images with embedded description and Mermaid source pointer). Committed Mermaid `.mmd` source files for all 4 diagrams. Added `scripts/build_diagrams.sh` to regenerate PNGs via `mmdc`. Sync tests added to enforce non-zero-byte and valid PNG format.
+
 ---
 
 ## [0.1.0] — 2026-04-05

@@ -1,0 +1,55 @@
+graph TD
+    subgraph Clients["AI Clients"]
+        C[Claude Desktop / Code]
+        G[Gemini CLI]
+        O[OpenAI / Codex]
+    end
+
+    subgraph Transport["Transport Layer"]
+        MCP[MCP stdio<br/>server/mcp_server.py]
+        REST[REST API<br/>api/main.py]
+        GRPC[gRPC<br/>rpc/server.py]
+    end
+
+    subgraph Tools["tools/ — single entry point"]
+        T1[retrieve_memory]
+        T2[store_memory]
+        T3[context_pack]
+        T4[lookup_symbol]
+        T5[who_calls]
+        T6[search_docs]
+        T7[log_episode]
+        T8[graph_stats / subgraph]
+    end
+
+    subgraph Engine["Memory Engine"]
+        MEM[memory/<br/>FAISS + episodic]
+        RET[retrieval/hybrid.py<br/>3-signal merge]
+        GRA[graph/<br/>KnowledgeGraph]
+        IDX[indexer/<br/>tree-sitter AST]
+    end
+
+    subgraph Storage[".cognirepo/"]
+        VDB[vector_db/]
+        GPH[graph/]
+        EPI[episodic/]
+        IND[index/]
+        SES[sessions/]
+    end
+
+    subgraph Orchestrator["orchestrator/ — CLI path"]
+        CLS[classifier.py<br/>QUICK/FAST/BALANCED/DEEP]
+        CTX[context_builder.py]
+        RTR[router.py → model API]
+    end
+
+    C -->|MCP JSON-RPC| MCP
+    G -->|MCP JSON-RPC| MCP
+    O -->|REST JSON| REST
+    MCP --> Tools
+    REST --> Tools
+    GRPC --> Tools
+    Tools --> Engine
+    Engine --> Storage
+    CLS --> CTX --> RTR
+    RTR --> Tools

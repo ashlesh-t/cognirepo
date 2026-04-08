@@ -59,9 +59,11 @@ User / AI Tool
     ┌─────────┼──────────────────────┐
     ▼         ▼                      ▼
 memory/    retrieval/hybrid.py    graph/
-FAISS      4-signal merge:        NetworkX
+FAISS      3-signal merge:        NetworkX
 episodic   vector + graph         behaviour
-embeddings + AST + episodic       tracker
+embeddings + behaviour            tracker
+           (AST pre-scorer +
+            episodic side-channel)
               │
          indexer/
          tree-sitter (Python, JS, TS, Java, Go, Rust, C++)

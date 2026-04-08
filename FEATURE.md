@@ -13,7 +13,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 |------|--------|----------------|-------|
 | `context_pack(query, max_tokens)` | ✅ | `tools/context_pack.py` | Hybrid retrieve → ±25-line code windows → greedy token pack; tiktoken + fallback |
 | `lookup_symbol(name)` | ✅ | `server/mcp_server.py` → `ASTIndexer.lookup_symbol()` | O(1) reverse index; enriched with graph node type |
-| `who_calls(function_name)` | ✅ | `server/mcp_server.py` → `KnowledgeGraph.get_neighbours()` | Returns callers + file/line from CALLS edges |
+| `who_calls(function_name)` | ✅ | `server/mcp_server.py` → `KnowledgeGraph.get_neighbours()` | Returns callers + file/line from CALLED_BY edges |
 | `subgraph(entity, depth)` | ✅ | `server/mcp_server.py` → `KnowledgeGraph.subgraph_around()` | BFS up to depth 2; returns nodes + edge list |
 | `retrieve_memory(query, top_k)` | ✅ | `tools/retrieve_memory.py` | FAISS cosine similarity via `SemanticMemory.retrieve()` |
 | `store_memory(text, source)` | ✅ | `tools/store_memory.py` | Embeds + stores to FAISS; logs to episodic |
@@ -73,7 +73,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Node types: FILE, FUNCTION, CLASS, CONCEPT, QUERY | ✅ | `NodeType` constants |
-| Edge types: CONTAINS, CALLS, USES, RELATED_TO | ✅ | `EdgeType` constants |
+| Edge types: RELATES_TO, DEFINED_IN, CALLED_BY, QUERIED_WITH, CO_OCCURS | ✅ | `EdgeType` constants in `graph/knowledge_graph.py` |
 | Persist/load (`graph.pkl`) | ✅ | Pickle serialization |
 | `add_node()`, `add_edge()` | ✅ | |
 | `nodes_for_file()` | ✅ | All nodes attributed to a file |
