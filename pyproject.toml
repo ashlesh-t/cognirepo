@@ -13,6 +13,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -77,11 +78,18 @@ security = [
     "cryptography>=42.0",
     "keyring>=25.0",
 ]
+cli = [
+    "rich>=13.7",
+    "prompt_toolkit>=3.0",
+    "tomli-w>=1.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-mock>=3.12",
     "httpx>=0.28",
+    "prometheus-client>=0.20",
+    "build>=1.0",
 ]
 
 [project.scripts]
