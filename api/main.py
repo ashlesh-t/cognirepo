@@ -25,6 +25,7 @@ from api.auth import router as auth_router
 from api.metrics import metrics_available, get_metrics_output
 from api.middleware import JWTMiddleware
 from api.middleware_metrics import MetricsMiddleware
+from api.middleware_ratelimit import RateLimitMiddleware
 from api.middleware_tracing import TracingMiddleware
 from api.routes.episodic import router as episodic_router
 from api.routes.graph import router as graph_router
@@ -39,9 +40,10 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Middleware is applied in reverse order — TracingMiddleware runs outermost,
-# then MetricsMiddleware, then JWTMiddleware.
+# Middleware stack (applied inside-out — last added = first to run):
+#   TracingMiddleware → MetricsMiddleware → RateLimitMiddleware → JWTMiddleware
 app.add_middleware(JWTMiddleware)
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(MetricsMiddleware)
 app.add_middleware(TracingMiddleware)
 
