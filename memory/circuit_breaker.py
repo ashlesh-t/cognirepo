@@ -122,20 +122,35 @@ def _cooldown_sec() -> float:
 # ── circuit breaker ───────────────────────────────────────────────────────────
 
 class CircuitBreaker:
-    """Thread-safe circuit breaker keyed on process RSS."""
+    """
+    Thread-safe circuit breaker backed by a list of pluggable probes.
+
+    Backward compatible: pass `rss_limit_mb` and the breaker behaves
+    exactly as before (only the RSS probe is used).  Pass `probes` to
+    override the probe list entirely.
+    """
 
     def __init__(
         self,
         rss_limit_mb: float | None = None,
         cooldown_sec: float | None = None,
         name: str = "default",
+        probes: list | None = None,
     ) -> None:
         self._name = name
-        self._limit = rss_limit_mb if rss_limit_mb is not None else _default_limit_mb()
         self._cooldown = cooldown_sec if cooldown_sec is not None else _cooldown_sec()
         self._state: State = State.CLOSED
         self._opened_at: float = 0.0
         self._lock = threading.Lock()
+        self._last_fail_reason: str = ""
+
+        if probes is not None:
+            self._probes = probes
+        else:
+            # Default to legacy RSS-only probe
+            from cron.probes import RSSProbe  # pylint: disable=import-outside-toplevel
+            limit = rss_limit_mb if rss_limit_mb is not None else _default_limit_mb()
+            self._probes = [RSSProbe(limit)]
 
     # ── public interface ──────────────────────────────────────────────────────
 
@@ -144,20 +159,35 @@ class CircuitBreaker:
         """Return the current circuit state (CLOSED, OPEN, HALF_OPEN)."""
         return self._state
 
+    @property
+    def probes(self) -> list:
+        """Return the list of configured probes (read-only view)."""
+        return list(self._probes)
+
+    def _run_probes(self) -> tuple[bool, str]:
+        """Run all probes; return (all_ok, first_failure_reason)."""
+        for probe in self._probes:
+            try:
+                result = probe()
+                if not result.ok:
+                    return False, result.reason
+            except Exception as exc:  # pylint: disable=broad-except
+                return False, f"probe error: {exc}"
+        return True, ""
+
     def check(self) -> None:
         """
         Check whether the circuit allows the call through.
-        Raises CircuitOpenError if OPEN and cooldown hasn't elapsed.
+        Raises CircuitOpenError if any probe fails.
         Transitions OPEN→HALF_OPEN when cooldown elapses.
         """
         with self._lock:
             if self._state == State.CLOSED:
-                rss = _rss_mb()
-                if rss >= self._limit:
-                    self._trip(rss)
+                ok, reason = self._run_probes()
+                if not ok:
+                    self._trip(reason)
                     raise CircuitOpenError(
-                        f"[CircuitBreaker:{self._name}] RSS {rss:.0f} MB >= limit "
-                        f"{self._limit:.0f} MB — shedding load"
+                        f"[CircuitBreaker:{self._name}] {reason} — shedding load"
                     )
                 return
 
@@ -168,17 +198,17 @@ class CircuitBreaker:
                         f"[CircuitBreaker:{self._name}] OPEN — retry in "
                         f"{self._cooldown - elapsed:.0f}s"
                     )
-                # Try a probe
+                # Cooldown elapsed — allow one probe call
                 self._state = State.HALF_OPEN
                 logger.info("[CB:%s] HALF_OPEN probe", self._name)
                 return
 
             # HALF_OPEN — allow the call; record_success/record_failure closes or re-opens
-            rss = _rss_mb()
-            if rss >= self._limit:
-                self._trip(rss)
+            ok, reason = self._run_probes()
+            if not ok:
+                self._trip(reason)
                 raise CircuitOpenError(
-                    f"[CircuitBreaker:{self._name}] HALF_OPEN probe failed — RSS still high"
+                    f"[CircuitBreaker:{self._name}] HALF_OPEN probe failed — {reason}"
                 )
 
     def record_success(self) -> None:
@@ -192,7 +222,7 @@ class CircuitBreaker:
     def record_failure(self) -> None:
         """Inform the breaker that a call failed; trips the circuit OPEN."""
         with self._lock:
-            self._trip(_rss_mb())
+            self._trip("record_failure() called")
 
     def reset(self) -> None:
         """Force CLOSED — for use in tests or after manual GC."""
@@ -224,12 +254,13 @@ class CircuitBreaker:
 
     # ── internal ──────────────────────────────────────────────────────────────
 
-    def _trip(self, rss: float) -> None:
+    def _trip(self, reason: str) -> None:
         self._state = State.OPEN
         self._opened_at = time.monotonic()
+        self._last_fail_reason = reason
         logger.warning(
-            "[CB:%s] OPEN — RSS %.0f MB / limit %.0f MB — will retry in %.0fs",
-            self._name, rss, self._limit, self._cooldown,
+            "[CB:%s] OPEN — %s — will retry in %.0fs",
+            self._name, reason, self._cooldown,
         )
         self._update_metric()
 
