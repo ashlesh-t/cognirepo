@@ -202,6 +202,10 @@ def route(
     """
     # ── 1. classify ──────────────────────────────────────────────────────────
     clf = classify(query, context=context, force_model=force_model)
+    logger.info(
+        "route.classify",
+        extra={"tier": clf.tier, "model": clf.model, "provider": clf.provider, "score": clf.score},
+    )
 
     # ── 1.5 local resolver (QUICK/FAST, no force_model) ─────────────────────
     if clf.tier in ("QUICK", "FAST") and not force_model:
@@ -233,6 +237,10 @@ def route(
             bundle.system_prompt += f"\n\n## Sub-Query Results (from fast models)\n{sub_text}"
 
     # ── 4. dispatch to adapter (with provider fallback chain) ────────────────
+    logger.info(
+        "route.dispatch",
+        extra={"tier": clf.tier, "model": clf.model, "provider": clf.provider},
+    )
     try:
         response = _dispatch_with_fallback(
             query=query,

@@ -15,11 +15,15 @@ All routes except /login require a Bearer JWT obtained from POST /login.
 from dotenv import load_dotenv
 load_dotenv()
 
+from config.logging import setup_logging
+setup_logging()
+
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from api.auth import router as auth_router
 from api.middleware import JWTMiddleware
+from api.middleware_tracing import TracingMiddleware
 from api.routes.episodic import router as episodic_router
 from api.routes.graph import router as graph_router
 from api.routes.memory import router as memory_router
@@ -33,7 +37,10 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Middleware is applied in reverse order — TracingMiddleware runs first so
+# trace_id is set before JWTMiddleware logs anything.
 app.add_middleware(JWTMiddleware)
+app.add_middleware(TracingMiddleware)
 
 app.include_router(auth_router)
 app.include_router(memory_router)

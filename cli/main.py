@@ -26,6 +26,9 @@ import sys
 import time
 import traceback
 
+from config.logging import setup_logging
+setup_logging()
+
 from cli.init_project import init_project
 
 

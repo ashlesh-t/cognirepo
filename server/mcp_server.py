@@ -10,8 +10,14 @@ and any stdio MCP client.
 """
 # pylint: disable=duplicate-code
 import json
+import logging
 import os
 from mcp.server.fastmcp import FastMCP
+
+from config.logging import setup_logging, new_trace_id
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 from tools.store_memory import store_memory as _store_memory
 from tools.retrieve_memory import retrieve_memory as _retrieve_memory
@@ -58,10 +64,23 @@ def _graph_is_empty() -> bool:
     return _get_graph().G.number_of_nodes() == 0
 
 
+def _traced(tool_name: str, fn, *args, **kwargs):
+    """Run a tool function with a fresh trace ID per call."""
+    tid = new_trace_id()
+    logger.info("mcp.tool.start", extra={"tool": tool_name, "trace_id": tid})
+    try:
+        result = fn(*args, **kwargs)
+        logger.info("mcp.tool.end", extra={"tool": tool_name, "status": "ok"})
+        return result
+    except Exception:
+        logger.exception("mcp.tool.error", extra={"tool": tool_name})
+        raise
+
+
 @mcp.tool()
 def store_memory(text: str, source: str = "") -> dict:
     """Store a semantic memory with an optional source label."""
-    return _store_memory(text, source)
+    return _traced("store_memory", _store_memory, text, source)
 
 
 @mcp.tool()
