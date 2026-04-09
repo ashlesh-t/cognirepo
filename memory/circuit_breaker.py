@@ -187,6 +187,7 @@ class CircuitBreaker:
             if self._state != State.CLOSED:
                 logger.info("[CB:%s] → CLOSED", self._name)
             self._state = State.CLOSED
+            self._update_metric()
 
     def record_failure(self) -> None:
         """Inform the breaker that a call failed; trips the circuit OPEN."""
@@ -230,6 +231,16 @@ class CircuitBreaker:
             "[CB:%s] OPEN — RSS %.0f MB / limit %.0f MB — will retry in %.0fs",
             self._name, rss, self._limit, self._cooldown,
         )
+        self._update_metric()
+
+    def _update_metric(self) -> None:
+        """Update the Prometheus CB_STATE gauge (no-op if prometheus not installed)."""
+        try:
+            from api.metrics import CB_STATE  # pylint: disable=import-outside-toplevel
+            _state_value = {"CLOSED": 0, "HALF_OPEN": 1, "OPEN": 2}
+            CB_STATE.set(_state_value.get(self._state.value, 0))
+        except Exception:  # pylint: disable=broad-except
+            pass
 
 
 # ── module-level singleton ────────────────────────────────────────────────────

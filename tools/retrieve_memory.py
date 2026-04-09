@@ -14,6 +14,7 @@ All retrieval goes through retrieval/hybrid.py.
 import sys
 
 from retrieval.hybrid import hybrid_retrieve
+from api.metrics import MEMORY_OPS_TOTAL
 
 
 def retrieve_memory(query: str, top_k: int = 5) -> list:
@@ -26,7 +27,13 @@ def retrieve_memory(query: str, top_k: int = 5) -> list:
     Degrades gracefully: if the graph/index are empty (cold start),
     returns pure vector results with graph_score=0, behaviour_score=0.
     """
-    return hybrid_retrieve(query, top_k)
+    try:
+        results = hybrid_retrieve(query, top_k)
+        MEMORY_OPS_TOTAL.labels(op="retrieve", result="ok").inc()
+        return results
+    except Exception:
+        MEMORY_OPS_TOTAL.labels(op="retrieve", result="error").inc()
+        raise
 
 
 if __name__ == "__main__":

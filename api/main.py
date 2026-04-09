@@ -19,10 +19,12 @@ from config.logging import setup_logging
 setup_logging()
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from api.auth import router as auth_router
+from api.metrics import metrics_available, get_metrics_output
 from api.middleware import JWTMiddleware
+from api.middleware_metrics import MetricsMiddleware
 from api.middleware_tracing import TracingMiddleware
 from api.routes.episodic import router as episodic_router
 from api.routes.graph import router as graph_router
@@ -37,15 +39,28 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Middleware is applied in reverse order — TracingMiddleware runs first so
-# trace_id is set before JWTMiddleware logs anything.
+# Middleware is applied in reverse order — TracingMiddleware runs outermost,
+# then MetricsMiddleware, then JWTMiddleware.
 app.add_middleware(JWTMiddleware)
+app.add_middleware(MetricsMiddleware)
 app.add_middleware(TracingMiddleware)
 
 app.include_router(auth_router)
 app.include_router(memory_router)
 app.include_router(episodic_router)
 app.include_router(graph_router)
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics_endpoint():
+    """Prometheus metrics — no auth required."""
+    if not metrics_available():
+        return JSONResponse(
+            {"detail": "prometheus_client not installed. Run: pip install cognirepo[dev]"},
+            status_code=501,
+        )
+    body, content_type = get_metrics_output()
+    return Response(content=body, media_type=content_type)
 
 
 @app.get("/health")

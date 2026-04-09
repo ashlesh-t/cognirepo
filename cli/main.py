@@ -1149,6 +1149,14 @@ def main():
         help="Show all checks including optional components.",
     )
 
+    # metrics — standalone Prometheus metrics HTTP server
+    p_metrics = sub.add_parser(
+        "metrics",
+        help="Serve Prometheus /metrics on a standalone HTTP port (for MCP-only deployments)",
+    )
+    p_metrics.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
+    p_metrics.add_argument("--port", type=int, default=9090, help="Port to listen on (default: 9090)")
+
     # list — process / daemon management
     p_list = sub.add_parser("list", help="List or inspect running cognirepo daemons")
     p_list.add_argument(
@@ -1195,6 +1203,11 @@ def main():
             sys.exit(0)
 
     # ── non-routable commands ──────────────────────────────────────────────
+    if args.command == "metrics":
+        from cli.metrics_server import run_metrics_server  # pylint: disable=import-outside-toplevel
+        run_metrics_server(host=args.host, port=args.port)
+        sys.exit(0)
+
     if args.command == "wait-api":
         import urllib.request  # pylint: disable=import-outside-toplevel
         api_url = args.api_url or _load_api_url()
