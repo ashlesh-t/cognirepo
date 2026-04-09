@@ -75,12 +75,15 @@ Scaffold `.cognirepo/` directory structure and write `config.json`.
 8. REST API port + password
 
 ```bash
-cognirepo init                   # interactive wizard (default when TTY)
-cognirepo init --no-index        # skip wizard + indexing (CI / scripting)
-cognirepo init --password mypassword --port 8080   # non-interactive flags
-cognirepo init --daemon          # run post-init file watcher in background
+cognirepo init                              # interactive wizard (default when TTY)
+cognirepo init --no-index                   # skip automatic post-init indexing
+cognirepo init --non-interactive            # skip wizard entirely (uses defaults)
+cognirepo init --password mypassword --port 8080   # set credentials non-interactively
+cognirepo init --non-interactive --no-index # CI / scripting — no prompt, no index
+cognirepo init --daemon                     # run post-init file watcher in background
 ```
 
+After `init` completes, the repo is indexed automatically unless `--no-index` is passed.
 Safe to re-run — only backfills missing keys.
 
 Creates:
@@ -226,6 +229,9 @@ Re-running is safe — unchanged files (same SHA-256) are skipped.
 | `--no-watch` | Exit immediately after indexing (no watcher) |
 | `--daemon` / `-d` | Fork watcher to background; prints PID and log path |
 
+> **Platform note:** The background file watcher (`--daemon`) uses `fcntl` and is **Linux-only**.
+> On macOS or Windows, `--daemon` exits with code 2 and a friendly message — use `--no-watch` for CI.
+
 ---
 
 ### `cognirepo serve`
@@ -355,10 +361,10 @@ cognirepo ask "list all functions in auth.py" --top-k 10
 
 | Tier | Score | Default Model | Provider | Use case |
 |------|-------|---------------|----------|----------|
-| QUICK | 0–2 | grok-beta | Grok | Single-token / trivial — fastest |
-| FAST | 3–6 | gemini-2.0-flash | Gemini | Factual lookup, single symbol |
-| BALANCED | 7–14 | gemini-2.0-flash | Gemini | Moderate reasoning |
-| DEEP | 15+ | claude-sonnet-4-6 | Anthropic | Cross-file, architectural |
+| QUICK | ≤2 | grok-beta | Grok | Single-token / trivial — fastest |
+| FAST | ≤4 | gemini-2.0-flash | Gemini | Factual lookup, single symbol |
+| BALANCED | ≤9 | gemini-2.0-flash | Gemini | Moderate reasoning |
+| DEEP | >9 | claude-sonnet-4-6 | Anthropic | Cross-file, architectural |
 
 On API error: user sees a friendly one-liner; full traceback saved to `.cognirepo/errors/<date>.log`.
 Override models in `.cognirepo/config.json` → `models` block.
@@ -447,7 +453,7 @@ cognirepo doctor --verbose    # show file paths and optional component details
 Example output:
 
 ```
-CogniRepo doctor — v0.1.0
+CogniRepo doctor — v0.2.0
 
   ✓  .cognirepo/ — config valid · project: my-project
   ✓  FAISS index — 47 memories
@@ -540,14 +546,22 @@ curl http://localhost:8080/health
 
 ## MCP Server
 
-CogniRepo exposes 4 MCP tools over stdio transport:
+CogniRepo exposes 12 MCP tools over stdio transport:
 
 | Tool | Parameters | Returns |
 |---|---|---|
 | `store_memory` | `text: str`, `source: str=""` | `{status, text, importance, source}` |
 | `retrieve_memory` | `query: str`, `top_k: int=5` | `list[{text, importance, final_score, ...}]` |
-| `search_docs` | `query: str` | `list[str]` (file paths) |
+| `search_docs` | `query: str` | `list[str]` (file paths with snippets) |
 | `log_episode` | `event: str`, `metadata: dict={}` | `{status, event, time}` |
+| `lookup_symbol` | `name: str` | `{file, line, kind}` |
+| `who_calls` | `function_name: str` | `list[str]` (caller names) |
+| `subgraph` | `entity: str`, `depth: int=1` | neighbourhood nodes/edges |
+| `episodic_search` | `query: str`, `limit: int=10` | BM25-ranked event list |
+| `graph_stats` | _(none)_ | `{nodes, edges, ...}` |
+| `semantic_search_code` | `query: str`, `top_k: int=5` | FAISS-ranked code symbols |
+| `dependency_graph` | `file: str` | import dependency map |
+| `context_pack` | `query: str` | packed code + memory bundle |
 
 Tool schemas are in `server/manifest.json` and exportable via `cognirepo export-spec`.
 
@@ -793,6 +807,8 @@ get_breaker().reset()
 | `COGNIREPO_API_URL` | `http://localhost:8080` | REST base URL for `--via-api` |
 | `COGNIREPO_TOKEN` | — | Pre-set JWT (skips password prompt) |
 | `COGNIREPO_PASSWORD` | — | Plain password for auto-login (dev only) |
+| `COGNIREPO_DIR` | — | Override `.cognirepo/` project storage directory (useful in CI and containers) |
+| `COGNIREPO_GLOBAL_DIR` | `~/.cognirepo` | Override global user-memory storage directory (test isolation + containers) |
 
 **Docker note:** The OS keychain is not available in containers. Pass secrets via environment variables:
 
@@ -831,7 +847,7 @@ pip install cognirepo[security]
 - `.cognirepo/episodic/episodic.json`
 - `.cognirepo/sessions/*.json`
 
-FAISS index files (`.index`) are binary and not encrypted in v0.1.0 — planned for v0.2.0.
+FAISS index files (`.index`) are binary and are not encrypted (structural limitation of the FAISS format).
 
 ### Key management
 

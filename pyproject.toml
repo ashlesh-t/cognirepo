@@ -1,6 +1,6 @@
 [project]
 name = "cognirepo"
-version = "0.1.1"
+version = "0.2.0"
 description = "Local cognitive infrastructure layer for AI agents"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -16,14 +16,6 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-
-[project.urls]
-Homepage = "https://github.com/ashlesh-t/cognirepo"
-"Bug Tracker" = "https://github.com/ashlesh-t/cognirepo/issues"
-Documentation = "https://github.com/ashlesh-t/cognirepo/blob/main/ARCHITECTURE.md"
-Changelog = "https://github.com/ashlesh-t/cognirepo/blob/main/CHANGELOG.md"
-Discord = "https://discord.com/channels/1488386981917360289/1488387271190380636"
-
 dependencies = [
     # core
     "faiss-cpu==1.13.2",
@@ -44,7 +36,7 @@ dependencies = [
     # graph + indexer
     "networkx>=3.3",
     "watchdog>=4.0",
-    "tree-sitter>=0.23",          # multi-language AST parsing (core, always installed)
+    "tree-sitter>=0.23",
     # shared
     "pydantic==2.12.5",
     "anyio==4.12.1",
@@ -60,6 +52,13 @@ dependencies = [
     # BM25 keyword retrieval (episodic search)
     "rank-bm25>=0.2.2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ashlesh-t/cognirepo"
+"Bug Tracker" = "https://github.com/ashlesh-t/cognirepo/issues"
+Documentation = "https://github.com/ashlesh-t/cognirepo/blob/main/ARCHITECTURE.md"
+Changelog = "https://github.com/ashlesh-t/cognirepo/blob/main/CHANGELOG.md"
+Discord = "https://discord.com/channels/1488386981917360289/1488387271190380636"
 
 [project.optional-dependencies]
 languages = [
@@ -82,7 +81,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-mock>=3.12",
-    "httpx>=0.28",          # for FastAPI TestClient
+    "httpx>=0.28",
 ]
 
 [project.scripts]
@@ -94,26 +93,20 @@ include = ["_bm25*", "adapters*", "api*", "cli*", "config*", "cron*", "graph*", 
 exclude = ["venv*", "*.egg-info*"]
 
 [build-system]
-# Default: setuptools (pure Python, no cmake needed)
-# To compile the optional C++ BM25 extension instead:
-#   pip install 'cognirepo[cpp]'   (uses scikit-build-core + cmake)
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
-# ── optional C++ build (scikit-build-core) ────────────────────────────────────
-# Activate by swapping the [build-system] block above to:
+# ── optional C++ build ────────────────────────────────────────────────────────
+# Activate by swapping [build-system] to:
 #   requires = ["scikit-build-core>=0.9", "pybind11>=2.12"]
 #   build-backend = "scikit_build_core.build"
 # and running: pip install . --config-settings=cmake.args=-DBUILD_EXT=ON
-# [tool.scikit-build]
-# cmake.source-dir = "cognirepo/_bm25"
-# cmake.build-type = "Release"
 
 [tool.pylint.messages_control]
 disable = [
-    "import-error",          # optional heavy deps not installed in lint env
-    "no-member",             # false positives on FAISS/protobuf dynamic attrs
-    "subprocess-run-check",  # intentional: seed command checks returncode manually
+    "import-error",
+    "no-member",
+    "subprocess-run-check",
 ]
 
 [tool.pylint.design]

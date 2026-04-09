@@ -6,7 +6,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [Unreleased]
+## [0.2.0] — 2026-04-08
 
 ### Fixed
 
@@ -14,6 +14,14 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **Task 1.2** — Removed `print()` from `memory/semantic_memory.py` (replaced with `logger.debug`); also fixed `memory/embeddings.py` and `retrieval/vector_search.py`. Added `scripts/check_no_stdout_pollution.py` CI guard that fails on any stdout-going `print()` in MCP-critical modules.
 - **Task 1.3** — `orchestrator/session.py` no longer captures `.cognirepo/sessions` at module-load time; all path resolution is now lazy via `config.paths.get_path()`, so `--project-dir` and `COGNIREPO_DIR` are correctly honoured for session storage.
 - **Task 1.4** — `cron/prune_memory.py` FAISS rebuild now writes to the configured project path (via `config.paths.get_path("vector_db/semantic.index")`) instead of a hard-coded relative `./vector_db/` path.
+
+### Added
+
+- **Task 1.1** — `scripts/check_no_stdout_pollution.py` CI guard (MCP framing safety).
+- **Task 2.3** — `docs/architecture/graph.md` — edge type glossary with example queries per type.
+- **Task 2.5** — `docs/architecture/retrieval.md` — canonical 3-signal pipeline diagram. Four Mermaid `.mmd` source files committed; `scripts/build_diagrams.sh` generates PNGs via `mmdc`.
+- **Task 3.3** — `COGNIREPO_GLOBAL_DIR` env var for redirecting global storage (test isolation + containers).
+- **Task 4.1** — Multi-platform matrix smoke test (Ubuntu / macOS / Windows × Python 3.11/3.12). `scripts/smoke_test.sh` + `scripts/smoke_test.ps1` added.
 
 ### Changed
 

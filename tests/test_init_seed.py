@@ -76,19 +76,15 @@ class TestInitProject:
         assert "jwt_secret" not in data
 
     def test_prompt_n_returns_none_triple(self, monkeypatch):
+        """--no-index skips indexing and returns (None, None, None)."""
         from cli.init_project import init_project
-        # Provide enough inputs for all wizard steps + indexing prompt
-        inputs = iter(["myproj", "y", "y", "n", "n", "n", "1", "n", "8000", "pass", "y", "n"])
-        monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
-        result = init_project()
+        result = init_project(no_index=True, non_interactive=True)
         assert result == (None, None, None)
 
     def test_prompt_no_returns_none_triple(self, monkeypatch):
+        """no_index=True is the canonical way to skip indexing (prompt was removed)."""
         from cli.init_project import init_project
-        # Provide enough inputs for all wizard steps + indexing prompt
-        inputs = iter(["myproj", "y", "y", "n", "n", "n", "1", "n", "8000", "pass", "y", "no"])
-        monkeypatch.setattr("builtins.input", lambda *_: next(inputs))
-        result = init_project()
+        result = init_project(no_index=True, non_interactive=True)
         assert result == (None, None, None)
 
     def test_scaffold_dirs_created(self):

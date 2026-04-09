@@ -21,14 +21,13 @@ import pytest
 # ── fixture: redirect session storage to tmp_path ────────────────────────────
 
 @pytest.fixture(autouse=True)
-def _isolate(tmp_path, monkeypatch):
-    """Redirect all session I/O to a temporary directory."""
+def _isolate(monkeypatch):
+    """
+    Session isolation — conftest's isolated_cognirepo (autouse) already
+    redirects set_cognirepo_dir() to tmp_path, so _sessions_dir() returns
+    a tmp location automatically. Just patch load_max_exchanges here.
+    """
     import orchestrator.session as _sess
-    fake_dir = tmp_path / ".cognirepo" / "sessions"
-    fake_dir.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(_sess, "_SESSIONS_DIR", fake_dir)
-    monkeypatch.setattr(_sess, "_CURRENT_PTR", fake_dir / "current.json")
-    # Also redirect config lookup so load_max_exchanges() doesn't read real file
     monkeypatch.setattr(_sess, "load_max_exchanges", lambda: 10)
 
 
@@ -46,15 +45,15 @@ class TestCreateLoad:
         import orchestrator.session as _sess
         from orchestrator.session import create_session
         s = create_session()
-        path = _sess._SESSIONS_DIR / f"{s['session_id']}.json"
+        path = _sess._sessions_dir() / f"{s['session_id']}.json"
         assert path.exists()
 
     def test_create_sets_current_pointer(self):
         import orchestrator.session as _sess
         from orchestrator.session import create_session
         s = create_session()
-        assert _sess._CURRENT_PTR.exists()
-        ptr = json.loads(_sess._CURRENT_PTR.read_text())
+        assert _sess._current_ptr().exists()
+        ptr = json.loads(_sess._current_ptr().read_text())
         assert ptr["session_id"] == s["session_id"]
 
     def test_load_session_returns_dict(self):

@@ -130,3 +130,53 @@ jobs:
         with:
           args: --severity-threshold=critical
         # Fails CI on CRITICAL dep vulnerabilities; requires SNYK_TOKEN secret
+
+  smoke:
+    name: Smoke Test (${{ matrix.os }} · Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python }}-${{ hashFiles('pyproject.toml') }}
+
+      - name: Cache sentence-transformers model
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/torch/sentence_transformers
+            ~/.cache/huggingface
+          key: ${{ runner.os }}-st-all-MiniLM-L6-v2-${{ matrix.python }}
+
+      - name: Install (editable)
+        run: pip install -e ".[dev,security]"
+
+      - name: Smoke test (Linux / macOS)
+        if: runner.os != 'Windows'
+        run: bash scripts/smoke_test.sh
+        env:
+          COGNIREPO_MULTI_AGENT_ENABLED: "false"
+          HF_HUB_OFFLINE: "1"
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\scripts\smoke_test.ps1
+        env:
+          COGNIREPO_MULTI_AGENT_ENABLED: "false"
+          HF_HUB_OFFLINE: "1"
