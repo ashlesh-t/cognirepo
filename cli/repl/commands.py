@@ -179,3 +179,72 @@ def _cmd_search(ui: UI, args: str, _state: dict) -> bool:
     except Exception as exc:  # pylint: disable=broad-except
         ui.print(f"  (error: {exc})")
     return True
+
+
+@register("save", "Save current session: /save [name]")
+def _cmd_save(ui: UI, args: str, state: dict) -> bool:
+    name = args.strip() or "unnamed"
+    try:
+        from orchestrator.session import create_session, append_exchange  # pylint: disable=import-outside-toplevel
+        msgs = state.get("messages_history", [])
+        session = create_session(model=state.get("force_model", ""))
+        # Replay exchanges into the session
+        for i in range(0, len(msgs) - 1, 2):
+            user_msg = msgs[i].get("content", "")
+            asst_msg = msgs[i + 1].get("content", "") if i + 1 < len(msgs) else ""
+            append_exchange(session, user_msg, asst_msg)
+        state["session_id"] = session["session_id"]
+        ui.status(f"Session saved: {session['session_id'][:8]}… (name hint: {name})")
+    except Exception as exc:  # pylint: disable=broad-except
+        ui.print(f"  (save error: {exc})")
+    return True
+
+
+@register("load", "Load a saved session: /load <id-prefix|last>")
+def _cmd_load(ui: UI, args: str, state: dict) -> bool:
+    key = args.strip()
+    if not key:
+        ui.print("  Usage: /load <session-id-prefix> | /load last")
+        return True
+    try:
+        from orchestrator.session import find_session, load_current_session, list_sessions  # pylint: disable=import-outside-toplevel
+        if key == "last":
+            session = load_current_session()
+            if session is None:
+                sessions = list_sessions(limit=1)
+                session = sessions[0] if sessions else None
+        else:
+            session = find_session(key)
+
+        if session is None:
+            ui.print(f"  No session found for: {key!r}")
+            return True
+
+        state["messages_history"] = list(session.get("messages", []))
+        state["session_id"] = session["session_id"]
+        n = len(state["messages_history"]) // 2
+        ui.status(f"Loaded session {session['session_id'][:8]}… ({n} exchange(s))")
+    except Exception as exc:  # pylint: disable=broad-except
+        ui.print(f"  (load error: {exc})")
+    return True
+
+
+@register("index-repo", "Re-index the current repository: /index-repo")
+def _cmd_index_repo(ui: UI, _args: str, _state: dict) -> bool:
+    import subprocess  # pylint: disable=import-outside-toplevel
+    import sys  # pylint: disable=import-outside-toplevel
+    ui.status("Indexing repository (this may take a moment)…")
+    try:
+        result = subprocess.run(  # nosec B603 B607
+            [sys.executable, "-m", "cli.main", "index-repo", "."],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0:
+            ui.status("Repository indexed successfully.")
+        else:
+            ui.print(f"  index-repo failed:\n{result.stderr[:400]}")
+    except subprocess.TimeoutExpired:
+        ui.print("  index-repo timed out after 120s.")
+    except Exception as exc:  # pylint: disable=broad-except
+        ui.print(f"  (error: {exc})")
+    return True

@@ -19,6 +19,7 @@ import sys
 
 from cli.repl.ui import make_ui
 from cli.repl.commands import dispatch as slash_dispatch
+from cli.cli_config import load_cli_config
 
 VERSION = "0.2.0"
 
@@ -53,6 +54,26 @@ def _ctrl_c_count_inc(state: dict) -> int:
     return state["ctrl_c_count"]
 
 
+def _auto_save_exchange(state: dict, user_msg: str, assistant_msg: str) -> None:
+    """Persist this exchange to the session store (if persist=true in config)."""
+    cfg = state.get("cli_cfg")
+    if cfg is None or not cfg.session.persist:
+        return
+    try:
+        from orchestrator.session import (  # pylint: disable=import-outside-toplevel
+            create_session, append_exchange, load_session,
+        )
+        sid = state.get("session_id")
+        session = load_session(sid) if sid else None
+        if session is None:
+            session = create_session(model=state.get("force_model") or "")
+            state["session_id"] = session["session_id"]
+        append_exchange(session, user_msg, assistant_msg,
+                        max_exchanges=cfg.session.max_exchanges)
+    except Exception:  # pylint: disable=broad-except
+        pass  # never break the REPL over persistence errors
+
+
 def run_repl() -> None:
     """
     Start the interactive REPL.
@@ -83,11 +104,25 @@ def run_repl() -> None:
     except Exception:  # pylint: disable=broad-except
         pass
 
+    # ── load CLI config ───────────────────────────────────────────────────────
+    cli_cfg = load_cli_config()
+
+    # ── session persistence: restore last session if persist=true ─────────────
+    restored_session: dict | None = None
+    if cli_cfg.session.persist:
+        try:
+            from orchestrator.session import load_current_session  # pylint: disable=import-outside-toplevel
+            restored_session = load_current_session()
+        except Exception:  # pylint: disable=broad-except
+            pass
+
     # Session state shared between commands and the main loop
     state: dict = {
-        "messages_history": [],
-        "force_model": None,
+        "messages_history": list(restored_session["messages"]) if restored_session else [],
+        "force_model": cli_cfg.model.prefer or None,
         "ctrl_c_count": 0,
+        "session_id": restored_session["session_id"] if restored_session else None,
+        "cli_cfg": cli_cfg,
     }
 
     while True:
@@ -149,6 +184,7 @@ def run_repl() -> None:
                     {"role": "user", "content": query},
                     {"role": "assistant", "content": local_answer},
                 ])
+                _auto_save_exchange(state, query, local_answer)
                 continue
 
         # ── stream from model ──────────────────────────────────────────────────
@@ -170,3 +206,5 @@ def run_repl() -> None:
                 {"role": "user", "content": query},
                 {"role": "assistant", "content": response_text},
             ])
+            # ── auto-save to session store ─────────────────────────────────────
+            _auto_save_exchange(state, query, response_text)
