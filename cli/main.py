@@ -144,7 +144,7 @@ def _direct_search(query):
     return search_docs(query)
 
 
-def _cmd_doctor(verbose: bool = False) -> int:
+def _cmd_doctor(verbose: bool = False, release_check: bool = False) -> int:
     """
     Run system health checks. Returns exit code 0 (all pass) or 1 (any fail).
     """
@@ -445,6 +445,22 @@ def _cmd_doctor(verbose: bool = False) -> int:
                 print(f"  \u25cb  {_label}: installed")
             except ImportError:
                 print(f"  \u25cb  {_label}: not installed (pip install cognirepo[security])")
+
+    # ── Release-readiness checks (opt-in) ────────────────────────────────────
+    if release_check:
+        print("\n  Release checks:")
+        try:
+            from cli.release_check import run_release_checks  # pylint: disable=import-outside-toplevel
+            _rc_violations = run_release_checks()
+            if not _rc_violations:
+                _ok("Docs — no legacy version refs or old tier names found")
+            else:
+                for _v in _rc_violations:
+                    _fail(f"Release: {_v}")
+                issues += len(_rc_violations)
+        except Exception as _exc:  # pylint: disable=broad-except
+            _fail(f"Release check failed to run: {_exc}")
+            issues += 1
 
     # ── Summary ───────────────────────────────────────────────────────────────
     if issues == 0:
@@ -1187,6 +1203,12 @@ def main():
         default=False,
         help="Show all checks including optional components.",
     )
+    p_doctor.add_argument(
+        "--release-check",
+        action="store_true",
+        default=False,
+        help="Also run release-readiness checks (v0.x refs, old tier names in docs).",
+    )
 
     # setup-env — interactive API key wizard
     p_setup_env = sub.add_parser(
@@ -1482,7 +1504,7 @@ def main():
         return
 
     if args.command == "doctor":
-        sys.exit(_cmd_doctor(verbose=args.verbose))
+        sys.exit(_cmd_doctor(verbose=args.verbose, release_check=getattr(args, "release_check", False)))
 
     if args.command == "watch":
         if sys.platform not in ("linux", "linux2"):

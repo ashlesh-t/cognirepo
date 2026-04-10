@@ -71,17 +71,18 @@ embeddings + behaviour)           tracker
 cognirepo ask "why is auth slow?"
     │
     ▼
-orchestrator/classifier.py      — score query → QUICK / FAST / BALANCED / DEEP tier
+orchestrator/classifier.py      — score query → QUICK / STANDARD / COMPLEX / EXPERT tier
     │                              errors → .cognirepo/errors/<date>.log (no raw tracebacks)
     ▼
 orchestrator/context_builder.py — hydrate ContextBundle from all 5 sources
     │  (semantic memories, graph context, AST hits, episodic events, session history)
     ▼
-orchestrator/router.py          — local resolver (QUICK/FAST) or model API call
+orchestrator/router.py          — local resolver (QUICK) or model API call
     │                              on error: user-friendly message + log to errors/
-    ├── grok_adapter.py         — Grok / xAI  (QUICK tier primary)
-    ├── gemini_adapter.py       — Gemini       (FAST/BALANCED primary)
-    ├── anthropic_adapter.py    — Claude       (DEEP primary)
+    ├── local_adapter.py        — zero-API local resolver (QUICK tier primary)
+    ├── grok_adapter.py         — Grok / xAI  (STANDARD tier primary)
+    ├── gemini_adapter.py       — Gemini       (STANDARD/COMPLEX primary)
+    ├── anthropic_adapter.py    — Claude       (EXPERT primary)
     └── openai_adapter.py       — OpenAI / Azure / Ollama / LM Studio (fallback)
     │
     ▼
@@ -99,7 +100,7 @@ cli/wizard.py           — 7-step powerlevel10k-style prompt
     ▼
 cli/init_project.py     — scaffold dirs, write config.json
     │
-    ├── .cognirepo/config.json   — project_name, models{QUICK/FAST/BALANCED/DEEP},
+    ├── .cognirepo/config.json   — project_name, models{QUICK/STANDARD/COMPLEX/EXPERT},
     │                              multi_agent, redis, storage.encrypt
     ├── .claude/CLAUDE.md        — project instructions (from STD_PROMPTS/claude_mcp.md)
     ├── .claude/settings.json    — MCP connector: cognirepo-<name> → cognirepo serve --project-dir
@@ -184,15 +185,15 @@ STD_PROMPTS/                   — bundled markdown templates (inside the cognir
 
 <!-- Thresholds are authoritative here. See _TIER_* constants in orchestrator/classifier.py -->
 **Score thresholds:**
-- ≤2    → **QUICK** — single-token, trivial — routed to Grok (fastest)
-- ≤4    → **FAST** — quick lookup, factual, single-entity — Gemini Flash
-- ≤9    → **BALANCED** — moderate reasoning — Gemini Flash
-- >9    → **DEEP** — cross-file, architectural, ambiguous — Claude
+- ≤2    → **QUICK** — single-token, trivial — local resolver (zero-API)
+- ≤4    → **STANDARD** — quick lookup, factual, single-entity — Gemini Flash / Grok
+- ≤9    → **COMPLEX** — moderate reasoning — Gemini Flash / Claude Sonnet
+- >9    → **EXPERT** — cross-file, architectural, ambiguous — Claude Opus
 
 **Hard overrides** (bypass score):
-- `"full context"` / `"everything related"` → always DEEP
+- `"full context"` / `"everything related"` → always EXPERT
 - Single word / single symbol → always **QUICK**
-- Error trace in query → always BALANCED minimum
+- Error trace in query → always COMPLEX minimum
 
 **Error handling:** All model errors write to `.cognirepo/errors/<date>.log`. Users see a
 friendly one-liner message, never a raw Python traceback.

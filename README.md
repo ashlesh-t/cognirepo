@@ -209,14 +209,14 @@ docker compose up api  # REST API on :8080
 
 | Tier | Score | Default model | Use case |
 |------|-------|---------------|----------|
-| **QUICK** | 0–2 | Grok | Single-token / trivial — fastest path |
-| **FAST** | 3–6 | Gemini Flash | Quick lookup, factual, single symbol — answered from local index when possible |
-| **BALANCED** | 7–14 | Gemini Flash | Moderate reasoning |
-| **DEEP** | 15+ | Claude | Cross-file, architectural, ambiguous — full context, best model |
+| **QUICK** | ≤2 | local resolver | Single-token / trivial — zero-API, fastest path |
+| **STANDARD** | ≤4 | Haiku | Quick lookup, factual, single symbol |
+| **COMPLEX** | ≤9 | Sonnet | Moderate reasoning |
+| **EXPERT** | >9 | Opus | Cross-file, architectural, ambiguous — full context, best model |
 
 ```bash
-cognirepo ask "where is verify_token defined?"       # → FAST, answered locally
-cognirepo ask "why is auth slow?"                    # → DEEP, Claude with full context
+cognirepo ask "where is verify_token defined?"       # → QUICK, answered locally
+cognirepo ask "why is auth slow?"                    # → EXPERT, Claude with full context
 cognirepo ask --verbose "explain the circuit breaker"  # show tier/score/signals
 ```
 

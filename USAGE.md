@@ -64,7 +64,7 @@ Scaffold `.cognirepo/` directory structure and write `config.json`.
 **Interactive mode (default):** launches a powerlevel10k-style wizard that asks:
 
 1. Project name (used to namespace your data in Claude/Gemini)
-2. Multi-model routing (QUICK→Grok, FAST→Gemini, BALANCED→Gemini, DEEP→Claude)
+2. Multi-model routing (QUICK→local, STANDARD→Gemini/Grok, COMPLEX→Gemini/Sonnet, EXPERT→Claude Opus)
 3. Lazy gRPC auto-start for sub-agent delegation
 4. Redis session cache
 5. Encryption at rest (Fernet — auto-installs `cognirepo[security]`)
@@ -153,7 +153,7 @@ cognirepo search-docs "JWT expiry"
   Line 42:
     ## Token Expiry
     JWT tokens expire after 24 hours. Use Bearer scheme.
-    Refresh tokens are not supported in v0.1.
+    Refresh tokens are not supported in v1.0.
 
 ./USAGE.md
 ──────────
@@ -361,10 +361,10 @@ cognirepo ask "list all functions in auth.py" --top-k 10
 
 | Tier | Score | Default Model | Provider | Use case |
 |------|-------|---------------|----------|----------|
-| QUICK | ≤2 | grok-beta | Grok | Single-token / trivial — fastest |
-| FAST | ≤4 | gemini-2.0-flash | Gemini | Factual lookup, single symbol |
-| BALANCED | ≤9 | gemini-2.0-flash | Gemini | Moderate reasoning |
-| DEEP | >9 | claude-sonnet-4-6 | Anthropic | Cross-file, architectural |
+| QUICK | ≤2 | local-resolver | local | Single-token / docs — zero-API |
+| STANDARD | ≤4 | claude-haiku-4-5 | Anthropic | Factual lookup, single symbol |
+| COMPLEX | ≤9 | claude-sonnet-4-6 | Anthropic | Moderate reasoning |
+| EXPERT | >9 | claude-opus-4-6 | Anthropic | Cross-file, architectural |
 
 On API error: user sees a friendly one-liner; full traceback saved to `.cognirepo/errors/<date>.log`.
 Override models in `.cognirepo/config.json` → `models` block.
@@ -470,7 +470,7 @@ cognirepo doctor --verbose    # show file paths and optional component details
 Example output:
 
 ```
-CogniRepo doctor — v0.2.0
+CogniRepo doctor — v1.0.0
 
   ✓  .cognirepo/ — config valid · project: my-project
   ✓  FAISS index — 47 memories
@@ -780,14 +780,15 @@ COGNIREPO_MULTI_AGENT_ENABLED=true cognirepo ask \
   "design jwt_auth compare verify_token with check_session" --verbose
 ```
 
-**What happens for a DEEP query:**
+**What happens for an EXPERT query:**
 
-1. Classifier assigns DEEP tier
+1. Classifier assigns EXPERT tier
 2. Router extracts up to 2 entities from query
-3. For each entity: gRPC `SubQuery` to FAST tier (Gemini Flash, ≤256 tokens, 10s timeout)
-4. Sub-results stored in `.cognirepo/sessions/<id>.json`
+3. For each entity: gRPC `SubQuery` to STANDARD tier (≤256 tokens, 10s timeout)
+4. Sub-results stored in `.cognirepo/sessions/<id>.json` under `sub_queries[]`
 5. Sub-results injected into Claude's system prompt
-6. Claude (DEEP) reasons with full context + sub-query results
+6. Claude Opus (EXPERT) reasons with full context + sub-query results
+7. REPL shows a greyed-out sub-agent panel after the primary response (`/agents` to inspect)
 
 **Agents involved:** 1 orchestrator + up to 2 sub-agents. Total: ≤3 model calls per query.
 **Failure mode:** sub-queries are best-effort; failures are silently dropped, primary model still runs.
@@ -850,20 +851,22 @@ get_breaker().reset()
 | `retrieval_weights.vector` | float | 0.5 | Weight for FAISS vector score |
 | `retrieval_weights.graph` | float | 0.3 | Weight for graph hop score |
 | `retrieval_weights.behaviour` | float | 0.2 | Weight for behaviour hit count |
-| `models.FAST.provider` | string | `gemini` | Provider for FAST tier |
-| `models.FAST.model` | string | `gemini-2.0-flash` | Model for FAST tier |
-| `models.BALANCED.provider` | string | `gemini` | Provider for BALANCED tier |
-| `models.BALANCED.model` | string | `gemini-2.0-flash` | Model for BALANCED tier |
-| `models.DEEP.provider` | string | `anthropic` | Provider for DEEP tier |
-| `models.DEEP.model` | string | `claude-sonnet-4-6` | Model for DEEP tier |
+| `models.QUICK.provider` | string | `local` | Provider for QUICK tier |
+| `models.QUICK.model` | string | `local-resolver` | Model for QUICK tier |
+| `models.STANDARD.provider` | string | `anthropic` | Provider for STANDARD tier |
+| `models.STANDARD.model` | string | `claude-haiku-4-5` | Model for STANDARD tier |
+| `models.COMPLEX.provider` | string | `anthropic` | Provider for COMPLEX tier |
+| `models.COMPLEX.model` | string | `claude-sonnet-4-6` | Model for COMPLEX tier |
+| `models.EXPERT.provider` | string | `anthropic` | Provider for EXPERT tier |
+| `models.EXPERT.model` | string | `claude-opus-4-6` | Model for EXPERT tier |
 | `circuit_breaker.rss_limit_mb` | float | 80% of RAM | RSS limit before circuit opens |
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | — | Claude API key (for DEEP tier) |
-| `GEMINI_API_KEY` | — | Gemini API key (for FAST/BALANCED tier) |
+| `ANTHROPIC_API_KEY` | — | Claude API key (for STANDARD/COMPLEX/EXPERT tiers) |
+| `GEMINI_API_KEY` | — | Gemini API key (alternative STANDARD/COMPLEX provider) |
 | `OPENAI_API_KEY` | — | OpenAI API key or `"ollama"` for local |
 | `OPENAI_BASE_URL` | — | Override endpoint (Ollama: `http://localhost:11434/v1`) |
 | `COGNIREPO_JWT_SECRET` | — | JWT signing secret — replaces OS keychain in CI/Docker |

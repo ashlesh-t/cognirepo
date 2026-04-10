@@ -173,3 +173,62 @@ def test_no_four_signal_in_docs():
     assert not violations, (
         f"Stale '4-signal' reference found in docs — update to '3-signal': {violations}"
     )
+
+
+# ── Sprint 4.3: new tier names in docs ───────────────────────────────────────
+
+_TIER_HISTORICAL = {"SPRINT.md", "CHANGELOG.md", "EXECUTION_PLAN_v3.md"}
+_OLD_TIER_TOKENS = re.compile(r"(?<![A-Z_])(?:FAST|BALANCED|DEEP)(?![A-Z_])")
+
+
+def test_new_tier_names_in_architecture_md():
+    """ARCHITECTURE.md must use the new tier names: STANDARD, COMPLEX, EXPERT."""
+    arch_text = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    for name in ("STANDARD", "COMPLEX", "EXPERT"):
+        assert name in arch_text, f"ARCHITECTURE.md missing new tier name '{name}'"
+
+
+def test_no_old_tier_names_in_user_docs():
+    """
+    FAST / BALANCED / DEEP must not appear as standalone tier tokens in user-facing docs.
+    Historical / meta files (CHANGELOG, SPRINT, execution plan) are excluded.
+    """
+    doc_files = list(ROOT.glob("*.md")) + list((ROOT / "docs").rglob("*.md"))
+    violations = []
+    for doc in doc_files:
+        if doc.name in _TIER_HISTORICAL:
+            continue
+        text = doc.read_text(encoding="utf-8", errors="replace")
+        for m in _OLD_TIER_TOKENS.finditer(text):
+            line_no = text[: m.start()].count("\n") + 1
+            violations.append(f"{doc.relative_to(ROOT)}:{line_no}: '{m.group()}'")
+    assert not violations, (
+        "Old tier names (FAST/BALANCED/DEEP) found in user-facing docs — "
+        f"rename to STANDARD/COMPLEX/EXPERT:\n  " + "\n  ".join(violations)
+    )
+
+
+def test_cli_config_path_in_cli_md():
+    """docs/CLI.md must document the cli_config.toml path."""
+    cli_md = ROOT / "docs" / "CLI.md"
+    if not cli_md.exists():
+        import pytest
+        pytest.skip("docs/CLI.md not yet created")
+    text = cli_md.read_text(encoding="utf-8")
+    assert "cli_config.toml" in text, "docs/CLI.md must mention cli_config.toml path"
+    assert "~/.cognirepo" in text, "docs/CLI.md must document the ~/.cognirepo/ config location"
+
+
+def test_metrics_endpoint_mentioned():
+    """
+    At least one doc file must mention /metrics (Prometheus scrape endpoint).
+    """
+    doc_files = list(ROOT.glob("*.md")) + list((ROOT / "docs").rglob("*.md"))
+    found = any(
+        "/metrics" in doc.read_text(encoding="utf-8", errors="replace")
+        for doc in doc_files
+    )
+    assert found, (
+        "No doc file mentions '/metrics'. Add a Prometheus /metrics reference "
+        "to USAGE.md or docs/CLI.md."
+    )

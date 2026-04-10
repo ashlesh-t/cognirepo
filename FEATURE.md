@@ -247,18 +247,19 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Score-based tier assignment | ✅ | Heuristic scoring: tokens, entity count, vague referents, code markers |
-| Tiers: QUICK / FAST / BALANCED / DEEP | ✅ | Score → tier boundary mapping |
+| Tiers: QUICK / STANDARD / COMPLEX / EXPERT | ✅ | Score → tier boundary mapping |
 | Config-driven model registry | ✅ | `config.json → models` section overrides defaults |
-| Default routing: QUICK→Grok, FAST→Gemini, BALANCED→Gemini, DEEP→Claude | ✅ | |
+| Default routing: QUICK→local, STANDARD→Haiku, COMPLEX→Sonnet, EXPERT→Opus | ✅ | |
+| Legacy tier migration | ✅ | `cognirepo migrate-config` renames v0.x tier keys to STANDARD/COMPLEX/EXPERT |
 
 ### Router
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Context bundle building | ✅ | `orchestrator/context_builder.py` |
-| Local resolver (QUICK/FAST short-circuits) | ✅ | `try_local_resolve()` — answers lookup_symbol, who_calls, list_files, graph_stats, history without API call |
+| Local resolver (QUICK short-circuits) | ✅ | `local_adapter.py` + `try_local_resolve()` — zero-API |
 | Provider fallback chain | ✅ | `_dispatch_with_fallback()` — anthropic → gemini → grok → openai |
 | `_available_providers()` | ✅ | Checks env vars for API keys |
-| gRPC sub-query stream (DEEP tier, multi-agent) | ✅ | `stream_route()` + `_run_sub_queries()` |
+| gRPC sub-query stream (EXPERT tier, multi-agent) | ✅ | `stream_route()` + sub-agent panel |
 | Model adapters | ✅ | anthropic, gemini, grok, openai adapters in `orchestrator/model_adapters/` |
 | Retry with exponential backoff | ✅ | `orchestrator/model_adapters/retry.py` |
 | Error logging | ✅ | Date-stamped error logs in `.cognirepo/errors/` |
