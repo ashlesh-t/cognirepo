@@ -30,6 +30,7 @@ from api.middleware_tracing import TracingMiddleware
 from api.routes.episodic import router as episodic_router
 from api.routes.graph import router as graph_router
 from api.routes.memory import router as memory_router
+from api.routes.status import router as status_router
 
 app = FastAPI(
     title="CogniRepo API",
@@ -51,6 +52,7 @@ app.include_router(auth_router)
 app.include_router(memory_router)
 app.include_router(episodic_router)
 app.include_router(graph_router)
+app.include_router(status_router)
 
 
 @app.get("/metrics", include_in_schema=False)

@@ -47,11 +47,21 @@ jobs:
         env:
           COGNIREPO_MULTI_AGENT_ENABLED: "false"
 
-      - name: Run tests
+      - name: Run tests with coverage
         run: |
-          pytest tests/ -v --tb=short -x
+          pytest tests/ -v --tb=short -x \
+            --cov=. --cov-report=xml --cov-report=html \
+            --cov-fail-under=50
         env:
           COGNIREPO_MULTI_AGENT_ENABLED: "false"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-html
+          path: htmlcov/
+          retention-days: 14
 
       - name: Check proto freshness
         run: |

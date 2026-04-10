@@ -410,11 +410,28 @@ Endpoints:
 - `POST /login` — get JWT token (returns `{"access_token": "...", "token_type": "bearer"}`)
 - `GET /ready` — lightweight readiness probe (no auth, poll before `/login`)
 - `GET /health` — health check with circuit breaker state (no auth required)
+- `GET /status/detailed` — full diagnostics JSON (no auth): uptime, FAISS size, graph stats, circuit breaker state, multi-agent flag
+- `GET /metrics` — Prometheus metrics in text format (no auth, requires `cognirepo[dev]`)
 - `POST /memory/store` — store memory
 - `POST /memory/retrieve` — retrieve memories
 - `POST /episodic/log` — log event
 - `GET /episodic/history` — get history
 - `GET /docs` — Swagger UI
+
+### Observability Dashboard
+
+Import `deploy/grafana/cognirepo.json` into Grafana (≥ 10.0) to get a pre-built
+dashboard wired to the Prometheus metrics:
+
+- **HTTP**: request rate, p50/p95 latency per route
+- **Memory & Graph**: FAISS vector count, graph nodes/edges
+- **Circuit Breaker**: 0 = CLOSED (green), 1 = HALF_OPEN (yellow), 2 = OPEN (red)
+- **Retrieval**: p95 latency per signal (vector / graph / bm25), memory op rate
+
+```bash
+# Quick check via /status/detailed (no auth needed)
+curl http://localhost:8080/status/detailed | python3 -m json.tool
+```
 
 **Safe curl pattern** (use `cognirepo wait-api` or poll `/ready`):
 ```bash

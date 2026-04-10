@@ -88,6 +88,7 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "pytest-mock>=3.12",
+    "pytest-cov>=5.0",
     "httpx>=0.28",
     "prometheus-client>=0.20",
     "build>=1.0",
@@ -110,6 +111,39 @@ build-backend = "setuptools.build_meta"
 #   requires = ["scikit-build-core>=0.9", "pybind11>=2.12"]
 #   build-backend = "scikit_build_core.build"
 # and running: pip install . --config-settings=cmake.args=-DBUILD_EXT=ON
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "tests/*",
+    "venv/*",
+    ".venv/*",
+    "rpc/proto/*",
+    "scripts/*",
+    "deploy/*",
+    "docs/*",
+    "*.egg-info/*",
+    "setup.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "except ImportError:",
+]
+fail_under = 50
 
 [tool.pylint.messages_control]
 disable = [
