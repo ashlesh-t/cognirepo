@@ -69,9 +69,10 @@ def isolated_cognirepo(tmp_path, monkeypatch):
         "storage": {"encrypt": False},
         "retrieval_weights": {"vector": 0.5, "graph": 0.3, "behaviour": 0.2},
         "models": {
-            "FAST":     {"provider": "gemini",    "model": "gemini-2.0-flash"},
-            "BALANCED": {"provider": "gemini",    "model": "gemini-2.0-flash"},
-            "DEEP":     {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+            "QUICK":    {"provider": "grok",      "model": "grok-beta"},
+            "STANDARD": {"provider": "gemini",    "model": "gemini-2.0-flash"},
+            "COMPLEX":  {"provider": "gemini",    "model": "gemini-2.0-flash"},
+            "EXPERT":   {"provider": "anthropic", "model": "claude-sonnet-4-6"},
         },
     }
     with open(".cognirepo/config.json", "w", encoding="utf-8") as f:

@@ -208,12 +208,12 @@ def route(
     )
 
     # ── 1.5 local resolver (QUICK/FAST, no force_model) ─────────────────────
-    if clf.tier in ("QUICK", "FAST") and not force_model:
-        _fast_bundle = build_context(query, top_k=0, episode_limit=0, tier="FAST")
+    if clf.tier in ("QUICK", "STANDARD") and not force_model:
+        _fast_bundle = build_context(query, top_k=0, episode_limit=0, tier="STANDARD")
         local_answer = try_local_resolve(query, _fast_bundle)
         if local_answer is not None:
             local_clf = ClassifierResult(
-                tier="FAST", score=clf.score, model="local",
+                tier="STANDARD", score=clf.score, model="local",
                 provider="local", signals=clf.signals, overrides=clf.overrides,
             )
             local_resp = ModelResponse(text=local_answer, model="local", provider="local")
@@ -226,7 +226,7 @@ def route(
 
     # ── 3. multi-agent sub-queries (DEEP only, off by default) ───────────────
     sub_queries: list[dict] = []
-    if _multi_agent_enabled() and clf.tier == "DEEP":
+    if _multi_agent_enabled() and clf.tier == "EXPERT":
         sub_queries = _run_sub_queries(query, bundle)
         if sub_queries:
             # Inject sub-query results into system prompt
@@ -366,7 +366,7 @@ def _run_sub_queries(query: str, bundle: ContextBundle) -> list[dict]:
                     query=sub_q,
                     context_id=context_id,
                     source_model="orchestrator",
-                    target_tier="FAST",
+                    target_tier="STANDARD",
                     max_tokens=256,
                     timeout=10.0,
                 )
@@ -374,7 +374,7 @@ def _run_sub_queries(query: str, bundle: ContextBundle) -> list[dict]:
                     results.append({
                         "query": sub_q,
                         "result": resp.result,
-                        "target_tier": "FAST",
+                        "target_tier": "STANDARD",
                         "model_used": resp.model_used,
                     })
     except Exception as exc:  # pylint: disable=broad-except
@@ -703,8 +703,8 @@ def stream_route(
     clf = classify(query, context=context, force_model=force_model)
 
     # local resolver (QUICK/FAST, no force_model) — yield answer directly
-    if clf.tier in ("QUICK", "FAST") and not force_model:
-        _fast_bundle = build_context(query, top_k=0, episode_limit=0, tier="FAST")
+    if clf.tier in ("QUICK", "STANDARD") and not force_model:
+        _fast_bundle = build_context(query, top_k=0, episode_limit=0, tier="STANDARD")
         local_answer = try_local_resolve(query, _fast_bundle)
         if local_answer is not None:
             yield local_answer

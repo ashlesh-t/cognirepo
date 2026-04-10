@@ -21,12 +21,12 @@ Signal table (from ARCHITECTURE.md):
 │ Imperative+abstract combo (implement,build,…) │  +4    │ binary                   │
 └────────────────────────────────────────────────┴────────┴──────────────────────────┘
 
-Tiers:   0–2 → QUICK (Grok)   3–6 → FAST   7–14 → BALANCED   15+ → DEEP
+Tiers:   0–2 → QUICK (Grok)   3–4 → STANDARD   5–9 → COMPLEX   10+ → EXPERT
 
 Hard overrides (bypass score):
-  "full context" / "everything related"   → DEEP
+  "full context" / "everything related"   → EXPERT
   single word / single symbol             → QUICK (fastest path)
-  error trace in query                    → BALANCED minimum
+  error trace in query                    → COMPLEX minimum
 """
 import json
 import os
@@ -78,14 +78,26 @@ _ERROR_PATTERNS = re.compile(
 # The table in ARCHITECTURE.md § "Complexity Classifier Signals" mirrors them.
 # Update both together — a sync test enforces parity: tests/test_docs_sync.py
 _TIER_QUICK    = 2.0
-_TIER_FAST     = 4.0
-_TIER_BALANCED = 9.0
+_TIER_STANDARD = 4.0    # formerly FAST
+_TIER_COMPLEX  = 9.0    # formerly BALANCED
+# 15+ → EXPERT (formerly DEEP)
+
+# Old tier name → new tier name (for config migration)
+_LEGACY_TIER_MAP = {
+    "FAST": "STANDARD",
+    "BALANCED": "COMPLEX",
+    "DEEP": "EXPERT",
+}
+
+
+class ConfigMigrationError(RuntimeError):
+    """Raised when config.json uses deprecated tier names."""
 
 
 @dataclass
 class ClassifierResult:
     """Result of the query complexity classification."""
-    tier: str                          # "QUICK" | "FAST" | "BALANCED" | "DEEP"
+    tier: str                          # "QUICK" | "STANDARD" | "COMPLEX" | "EXPERT"
     score: float
     model: str                         # resolved model ID
     provider: str                      # "anthropic" | "gemini" | "grok" | "openai"
@@ -96,16 +108,27 @@ class ClassifierResult:
 def _load_model_registry() -> dict:
     default = {
         "QUICK":    {"provider": "grok",      "model": "grok-beta"},
-        "FAST":     {"provider": "gemini",    "model": "gemini-2.0-flash"},
-        "BALANCED": {"provider": "gemini",    "model": "gemini-2.0-flash"},
-        "DEEP":     {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+        "STANDARD": {"provider": "gemini",    "model": "gemini-2.0-flash"},
+        "COMPLEX":  {"provider": "gemini",    "model": "gemini-2.0-flash"},
+        "EXPERT":   {"provider": "anthropic", "model": "claude-sonnet-4-6"},
     }
     if not os.path.exists(_config_file()):
         return default
     try:
         with open(_config_file(), encoding="utf-8") as f:
             cfg = json.load(f)
-        return cfg.get("models", default)
+        models = cfg.get("models", default)
+        # Detect legacy tier names and raise a migration error
+        legacy_found = [k for k in models if k in _LEGACY_TIER_MAP]
+        if legacy_found:
+            raise ConfigMigrationError(
+                f"config.json uses deprecated tier names: {legacy_found}. "
+                "Rename FAST→STANDARD, BALANCED→COMPLEX, DEEP→EXPERT. "
+                "Auto-fix: cognirepo migrate-config"
+            )
+        return models
+    except ConfigMigrationError:
+        raise
     except (json.JSONDecodeError, OSError):
         return default
 
@@ -142,21 +165,21 @@ def classify(
         overrides.append("docs_query")
         score = 0.0
     elif any(p in q_lower for p in _FULL_CONTEXT):
-        tier = "DEEP"
+        tier = "EXPERT"
         overrides.append("full_context_phrase")
         score = 20.0
     elif _ERROR_PATTERNS.search(q):
-        tier = "BALANCED"          # minimum; scoring may push to DEEP
+        tier = "COMPLEX"           # minimum; scoring may push to EXPERT
         overrides.append("error_trace")
         score = _compute_score(q_lower, tokens, context, signals)
-        if score >= _TIER_BALANCED:
-            tier = "DEEP"
+        if score >= _TIER_COMPLEX:
+            tier = "EXPERT"
     else:
         score = _compute_score(q_lower, tokens, context, signals)
         tier = _score_to_tier(score)
 
     # resolve model from registry (force_model overrides model ID, not tier)
-    reg_entry = registry.get(tier, registry.get("DEEP", {}))
+    reg_entry = registry.get(tier, registry.get("EXPERT", {}))
     provider = reg_entry.get("provider", "anthropic")
     model_id = force_model or reg_entry.get("model", "claude-sonnet-4-6")
 
@@ -229,11 +252,11 @@ def _compute_score(
 def _score_to_tier(score: float) -> str:
     if score <= _TIER_QUICK:
         return "QUICK"
-    if score <= _TIER_FAST:
-        return "FAST"
-    if score <= _TIER_BALANCED:
-        return "BALANCED"
-    return "DEEP"
+    if score <= _TIER_STANDARD:
+        return "STANDARD"
+    if score <= _TIER_COMPLEX:
+        return "COMPLEX"
+    return "EXPERT"
 
 
 def _count_vague_referents(tokens: list[str]) -> int:

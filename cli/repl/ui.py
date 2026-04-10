@@ -108,10 +108,10 @@ class RichUI(UI):
 
     def tier_label(self, tier: str, model: str) -> None:
         _TIER_COLORS = {
-            "QUICK": "green", "FAST": "green",
-            "STANDARD": "blue", "BALANCED": "blue",
-            "COMPLEX": "yellow",
-            "DEEP": "red", "EXPERT": "red",
+            "QUICK":    "green",
+            "STANDARD": "blue",
+            "COMPLEX":  "yellow",
+            "EXPERT":   "red",
         }
         color = _TIER_COLORS.get(tier, "white")
         self._console.print(

@@ -26,36 +26,36 @@ def test_classifier_thresholds_match_docs():
     ARCHITECTURE.md. Any drift here means users get a wrong mental model of
     routing behaviour.
     """
-    from orchestrator.classifier import _TIER_QUICK, _TIER_FAST, _TIER_BALANCED
+    from orchestrator.classifier import _TIER_QUICK, _TIER_STANDARD, _TIER_COMPLEX
 
     arch_text = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
 
     # Extract the threshold lines from ARCHITECTURE.md
-    # Expected patterns:  ≤2 → QUICK,  ≤4 → FAST,  ≤9 → BALANCED,  >9 → DEEP
+    # Expected patterns:  ≤2 → QUICK,  ≤4 → STANDARD,  ≤9 → COMPLEX,  >9 → EXPERT
     def find_threshold(tier_label: str) -> float | None:
-        # Match patterns like "≤2" or ">9" before QUICK/FAST/BALANCED/DEEP
+        # Match patterns like "≤2" or ">9" before QUICK/STANDARD/COMPLEX/EXPERT
         pattern = rf"[≤>](\d+(?:\.\d+)?)\s*.*?\*\*{tier_label}\*\*"
         m = re.search(pattern, arch_text)
         if m:
             return float(m.group(1))
         return None
 
-    doc_quick = find_threshold("QUICK")
-    doc_fast  = find_threshold("FAST")
-    doc_balanced = find_threshold("BALANCED")
+    doc_quick    = find_threshold("QUICK")
+    doc_standard = find_threshold("STANDARD")
+    doc_complex  = find_threshold("COMPLEX")
 
     assert doc_quick is not None, "ARCHITECTURE.md missing QUICK threshold line"
-    assert doc_fast is not None, "ARCHITECTURE.md missing FAST threshold line"
-    assert doc_balanced is not None, "ARCHITECTURE.md missing BALANCED threshold line"
+    assert doc_standard is not None, "ARCHITECTURE.md missing STANDARD threshold line"
+    assert doc_complex is not None, "ARCHITECTURE.md missing COMPLEX threshold line"
 
     assert doc_quick == _TIER_QUICK, (
         f"QUICK threshold mismatch: ARCHITECTURE.md={doc_quick}, code={_TIER_QUICK}"
     )
-    assert doc_fast == _TIER_FAST, (
-        f"FAST threshold mismatch: ARCHITECTURE.md={doc_fast}, code={_TIER_FAST}"
+    assert doc_standard == _TIER_STANDARD, (
+        f"STANDARD threshold mismatch: ARCHITECTURE.md={doc_standard}, code={_TIER_STANDARD}"
     )
-    assert doc_balanced == _TIER_BALANCED, (
-        f"BALANCED threshold mismatch: ARCHITECTURE.md={doc_balanced}, code={_TIER_BALANCED}"
+    assert doc_complex == _TIER_COMPLEX, (
+        f"COMPLEX threshold mismatch: ARCHITECTURE.md={doc_complex}, code={_TIER_COMPLEX}"
     )
 
 

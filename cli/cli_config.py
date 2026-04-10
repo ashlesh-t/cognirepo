@@ -19,7 +19,7 @@ Schema (all keys are optional in the file; defaults shown below):
 
     [model]
     prefer   = ""       # preferred model override (empty = classifier decides)
-    force_tier = ""     # force tier: "QUICK"|"FAST"|"BALANCED"|"DEEP"|""
+    force_tier = ""     # force tier: "QUICK"|"STANDARD"|"COMPLEX"|"EXPERT"|""
 
     [session]
     persist        = true   # auto-save session history to disk
@@ -53,7 +53,7 @@ max_exchanges = 20
 """
 
 _VALID_THEMES = {"auto", "dark", "light", "plain"}
-_VALID_TIERS = {"", "QUICK", "FAST", "BALANCED", "DEEP"}
+_VALID_TIERS = {"", "QUICK", "STANDARD", "COMPLEX", "EXPERT"}
 
 
 @dataclass

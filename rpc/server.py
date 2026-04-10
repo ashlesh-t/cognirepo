@@ -227,7 +227,7 @@ class ContextServiceServicer(pb2_grpc.ContextServiceServicer):
 
 def _confidence_from_tier(tier: str) -> float:
     """Map classifier tier to a rough confidence value."""
-    return {"FAST": 0.7, "BALANCED": 0.8, "DEEP": 0.9}.get(tier, 0.5)
+    return {"STANDARD": 0.7, "COMPLEX": 0.8, "EXPERT": 0.9}.get(tier, 0.5)
 
 
 # ── server lifecycle ──────────────────────────────────────────────────────────

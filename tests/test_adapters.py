@@ -727,7 +727,7 @@ class TestStreamRoute:
         from orchestrator.context_builder import ContextBundle
 
         fake_clf = ClassifierResult(
-            tier="FAST", score=0.0, model="gemini-2.0-flash",
+            tier="STANDARD", score=0.0, model="gemini-2.0-flash",
             provider="gemini",
         )
         fake_bundle = ContextBundle(query="test", system_prompt="sys")

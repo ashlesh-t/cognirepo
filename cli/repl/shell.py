@@ -174,8 +174,8 @@ def run_repl() -> None:
         clf = classify(query, force_model=state.get("force_model"))
 
         # ── QUICK/FAST: try local resolver ────────────────────────────────────
-        if clf.tier in ("QUICK", "FAST") and not state.get("force_model"):
-            bundle = build_context(query, tier="FAST", episode_limit=0)
+        if clf.tier in ("QUICK", "STANDARD") and not state.get("force_model"):
+            bundle = build_context(query, tier="STANDARD", episode_limit=0)
             local_answer = try_local_resolve(query, bundle)
             if local_answer is not None:
                 ui.tier_label("QUICK", "local")

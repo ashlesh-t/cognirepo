@@ -1072,6 +1072,16 @@ def main():
     p_bench.add_argument("--json", action="store_true", help="Output raw JSON instead of report")
     p_bench.add_argument("--compare", action="store_true", help="Compare with previous run")
 
+    # migrate-config
+    p_migrate = sub.add_parser(
+        "migrate-config",
+        help="Rename deprecated tier names in .cognirepo/config.json (FAST→STANDARD etc.)",
+    )
+    p_migrate.add_argument(
+        "--dry-run", action="store_true",
+        help="Preview changes without writing anything",
+    )
+
     # export-spec
     sub.add_parser("export-spec", help="Export OpenAI/Cursor tool specs to adapters/")
 
@@ -1395,6 +1405,10 @@ def main():
             prev = load_last_run() if args.compare else None
             print_report(metrics, compare=prev)
         return
+
+    if args.command == "migrate-config":
+        from cli.migrate_config import run_migrate_config  # pylint: disable=import-outside-toplevel
+        sys.exit(run_migrate_config(dry_run=getattr(args, "dry_run", False)))
 
     if args.command == "export-spec":
         import json as _json  # pylint: disable=import-outside-toplevel,redefined-outer-name

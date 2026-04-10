@@ -164,12 +164,12 @@ def run_repl() -> None:
         # ── classify to get tier/model for the label ──────────────────────────
         clf = classify(query)
 
-        # ── FAST: try local resolver first ────────────────────────────────────
-        if clf.tier == "FAST":
-            bundle = build_context(query, tier="FAST", episode_limit=0)
+        # ── STANDARD: try local resolver first ───────────────────────────────
+        if clf.tier == "STANDARD":
+            bundle = build_context(query, tier="STANDARD", episode_limit=0)
             local_answer = try_local_resolve(query, bundle)
             if local_answer is not None:
-                print("[FAST → local] ", end="", flush=True)
+                print("[STANDARD → local] ", end="", flush=True)
                 print(local_answer)
                 messages_history.append({"role": "user", "content": query})
                 messages_history.append({"role": "assistant", "content": local_answer})

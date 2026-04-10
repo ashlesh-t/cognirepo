@@ -558,7 +558,7 @@ def run_classifier(args):
     def test_quick_query_classified_quick_or_fast():
         from orchestrator.classifier import classify
         result = classify("where is context_pack defined")
-        assert result.tier in ("QUICK", "FAST"), f"Simple query classified as {result.tier}"
+        assert result.tier in ("QUICK", "STANDARD"), f"Simple query classified as {result.tier}"
         return f"'{result.tier}' tier for simple lookup query"
 
     def test_complex_query_classified_deep():
@@ -567,8 +567,8 @@ def run_classifier(args):
             "Analyze the BM25 episodic search implementation, compare it to "
             "pure vector search, and suggest three specific improvements with code examples"
         )
-        assert result.tier in ("BALANCED", "DEEP"), (
-            f"Complex query classified as {result.tier} — expected BALANCED or DEEP"
+        assert result.tier in ("COMPLEX", "EXPERT"), (
+            f"Complex query classified as {result.tier} — expected COMPLEX or EXPERT"
         )
         return f"'{result.tier}' tier for complex reasoning query"
 

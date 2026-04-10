@@ -32,21 +32,21 @@ class TestHardOverrides:
 
     def test_full_context_phrase_deep(self, classify):
         r = classify("give me full context on this")
-        assert r.tier == "DEEP"
+        assert r.tier == "EXPERT"
         assert "full_context_phrase" in r.overrides
 
     def test_all_related_phrase_deep(self, classify):
         r = classify("show everything related to auth")
-        assert r.tier == "DEEP"
+        assert r.tier == "EXPERT"
 
     def test_error_trace_minimum_balanced(self, classify):
         r = classify("TypeError: 'NoneType' object is not subscriptable at line 42")
-        assert r.tier in ("BALANCED", "DEEP")
+        assert r.tier in ("COMPLEX", "EXPERT")
         assert "error_trace" in r.overrides
 
     def test_traceback_keyword(self, classify):
         r = classify("Traceback (most recent call last): File auth.py line 10")
-        assert r.tier in ("BALANCED", "DEEP")
+        assert r.tier in ("COMPLEX", "EXPERT")
 
 
 class TestSignals:
@@ -88,17 +88,17 @@ class TestSignals:
 
 
 class TestTierBoundaries:
-    def test_fast_tier(self, classify):
+    def test_standard_tier(self, classify):
         r = classify("list all files")
         assert r.tier == "QUICK"
 
-    def test_balanced_tier(self, classify):
+    def test_complex_tier(self, classify):
         r = classify("why is verify_token slow compared to check_session")
-        assert r.tier in ("BALANCED", "DEEP")
+        assert r.tier in ("COMPLEX", "EXPERT")
 
     def test_deep_tier_full_override(self, classify):
         r = classify("complete context for this project")
-        assert r.tier == "DEEP"
+        assert r.tier == "EXPERT"
 
     def test_score_returned(self, classify):
         r = classify("show me auth.py")
@@ -107,7 +107,7 @@ class TestTierBoundaries:
     def test_model_and_provider_returned(self, classify):
         r = classify("what is jwt")
         assert r.model
-        assert r.provider in ("anthropic", "gemini", "openai")
+        assert r.provider in ("anthropic", "gemini", "openai", "grok")
 
     def test_force_model_overrides_model_id(self, classify):
         r = classify("show me files", force_model="claude-opus-4-6")

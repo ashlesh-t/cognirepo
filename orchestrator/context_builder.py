@@ -46,9 +46,9 @@ MANIFEST_PATH = "server/manifest.json"
 
 #: Token budget per classifier tier (rough: 1 token ≈ 4 chars)
 TIER_BUDGETS: dict[str, int] = {
-    "FAST":     6_000,
-    "BALANCED": 12_000,
-    "DEEP":     24_000,
+    "STANDARD": 6_000,
+    "COMPLEX":  12_000,
+    "EXPERT":   24_000,
 }
 
 # lazily-shared retriever instance for context_builder calls within one session
@@ -78,7 +78,7 @@ class ContextBundle:  # pylint: disable=too-many-instance-attributes
     tool_manifest: list[dict] = field(default_factory=list)   # CogniRepo tool schemas
     system_prompt: str = ""                                   # assembled for model
     # token budget tracking
-    max_tokens: int = TIER_BUDGETS["BALANCED"]
+    max_tokens: int = TIER_BUDGETS["COMPLEX"]
     token_count: int = 0                                      # tokens after trimming
     was_trimmed: bool = False
 
@@ -117,7 +117,7 @@ def build(
     query: str,
     top_k: int = 5,
     episode_limit: int = 10,
-    tier: str = "BALANCED",
+    tier: str = "COMPLEX",
 ) -> ContextBundle:
     """
     Build a ContextBundle for the given query, trimmed to the tier's token budget.
@@ -125,7 +125,7 @@ def build(
     # pylint: disable=too-many-locals
     bundle = ContextBundle(
         query=query,
-        max_tokens=TIER_BUDGETS.get(tier, TIER_BUDGETS["BALANCED"]),
+        max_tokens=TIER_BUDGETS.get(tier, TIER_BUDGETS["COMPLEX"]),
     )
 
     # ── 1. hybrid memory retrieval ────────────────────────────────────────────

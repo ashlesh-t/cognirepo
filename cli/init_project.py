@@ -40,9 +40,9 @@ GITIGNORE_CONTENT = "*\n!.gitignore\n"
 
 DEFAULT_MODELS = {
     "QUICK":    {"provider": "grok",      "model": "llama-3.1-8b-instant"},
-    "FAST":     {"provider": "gemini",    "model": "gemini-2.0-flash"},
-    "BALANCED": {"provider": "gemini",    "model": "gemini-2.0-flash"},
-    "DEEP":     {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+    "STANDARD": {"provider": "gemini",    "model": "gemini-2.0-flash"},
+    "COMPLEX":  {"provider": "gemini",    "model": "gemini-2.0-flash"},
+    "EXPERT":   {"provider": "anthropic", "model": "claude-sonnet-4-6"},
 }
 
 # Path to the bundled MCP prompt templates (relative to this file)

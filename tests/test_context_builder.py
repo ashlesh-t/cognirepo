@@ -13,6 +13,15 @@ All tests work on ContextBundle directly to avoid loading real models/storage.
 """
 from __future__ import annotations
 
+import sys
+from unittest.mock import MagicMock
+
+# Stub heavy deps not installed in test environment
+for _dep in ("networkx", "faiss", "sentence_transformers"):
+    if _dep not in sys.modules:
+        sys.modules[_dep] = MagicMock()
+sys.modules["networkx"].DiGraph = MagicMock(return_value=MagicMock())
+
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -69,30 +78,29 @@ class TestTokenEstimation:
 # ── tier budgets ──────────────────────────────────────────────────────────────
 
 class TestTierBudgets:
-    def test_fast_budget(self):
+    def test_standard_budget(self):
         from orchestrator.context_builder import TIER_BUDGETS
-        assert TIER_BUDGETS["FAST"] == 6_000
+        assert TIER_BUDGETS["STANDARD"] == 6_000
 
-    def test_balanced_budget(self):
+    def test_complex_budget(self):
         from orchestrator.context_builder import TIER_BUDGETS
-        assert TIER_BUDGETS["BALANCED"] == 12_000
+        assert TIER_BUDGETS["COMPLEX"] == 12_000
 
-    def test_deep_budget(self):
+    def test_expert_budget(self):
         from orchestrator.context_builder import TIER_BUDGETS
-        assert TIER_BUDGETS["DEEP"] == 24_000
+        assert TIER_BUDGETS["EXPERT"] == 24_000
 
     def test_build_sets_tier_budget(self, monkeypatch):
-        """build() with tier='FAST' sets max_tokens=6000 on bundle."""
-        # Patch sources to avoid real I/O
+        """build() with tier='STANDARD' sets max_tokens=6000 on bundle."""
         _patch_build_sources(monkeypatch)
         from orchestrator.context_builder import build
-        bundle = build("test", tier="FAST")
+        bundle = build("test", tier="STANDARD")
         assert bundle.max_tokens == 6_000
 
-    def test_build_deep_budget(self, monkeypatch):
+    def test_build_expert_budget(self, monkeypatch):
         _patch_build_sources(monkeypatch)
         from orchestrator.context_builder import build
-        bundle = build("test", tier="DEEP")
+        bundle = build("test", tier="EXPERT")
         assert bundle.max_tokens == 24_000
 
 

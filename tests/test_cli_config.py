@@ -50,7 +50,7 @@ multiline = true
 
 [model]
 prefer = "claude-opus-4-6"
-force_tier = "DEEP"
+force_tier = "EXPERT"
 
 [session]
 persist = false
@@ -60,7 +60,7 @@ max_exchanges = 5
     assert cfg.ui.theme == "dark"
     assert cfg.ui.multiline is True
     assert cfg.model.prefer == "claude-opus-4-6"
-    assert cfg.model.force_tier == "DEEP"
+    assert cfg.model.force_tier == "EXPERT"
     assert cfg.session.persist is False
     assert cfg.session.max_exchanges == 5
 
@@ -105,9 +105,9 @@ def test_corrupt_toml_falls_back_to_defaults(tmp_path):
 # ── force_tier case-insensitive ───────────────────────────────────────────────
 
 def test_force_tier_normalised_to_uppercase(tmp_path):
-    p = _write(tmp_path, '[model]\nforce_tier = "fast"\n')
+    p = _write(tmp_path, '[model]\nforce_tier = "standard"\n')
     cfg = load_cli_config(p)
-    assert cfg.model.force_tier == "FAST"
+    assert cfg.model.force_tier == "STANDARD"
 
 
 # ── default TOML written on first launch ──────────────────────────────────────

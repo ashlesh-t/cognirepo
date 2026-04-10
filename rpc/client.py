@@ -17,7 +17,7 @@ Typical usage (inside anthropic_adapter.py or router.py):
             query="what does verify_token return on expiry?",
             context_id="q_abc123",
             source_model="claude-sonnet-4-6",
-            target_tier="FAST",
+            target_tier="STANDARD",
         )
         print(result.result, result.confidence)
 
