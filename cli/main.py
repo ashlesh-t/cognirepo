@@ -1206,7 +1206,7 @@ def main():
 
     if args.command is None:
         if sys.stdin.isatty():
-            from cli.repl import run_repl  # pylint: disable=import-outside-toplevel
+            from cli.repl import run_repl  # pylint: disable=import-outside-toplevel  # noqa: F401
             run_repl()
             sys.exit(0)
         else:
