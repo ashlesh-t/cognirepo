@@ -1,9 +1,22 @@
 name: Publish to PyPI
 
+# Triggers:
+#   - GitHub Release published → publishes to PyPI
+#   - Pre-release tag (e.g. v1.0.0-rc1) → publishes to TestPyPI
+#   - Manual dispatch → publishes to TestPyPI (dry-run)
 on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      target:
+        description: "Publish target"
+        required: true
+        default: "testpypi"
+        type: choice
+        options:
+          - testpypi
+          - pypi
 
 jobs:
   build:
@@ -31,15 +44,42 @@ jobs:
           name: dist
           path: dist/
 
-  publish-pypi:
-    name: Publish to PyPI
+  wheel-smoke:
+    name: Wheel smoke test
     needs: build
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run check_wheel.sh against built wheel
+        run: bash scripts/check_wheel.sh --skip-size-check
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [build, wheel-smoke]
+    runs-on: ubuntu-latest
+    # Publish to TestPyPI for:
+    #   - pre-release tags (v*.*.* rc/alpha/beta)
+    #   - manual dispatch targeting testpypi
+    if: |
+      (github.event_name == 'release' && contains(github.ref, '-rc')) ||
+      (github.event_name == 'release' && contains(github.ref, '-alpha')) ||
+      (github.event_name == 'release' && contains(github.ref, '-beta')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'testpypi')
     environment:
-      name: pypi
-      url: https://pypi.org/p/cognirepo
+      name: testpypi
+      url: https://test.pypi.org/p/cognirepo
     permissions:
-      id-token: write   # required for trusted publishing
+      id-token: write   # OIDC trusted publishing — no token secrets needed
 
     steps:
       - uses: actions/download-artifact@v4
@@ -47,15 +87,40 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Publish to PyPI
+      - name: Publish to TestPyPI (OIDC)
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          # skip-existing: true  # Recommended to avoid 400 error if version exists
-          # verbose: true       # Use this to debug 400 errors
-          # If using Trusted Publishing (recommended):
-          # 1. Setup at: https://pypi.org/manage/project/cognirepo/settings/publishing/
-          # 2. Remove 'password' below
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
+          verbose: true
+          print-hash: true
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build, wheel-smoke]
+    runs-on: ubuntu-latest
+    # Only publish to PyPI for stable releases (no rc/alpha/beta suffix)
+    if: |
+      github.event_name == 'release' &&
+      !contains(github.ref, '-rc') &&
+      !contains(github.ref, '-alpha') &&
+      !contains(github.ref, '-beta') &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'pypi')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/cognirepo
+    permissions:
+      id-token: write   # OIDC trusted publishing — no PYPI_API_TOKEN secret needed
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI (OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
           skip-existing: true
           verbose: true
           print-hash: true

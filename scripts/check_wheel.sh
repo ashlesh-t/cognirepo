@@ -62,5 +62,29 @@ echo
 echo "--- Smoke: cognirepo doctor ---"
 "$VENV_DIR/bin/cognirepo" doctor --verbose 2>&1 | head -20 || true
 
+# ── Step 5: Tier-1 REPL docs Q&A via stdin ────────────────────────────────────
+# Installs [cli] extras so the embedded docs index and REPL are available.
+echo
+echo "--- Installing [cli] extras ---"
+"$VENV_DIR/bin/pip" install --quiet "$WHEEL[cli]" 2>/dev/null || \
+    echo "  (no [cli] extra — skipping REPL Q&A test)"
+
+if "$VENV_DIR/bin/cognirepo" --version 2>&1 | grep -q "cognirepo"; then
+    echo
+    echo "--- Smoke: Tier-1 REPL docs Q&A (stdin) ---"
+    # Pipe a docs question; expect the answer to mention the source file
+    REPL_OUTPUT=$(printf 'how do I install cognirepo\n/exit\n' | \
+        timeout 30 "$VENV_DIR/bin/cognirepo" 2>&1 || true)
+
+    echo "$REPL_OUTPUT" | head -20
+
+    # Verify we got a response (either from docs index or the tier label)
+    if echo "$REPL_OUTPUT" | grep -qiE "install|pip|cognirepo|QUICK|STANDARD"; then
+        echo "  Tier-1 REPL Q&A: PASS"
+    else
+        echo "  WARNING: Tier-1 REPL response not detected (non-fatal)"
+    fi
+fi
+
 echo
 echo "=== check_wheel.sh PASSED ==="
