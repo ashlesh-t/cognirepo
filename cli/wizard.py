@@ -229,24 +229,39 @@ def run_wizard() -> dict:
 
     # ── 6. AI tool MCP integration ────────────────────────────────────────────
     _section(6, STEPS, "AI tool MCP integration",
-             "Wire CogniRepo memory + code search into Claude / Gemini via MCP protocol.")
+             "Wire CogniRepo memory + code search into Claude / Gemini / Cursor / VS Code.")
     mcp_idx = _ask_choice(
         "Set up MCP server for:",
         [
             "Claude  (Claude Code CLI + Claude Desktop)",
             "Gemini  (Gemini CLI)",
-            "Both Claude and Gemini",
+            "Cursor  (Cursor IDE)",
+            "VS Code / GitHub Copilot",
+            "All of the above",
+            "Claude + Gemini",
             "Skip — configure later with: cognirepo mcp-setup",
         ],
         descriptions=[
             "Writes .claude/CLAUDE.md and .claude/settings.json",
             "Writes .gemini/COGNIREPO.md and .gemini/settings.json",
-            "Configures both AI tools",
+            "Writes .cursor/mcp.json",
+            "Writes .vscode/mcp.json",
+            "Configures all four AI tools",
+            "Configures both Claude and Gemini",
             "",
         ],
         default=0,
     )
-    mcp_map = {0: ["claude"], 1: ["gemini"], 2: ["claude", "gemini"], 3: []}
+    _all_tools = ["claude", "gemini", "cursor", "vscode"]
+    mcp_map = {
+        0: ["claude"],
+        1: ["gemini"],
+        2: ["cursor"],
+        3: ["vscode"],
+        4: _all_tools,
+        5: ["claude", "gemini"],
+        6: [],
+    }
     cfg["mcp_targets"] = mcp_map[mcp_idx]
 
     cfg["mcp_global"] = False

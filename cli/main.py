@@ -404,6 +404,35 @@ def _cmd_doctor(verbose: bool = False) -> int:
                 )
                 issues += 1
 
+    # ── Check N: AI tool MCP configs (informational, not failures) ───────────
+    _tool_checks = [
+        ("Claude Code", ".claude/settings.json", "mcpServers"),
+        ("Gemini CLI",  ".gemini/settings.json", "mcpServers"),
+        ("Cursor",      ".cursor/mcp.json",       "mcpServers"),
+        ("VS Code",     ".vscode/mcp.json",        "servers"),
+    ]
+    _any_tool_configured = False
+    for _tool_name, _tool_path, _tool_key in _tool_checks:
+        if os.path.exists(_tool_path):
+            try:
+                with open(_tool_path, encoding="utf-8") as _tf:
+                    _tool_cfg = json.load(_tf)
+                _entries = _tool_cfg.get(_tool_key, {})
+                _cognirepo_entries = [k for k in _entries if "cognirepo" in k.lower()]
+                if _cognirepo_entries:
+                    _ok(f"{_tool_name} — configured ({', '.join(_cognirepo_entries)})")
+                    _any_tool_configured = True
+                else:
+                    _ok(f"{_tool_name} — {_tool_path} exists but no cognirepo entry")
+            except (json.JSONDecodeError, OSError):
+                _ok(f"{_tool_name} — {_tool_path} exists (unreadable)")
+        elif verbose:
+            print(f"  ○  {_tool_name} — not configured (run: cognirepo init)")
+
+    if not _any_tool_configured:
+        _fail("AI tools — no MCP configs found", "Run: cognirepo init (select your AI tools)")
+        issues += 1
+
     # ── Optional verbose extras ───────────────────────────────────────────────
     if verbose:
         print("\n  Optional components:")
