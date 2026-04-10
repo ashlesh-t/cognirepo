@@ -389,10 +389,10 @@ _PROVIDER_PRIORITY = ["anthropic", "gemini", "grok", "openai"]
 
 #: Default model IDs used when falling back to a provider not in the classifier result
 _PROVIDER_DEFAULT_MODELS: dict[str, str] = {
-    "anthropic": "claude-sonnet-4-6",
+    "anthropic": "claude-haiku-4-5",   # cheapest model for STANDARD promotion
     "gemini": "gemini-2.0-flash",
     "grok": "grok-beta",
-    "openai": "gpt-4o",
+    "openai": "gpt-4o-mini",
 }
 
 
@@ -462,6 +462,33 @@ def _dispatch_with_fallback(
     raise last_exc  # type: ignore[misc]
 
 
+def _promote_to_standard(
+    query: str,
+    system_prompt: str,
+    tool_manifest: list[dict],
+    max_tokens: int,
+    messages_history: list[dict] | None = None,
+) -> "ModelResponse | None":
+    """
+    When the local adapter has no answer, promote the query to STANDARD tier
+    by re-classifying and dispatching to the best available provider.
+    Returns None if no provider is available.
+    """
+    available = _available_providers()
+    if not available:
+        return None
+    provider = available[0]
+    model_id = _PROVIDER_DEFAULT_MODELS.get(provider, "claude-haiku-4-5")
+    try:
+        return _call_adapter(
+            query=query, provider=provider, model_id=model_id,
+            system_prompt=system_prompt, tool_manifest=tool_manifest,
+            max_tokens=max_tokens, messages_history=messages_history,
+        )
+    except Exception:  # pylint: disable=broad-except
+        return None
+
+
 def _call_adapter(
     query: str,
     provider: str,
@@ -480,6 +507,24 @@ def _call_adapter(
         "max_tokens": max_tokens,
         "messages_history": messages_history,
     }
+    if provider == "local":
+        from orchestrator.model_adapters import local_adapter  # pylint: disable=import-outside-toplevel
+        from orchestrator.model_adapters.local_adapter import NoLocalAnswer  # pylint: disable=import-outside-toplevel
+        try:
+            return local_adapter.call(**kwargs)
+        except NoLocalAnswer:
+            # Promote to STANDARD — pick the first available non-local provider
+            logger.info("local_adapter: no answer, promoting to STANDARD")
+            _promoted = _promote_to_standard(
+                query=query,
+                system_prompt=system_prompt,
+                tool_manifest=tool_manifest,
+                max_tokens=max_tokens,
+                messages_history=messages_history,
+            )
+            if _promoted is not None:
+                return _promoted
+            raise  # re-raise if no providers available
     if provider == "anthropic":
         from orchestrator.model_adapters import anthropic_adapter  # pylint: disable=import-outside-toplevel
         return anthropic_adapter.call(**kwargs)
@@ -770,6 +815,29 @@ def _stream_dispatch(
         "stream": True,
         "messages_history": messages_history,
     }
+    if provider == "local":
+        from orchestrator.model_adapters import local_adapter  # pylint: disable=import-outside-toplevel
+        from orchestrator.model_adapters.local_adapter import NoLocalAnswer  # pylint: disable=import-outside-toplevel
+        try:
+            return (yield from local_adapter.call(**kwargs))
+        except NoLocalAnswer:
+            # Promote to STANDARD — fall back to first available provider
+            logger.info("local_adapter (stream): no answer, promoting to STANDARD")
+            available = _available_providers()
+            if available:
+                promoted_provider = available[0]
+                promoted_model = _PROVIDER_DEFAULT_MODELS.get(promoted_provider, "claude-haiku-4-5")
+                kwargs["model_id"] = promoted_model
+                del kwargs["stream"]
+                kwargs["stream"] = True
+                # Recurse once with a real provider
+                return (yield from _stream_dispatch(
+                    query=query, provider=promoted_provider,
+                    model_id=promoted_model, system_prompt=system_prompt,
+                    tool_manifest=tool_manifest, max_tokens=max_tokens,
+                    messages_history=messages_history,
+                ))
+            return {}
     if provider == "anthropic":
         from orchestrator.model_adapters import anthropic_adapter  # pylint: disable=import-outside-toplevel
         return (yield from anthropic_adapter.call(**kwargs))

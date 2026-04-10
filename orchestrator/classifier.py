@@ -107,10 +107,10 @@ class ClassifierResult:
 
 def _load_model_registry() -> dict:
     default = {
-        "QUICK":    {"provider": "grok",      "model": "grok-beta"},
-        "STANDARD": {"provider": "gemini",    "model": "gemini-2.0-flash"},
-        "COMPLEX":  {"provider": "gemini",    "model": "gemini-2.0-flash"},
-        "EXPERT":   {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+        "QUICK":    {"provider": "local",     "model": "local-resolver"},
+        "STANDARD": {"provider": "anthropic", "model": "claude-haiku-4-5"},
+        "COMPLEX":  {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+        "EXPERT":   {"provider": "anthropic", "model": "claude-opus-4-6"},
     }
     if not os.path.exists(_config_file()):
         return default
