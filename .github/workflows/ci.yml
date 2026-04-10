@@ -180,3 +180,66 @@ jobs:
         env:
           COGNIREPO_MULTI_AGENT_ENABLED: "false"
           HF_HUB_OFFLINE: "1"
+
+  grpc-multiagent:
+    name: gRPC Multi-Agent Tests
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-grpc-${{ hashFiles('pyproject.toml') }}
+          restore-keys: ${{ runner.os }}-pip-grpc-
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]" grpcio grpcio-health-checking
+
+      - name: Unit tests — health + multi-agent (no live server)
+        run: pytest tests/test_grpc_health.py tests/test_grpc_multiagent.py -v
+        env:
+          COGNIREPO_MULTI_AGENT_ENABLED: "true"
+
+      - name: Integration test — live gRPC server
+        run: |
+          # Start the gRPC server on an ephemeral port in the background
+          export GRPC_PORT=15151
+          cognirepo init --password changeme --no-index
+          cognirepo serve-grpc --port $GRPC_PORT --idle-timeout 60 &
+          SERVER_PID=$!
+
+          # Poll health endpoint until SERVING or timeout (30s)
+          for i in $(seq 1 30); do
+            if python - <<'EOF'
+import socket, sys
+s = socket.socket()
+s.settimeout(1)
+sys.exit(0 if s.connect_ex(("localhost", 15151)) == 0 else 1)
+EOF
+            then
+              echo "gRPC server is up"
+              break
+            fi
+            sleep 1
+          done
+
+          # Run integration tests
+          pytest tests/test_grpc_multiagent.py tests/test_grpc_health.py \
+            -v --tb=short \
+            -k "not test_warn_logged"
+          EXIT_CODE=$?
+
+          kill $SERVER_PID 2>/dev/null || true
+          exit $EXIT_CODE
+        env:
+          COGNIREPO_MULTI_AGENT_ENABLED: "true"
+          COGNIREPO_GRPC_PORT: "15151"

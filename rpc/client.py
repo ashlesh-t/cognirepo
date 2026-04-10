@@ -29,15 +29,28 @@ Typical usage (inside anthropic_adapter.py or router.py):
 """
 from __future__ import annotations
 
+import logging
 import os
 import socket
 import subprocess
 import time
+import uuid
 
 import grpc
 
 from rpc.proto import cognirepo_pb2 as pb2
 from rpc.proto import cognirepo_pb2_grpc as pb2_grpc
+
+try:
+    from grpc_health.v1 import health_pb2, health_pb2_grpc as health_grpc
+    _GRPC_HEALTH_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _GRPC_HEALTH_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
+
+_RETRY_ATTEMPTS = 3
+_RETRY_BASE_DELAY = 0.5  # seconds; doubles on each attempt
 
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 50051
@@ -122,39 +135,85 @@ class CogniRepoClient:
 
     # ── QueryService ──────────────────────────────────────────────────────────
 
+    def health(self, service: str = "", timeout: float = 5.0) -> bool:
+        """
+        Check the server health via the gRPC Health proto.
+
+        Returns True if the server reports SERVING, False otherwise
+        (including when ``grpcio-health-checking`` is not installed).
+        """
+        if not _GRPC_HEALTH_AVAILABLE:
+            # Fall back to a simple port-open check
+            return self._is_port_open()
+        self._ensure_connected()
+        try:
+            stub = health_grpc.HealthStub(self._channel)
+            req = health_pb2.HealthCheckRequest(service=service)
+            resp = stub.Check(req, timeout=timeout)
+            return resp.status == health_pb2.HealthCheckResponse.SERVING
+        except grpc.RpcError as exc:
+            logger.warning("health check failed: %s — %s", exc.code(), exc.details())
+            return False
+
     def sub_query(
         self,
         query: str,
         context_id: str = "",
         source_model: str = "",
-        target_tier: str = "FAST",
+        target_tier: str = "STANDARD",
         max_tokens: int = 512,
         metadata: dict[str, str] | None = None,
         timeout: float = 30.0,
+        trace_id: str | None = None,
     ) -> pb2.QueryResponse:
         """
         Delegate a sub-query to the gRPC server (which routes it through the
         model router).  Returns a QueryResponse proto.
+
+        Retries up to ``_RETRY_ATTEMPTS`` times with exponential backoff on
+        transient gRPC errors (UNAVAILABLE, DEADLINE_EXCEEDED).  The
+        ``trace_id`` is propagated through gRPC metadata for log correlation.
 
         Parameters
         ----------
         query        : the sub-question to answer
         context_id   : session ID so the result is stored in shared context
         source_model : calling model — informational, stored in session metadata
-        target_tier  : hint for routing ("FAST" for Gemini Flash lookups)
+        target_tier  : hint for routing ("STANDARD" for lightweight lookups)
         max_tokens   : response length cap
-        timeout      : seconds before the call is cancelled
+        timeout      : per-attempt deadline in seconds
+        trace_id     : optional correlation ID (generated if not provided)
         """
         self._ensure_connected()
+        _trace_id = trace_id or str(uuid.uuid4())
+        _meta = [("x-trace-id", _trace_id)]
+
         request = pb2.QueryRequest(
             query=query,
             context_id=context_id,
             source_model=source_model,
             target_tier=target_tier,
             max_tokens=max_tokens,
-            metadata=metadata or {},
+            metadata={**(metadata or {}), "trace_id": _trace_id},
         )
-        return self._query_stub.SubQuery(request, timeout=timeout)
+
+        last_exc: grpc.RpcError | None = None
+        for attempt in range(_RETRY_ATTEMPTS):
+            try:
+                return self._query_stub.SubQuery(request, timeout=timeout, metadata=_meta)
+            except grpc.RpcError as exc:
+                code = exc.code()
+                if code not in (grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED):
+                    raise
+                last_exc = exc
+                delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                logger.warning(
+                    "sub_query attempt %d/%d failed (trace_id=%s): %s — %s; retrying in %.1fs",
+                    attempt + 1, _RETRY_ATTEMPTS, _trace_id, code, exc.details(), delay,
+                )
+                time.sleep(delay)
+
+        raise last_exc  # type: ignore[misc]
 
     def sub_query_stream(
         self,
@@ -230,7 +289,7 @@ def sub_query(
     query: str,
     context_id: str = "",
     source_model: str = "",
-    target_tier: str = "FAST",
+    target_tier: str = "STANDARD",
     max_tokens: int = 512,
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,

@@ -569,7 +569,60 @@ Tool schemas are in `server/manifest.json` and exportable via `cognirepo export-
 
 ## gRPC Server
 
-Port 50051 by default. Two services:
+### Port selection and on/off switch
+
+| Environment variable | Default | Purpose |
+|---|---|---|
+| `COGNIREPO_GRPC_PORT` | `50051` | Port the gRPC server listens on |
+| `COGNIREPO_MULTI_AGENT_ENABLED` | `false` | Enable gRPC sub-query delegation to sub-agents |
+
+```bash
+# Start the gRPC server on default port 50051
+cognirepo serve-grpc
+
+# Use a custom port
+COGNIREPO_GRPC_PORT=50052 cognirepo serve-grpc --port 50052
+
+# Disable multi-agent mode (gRPC sub-queries never fired)
+COGNIREPO_MULTI_AGENT_ENABLED=false cognirepo
+```
+
+When `COGNIREPO_MULTI_AGENT_ENABLED=false` (the default), no gRPC calls are made
+and the server does not need to be running. All queries are handled by the primary
+model directly.
+
+### Health endpoint
+
+The gRPC server exposes the standard health protocol (requires
+`grpcio-health-checking`).  The client provides a `health()` helper:
+
+```python
+from rpc.client import CogniRepoClient
+
+with CogniRepoClient(port=50051) as c:
+    if c.health():          # True = SERVING
+        print("server up")
+    if c.health("QueryService"):   # service-level check
+        print("QueryService ready")
+```
+
+The CI pipeline polls `health()` before running integration tests to avoid
+races during server startup.
+
+### Sub-query retry behaviour
+
+`sub_query()` retries up to **3 times** with exponential backoff (0.5 s, 1 s, 2 s)
+on `UNAVAILABLE` and `DEADLINE_EXCEEDED` errors.  Non-retryable errors (e.g.
+`INTERNAL`) surface immediately.  A `trace_id` is auto-generated (or you can
+supply one) and propagated through gRPC metadata for log correlation.
+
+```python
+resp = c.sub_query(
+    "who calls verify_token?",
+    trace_id="req-abc-123",   # correlate logs across services
+    timeout=10.0,             # per-attempt deadline
+)
+```
 
 ### QueryService
 
@@ -582,13 +635,13 @@ with CogniRepoClient(port=50051) as c:
         query="what does verify_token return on expiry?",
         context_id="q_abc123",
         source_model="claude-sonnet-4-6",
-        target_tier="FAST",   # hint: use Gemini Flash
+        target_tier="STANDARD",   # hint: use lightweight model
         max_tokens=256,
     )
     print(resp.result, resp.confidence)
 
     # Streaming version
-    for chunk in c.sub_query_stream("explain auth flow", target_tier="FAST"):
+    for chunk in c.sub_query_stream("explain auth flow", target_tier="STANDARD"):
         print(chunk.result, end="")
 ```
 

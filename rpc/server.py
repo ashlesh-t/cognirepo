@@ -37,6 +37,13 @@ from rpc.proto import cognirepo_pb2 as pb2
 from rpc.proto import cognirepo_pb2_grpc as pb2_grpc
 
 try:
+    from grpc_health.v1 import health as grpc_health_mod
+    from grpc_health.v1 import health_pb2, health_pb2_grpc
+    _GRPC_HEALTH_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _GRPC_HEALTH_AVAILABLE = False
+
+try:
     from orchestrator.router import stream_route  # noqa: F401  (re-exported for patching in tests)
 except ImportError:  # orchestrator not yet available in lightweight test envs
     stream_route = None  # type: ignore[assignment]
@@ -230,6 +237,70 @@ def _confidence_from_tier(tier: str) -> float:
     return {"STANDARD": 0.7, "COMPLEX": 0.8, "EXPERT": 0.9}.get(tier, 0.5)
 
 
+# ── HealthServicer ────────────────────────────────────────────────────────────
+
+class HealthServicer:
+    """
+    Standard gRPC health servicer.
+
+    Uses ``grpc_health.v1`` if available, otherwise provides a minimal
+    compatible implementation that returns SERVING for all services.
+
+    The canonical service names are:
+        ""                      — overall server health
+        "QueryService"          — sub-query delegation
+        "ContextService"        — shared context store
+    """
+
+    SERVING = 1
+    NOT_SERVING = 2
+
+    def __init__(self):
+        self._status: dict[str, int] = {
+            "": self.SERVING,
+            "QueryService": self.SERVING,
+            "ContextService": self.SERVING,
+        }
+        # If the package is available, delegate to it for full Watch support
+        self._delegate = None
+        if _GRPC_HEALTH_AVAILABLE:
+            self._delegate = grpc_health_mod.HealthServicer()
+            for svc in self._status:
+                self._delegate.set(svc, health_pb2.HealthCheckResponse.SERVING)
+
+    def set_status(self, service: str, serving: bool) -> None:
+        """Update the serving status for a named service."""
+        status = self.SERVING if serving else self.NOT_SERVING
+        self._status[service] = status
+        if self._delegate is not None:
+            proto_status = (
+                health_pb2.HealthCheckResponse.SERVING if serving
+                else health_pb2.HealthCheckResponse.NOT_SERVING
+            )
+            self._delegate.set(service, proto_status)
+
+    def is_serving(self, service: str = "") -> bool:
+        """Return True if the service is currently SERVING."""
+        return self._status.get(service, self.NOT_SERVING) == self.SERVING
+
+    def add_to_server(self, server: grpc.Server) -> None:
+        """Register this servicer on the gRPC server."""
+        if _GRPC_HEALTH_AVAILABLE and self._delegate is not None:
+            health_pb2_grpc.add_HealthServicer_to_server(self._delegate, server)
+
+
+# Module-level singleton so tests and server lifecycle code can share it
+_health_servicer: HealthServicer | None = None
+
+
+def get_health_servicer() -> HealthServicer:
+    """Return the module-level HealthServicer (created lazily)."""
+    global _health_servicer  # pylint: disable=global-statement
+    if _health_servicer is None:
+        _health_servicer = HealthServicer()
+    return _health_servicer
+
+
 # ── server lifecycle ──────────────────────────────────────────────────────────
 
 def start_server(
@@ -252,6 +323,8 @@ def start_server(
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=_MAX_WORKERS))
     pb2_grpc.add_QueryServiceServicer_to_server(QueryServiceServicer(), server)
     pb2_grpc.add_ContextServiceServicer_to_server(ContextServiceServicer(), server)
+    health_svc = get_health_servicer()
+    health_svc.add_to_server(server)
     server.add_insecure_port(f"[::]:{port}")
     server.start()
     print(f"[gRPC] CogniRepo server listening on port {port}", flush=True)
