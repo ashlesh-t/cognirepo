@@ -1149,6 +1149,20 @@ def main():
         help="Show all checks including optional components.",
     )
 
+    # setup-env — interactive API key wizard
+    p_setup_env = sub.add_parser(
+        "setup-env",
+        help="Interactive wizard to set and verify API keys",
+    )
+    p_setup_env.add_argument(
+        "--skip-verify", action="store_true", default=False,
+        help="Write keys but skip API verification calls (useful in CI with real keys)",
+    )
+    p_setup_env.add_argument(
+        "--non-interactive", action="store_true", default=False,
+        help="Skip wizard entirely (for scripted environments)",
+    )
+
     # metrics — standalone Prometheus metrics HTTP server
     p_metrics = sub.add_parser(
         "metrics",
@@ -1203,6 +1217,14 @@ def main():
             sys.exit(0)
 
     # ── non-routable commands ──────────────────────────────────────────────
+    if args.command == "setup-env":
+        from cli.env_wizard import EnvWizard  # pylint: disable=import-outside-toplevel
+        wizard = EnvWizard(
+            non_interactive=getattr(args, "non_interactive", False),
+        )
+        wizard.run(skip_verify=getattr(args, "skip_verify", False))
+        sys.exit(0)
+
     if args.command == "metrics":
         from cli.metrics_server import run_metrics_server  # pylint: disable=import-outside-toplevel
         run_metrics_server(host=args.host, port=args.port)
