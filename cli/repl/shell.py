@@ -54,8 +54,17 @@ def _ctrl_c_count_inc(state: dict) -> int:
     return state["ctrl_c_count"]
 
 
-def _auto_save_exchange(state: dict, user_msg: str, assistant_msg: str) -> None:
-    """Persist this exchange to the session store (if persist=true in config)."""
+def _auto_save_exchange(
+    state: dict,
+    user_msg: str,
+    assistant_msg: str,
+    sub_queries: list[dict] | None = None,
+) -> None:
+    """Persist this exchange to the session store (if persist=true in config).
+
+    sub_queries: optional list of sub-agent records to store under
+                 exchange["sub_queries"] for multi-agent turns.
+    """
     cfg = state.get("cli_cfg")
     if cfg is None or not cfg.session.persist:
         return
@@ -68,10 +77,47 @@ def _auto_save_exchange(state: dict, user_msg: str, assistant_msg: str) -> None:
         if session is None:
             session = create_session(model=state.get("force_model") or "")
             state["session_id"] = session["session_id"]
-        append_exchange(session, user_msg, assistant_msg,
-                        max_exchanges=cfg.session.max_exchanges)
+        append_exchange(
+            session, user_msg, assistant_msg,
+            max_exchanges=cfg.session.max_exchanges,
+            extra={"sub_queries": sub_queries} if sub_queries else None,
+        )
     except Exception:  # pylint: disable=broad-except
         pass  # never break the REPL over persistence errors
+
+
+def _fire_sub_agents(query: str, registry) -> None:
+    """
+    For EXPERT-tier queries, dispatch a lightweight sub-agent lookup via gRPC
+    in a background thread.  The sub-agent result is stored in the registry
+    and rendered as a grey panel after the primary response completes.
+
+    Only fires when COGNIREPO_MULTI_AGENT_ENABLED=true (checked by caller).
+    Silently drops errors — the primary response must always complete.
+    """
+    import threading  # pylint: disable=import-outside-toplevel
+
+    # Heuristic: extract the first noun phrase as the sub-query focus
+    sub_q = f"quick lookup: {query[:120]}"
+    agent_id = registry.start(sub_q)
+
+    def _run():
+        try:
+            from rpc.client import CogniRepoClient  # pylint: disable=import-outside-toplevel
+            import os  # pylint: disable=import-outside-toplevel
+            port = int(os.environ.get("COGNIREPO_GRPC_PORT", "50051"))
+            with CogniRepoClient(port=port) as client:
+                resp = client.sub_query(
+                    query=sub_q,
+                    target_tier="STANDARD",
+                    max_tokens=256,
+                    timeout=15.0,
+                )
+                registry.finish(agent_id, result=resp.result)
+        except Exception as exc:  # pylint: disable=broad-except
+            registry.fail(agent_id, error=str(exc))
+
+    threading.Thread(target=_run, daemon=True, name=f"sub-agent-{agent_id}").start()
 
 
 def run_repl() -> None:
@@ -116,6 +162,12 @@ def run_repl() -> None:
         except Exception:  # pylint: disable=broad-except
             pass
 
+    # ── multi-agent: per-turn registry ────────────────────────────────────────
+    import os  # pylint: disable=import-outside-toplevel
+    _multi_agent_enabled = os.environ.get("COGNIREPO_MULTI_AGENT_ENABLED", "false").lower() == "true"
+    from cli.repl.agents_panel import AgentRegistry  # pylint: disable=import-outside-toplevel
+    _agent_registry = AgentRegistry()
+
     # Session state shared between commands and the main loop
     state: dict = {
         "messages_history": list(restored_session["messages"]) if restored_session else [],
@@ -123,6 +175,7 @@ def run_repl() -> None:
         "ctrl_c_count": 0,
         "session_id": restored_session["session_id"] if restored_session else None,
         "cli_cfg": cli_cfg,
+        "agent_registry": _agent_registry,
     }
 
     while True:
@@ -187,6 +240,11 @@ def run_repl() -> None:
                 _auto_save_exchange(state, query, local_answer)
                 continue
 
+        # ── multi-agent: fire sub-agents for EXPERT queries ──────────────────
+        _agent_registry.clear()
+        if _multi_agent_enabled and clf.tier == "EXPERT":
+            _fire_sub_agents(query, _agent_registry)
+
         # ── stream from model ──────────────────────────────────────────────────
         ui.tier_label(clf.tier, clf.model)
         try:
@@ -201,10 +259,16 @@ def run_repl() -> None:
             ui.print("")
             continue
 
+        # ── render sub-agent panel after primary response ─────────────────────
+        if _multi_agent_enabled and _agent_registry.all():
+            from cli.repl.agents_panel import render_agents_panel  # pylint: disable=import-outside-toplevel
+            render_agents_panel(_agent_registry)
+
         if response_text:
             state["messages_history"].extend([
                 {"role": "user", "content": query},
                 {"role": "assistant", "content": response_text},
             ])
-            # ── auto-save to session store ─────────────────────────────────────
-            _auto_save_exchange(state, query, response_text)
+            # ── auto-save to session store (include sub_queries) ───────────────
+            _auto_save_exchange(state, query, response_text,
+                                sub_queries=_agent_registry.to_session_records())

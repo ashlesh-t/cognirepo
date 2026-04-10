@@ -72,8 +72,8 @@ def _cmd_exit(ui: UI, _args: str, _state: dict) -> bool:
     return False
 
 
-@register("status", "Show daemon health, FAISS size, graph stats, circuit breaker")
-def _cmd_status(ui: UI, _args: str, _state: dict) -> bool:
+@register("status", "Show daemon health, FAISS size, graph stats, circuit breaker, sub-agents")
+def _cmd_status(ui: UI, _args: str, state: dict) -> bool:
     try:
         from vector_db.local_vector_db import LocalVectorDB  # pylint: disable=import-outside-toplevel
         db = LocalVectorDB()
@@ -96,9 +96,27 @@ def _cmd_status(ui: UI, _args: str, _state: dict) -> bool:
     except Exception:  # pylint: disable=broad-except
         cb_state = "?"
 
+    import os  # pylint: disable=import-outside-toplevel
+    multi_agent = os.environ.get("COGNIREPO_MULTI_AGENT_ENABLED", "false").lower() == "true"
+
     ui.print(f"  Memories (FAISS): {mem_count}")
     ui.print(f"  Knowledge graph:  {graph_info}")
     ui.print(f"  Circuit breaker:  {cb_state}")
+    ui.print(f"  Multi-agent mode: {'enabled' if multi_agent else 'disabled'}")
+
+    if multi_agent:
+        registry = state.get("agent_registry")
+        if registry is not None:
+            agents = registry.all()
+            if agents:
+                ui.print(f"  Active sub-agents: {len(registry.active())} / {len(agents)}")
+                for agent in agents[-5:]:  # show last 5
+                    from cli.repl.agents_panel import _STATE_ICON  # pylint: disable=import-outside-toplevel
+                    icon = _STATE_ICON.get(agent.state, "?")
+                    ui.print(f"    [{agent.agent_id}] {icon} {agent.query[:50]}  ({agent.elapsed:.1f}s)")
+            else:
+                ui.print("  Active sub-agents: none")
+
     return True
 
 
@@ -226,6 +244,53 @@ def _cmd_load(ui: UI, args: str, state: dict) -> bool:
         ui.status(f"Loaded session {session['session_id'][:8]}… ({n} exchange(s))")
     except Exception as exc:  # pylint: disable=broad-except
         ui.print(f"  (load error: {exc})")
+    return True
+
+
+@register("agents", "List active sub-agent sessions: /agents [cancel <id>]")
+def _cmd_agents(ui: UI, args: str, state: dict) -> bool:
+    """
+    /agents          — list all sub-agents for the current REPL turn
+    /agents cancel <id>  — cancel a pending/running sub-agent
+    """
+    import os  # pylint: disable=import-outside-toplevel
+
+    if os.environ.get("COGNIREPO_MULTI_AGENT_ENABLED", "false").lower() != "true":
+        ui.print("  Multi-agent mode is disabled. Set COGNIREPO_MULTI_AGENT_ENABLED=true to enable.")
+        return True
+
+    registry = state.get("agent_registry")
+    if registry is None:
+        ui.print("  No sub-agent registry in current session.")
+        return True
+
+    parts = args.strip().split()
+    if parts and parts[0] == "cancel":
+        if len(parts) < 2:
+            ui.print("  Usage: /agents cancel <agent_id>")
+            return True
+        aid = parts[1]
+        if registry.cancel(aid):
+            ui.status(f"Sub-agent {aid} cancelled.")
+        else:
+            ui.print(f"  Agent {aid!r} not found or already finished.")
+        return True
+
+    agents = registry.all()
+    if not agents:
+        ui.print("  No sub-agents recorded in this turn.")
+        return True
+
+    from cli.repl.agents_panel import _STATE_ICON  # pylint: disable=import-outside-toplevel
+    ui.print(f"\n  Sub-agents ({len(agents)}):")
+    for agent in agents:
+        icon = _STATE_ICON.get(agent.state, "?")
+        result_snippet = (agent.result or agent.error or "")[:60]
+        ui.print(f"    [{agent.agent_id}] {icon} {agent.query[:50]}")
+        if result_snippet:
+            ui.print(f"          → {result_snippet}")
+        ui.print(f"          state={agent.state.value}  elapsed={agent.elapsed:.1f}s")
+    ui.print("")
     return True
 
 

@@ -118,6 +118,7 @@ def append_exchange(
     user_msg: str,
     assistant_msg: str,
     max_exchanges: int = DEFAULT_MAX_EXCHANGES,
+    extra: dict | None = None,
 ) -> dict:
     """
     Append a user/assistant exchange to *session* and enforce the history cap.
@@ -126,9 +127,17 @@ def append_exchange(
     exchange (one user + one assistant message) is dropped.
 
     The updated session is saved to disk automatically.
+
+    Parameters
+    ----------
+    extra : optional dict merged into the assistant message record.
+            Used by the REPL to store ``sub_queries`` from multi-agent turns.
     """
     session["messages"].append({"role": "user", "content": user_msg})
-    session["messages"].append({"role": "assistant", "content": assistant_msg})
+    assistant_record: dict = {"role": "assistant", "content": assistant_msg}
+    if extra:
+        assistant_record.update(extra)
+    session["messages"].append(assistant_record)
 
     # Enforce cap: each exchange = 2 messages
     max_msgs = max_exchanges * 2

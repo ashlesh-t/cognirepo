@@ -53,7 +53,6 @@ for _mod in (
     "rpc.proto.cognirepo_pb2",
     "rpc.proto.cognirepo_pb2_grpc",
     "rpc.context_store",
-    "orchestrator.router",
     "dotenv",
     "grpc_health",
     "grpc_health.v1",

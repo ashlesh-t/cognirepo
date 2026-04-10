@@ -64,8 +64,21 @@ for _mod in (
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
 
-# ── Import router (after all stubs are in place) ──────────────────────────────
-from orchestrator.router import _dispatch_with_fallback, _available_providers  # noqa: E402
+# ── Import router (guarded against MagicMock pollution from other test files) ─
+def _get_router_fns():
+    """Return real _dispatch_with_fallback and _available_providers.
+
+    If another test file has stubbed orchestrator.router as a MagicMock, pop it
+    so Python re-imports the real module with our error stubs already in place.
+    """
+    existing = sys.modules.get("orchestrator.router")
+    if existing is not None and isinstance(existing, MagicMock):
+        del sys.modules["orchestrator.router"]
+    from orchestrator.router import _dispatch_with_fallback, _available_providers  # noqa: E402
+    return _dispatch_with_fallback, _available_providers
+
+
+_dispatch_with_fallback, _available_providers = _get_router_fns()
 
 
 # ── fallback chain ────────────────────────────────────────────────────────────
