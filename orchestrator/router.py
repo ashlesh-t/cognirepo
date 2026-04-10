@@ -236,6 +236,31 @@ def route(
             )
             bundle.system_prompt += f"\n\n## Sub-Query Results (from fast models)\n{sub_text}"
 
+    # ── 3.5 inject relevant past learnings (corrections/prod_issues) ─────────
+    try:
+        from memory.learning_store import get_learning_store  # pylint: disable=import-outside-toplevel
+        learnings = get_learning_store().retrieve_learnings(
+            query, top_k=3, types=["correction", "prod_issue"],
+        )
+        if learnings:
+            _MAX_LEARNING_CHARS = 1800  # stay under ~500 tokens
+            learning_lines = []
+            chars = 0
+            for lr in learnings:
+                line = f"- [{lr.get('type','learning')}] {lr.get('text','')[:200]}"
+                if chars + len(line) > _MAX_LEARNING_CHARS:
+                    break
+                learning_lines.append(line)
+                chars += len(line)
+            if learning_lines:
+                bundle.system_prompt += (
+                    "\n\n## Relevant past learnings from prior sessions\n"
+                    + "\n".join(learning_lines)
+                )
+                logger.debug("route.learnings_injected", extra={"count": len(learning_lines)})
+    except Exception:  # pylint: disable=broad-except
+        pass  # never let learning injection break routing
+
     # ── 4. dispatch to adapter (with provider fallback chain) ────────────────
     logger.info(
         "route.dispatch",

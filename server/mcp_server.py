@@ -27,6 +27,8 @@ from tools.dependency_graph import dependency_graph as _dependency_graph
 from tools.explain_change import explain_change as _explain_change
 from retrieval.docs_search import search_docs as _search_docs
 from memory.episodic_memory import log_event, get_history, search_episodes
+from memory.learning_store import get_learning_store, auto_tag
+from server.learning_middleware import intercept_after_store, intercept_after_episode
 
 mcp = FastMCP("cognirepo")
 
@@ -80,7 +82,10 @@ def _traced(tool_name: str, fn, *args, **kwargs):
 @mcp.tool()
 def store_memory(text: str, source: str = "") -> dict:
     """Store a semantic memory with an optional source label."""
-    return _traced("store_memory", _store_memory, text, source)
+    result = _traced("store_memory", _store_memory, text, source)
+    # Auto-learning middleware: capture corrections/decisions/prod-issues
+    intercept_after_store(text, source=source)
+    return result
 
 
 @mcp.tool()
@@ -99,7 +104,48 @@ def search_docs(query: str) -> list:
 def log_episode(event: str, metadata: dict = None) -> dict:
     """Append an episodic event with optional metadata to the event log."""
     log_event(event, metadata or {})
+    intercept_after_episode(event, metadata=metadata or {})
     return {"status": "logged", "event": event}
+
+
+@mcp.tool()
+def log_learning(
+    type: str,  # pylint: disable=redefined-builtin
+    text: str,
+    context_summary: str = "",
+    scope: str = "auto",
+) -> dict:
+    """
+    Explicitly record a learning (correction / prod_issue / decision).
+    type  : "correction" | "prod_issue" | "decision"
+    scope : "project" | "global" | "auto" (auto-detected from text)
+    """
+    store = get_learning_store()
+    metadata = {"context_summary": context_summary}
+    result = store.store_learning(type, text, metadata, scope=scope)
+    logger.info("mcp.log_learning", extra={"type": type, "scope": result.get("scope")})
+    return {"status": "stored", **result}
+
+
+@mcp.tool()
+def retrieve_learnings(
+    query: str,
+    top_k: int = 5,
+    types: list = None,
+    scopes: list = None,
+) -> list:
+    """
+    Retrieve learnings (corrections, prod issues, decisions) relevant to query.
+    types  : filter list e.g. ["correction", "prod_issue"]
+    scopes : ["project", "global"] (default: both)
+    """
+    store = get_learning_store()
+    return store.retrieve_learnings(
+        query,
+        top_k=top_k,
+        types=types or [],
+        scopes=scopes or ["project", "global"],
+    )
 
 
 @mcp.tool()

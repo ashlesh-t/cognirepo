@@ -241,6 +241,64 @@
       }
     },
     {
+      "name": "log_learning",
+      "description": "Explicitly record a learning: correction, prod_issue, or decision. Call after solving bugs or receiving corrections.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "correction | prod_issue | decision"
+          },
+          "text": {
+            "type": "string",
+            "description": "The learning text to store"
+          },
+          "context_summary": {
+            "type": "string",
+            "description": "Optional brief context",
+            "default": ""
+          },
+          "scope": {
+            "type": "string",
+            "description": "project | global | auto",
+            "default": "auto"
+          }
+        },
+        "required": ["type", "text"]
+      }
+    },
+    {
+      "name": "retrieve_learnings",
+      "description": "Retrieve past learnings (corrections/prod_issues/decisions) relevant to a query. Call at session start and before complex tasks.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query"
+          },
+          "top_k": {
+            "type": "integer",
+            "default": 5
+          },
+          "types": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Filter: correction, prod_issue, decision",
+            "default": []
+          },
+          "scopes": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "project | global",
+            "default": ["project", "global"]
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
       "name": "context_pack",
       "description": "Budget-pack the most relevant code + episodic context into a token-bounded block for prompt injection.  Call this BEFORE reading any source file.",
       "parameters": {
