@@ -61,6 +61,11 @@ _CONTEXT_DEP = {
     "what i", "my last",
 }
 _FULL_CONTEXT = {"full context", "everything related", "all related", "complete context"}
+_DOCS_QUERY_PATTERN = re.compile(
+    r"\b(cognirepo|install|tier|mcp|prune|doctor|serve.api|retrieve|store|"
+    r"how does|what is cognirepo|index.repo|memory|graph|embedding)\b",
+    re.IGNORECASE,
+)
 _ERROR_PATTERNS = re.compile(
     r"(traceback|error:|exception:|syntaxerror|typeerror|nameerror|"
     r"attributeerror|importerror|valueerror|keyerror|indexerror|"
@@ -131,6 +136,10 @@ def classify(
     if len(tokens) <= 1:
         tier = "QUICK"
         overrides.append("single_token")
+        score = 0.0
+    elif _DOCS_QUERY_PATTERN.search(q):
+        tier = "QUICK"
+        overrides.append("docs_query")
         score = 0.0
     elif any(p in q_lower for p in _FULL_CONTEXT):
         tier = "DEEP"

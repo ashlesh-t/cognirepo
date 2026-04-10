@@ -75,6 +75,14 @@ def run_repl() -> None:
     )
     ui.print("Type /help for commands, /exit or Ctrl+D to quit.\n")
 
+    # ── warm up the embedded docs index (background, never blocks startup) ────
+    try:
+        import threading  # pylint: disable=import-outside-toplevel
+        from cli.docs_index import ensure_docs_index  # pylint: disable=import-outside-toplevel
+        threading.Thread(target=ensure_docs_index, daemon=True, name="docs-index-warmup").start()
+    except Exception:  # pylint: disable=broad-except
+        pass
+
     # Session state shared between commands and the main loop
     state: dict = {
         "messages_history": [],

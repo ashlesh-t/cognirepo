@@ -507,6 +507,7 @@ def try_local_resolve(query: str, context_bundle) -> str | None:
 
     Patterns handled
     ----------------
+    - CogniRepo usage questions    → docs FAISS index (Tier-1, score ≥ 0.6)
     - "where is <symbol>"         → reverse-index lookup
     - "who calls <function>"      → call-graph predecessors in knowledge graph
     - "list files" / "what files" → AST index file list
@@ -514,6 +515,20 @@ def try_local_resolve(query: str, context_bundle) -> str | None:
     - "recent history" / "what did I do" → last 5 episodic events
     """
     import re  # pylint: disable=import-outside-toplevel
+
+    # ── Tier-1: embedded docs index (CogniRepo usage questions) ─────────────
+    try:
+        from cli.docs_index import ensure_docs_index, _CONFIDENCE_THRESHOLD  # pylint: disable=import-outside-toplevel
+        _docs_idx = ensure_docs_index()
+        if _docs_idx is not None and _docs_idx.is_docs_query(query):
+            results = _docs_idx.answer(query, top_k=3)
+            if results and results[0]["score"] >= _CONFIDENCE_THRESHOLD:
+                top = results[0]
+                answer = top["text"]
+                footer = f"\n\n→ see: {top['file']} § {top['section']}"
+                return answer + footer
+    except Exception:  # pylint: disable=broad-except
+        pass  # never break routing on docs-index errors
 
     q = query.strip().lower()
 
