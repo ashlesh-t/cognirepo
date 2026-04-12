@@ -11,6 +11,9 @@
 
 set -euo pipefail
 
+# --- Memory Guard: limit to 10 GiB virtual memory ---
+ulimit -v 10485760 2>/dev/null || echo "Warning: Could not set ulimit -v (non-fatal)"
+
 SKIP_SIZE_CHECK=false
 for arg in "$@"; do
     [[ "$arg" == "--skip-size-check" ]] && SKIP_SIZE_CHECK=true
@@ -23,23 +26,25 @@ echo "=== check_wheel.sh ==="
 echo "Repo:  $REPO_ROOT"
 echo "Venv:  $VENV_DIR"
 
+# Ensure we use python3
+PYTHON=$(command -v python3 || command -v python)
+echo "Python: $($PYTHON --version)"
+
 # ── Step 1: build wheel ────────────────────────────────────────────────────────
 echo
 echo "--- Building wheel ---"
 cd "$REPO_ROOT"
 
 # Check if wheel already exists (e.g. downloaded as artifact in CI)
-WHEEL=$(ls -t dist/cognirepo-*.whl 2>/dev/null | head -1)
+# Using a glob to find the newest wheel
+WHEEL=$(ls -t dist/cognirepo-*.whl 2>/dev/null | head -1 || true)
 
 if [[ -n "$WHEEL" ]]; then
     echo "Using existing wheel: $WHEEL"
 else
     # Ensure 'build' is installed
-    python -c "import build" 2>/dev/null || {
-        echo "Module 'build' not found. Installing..."
-        python -m pip install --quiet build
-    }
-    python -m build --wheel --outdir dist/ 2>&1 | tail -5
+    $PYTHON -m pip install --quiet build
+    $PYTHON -m build --wheel --outdir dist/ 2>&1 | tail -5
     WHEEL=$(ls -t dist/cognirepo-*.whl 2>/dev/null | head -1)
 fi
 
@@ -63,7 +68,7 @@ fi
 # ── Step 3: install in fresh venv ─────────────────────────────────────────────
 echo
 echo "--- Installing in fresh venv: $VENV_DIR ---"
-python -m venv "$VENV_DIR"
+$PYTHON -m venv "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --quiet "$WHEEL"
 
 # ── Step 4: smoke tests ────────────────────────────────────────────────────────
