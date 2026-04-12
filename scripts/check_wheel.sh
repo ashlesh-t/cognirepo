@@ -20,7 +20,15 @@ for arg in "$@"; do
 done
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENV_DIR="$(mktemp -d)/wheel_test_venv"
+
+# Create temp dir on the real filesystem, not /tmp (which is often a small tmpfs).
+# CogniRepo's deps (nvidia, triton, scipy…) need ~3.5 GiB and pip doubles that
+# during extraction — easily exceeding a 7–8 GiB tmpfs.
+_TMPDIR="$(mktemp -d --tmpdir="$REPO_ROOT")"
+VENV_DIR="$_TMPDIR/wheel_test_venv"
+
+# Always clean up on exit (success, error, or signal)
+trap 'rm -rf "$_TMPDIR"' EXIT
 
 echo "=== check_wheel.sh ==="
 echo "Repo:  $REPO_ROOT"
@@ -66,6 +74,10 @@ if [[ "$SKIP_SIZE_CHECK" == false ]]; then
 fi
 
 # ── Step 3: install in fresh venv ─────────────────────────────────────────────
+# Point pip's own temp extraction to the same real-disk tmpdir so it never
+# touches /tmp (which may be a small tmpfs).
+export TMPDIR="$_TMPDIR"
+
 echo
 echo "--- Installing in fresh venv: $VENV_DIR ---"
 $PYTHON -m venv "$VENV_DIR"

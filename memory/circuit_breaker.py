@@ -147,10 +147,9 @@ class CircuitBreaker:
         if probes is not None:
             self._probes = probes
         else:
-            # Default to legacy RSS-only probe
-            from cron.probes import RSSProbe  # pylint: disable=import-outside-toplevel
+            from cron.probes import RSSProbe, StorageSizeProbe  # pylint: disable=import-outside-toplevel
             limit = rss_limit_mb if rss_limit_mb is not None else _default_limit_mb()
-            self._probes = [RSSProbe(limit)]
+            self._probes = [RSSProbe(limit), StorageSizeProbe()]
 
     # ── public interface ──────────────────────────────────────────────────────
 
