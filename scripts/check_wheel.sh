@@ -27,14 +27,27 @@ echo "Venv:  $VENV_DIR"
 echo
 echo "--- Building wheel ---"
 cd "$REPO_ROOT"
-python -m build --wheel --outdir dist/ 2>&1 | tail -5
 
+# Check if wheel already exists (e.g. downloaded as artifact in CI)
 WHEEL=$(ls -t dist/cognirepo-*.whl 2>/dev/null | head -1)
+
+if [[ -n "$WHEEL" ]]; then
+    echo "Using existing wheel: $WHEEL"
+else
+    # Ensure 'build' is installed
+    python -c "import build" 2>/dev/null || {
+        echo "Module 'build' not found. Installing..."
+        python -m pip install --quiet build
+    }
+    python -m build --wheel --outdir dist/ 2>&1 | tail -5
+    WHEEL=$(ls -t dist/cognirepo-*.whl 2>/dev/null | head -1)
+fi
+
 if [[ -z "$WHEEL" ]]; then
     echo "ERROR: No wheel found in dist/" >&2
     exit 1
 fi
-echo "Built: $WHEEL"
+echo "Target wheel: $WHEEL"
 
 # ── Step 2: size check ─────────────────────────────────────────────────────────
 if [[ "$SKIP_SIZE_CHECK" == false ]]; then
