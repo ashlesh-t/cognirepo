@@ -28,7 +28,9 @@ from tools.explain_change import explain_change as _explain_change
 from retrieval.docs_search import search_docs as _search_docs
 from memory.episodic_memory import log_event, get_history, search_episodes
 from memory.learning_store import get_learning_store, auto_tag
+from memory.embeddings import evict_model
 from server.learning_middleware import intercept_after_store, intercept_after_episode
+from server.idle_manager import get_idle_manager
 
 mcp = FastMCP("cognirepo")
 
@@ -56,6 +58,21 @@ def _get_indexer():
     return _INDEXER
 
 
+def _evict_singletons() -> None:
+    """Release graph and indexer singletons so they reload on next use."""
+    global _GRAPH, _INDEXER  # pylint: disable=global-statement
+    if _GRAPH is not None or _INDEXER is not None:
+        _GRAPH = None
+        _INDEXER = None
+        logger.info("idle: graph and indexer evicted from memory")
+
+
+# ── idle resource manager — evict heavy objects after TTL of inactivity ───────
+_idle = get_idle_manager()
+_idle.register_evict(evict_model)
+_idle.register_evict(_evict_singletons)
+
+
 _EMPTY_GRAPH_WARNING = {
     "warning": "Graph is empty. Run 'cognirepo index-repo .' first.",
     "results": [],
@@ -68,6 +85,7 @@ def _graph_is_empty() -> bool:
 
 def _traced(tool_name: str, fn, *args, **kwargs):
     """Run a tool function with a fresh trace ID per call."""
+    _idle.touch()  # reset idle timer on every tool invocation
     tid = new_trace_id()
     logger.info("mcp.tool.start", extra={"tool": tool_name, "trace_id": tid})
     try:

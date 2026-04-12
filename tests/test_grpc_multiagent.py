@@ -53,19 +53,45 @@ for _mod in (
     "rpc.proto.cognirepo_pb2",
     "rpc.proto.cognirepo_pb2_grpc",
     "rpc.context_store",
-    "dotenv",
     "grpc_health",
     "grpc_health.v1",
     "grpc_health.v1.health_pb2",
     "grpc_health.v1.health_pb2_grpc",
 ):
-    sys.modules.setdefault(_mod, MagicMock())
+    # Force-assign (not setdefault) so a cached real module from a prior test
+    # file does not survive into this file's grpc-mocked environment.
+    # dotenv is NOT stubbed — it is a real installed package used by test_env_wizard.py.
+    sys.modules[_mod] = MagicMock()
 
-# Force grpc_health unavailable so client uses port-open fallback in health()
+# Evict cached rpc.* modules so they re-import against the mock grpc above.
+for _rpc_mod in ("rpc.server", "rpc.client"):
+    sys.modules.pop(_rpc_mod, None)
+
 import rpc.client as _cli_mod  # noqa: E402 — after sys.modules stubs
 
 _cli_mod._GRPC_HEALTH_AVAILABLE = False
 _cli_mod._RETRY_BASE_DELAY = 0.0  # disable sleep in tests
+
+_MULTIAGENT_STUBS = [
+    "grpc", "rpc.proto", "rpc.proto.cognirepo_pb2", "rpc.proto.cognirepo_pb2_grpc",
+    "rpc.context_store",
+    "grpc_health", "grpc_health.v1", "grpc_health.v1.health_pb2",
+    "grpc_health.v1.health_pb2_grpc",
+    "rpc.server", "rpc.client",
+]
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _setup_and_cleanup_multiagent():
+    """Ensure rpc.client settings are applied; evict stubs after tests finish."""
+    # Re-apply settings in case rpc.client was evicted + re-imported by a prior module.
+    import importlib  # pylint: disable=import-outside-toplevel
+    _mod = importlib.import_module("rpc.client")
+    _mod._GRPC_HEALTH_AVAILABLE = False
+    _mod._RETRY_BASE_DELAY = 0.0
+    yield
+    for _s in _MULTIAGENT_STUBS:
+        sys.modules.pop(_s, None)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

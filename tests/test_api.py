@@ -22,6 +22,12 @@ def client():
     """Return an httpx TestClient for the FastAPI app."""
     from fastapi.testclient import TestClient
     from api.main import app
+    # Reset rate limiter between test modules to avoid 429 bleed-over
+    try:
+        from api.rate_limit import get_limiter
+        get_limiter().clear()
+    except Exception:  # pylint: disable=broad-except
+        pass
     return TestClient(app, raise_server_exceptions=True)
 
 

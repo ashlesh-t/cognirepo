@@ -19,6 +19,7 @@ import pytest
 
 # ── Stub grpc and proto modules so no network / grpcio install needed ─────────
 _grpc_mock = MagicMock()
+_grpc_mock.__version__ = "1.60.0"  # grpc_health.v1.health_pb2_grpc reads grpc.__version__ at import
 
 # StatusCode mock
 class _StatusCode:
@@ -28,20 +29,61 @@ class _StatusCode:
 
 _grpc_mock.StatusCode = _StatusCode
 _grpc_mock.RpcError = type("RpcError", (Exception,), {"code": lambda self: None, "details": lambda self: ""})
-sys.modules.setdefault("grpc", _grpc_mock)
 
+# Force-inject grpc mock — always replace so rpc modules bind to our stub.
+sys.modules["grpc"] = _grpc_mock
+
+# Stub proto / context / grpc_health modules unconditionally (they're never
+# real-imported in tests), but use setdefault for orchestrator.router so we
+# don't clobber it when test_fallback_chain.py already holds a live reference.
 for _mod in (
     "rpc.proto",
     "rpc.proto.cognirepo_pb2",
     "rpc.proto.cognirepo_pb2_grpc",
     "rpc.context_store",
-    "orchestrator.router",
-    "dotenv",
+    "grpc_health",
+    "grpc_health.v1",
+    "grpc_health.v1.health_pb2",
+    "grpc_health.v1.health_pb2_grpc",
 ):
-    sys.modules.setdefault(_mod, MagicMock())
+    sys.modules[_mod] = MagicMock()
+# dotenv is a real installed package — do NOT stub it here, or test_env_wizard.py
+# (which calls `from dotenv import set_key` at test-run time) will get a MagicMock.
+# orchestrator.router is NOT stubbed here — rpc.server imports it lazily inside
+# handler functions (except the one re-export at line 47 which is harmless with
+# the real module). Stubbing it would corrupt test_fallback_chain.py and
+# test_adapters.py which hold live references to the real module.
+
+# Force-reload rpc.server and rpc.client so they rebind grpc from the mock.
+for _rpc_mod in ("rpc.server", "rpc.client"):
+    sys.modules.pop(_rpc_mod, None)
 
 # ── Import under test ─────────────────────────────────────────────────────────
 from rpc.server import HealthServicer, get_health_servicer  # noqa: E402
+
+# Zero retry delay so any accidental retry path does not sleep.
+import rpc.client as _cli_mod  # noqa: E402
+_cli_mod._RETRY_BASE_DELAY = 0.0
+
+# Track which modules were injected so we can clean up after all tests run.
+_GRPC_HEALTH_STUBS = [
+    "grpc",
+    "rpc.proto", "rpc.proto.cognirepo_pb2", "rpc.proto.cognirepo_pb2_grpc",
+    "rpc.context_store",
+    "grpc_health", "grpc_health.v1", "grpc_health.v1.health_pb2",
+    "grpc_health.v1.health_pb2_grpc",
+    # rpc.server only — rpc.client is left for test_grpc_multiagent.py to manage
+    "rpc.server",
+    # dotenv is NOT listed — it is a real installed package, never stubbed
+]
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _cleanup_grpc_stubs():
+    """Evict grpc stubs after this module's tests finish."""
+    yield
+    for _mod in _GRPC_HEALTH_STUBS:
+        sys.modules.pop(_mod, None)
 
 
 # ── HealthServicer unit tests ─────────────────────────────────────────────────

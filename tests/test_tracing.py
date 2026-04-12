@@ -6,7 +6,14 @@
 
 """Tests for api/middleware_tracing.py — X-Trace-Id propagation."""
 import pytest
-from fastapi.testclient import TestClient
+
+try:
+    from fastapi.testclient import TestClient
+    _FASTAPI = True
+except ImportError:
+    _FASTAPI = False
+
+pytestmark = pytest.mark.skipif(not _FASTAPI, reason="fastapi not installed")
 
 from api.main import app
 

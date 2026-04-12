@@ -56,6 +56,13 @@ def _cmd_help(ui: UI, _args: str, _state: dict) -> bool:
     for name, desc in rows:
         ui.print(f"  /{name:15s}  {desc}")
     ui.print("")
+    ui.print("Query tiers (auto-selected by complexity score):")
+    ui.print("  QUICK    ≤2   local resolver   — zero-API, symbol finds, docs lookups")
+    ui.print("  STANDARD ≤4   claude-haiku-4-5 — factual, single-entity")
+    ui.print("  COMPLEX  ≤9   claude-sonnet-4-6 — moderate reasoning")
+    ui.print("  EXPERT   >9   claude-opus-4-6  — cross-file, architectural")
+    ui.print("  Override for one query: /model set <model-id>")
+    ui.print("")
     return True
 
 

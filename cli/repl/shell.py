@@ -136,11 +136,39 @@ def run_repl() -> None:
     from orchestrator.router import try_local_resolve, stream_route  # pylint: disable=import-outside-toplevel
 
     project_name, memory_count, graph_nodes = _get_project_stats()
-    ui.print(
-        f"CogniRepo v{VERSION} — {project_name} "
-        f"({memory_count} memories, {graph_nodes} graph nodes)"
-    )
-    ui.print("Type /help for commands, /exit or Ctrl+D to quit.\n")
+
+    # ── detect API keys ───────────────────────────────────────────────────────
+    import os as _os  # pylint: disable=import-outside-toplevel
+    _keys_present = [
+        k for k in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "GROK_API_KEY")
+        if _os.environ.get(k)
+    ]
+    _multi_agent = _os.environ.get("COGNIREPO_MULTI_AGENT_ENABLED", "false").lower() == "true"
+
+    # ── detect current tier/model from config ─────────────────────────────────
+    _tier_summary = "QUICK→local | STANDARD→Haiku | COMPLEX→Sonnet | EXPERT→Opus"
+    try:
+        from config.paths import get_path as _get_path  # pylint: disable=import-outside-toplevel
+        import json as _json  # pylint: disable=import-outside-toplevel
+        with open(_get_path("config.json"), encoding="utf-8") as _f:
+            _cfg = _json.load(_f)
+        _models = _cfg.get("models", {})
+        if _models:
+            _tier_summary = " | ".join(
+                f"{t}→{_models[t].get('model', '?').split('-')[2] if '-' in _models[t].get('model', '') else _models[t].get('model', '?')}"
+                for t in ("QUICK", "STANDARD", "COMPLEX", "EXPERT") if t in _models
+            )
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+    ui.print(f"╔═ CogniRepo v{VERSION} ══════════════════════════════════════╗")
+    ui.print(f"  Project : {project_name}")
+    ui.print(f"  Index   : {memory_count} memories · {graph_nodes} graph nodes")
+    ui.print(f"  Tiers   : {_tier_summary}")
+    ui.print(f"  API keys: {', '.join(_keys_present) if _keys_present else '⚠ none set — QUICK tier only'}")
+    ui.print(f"  Agents  : {'enabled (gRPC)' if _multi_agent else 'disabled  (set COGNIREPO_MULTI_AGENT_ENABLED=true)'}")
+    ui.print(f"  Help    : /help · /status · /model · /exit or Ctrl+D")
+    ui.print("")
 
     # ── warm up the embedded docs index (background, never blocks startup) ────
     try:

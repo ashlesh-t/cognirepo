@@ -57,6 +57,56 @@ docker compose up api   # REST API on :8080
 All commands support `--via-api` (routes through REST instead of in-process) and
 `--api-url URL` (override REST base URL).
 
+### `cognirepo chat`
+
+Start the interactive REPL (alias: `cognirepo` with no subcommand).
+
+```bash
+cognirepo chat                                        # start REPL
+cognirepo chat --model claude-opus-4-6               # force model for all queries
+COGNIREPO_MULTI_AGENT_ENABLED=true cognirepo chat    # enable gRPC sub-agents
+```
+
+On startup the REPL shows:
+- Project name, memory count, graph node count
+- Active tier → model routing table
+- API keys detected (warns if none set)
+- Multi-agent status
+
+Type `/help` inside the REPL to list all slash commands.
+See [docs/CLI.md](docs/CLI.md) for the full REPL reference.
+
+---
+
+### `cognirepo migrate-config`
+
+Rename legacy tier keys in `.cognirepo/config.json` in-place (v0.x → v1.0 migration).
+
+```bash
+cognirepo migrate-config
+```
+
+Renames legacy v0.x tier keys to their v1.0 equivalents (e.g. the old name → STANDARD, COMPLEX, EXPERT).
+Creates a `.cognirepo/config.json.bak` backup before modifying.
+Raises `ConfigMigrationError` on unknown keys so you can inspect before proceeding.
+
+---
+
+### `cognirepo setup-env`
+
+Interactive wizard to set and verify API keys (also reachable from `cognirepo init`).
+
+```bash
+cognirepo setup-env                # interactive prompt for all supported API keys
+cognirepo setup-env --skip-verify  # write keys but skip API verification calls (CI)
+```
+
+Supported providers: Anthropic, Gemini, OpenAI/Ollama, Grok/xAI.
+Keys are written to `.env` in the project root. Existing keys are not overwritten
+unless you confirm.
+
+---
+
 ### `cognirepo init`
 
 Scaffold `.cognirepo/` directory structure and write `config.json`.
@@ -463,8 +513,9 @@ Services: `QueryService` (SubQuery, SubQueryStream), `ContextService` (PushConte
 Run a system health check and report the status of all CogniRepo components.
 
 ```bash
-cognirepo doctor              # run health check
-cognirepo doctor --verbose    # show file paths and optional component details
+cognirepo doctor                    # run health check
+cognirepo doctor --verbose          # show file paths and optional component details
+cognirepo doctor --release-check    # also scan docs for legacy v0.x refs and old tier names
 ```
 
 Example output:
@@ -860,6 +911,7 @@ get_breaker().reset()
 | `models.EXPERT.provider` | string | `anthropic` | Provider for EXPERT tier |
 | `models.EXPERT.model` | string | `claude-opus-4-6` | Model for EXPERT tier |
 | `circuit_breaker.rss_limit_mb` | float | 80% of RAM | RSS limit before circuit opens |
+| `idle_ttl_seconds` | int | `600` | Seconds of MCP inactivity before heavy resources (embedding model, graph, indexer) are evicted from RAM. Set to `0` to disable. |
 
 ### Environment Variables
 

@@ -37,3 +37,16 @@ def get_model():
         MODEL = SentenceTransformer("all-MiniLM-L6-v2")
 
     return MODEL
+
+
+def evict_model() -> None:
+    """
+    Release the in-memory embedding model to free RAM.
+
+    Called by IdleManager after the idle TTL expires.  The next call to
+    get_model() will reload the model from disk (~2 s warm-up).
+    """
+    global MODEL  # pylint: disable=global-statement
+    if MODEL is not None:
+        MODEL = None
+        logger.info("idle: embedding model evicted from memory")

@@ -120,6 +120,13 @@ class TestGracefulDegradation:
 
     def test_redis_init_failure_caught(self, monkeypatch):
         """If redis.from_url raises, _init_redis returns None gracefully."""
+        import sys
+        import types
+        # Stub redis so the patch target exists even without the package
+        if "redis" not in sys.modules:
+            _fake_redis = types.ModuleType("redis")
+            _fake_redis.from_url = lambda *a, **kw: None
+            sys.modules["redis"] = _fake_redis
         from api.cache import reset_for_testing
         reset_for_testing()
         monkeypatch.setenv("COGNIREPO_REDIS_URL", "redis://bad_host:9999")

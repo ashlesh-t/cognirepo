@@ -112,8 +112,10 @@ def _run_doctor(
 
     # ── stub circuit breaker ──────────────────────────────────────────────────
     fake_cb_mod = types.ModuleType("memory.circuit_breaker")
+    class _FakeCBState:
+        value = "CLOSED"
     class _FakeCB:
-        state = "CLOSED"
+        state = _FakeCBState()
         _rss_limit_mb = 6553.0
     fake_cb_mod.get_breaker = lambda: _FakeCB()
     monkeypatch.setitem(sys.modules, "memory.circuit_breaker", fake_cb_mod)
@@ -162,6 +164,9 @@ def _run_doctor(
                "graph.pkl" in ps or "ast_index.json" in ps or \
                "episodic.json" in ps:
                 return True
+            # Fake at least one MCP config so the AI-tools check passes
+            if ".claude/settings.json" in ps or "settings.json" in ps:
+                return True
             return _orig_exists(p)
             
         monkeypatch.setattr(os.path, "exists", _fake_exists)
@@ -171,13 +176,16 @@ def _run_doctor(
         _orig_open = builtins.open
         def _fake_open(p, *a, **kw):
             ps = str(p)
-            if "config.json" in ps:
+            if "config.json" in ps and ".claude" not in ps and ".gemini" not in ps:
                 return io.StringIO('{"project_name": "test-project"}')
             if "ast_index.json" in ps:
                 return io.StringIO('{"files": {"f1.py": {"symbols": [{"name": "s1"}]}}}')
             if "episodic.json" in ps:
                 # episodic is opened in "rb" mode
                 return io.BytesIO(b'[]')
+            # Fake MCP settings.json so doctor can parse it
+            if "settings.json" in ps:
+                return io.StringIO('{"mcpServers": {"cognirepo-test": {}}}')
             return _orig_open(p, *a, **kw)
         monkeypatch.setattr(builtins, "open", _fake_open)
 

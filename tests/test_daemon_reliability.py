@@ -200,7 +200,79 @@ class TestSingletonEnforcement:
 
 # ── TASK-010: True gRPC streaming ────────────────────────────────────────────
 
+def _ensure_clean_rpc_server():
+    """Evict rpc.server and set up stubs with real base classes for re-import.
+
+    test_grpc_health.py and test_grpc_multiagent.py inject plain MagicMock stubs
+    for rpc.proto.cognirepo_pb2_grpc at collection time.  When rpc.server is then
+    imported, `class QueryServiceServicer(pb2_grpc.QueryServiceServicer)` inherits
+    from a MagicMock attribute, which causes Python to construct the class as a
+    MagicMock — losing all defined methods. We replace pb2_grpc with a module whose
+    base classes are real (empty) Python classes so method dispatch works normally.
+    """
+    import sys  # pylint: disable=import-outside-toplevel
+    import types  # pylint: disable=import-outside-toplevel
+    from unittest.mock import MagicMock  # pylint: disable=import-outside-toplevel
+
+    # Real (non-Mock) base classes for rpc.server class definitions
+    class _QueryServiceServicerBase:
+        pass
+
+    class _ContextServiceServicerBase:
+        pass
+
+    _pb2_grpc_stub = types.ModuleType("rpc.proto.cognirepo_pb2_grpc")
+    _pb2_grpc_stub.QueryServiceServicer = _QueryServiceServicerBase
+    _pb2_grpc_stub.ContextServiceServicer = _ContextServiceServicerBase
+    _pb2_grpc_stub.add_QueryServiceServicer_to_server = lambda *a, **kw: None
+    _pb2_grpc_stub.add_ContextServiceServicer_to_server = lambda *a, **kw: None
+
+    sys.modules["rpc.proto.cognirepo_pb2_grpc"] = _pb2_grpc_stub
+
+    # Real QueryResponse so yield pb2.QueryResponse(result=chunk) stores kwargs
+    class _QueryResponse:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+
+    # Ensure grpc stub has __version__ (grpc_health reads it at import time)
+    _grpc = sys.modules.get("grpc")
+    if not isinstance(_grpc, MagicMock) or not hasattr(_grpc, "__version__"):
+        _g = MagicMock()
+        _g.__version__ = "1.60.0"
+        sys.modules["grpc"] = _g
+
+    for _mod in (
+        "rpc.proto", "rpc.proto.cognirepo_pb2", "rpc.context_store",
+        "grpc_health", "grpc_health.v1",
+        "grpc_health.v1.health_pb2", "grpc_health.v1.health_pb2_grpc",
+    ):
+        sys.modules.setdefault(_mod, MagicMock())
+    # dotenv is real and installed — never stub it here
+
+    # KEY: `from rpc.proto import cognirepo_pb2_grpc` reads the *attribute* on the
+    # rpc.proto mock, not sys.modules.  Set it explicitly so the real stub is used.
+    sys.modules["rpc.proto"].cognirepo_pb2_grpc = _pb2_grpc_stub
+
+    # Similarly, `from rpc.proto import cognirepo_pb2 as pb2` reads from rpc.proto.
+    # Give pb2 a real QueryResponse so keyword args are stored as attributes.
+    _pb2_stub = sys.modules["rpc.proto.cognirepo_pb2"]
+    _pb2_stub.QueryResponse = _QueryResponse
+    sys.modules["rpc.proto"].cognirepo_pb2 = _pb2_stub
+
+    # Force re-import of rpc.server so classes are built with the correct bases
+    sys.modules.pop("rpc.server", None)
+
+
 class TestGrpcStreaming:
+    @pytest.fixture(autouse=True)
+    def _fresh_rpc_server(self):
+        """Ensure rpc.server is re-imported cleanly before each streaming test."""
+        _ensure_clean_rpc_server()
+        yield
+        import sys  # pylint: disable=import-outside-toplevel
+        sys.modules.pop("rpc.server", None)
+
     def _make_request(self, query="test query", max_tokens=256):
         req = MagicMock()
         req.query = query

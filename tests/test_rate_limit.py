@@ -8,7 +8,14 @@
 import asyncio
 
 import pytest
-from fastapi.testclient import TestClient
+
+try:
+    from fastapi.testclient import TestClient
+    _FASTAPI = True
+except ImportError:
+    _FASTAPI = False
+
+pytestmark = pytest.mark.skipif(not _FASTAPI, reason="fastapi not installed")
 
 import api.rate_limit as rl_module
 from api.rate_limit import RateLimiter, get_limiter

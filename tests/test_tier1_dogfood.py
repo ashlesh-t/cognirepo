@@ -22,10 +22,13 @@ import pytest
 def _stub_heavy_deps():
     """Stub out packages that aren't installed in the test environment."""
     for name in ("networkx", "faiss", "sentence_transformers"):
-        if name not in sys.modules:
+        try:
+            __import__(name)
+        except ImportError:
             sys.modules[name] = MagicMock()
-    # networkx needs .DiGraph()
-    sys.modules["networkx"].DiGraph = MagicMock(return_value=MagicMock())
+    # Only set DiGraph on the stub — never mutate the real networkx module.
+    if isinstance(sys.modules.get("networkx"), MagicMock):
+        sys.modules["networkx"].DiGraph = MagicMock(return_value=MagicMock())
 
 
 _stub_heavy_deps()

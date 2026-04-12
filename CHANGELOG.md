@@ -8,6 +8,12 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Added
+- **Idle resource eviction** — `server/idle_manager.py` (`IdleManager`) evicts the SentenceTransformer embedding model, KnowledgeGraph, and ASTIndexer from RAM after a configurable idle TTL (default 10 min). Controlled via `idle_ttl_seconds` in `.cognirepo/config.json`. Resources reload lazily on next tool call with ~2 s warm-up. Frees ~400 MB+ for users who leave the MCP server running overnight.
+
+### Fixed
+- **Test suite cross-contamination** — eliminated all `sys.modules` pollution between test files. Root causes: unconditional `dotenv` stubbing clobbered real `python-dotenv` for `test_env_wizard.py`; `if dep not in sys.modules` stub guards installed MagicMocks when real packages existed but weren't cached yet; networkx DiGraph was mutated even on the real installed module; `rpc.proto.cognirepo_pb2_grpc` MagicMock caused `QueryServiceServicer` to be constructed as a Mock (inheriting from a Mock attribute loses all defined methods). Full suite: **850 passed, 15 skipped, 2 xfailed, 0 failures**.
+
 ---
 
 ## [1.0.0] — 2026-04-10

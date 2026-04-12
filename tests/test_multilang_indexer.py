@@ -248,6 +248,11 @@ class TestWatchdogCoverage:
     @pytest.mark.parametrize("ext", [".ts", ".tsx", ".go", ".rs", ".java", ".py"])
     def test_supported_extensions_trigger_reindex(self, ext, tmp_path):
         """on_modified must trigger _reindex for each indexed extension."""
+        from pathlib import Path
+        from indexer.language_registry import is_supported
+        if not is_supported(Path(f"file{ext}")):
+            pytest.skip(f"grammar for {ext} not installed")
+
         from watchdog.events import FileModifiedEvent
         handler = self._make_handler()
 

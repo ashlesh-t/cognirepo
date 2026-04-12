@@ -97,29 +97,42 @@ class TestStatusDetailedUnit:
     def test_returns_dict_with_required_keys(self):
         """The response dict always has all required keys."""
         import asyncio
-        from api.routes.status import status_detailed
-        resp = asyncio.get_event_loop().run_until_complete(status_detailed())
-        data = resp.body
         import json
-        body = json.loads(data)
+        from api.routes.status import status_detailed
+        loop = asyncio.new_event_loop()
+        try:
+            resp = loop.run_until_complete(status_detailed())
+        finally:
+            loop.close()
+        body = json.loads(resp.body)
         for key in ("uptime_s", "python", "platform", "memory", "graph",
                     "circuit_breaker", "ok", "multi_agent", "grpc_port"):
             assert key in body, f"Missing key: {key}"
 
     def test_multi_agent_reflects_env(self, monkeypatch):
         """multi_agent field mirrors COGNIREPO_MULTI_AGENT_ENABLED."""
-        import asyncio, json
+        import asyncio
+        import json
         from api.routes.status import status_detailed
         monkeypatch.setenv("COGNIREPO_MULTI_AGENT_ENABLED", "true")
-        resp = asyncio.get_event_loop().run_until_complete(status_detailed())
+        loop = asyncio.new_event_loop()
+        try:
+            resp = loop.run_until_complete(status_detailed())
+        finally:
+            loop.close()
         body = json.loads(resp.body)
         assert body["multi_agent"] is True
 
     def test_grpc_port_reflects_env(self, monkeypatch):
         """grpc_port field mirrors COGNIREPO_GRPC_PORT."""
-        import asyncio, json
+        import asyncio
+        import json
         from api.routes.status import status_detailed
         monkeypatch.setenv("COGNIREPO_GRPC_PORT", "50052")
-        resp = asyncio.get_event_loop().run_until_complete(status_detailed())
+        loop = asyncio.new_event_loop()
+        try:
+            resp = loop.run_until_complete(status_detailed())
+        finally:
+            loop.close()
         body = json.loads(resp.body)
         assert body["grpc_port"] == 50052

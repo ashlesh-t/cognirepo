@@ -16,11 +16,15 @@ from __future__ import annotations
 import sys
 from unittest.mock import MagicMock
 
-# Stub heavy deps not installed in test environment
+# Stub heavy deps only when the real package is not installed.
 for _dep in ("networkx", "faiss", "sentence_transformers"):
-    if _dep not in sys.modules:
+    try:
+        __import__(_dep)
+    except ImportError:
         sys.modules[_dep] = MagicMock()
-sys.modules["networkx"].DiGraph = MagicMock(return_value=MagicMock())
+# Only set DiGraph on the stub — never mutate the real networkx module.
+if isinstance(sys.modules.get("networkx"), MagicMock):
+    sys.modules["networkx"].DiGraph = MagicMock(return_value=MagicMock())
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

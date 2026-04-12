@@ -6,7 +6,14 @@
 
 """Tests for api/metrics.py — Prometheus metrics."""
 import pytest
-from fastapi.testclient import TestClient
+
+try:
+    from fastapi.testclient import TestClient
+    _FASTAPI = True
+except ImportError:
+    _FASTAPI = False
+
+pytestmark = pytest.mark.skipif(not _FASTAPI, reason="fastapi not installed")
 
 from api.main import app
 from api.metrics import metrics_available
@@ -51,13 +58,15 @@ def test_memory_ops_counter_increments():
     from api.metrics import MEMORY_OPS_TOTAL
     from prometheus_client import REGISTRY
 
-    # Read current value
+    # Read current value — Counter family name is without _total in some prom versions;
+    # check by sample name to be version-agnostic.
     def _get_count(op, result):
         for metric in REGISTRY.collect():
-            if metric.name == "cognirepo_memory_ops_total":
-                for sample in metric.samples:
-                    if sample.labels.get("op") == op and sample.labels.get("result") == result:
-                        return sample.value
+            for sample in metric.samples:
+                if (sample.name == "cognirepo_memory_ops_total"
+                        and sample.labels.get("op") == op
+                        and sample.labels.get("result") == result):
+                    return sample.value
         return 0.0
 
     before = _get_count("store", "ok")
@@ -76,8 +85,8 @@ def test_circuit_breaker_gauge_updates():
 
     def _get_gauge():
         for metric in REGISTRY.collect():
-            if metric.name == "cognirepo_circuit_breaker_state":
-                for sample in metric.samples:
+            for sample in metric.samples:
+                if sample.name == "cognirepo_circuit_breaker_state":
                     return sample.value
         return None
 

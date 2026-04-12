@@ -62,28 +62,33 @@ async def status_detailed() -> JSONResponse:
 
     try:
         from config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
-        result["storage_path"] = get_cognirepo_dir()
+        _path = get_cognirepo_dir()
+        result["storage_path"] = str(_path) if _path is not None else ""
     except Exception:  # pylint: disable=broad-except
         pass
 
     try:
         from vector_db.local_vector_db import LocalVectorDB  # pylint: disable=import-outside-toplevel
         db = LocalVectorDB()
-        result["memory"]["faiss_vectors"] = db.index.ntotal
+        _ntotal = db.index.ntotal
+        result["memory"]["faiss_vectors"] = int(_ntotal) if isinstance(_ntotal, (int, float)) else None
     except Exception:  # pylint: disable=broad-except
         pass
 
     try:
         from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         kg = KnowledgeGraph()
-        result["graph"]["nodes"] = kg.G.number_of_nodes()
-        result["graph"]["edges"] = kg.G.number_of_edges()
+        _nodes = kg.G.number_of_nodes()
+        _edges = kg.G.number_of_edges()
+        result["graph"]["nodes"] = int(_nodes) if isinstance(_nodes, (int, float)) else None
+        result["graph"]["edges"] = int(_edges) if isinstance(_edges, (int, float)) else None
     except Exception:  # pylint: disable=broad-except
         pass
 
     try:
         from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
-        result["circuit_breaker"]["state"] = get_breaker().state.value
+        _state = get_breaker().state.value
+        result["circuit_breaker"]["state"] = str(_state) if _state is not None else "unknown"
     except Exception:  # pylint: disable=broad-except
         pass
 

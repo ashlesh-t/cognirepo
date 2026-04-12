@@ -12,11 +12,28 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Stub heavy deps
-for _dep in ("networkx", "faiss", "sentence_transformers"):
-    if _dep not in sys.modules:
+# Stub heavy deps — try real import first; only stub if the package is absent.
+_LOCAL_ADAPTER_STUBS: list[str] = []
+for _dep in ("faiss", "sentence_transformers"):
+    try:
+        __import__(_dep)
+    except ImportError:
         sys.modules[_dep] = MagicMock()
-sys.modules["networkx"].DiGraph = MagicMock(return_value=MagicMock())
+        _LOCAL_ADAPTER_STUBS.append(_dep)
+try:
+    __import__("networkx")
+except ImportError:
+    _nx_stub = MagicMock()
+    _nx_stub.DiGraph = MagicMock(return_value=MagicMock())
+    sys.modules["networkx"] = _nx_stub
+    _LOCAL_ADAPTER_STUBS.append("networkx")
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _cleanup_local_adapter_stubs():
+    yield
+    for _mod in _LOCAL_ADAPTER_STUBS:
+        sys.modules.pop(_mod, None)
 
 from orchestrator.model_adapters.local_adapter import call, NoLocalAnswer, _resolve_locally
 

@@ -13,56 +13,79 @@ anthropic → gemini → openai per provider priority.
 from __future__ import annotations
 
 import sys
-import types
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 # ── Stub heavy deps BEFORE any project imports ────────────────────────────────
-for _dep in ("networkx", "faiss", "sentence_transformers"):
-    if _dep not in sys.modules:
+# Try to import each dep first; only stub if the real package is absent.
+# This prevents us from injecting a MagicMock when the real package is installed
+# but just hasn't been imported yet (which would leave stale stubs in other
+# modules' globals after cleanup).
+_HEAVY_DEPS_STUBBED: list[str] = []
+for _dep in ("faiss", "sentence_transformers"):
+    try:
+        __import__(_dep)
+    except ImportError:
         sys.modules[_dep] = MagicMock()
-sys.modules["networkx"].DiGraph = MagicMock(return_value=MagicMock())
+        _HEAVY_DEPS_STUBBED.append(_dep)
+try:
+    __import__("networkx")
+except ImportError:
+    _nx_mock = MagicMock()
+    _nx_mock.DiGraph = MagicMock(return_value=MagicMock())
+    sys.modules["networkx"] = _nx_mock
+    _HEAVY_DEPS_STUBBED.append("networkx")
 
-# ── Real ModelCallError (must be set before router is imported) ───────────────
-class ModelCallError(Exception):
-    NON_RETRYABLE_CODES = {401, 403}
-
-    def __init__(self, message: str = "", status_code: int = 500):
-        super().__init__(message)
-        self.message = message
-        self.status_code = status_code
-
-
-_err_mod = types.ModuleType("orchestrator.model_adapters.errors")
-_err_mod.ModelCallError = ModelCallError
-sys.modules["orchestrator.model_adapters.errors"] = _err_mod
-
-# ── Minimal ModelResponse ─────────────────────────────────────────────────────
-class ModelResponse:
-    def __init__(self, text: str, model: str, provider: str, usage: dict | None = None):
-        self.text = text
-        self.model = model
-        self.provider = provider
-        self.usage = usage or {}
-
-
-_anthropic_mod = types.ModuleType("orchestrator.model_adapters.anthropic_adapter")
-_anthropic_mod.ModelResponse = ModelResponse
-sys.modules["orchestrator.model_adapters.anthropic_adapter"] = _anthropic_mod
+# ── Use real ModelCallError and ModelResponse (both modules are importable) ───
+from orchestrator.model_adapters.errors import ModelCallError  # noqa: E402
+from orchestrator.model_adapters.anthropic_adapter import ModelResponse  # noqa: E402
 
 # ── Remaining heavy stubs ─────────────────────────────────────────────────────
+# Only stub modules that are NOT already importable (avoid polluting real installs).
+_STUBBED_BY_THIS_FILE: list[str] = []
+
+def _try_real_import(mod: str) -> bool:
+    """Return True if the real module can be imported without error."""
+    import importlib  # pylint: disable=import-outside-toplevel
+    try:
+        importlib.import_module(mod)
+        return True
+    except Exception:  # pylint: disable=broad-except
+        return False
+
 for _mod in (
     "orchestrator.context_builder",
     "orchestrator.model_adapters.gemini_adapter",
     "orchestrator.model_adapters.grok_adapter",
     "orchestrator.model_adapters.openai_adapter",
-    "graph.knowledge_graph",
     "graph.behaviour_tracker",
     "memory.episodic_memory",
 ):
-    if _mod not in sys.modules:
+    if _mod not in sys.modules and not _try_real_import(_mod):
         sys.modules[_mod] = MagicMock()
+        _STUBBED_BY_THIS_FILE.append(_mod)
+
+# graph.knowledge_graph needs networkx — never stub it if networkx is real
+# (the API tests need the real KnowledgeGraph after our tests run)
+_need_graph_stub = not _try_real_import("graph.knowledge_graph")
+if _need_graph_stub and "graph.knowledge_graph" not in sys.modules:
+    sys.modules["graph.knowledge_graph"] = MagicMock()
+    _STUBBED_BY_THIS_FILE.append("graph.knowledge_graph")
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _restore_stubs():
+    """Remove module-level stubs after this test module finishes."""
+    yield
+    # Remove stubs we installed (heavy deps and conditional module stubs)
+    for _mod in _STUBBED_BY_THIS_FILE + _HEAVY_DEPS_STUBBED:
+        sys.modules.pop(_mod, None)
+    # Evict the router so later tests re-import it cleanly
+    sys.modules.pop("orchestrator.router", None)
+    for _mod in list(sys.modules):
+        if "graph.knowledge_graph" in _mod or "retrieval" in _mod:
+            sys.modules.pop(_mod, None)
 
 # ── Import router (guarded against MagicMock pollution from other test files) ─
 def _get_router_fns():
@@ -94,7 +117,7 @@ def test_fallback_from_anthropic_to_gemini():
         patch("orchestrator.router._call_adapter") as mock_call,
     ):
         mock_call.side_effect = [
-            ModelCallError("quota", status_code=429),
+            ModelCallError("anthropic", 429, "quota"),
             gemini_response,
         ]
         result = _dispatch_with_fallback(
@@ -116,7 +139,7 @@ def test_all_providers_fail_raises():
         patch("orchestrator.router._available_providers", return_value=["anthropic"]),
         patch(
             "orchestrator.router._call_adapter",
-            side_effect=ModelCallError("all fail", status_code=429),
+            side_effect=ModelCallError("anthropic", 429, "all fail"),
         ),
     ):
         with pytest.raises(ModelCallError):
@@ -137,7 +160,7 @@ def test_non_retryable_error_does_not_try_fallback():
     def _raise_401(*args, **kwargs):
         nonlocal call_count
         call_count += 1
-        raise ModelCallError("Unauthorized", status_code=401)
+        raise ModelCallError("anthropic", 401, "Unauthorized")
 
     with (
         patch("orchestrator.router._available_providers", return_value=["anthropic", "gemini"]),
