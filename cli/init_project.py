@@ -197,9 +197,9 @@ def _write_config(
     if changed:
         with open(get_path("config.json"), "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
-        print(f"Updated {get_path("config.json")} with missing keys.")
+        print(f"Updated {get_path('config.json')} with missing keys.")
     else:
-        print(f"{get_path("config.json")} already up to date.")
+        print(f"{get_path('config.json')} already up to date.")
 
     return config["project_id"]
 

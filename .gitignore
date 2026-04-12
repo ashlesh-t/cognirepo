@@ -44,6 +44,9 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
+# ── Temp dirs (created by check_wheel.sh inside repo root) ───────────────────
+tmp.*/
+
 # ── Misc ──────────────────────────────────────────────────────────────────────
 *.log
 *.pid

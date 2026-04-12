@@ -12,9 +12,11 @@ and any stdio MCP client.
 import json
 import logging
 import os
+import threading
 from mcp.server.fastmcp import FastMCP
 
 from config.logging import setup_logging, new_trace_id
+from memory.circuit_breaker import get_breaker, CircuitOpenError
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -33,6 +35,13 @@ from server.learning_middleware import intercept_after_store, intercept_after_ep
 from server.idle_manager import get_idle_manager
 
 _CONFLICT_OVERLAP_THRESHOLD = 0.35  # word-overlap ratio that triggers conflict warning
+
+# ── concurrency gate ──────────────────────────────────────────────────────────
+# Limits simultaneous heavy tool ops (embedding + FAISS) to avoid RSS spikes.
+# Queue depth = semaphore count; calls block up to _TOOL_ACQUIRE_TIMEOUT seconds.
+_TOOL_MAX_CONCURRENT = int(os.environ.get("COGNIREPO_CB_MAX_CONCURRENT", "2"))
+_TOOL_ACQUIRE_TIMEOUT = float(os.environ.get("COGNIREPO_CB_ACQUIRE_TIMEOUT_SEC", "10"))
+_TOOL_SEMAPHORE = threading.BoundedSemaphore(_TOOL_MAX_CONCURRENT)
 
 mcp = FastMCP("cognirepo")
 
@@ -86,17 +95,47 @@ def _graph_is_empty() -> bool:
 
 
 def _traced(tool_name: str, fn, *args, **kwargs):
-    """Run a tool function with a fresh trace ID per call."""
+    """
+    Run a tool function with:
+      1. Circuit-breaker check  — shed load when RSS or storage is over limit
+      2. Concurrency gate       — serialise up to _TOOL_MAX_CONCURRENT calls;
+                                  extra callers queue (block) for up to
+                                  _TOOL_ACQUIRE_TIMEOUT seconds before giving up
+      3. Trace logging
+    """
     _idle.touch()  # reset idle timer on every tool invocation
+
+    # ── circuit breaker ──────────────────────────────────────────────────────
+    try:
+        get_breaker().check()
+    except CircuitOpenError as exc:
+        logger.warning("mcp.tool.shed_load tool=%s reason=%s", tool_name, exc)
+        return {"error": str(exc), "shed": True}
+
+    # ── concurrency gate ─────────────────────────────────────────────────────
+    acquired = _TOOL_SEMAPHORE.acquire(blocking=True, timeout=_TOOL_ACQUIRE_TIMEOUT)
+    if not acquired:
+        msg = (
+            f"[cognirepo] tool '{tool_name}' timed out waiting for a slot "
+            f"(max_concurrent={_TOOL_MAX_CONCURRENT}, "
+            f"timeout={_TOOL_ACQUIRE_TIMEOUT:.0f}s). "
+            "Retry in a moment or increase COGNIREPO_CB_MAX_CONCURRENT."
+        )
+        logger.warning("mcp.tool.congestion tool=%s", tool_name)
+        return {"error": msg, "shed": True}
+
     tid = new_trace_id()
     logger.info("mcp.tool.start", extra={"tool": tool_name, "trace_id": tid})
     try:
         result = fn(*args, **kwargs)
         logger.info("mcp.tool.end", extra={"tool": tool_name, "status": "ok"})
+        get_breaker().record_success()
         return result
     except Exception:
         logger.exception("mcp.tool.error", extra={"tool": tool_name})
         raise
+    finally:
+        _TOOL_SEMAPHORE.release()
 
 
 @mcp.tool()
@@ -124,7 +163,7 @@ def store_memory(text: str, source: str = "") -> dict:
 @mcp.tool()
 def retrieve_memory(query: str, top_k: int = 5) -> list:
     """Retrieve the top-k memories most similar to the query."""
-    return _retrieve_memory(query, top_k)
+    return _traced("retrieve_memory", _retrieve_memory, query, top_k)
 
 
 @mcp.tool()
@@ -333,7 +372,7 @@ def semantic_search_code(
     Semantic vector search over indexed code symbols only (no episodic memory
     mixed in).  Optionally filter by language: "python", "typescript", "go", etc.
     """
-    return _semantic_search_code(query=query, top_k=top_k, language=language)
+    return _traced("semantic_search_code", _semantic_search_code, query=query, top_k=top_k, language=language)
 
 
 @mcp.tool()
@@ -376,7 +415,9 @@ def context_pack(
     block ready for injection into the next prompt.  Call this BEFORE reading
     any source file to avoid wasting tokens on raw file reads.
     """
-    return _context_pack(
+    return _traced(
+        "context_pack",
+        _context_pack,
         query=query,
         max_tokens=max_tokens,
         include_episodic=include_episodic,

@@ -7,7 +7,7 @@
 """Tests for generalized circuit breaker + cron/probes.py."""
 import pytest
 
-from cron.probes import ProbeResult, RSSProbe, DiskFreeProbe
+from cron.probes import ProbeResult, RSSProbe, DiskFreeProbe, StorageSizeProbe
 from memory.circuit_breaker import CircuitBreaker, CircuitOpenError, State
 
 
@@ -88,6 +88,32 @@ def test_multiple_probes_first_failure_trips():
     assert "fail" in calls
     # second probe must NOT have been called (short-circuit)
     assert "second" not in calls
+
+
+def test_storage_size_probe_ok_when_under_limit(tmp_path):
+    # Write a tiny file — well under 1 GiB limit
+    (tmp_path / "data.bin").write_bytes(b"x" * 1024)
+    probe = StorageSizeProbe(limit_gib=1.0, path=str(tmp_path))
+    result = probe()
+    assert result.ok is True
+    assert "GiB" in result.reason
+
+
+def test_storage_size_probe_fails_when_over_limit(tmp_path):
+    # Set limit to 0 GiB — always trips
+    probe = StorageSizeProbe(limit_gib=0.0, path=str(tmp_path))
+    result = probe()
+    assert result.ok is False
+    assert "Storage" in result.reason
+    assert "prune" in result.reason
+
+
+def test_storage_probe_trips_breaker(tmp_path):
+    probe = StorageSizeProbe(limit_gib=0.0, path=str(tmp_path))
+    cb = CircuitBreaker(probes=[probe], cooldown_sec=0.01, name="storage-test")
+    with pytest.raises(CircuitOpenError):
+        cb.check()
+    assert cb.state == State.OPEN
 
 
 def test_record_success_closes_circuit():

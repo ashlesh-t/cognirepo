@@ -86,6 +86,62 @@ class DiskFreeProbe:
             return ProbeResult(ok=False, reason=f"DiskFreeProbe error: {exc}")
 
 
+# ── storage size probe ───────────────────────────────────────────────────────
+
+def _dir_size_gib(path: str) -> float:
+    """Return total size of *path* in GiB (walks recursively, ignores errors)."""
+    total = 0
+    try:
+        for dirpath, _dirs, files in os.walk(path):
+            for fname in files:
+                try:
+                    total += os.path.getsize(os.path.join(dirpath, fname))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return total / (1024 ** 3)
+
+
+class StorageSizeProbe:
+    """
+    Probe that trips when the cumulative size of the .cognirepo/ data directory
+    exceeds *limit_gib* GiB.
+
+    Configured via COGNIREPO_CB_STORAGE_LIMIT_GIB (default 2.0).
+    Pass ``path=None`` to auto-detect from config.paths.
+    """
+
+    def __init__(self, limit_gib: float | None = None, path: str | None = None) -> None:
+        if limit_gib is None:
+            try:
+                limit_gib = float(os.environ.get("COGNIREPO_CB_STORAGE_LIMIT_GIB", "2.0"))
+            except ValueError:
+                limit_gib = 2.0
+        self._limit = limit_gib
+        self._path = path  # resolved lazily
+
+    def _data_path(self) -> str:
+        if self._path:
+            return self._path
+        try:
+            from config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
+            return get_cognirepo_dir()
+        except Exception:  # pylint: disable=broad-except
+            return ".cognirepo"
+
+    def __call__(self) -> ProbeResult:
+        path = self._data_path()
+        used = _dir_size_gib(path)
+        if used >= self._limit:
+            return ProbeResult(
+                ok=False,
+                reason=f"Storage {used:.2f} GiB >= limit {self._limit:.2f} GiB ({path})"
+                       " — run 'cognirepo prune' to reclaim space",
+            )
+        return ProbeResult(ok=True, reason=f"Storage {used:.2f} GiB / {self._limit:.2f} GiB")
+
+
 # ── FAISS health probe ────────────────────────────────────────────────────────
 
 class FAISSHealthProbe:
