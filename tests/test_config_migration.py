@@ -9,9 +9,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import patch
-
-import pytest
 
 from cli.migrate_config import migrate_config, _TIER_RENAMES
 from orchestrator.classifier import ConfigMigrationError, _load_model_registry

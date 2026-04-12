@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import shutil
 from pathlib import Path
 
@@ -99,7 +98,7 @@ def run_migrate_config(dry_run: bool = False) -> int:
     """Entry point for the CLI command. Returns exit code."""
     print("CogniRepo config migration — v0.5.0 tier rename\n")
     try:
-        result = migrate_config(dry_run=dry_run)
+        migrate_config(dry_run=dry_run)
         return 0
     except FileNotFoundError as exc:
         print(f"  Error: {exc}")

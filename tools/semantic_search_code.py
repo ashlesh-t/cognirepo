@@ -73,7 +73,6 @@ def semantic_search_code(
     fetch_k = min(fetch_k, indexer.faiss_index.ntotal)
 
     import numpy as np  # pylint: disable=import-outside-toplevel
-    import faiss  # pylint: disable=import-outside-toplevel
 
     distances, ids = indexer.faiss_index.search(
         np.array([query_vec], dtype="float32"), fetch_k

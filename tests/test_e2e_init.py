@@ -13,7 +13,6 @@ Verifies that:
 - The knowledge graph has at least one node after init
 - --no-index flag correctly skips indexing
 """
-import os
 import json
 from pathlib import Path
 

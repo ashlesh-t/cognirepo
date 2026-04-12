@@ -151,7 +151,7 @@ def _write_config(
 
         with open(get_path("config.json"), "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
-        print(f"Created {get_path("config.json")}")
+        print(f"Created {get_path('config.json')}")
         print(f"  api_url  : http://localhost:{port}")
         if in_keychain:
             print("  secrets  : stored in OS keychain (never written to disk)")

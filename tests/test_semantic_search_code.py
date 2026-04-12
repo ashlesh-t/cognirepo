@@ -10,7 +10,6 @@ tests/test_semantic_search_code.py — unit tests for semantic_search_code tool.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 from unittest.mock import MagicMock, patch
 
 

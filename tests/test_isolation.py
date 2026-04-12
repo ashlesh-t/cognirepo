@@ -11,8 +11,6 @@ Verifies that:
 - user_memory writes go to the tmp directory, NOT the real ~/.cognirepo
 - The real ~/.cognirepo is untouched after running user_memory operations
 """
-import os
-import stat
 from pathlib import Path
 
 

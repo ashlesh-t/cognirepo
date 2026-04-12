@@ -19,10 +19,7 @@ Skipped automatically if the index is empty.
 from __future__ import annotations
 
 import os
-import sys
 import time
-
-import pytest
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

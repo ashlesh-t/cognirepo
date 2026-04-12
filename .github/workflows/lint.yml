@@ -16,8 +16,8 @@ jobs:
 
       - name: Install dependencies
         run: |
+          pip install -e ".[dev,security]"
           pip install pylint
-          pip install -r requirements.txt
 
       - name: Run pylint
         run: |

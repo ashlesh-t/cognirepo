@@ -9,7 +9,7 @@ tests/test_context_pack.py — unit tests for the context_pack tool.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 
 class TestContextPack:

@@ -29,8 +29,6 @@ import time
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 _CONFIDENCE_THRESHOLD = 0.6

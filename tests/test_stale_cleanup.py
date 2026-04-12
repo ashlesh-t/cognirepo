@@ -17,11 +17,8 @@ Covers stale data cleanup across all four stores when a file is deleted:
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -176,7 +173,7 @@ class TestFileWatcherRemove:
             },
             "reverse_index": {"verify_token": [["auth.py", 10]]},
         }
-        indexer._build_reverse_index = MagicMock(side_effect=lambda: indexer.index_data["reverse_index"].clear())
+        indexer._build_reverse_index = MagicMock(side_effect=indexer.index_data["reverse_index"].clear)
         indexer.save = MagicMock()
 
         kg.save = MagicMock()

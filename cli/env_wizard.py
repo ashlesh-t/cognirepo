@@ -31,7 +31,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 

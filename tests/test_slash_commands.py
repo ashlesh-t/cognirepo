@@ -7,13 +7,7 @@
 """Tests for /save, /load, /index-repo slash commands."""
 from __future__ import annotations
 
-import json
-import sys
-import types
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from cli.repl.ui import StdlibUI
 from cli.repl.commands import dispatch

@@ -44,7 +44,7 @@ def test_grammar_parses_fixture(ext, args):
     if not _grammar_installed(pkg):
         pytest.xfail(
             reason=f"Grammar package '{pkg}' not installed "
-                   f"(install with: pip install 'cognirepo[languages]')"
+                   "(install with: pip install 'cognirepo[languages]')"
         )
 
     tree_sitter = importlib.import_module("tree_sitter")
@@ -78,6 +78,6 @@ def test_language_registry_declared_grammars_importable():
 
     if missing:
         pytest.xfail(
-            f"Grammar packages not installed (run: pip install 'cognirepo[languages]'): "
+            "Grammar packages not installed (run: pip install 'cognirepo[languages]'): "
             + ", ".join(missing)
         )

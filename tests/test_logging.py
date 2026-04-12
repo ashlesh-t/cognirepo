@@ -5,12 +5,9 @@
 # Licensed under AGPL v3. See LICENSE file in repository root.
 
 """Tests for config/logging.py — structured logging + correlation IDs."""
-import importlib
 import json
 import logging
 import sys
-
-import pytest
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

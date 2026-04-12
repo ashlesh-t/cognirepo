@@ -30,7 +30,6 @@ Typical usage (inside anthropic_adapter.py or router.py):
 from __future__ import annotations
 
 import logging
-import os
 import socket
 import subprocess
 import time
@@ -246,7 +245,7 @@ class CogniRepoClient:
         timeout: float = 5.0,
     ) -> pb2.ContextSyncResponse:
         """Push a key-value pair into the shared session context."""
-        import time  # pylint: disable=import-outside-toplevel
+        # time already imported at module level
         self._ensure_connected()
         request = pb2.ContextSyncRequest(
             context_id=context_id,

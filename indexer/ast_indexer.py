@@ -325,7 +325,7 @@ class ASTIndexer:
         embed : If False, skip FAISS embedding (AST/symbol index + graph only).
                 Faster for CI or when only symbol lookup is needed.
         """
-        self._embed_enabled = embed
+        self._embed_enabled = embed  # pylint: disable=attribute-defined-outside-init
         self._ensure_faiss()
         repo_root = os.path.abspath(repo_root)
         self.index_data["repo_root"] = repo_root

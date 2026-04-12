@@ -38,8 +38,8 @@ def retrieve_memory(query: str, top_k: int = 5) -> list:
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        results = retrieve_memory(sys.argv[1])
-        for r in results:
+        _results = retrieve_memory(sys.argv[1])
+        for r in _results:
             score = r.get("final_score", r.get("importance", "?"))
             print(f"[{score}] {r.get('text', '')}")
     else:

@@ -11,7 +11,6 @@ Task 2.2 — Classifier thresholds match ARCHITECTURE.md
 Task 2.3 — Edge type names match docs/architecture/graph.md
 Task 2.5 — No 0-byte PNG diagram placeholders remain
 """
-import os
 import re
 from pathlib import Path
 
@@ -128,7 +127,7 @@ def test_no_zero_byte_pngs():
 
     zero_byte = [p for p in pngs if p.stat().st_size == 0]
     assert not zero_byte, (
-        f"0-byte PNG placeholder(s) found — run scripts/build_diagrams.sh to regenerate: "
+        "0-byte PNG placeholder(s) found — run scripts/build_diagrams.sh to regenerate: "
         + ", ".join(str(p.relative_to(ROOT)) for p in zero_byte)
     )
 
@@ -204,7 +203,7 @@ def test_no_old_tier_names_in_user_docs():
             violations.append(f"{doc.relative_to(ROOT)}:{line_no}: '{m.group()}'")
     assert not violations, (
         "Old tier names (FAST/BALANCED/DEEP) found in user-facing docs — "
-        f"rename to STANDARD/COMPLEX/EXPERT:\n  " + "\n  ".join(violations)
+        "rename to STANDARD/COMPLEX/EXPERT:\n  " + "\n  ".join(violations)
     )
 
 

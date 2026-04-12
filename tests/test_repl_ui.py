@@ -5,12 +5,7 @@
 # Licensed under AGPL v3. See LICENSE file in repository root.
 
 """Tests for cli/repl/ui.py and cli/repl/commands.py."""
-import sys
-import types
-
-import pytest
-
-from cli.repl.ui import StdlibUI, make_ui, UI
+from cli.repl.ui import StdlibUI, make_ui
 from cli.repl.commands import dispatch, list_commands
 
 

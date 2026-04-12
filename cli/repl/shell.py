@@ -103,9 +103,9 @@ def _fire_sub_agents(query: str, registry) -> None:
 
     def _run():
         try:
+            import os as _os  # pylint: disable=import-outside-toplevel
             from rpc.client import CogniRepoClient  # pylint: disable=import-outside-toplevel
-            import os  # pylint: disable=import-outside-toplevel
-            port = int(os.environ.get("COGNIREPO_GRPC_PORT", "50051"))
+            port = int(_os.environ.get("COGNIREPO_GRPC_PORT", "50051"))
             with CogniRepoClient(port=port) as client:
                 resp = client.sub_query(
                     query=sub_q,
@@ -138,20 +138,18 @@ def run_repl() -> None:
     project_name, memory_count, graph_nodes = _get_project_stats()
 
     # ── detect API keys ───────────────────────────────────────────────────────
-    import os as _os  # pylint: disable=import-outside-toplevel
     _keys_present = [
         k for k in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "GROK_API_KEY")
-        if _os.environ.get(k)
+        if os.environ.get(k)
     ]
-    _multi_agent = _os.environ.get("COGNIREPO_MULTI_AGENT_ENABLED", "false").lower() == "true"
+    _multi_agent = os.environ.get("COGNIREPO_MULTI_AGENT_ENABLED", "false").lower() == "true"
 
     # ── detect current tier/model from config ─────────────────────────────────
     _tier_summary = "QUICK→local | STANDARD→Haiku | COMPLEX→Sonnet | EXPERT→Opus"
     try:
         from config.paths import get_path as _get_path  # pylint: disable=import-outside-toplevel
-        import json as _json  # pylint: disable=import-outside-toplevel
         with open(_get_path("config.json"), encoding="utf-8") as _f:
-            _cfg = _json.load(_f)
+            _cfg = json.load(_f)
         _models = _cfg.get("models", {})
         if _models:
             _tier_summary = " | ".join(
@@ -167,7 +165,7 @@ def run_repl() -> None:
     ui.print(f"  Tiers   : {_tier_summary}")
     ui.print(f"  API keys: {', '.join(_keys_present) if _keys_present else '⚠ none set — QUICK tier only'}")
     ui.print(f"  Agents  : {'enabled (gRPC)' if _multi_agent else 'disabled  (set COGNIREPO_MULTI_AGENT_ENABLED=true)'}")
-    ui.print(f"  Help    : /help · /status · /model · /exit or Ctrl+D")
+    ui.print("  Help    : /help · /status · /model · /exit or Ctrl+D")
     ui.print("")
 
     # ── warm up the embedded docs index (background, never blocks startup) ────
@@ -191,7 +189,6 @@ def run_repl() -> None:
             pass
 
     # ── multi-agent: per-turn registry ────────────────────────────────────────
-    import os  # pylint: disable=import-outside-toplevel
     _multi_agent_enabled = os.environ.get("COGNIREPO_MULTI_AGENT_ENABLED", "false").lower() == "true"
     from cli.repl.agents_panel import AgentRegistry  # pylint: disable=import-outside-toplevel
     _agent_registry = AgentRegistry()

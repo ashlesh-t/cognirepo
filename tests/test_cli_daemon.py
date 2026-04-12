@@ -12,7 +12,6 @@ Verifies that:
   and the process exits with code 2 (not an ImportError traceback)
 - fcntl import does not happen at module-level in cli/daemon.py
 """
-import subprocess
 import sys
 from pathlib import Path
 

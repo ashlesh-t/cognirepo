@@ -5,10 +5,6 @@
 # Licensed under AGPL v3. See LICENSE file in repository root.
 
 """Tests for cli/env_wizard.py — .env setup wizard."""
-import os
-
-import pytest
-
 from cli.env_wizard import EnvWizard, _mask, _read_dotenv, _set_dotenv_key
 
 

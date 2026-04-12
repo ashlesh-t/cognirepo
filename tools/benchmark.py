@@ -29,7 +29,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -198,8 +197,8 @@ def measure_memory_recall(test_memories: list[str]) -> dict:
         retrieved_texts = [r.get("text", "").lower() for r in results]
 
         # The unique prefix guarantees we only match the exact stored memory
-        def _is_hit(candidate_texts):
-            return any(unique_prefix.lower() in t for t in candidate_texts)
+        def _is_hit(candidate_texts, _prefix=unique_prefix):
+            return any(_prefix.lower() in t for t in candidate_texts)
 
         if _is_hit(retrieved_texts[:1]):
             recall_at_1 += 1

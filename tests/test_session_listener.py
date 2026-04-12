@@ -9,8 +9,6 @@ import json
 import uuid
 from pathlib import Path
 
-import pytest
-
 from server.session_listener import on_session_end, recover_unclosed_sessions
 
 

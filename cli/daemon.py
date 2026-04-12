@@ -297,7 +297,7 @@ def daemonize(log_path: str) -> int:
         # We cannot know the grandchild PID directly, so we use a small pipe.
         # The intermediate child will write grandchild PID to a temp file and exit.
         # Simple approach: use a pipe.
-        r_fd, w_fd = os.pipe()
+        _r_fd, _w_fd = os.pipe()  # kept for potential future use
         # Re-do: we need the pipe BEFORE forking. Use a different design:
         # Write grandchild PID to a side-channel temp file keyed on intermediate PID.
         _wait_file = Path(tempfile.gettempdir()) / f".cognirepo_daemon_{pid}"
@@ -341,12 +341,12 @@ def daemonize(log_path: str) -> int:
 
     # ── Grandchild (actual daemon) ──────────────────────────────────────────
     # Redirect stdin to /dev/null
-    with open(os.devnull, "r") as devnull:
+    with open(os.devnull, "r", encoding="ascii") as devnull:
         os.dup2(devnull.fileno(), sys.stdin.fileno())
 
     # Redirect stdout + stderr to log file
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    log_fd = open(log_path, "a", buffering=1)  # line-buffered  # noqa: WPS515
+    log_fd = open(log_path, "a", buffering=1, encoding="utf-8")  # line-buffered  # noqa: WPS515  # pylint: disable=consider-using-with
     os.dup2(log_fd.fileno(), sys.stdout.fileno())
     os.dup2(log_fd.fileno(), sys.stderr.fileno())
     log_fd.close()
@@ -444,7 +444,7 @@ def view_watcher_logs(name_or_pid: str) -> None:
     print(f"[cognirepo] Log: {log_path}  |  Ctrl+C to stop viewing\n")
 
     try:
-        with open(log_path, "r") as fh:
+        with open(log_path, "r", encoding="utf-8") as fh:
             # Print existing content first
             existing = fh.read()
             if existing:

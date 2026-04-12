@@ -19,7 +19,6 @@ Strategy:
 """
 from __future__ import annotations
 
-import os
 from collections import deque
 from pathlib import Path
 

@@ -26,8 +26,8 @@ from tools.semantic_search_code import semantic_search_code as _semantic_search_
 from tools.dependency_graph import dependency_graph as _dependency_graph
 from tools.explain_change import explain_change as _explain_change
 from retrieval.docs_search import search_docs as _search_docs
-from memory.episodic_memory import log_event, get_history, search_episodes
-from memory.learning_store import get_learning_store, auto_tag
+from memory.episodic_memory import log_event, search_episodes
+from memory.learning_store import get_learning_store
 from memory.embeddings import evict_model
 from server.learning_middleware import intercept_after_store, intercept_after_episode
 from server.idle_manager import get_idle_manager

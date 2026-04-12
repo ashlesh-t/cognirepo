@@ -8,10 +8,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from cli.docs_index import (
     _CONFIDENCE_THRESHOLD,

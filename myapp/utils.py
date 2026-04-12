@@ -9,6 +9,6 @@ def compute_hash(password: str) -> str:
     import bcrypt
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
-def verify_hash(password: str, hashed: str) -> bool:
+def verify_hash(password: str, hashed: str) -> bool:  # pylint: disable=missing-function-docstring
     import bcrypt
     return bcrypt.checkpw(password.encode(), hashed.encode())

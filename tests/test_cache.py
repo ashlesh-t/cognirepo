@@ -10,8 +10,6 @@ and TTL cache on hybrid_retrieve.
 """
 from __future__ import annotations
 
-import time
-import unittest
 from unittest.mock import MagicMock, patch
 
 

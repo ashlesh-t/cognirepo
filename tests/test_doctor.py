@@ -132,12 +132,12 @@ def _run_doctor(
 
     # ── stub faiss ────────────────────────────────────────────────────────────
     fake_faiss = types.ModuleType("faiss")
-    class _FakeIndex:
+    class _FakeFaissIndex:  # pylint: disable=too-few-public-methods
         ntotal = 47
     def _fake_read_index(_):
         if faiss_fail:
             raise RuntimeError("FAISS index not found")
-        return _FakeIndex()
+        return _FakeFaissIndex()
     fake_faiss.read_index = _fake_read_index
     monkeypatch.setitem(sys.modules, "faiss", fake_faiss)
 
@@ -155,7 +155,6 @@ def _run_doctor(
             return os.path.isdir.__wrapped__(p)
 
         monkeypatch.setattr(os.path, "isdir", _fake_isdir, raising=False)
-        
         _orig_exists = os.path.exists
         def _fake_exists(p):
             ps = str(p)
@@ -168,7 +167,6 @@ def _run_doctor(
             if ".claude/settings.json" in ps or "settings.json" in ps:
                 return True
             return _orig_exists(p)
-            
         monkeypatch.setattr(os.path, "exists", _fake_exists)
         # stub open for check files
         import builtins  # pylint: disable=import-outside-toplevel

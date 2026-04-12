@@ -5,8 +5,6 @@
 # Licensed under AGPL v3. See LICENSE file in repository root.
 
 """Tests for server/learning_middleware.py — auto-learning intercepts."""
-import pytest
-
 from server.learning_middleware import intercept_after_store, intercept_after_episode
 
 

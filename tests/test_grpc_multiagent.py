@@ -15,10 +15,7 @@ All tests are unit-level (mocked stubs, no live server).
 from __future__ import annotations
 
 import sys
-import time
-from unittest.mock import MagicMock, call, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 # ── Stub grpc module ──────────────────────────────────────────────────────────
 class _FakeStatusCode:

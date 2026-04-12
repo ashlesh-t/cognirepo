@@ -127,8 +127,6 @@ def _load_model_registry() -> dict:
                 "Auto-fix: cognirepo migrate-config"
             )
         return models
-    except ConfigMigrationError:
-        raise
     except (json.JSONDecodeError, OSError):
         return default
 

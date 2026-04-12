@@ -11,9 +11,6 @@ Verifies that session files are written under the configured project dir,
 and that two distinct project dirs do not cross-contaminate each other.
 """
 import json
-import os
-
-import pytest
 
 
 def test_project_dir_isolates_sessions(tmp_path):

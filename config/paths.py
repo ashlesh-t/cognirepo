@@ -97,7 +97,6 @@ def get_cognirepo_dir() -> str:
     
     global_base = os.path.join(home_dir, ".cognirepo", "storage")
     project_storage = os.path.join(global_base, f"{project_name}_{project_hash}")
-    
     return project_storage
 
 def get_path(subpath: str) -> str:
@@ -112,7 +111,6 @@ def get_path(subpath: str) -> str:
         full_path = subpath
     else:
         full_path = os.path.join(base, subpath)
-    
     # Ensure directory exists for files
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     return full_path

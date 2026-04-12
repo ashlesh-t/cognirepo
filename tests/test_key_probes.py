@@ -8,8 +8,6 @@
 import urllib.error
 import urllib.request
 
-import pytest
-
 from cli.key_probes import (
     probe_anthropic,
     probe_gemini,

@@ -21,8 +21,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 REPO_ROOT = Path(__file__).parent.parent
 DOCS = REPO_ROOT / "docs"
 

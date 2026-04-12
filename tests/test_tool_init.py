@@ -12,11 +12,8 @@ All tests run in a tmp_path so no real project files are modified.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from cli.init_project import _setup_cursor_mcp, _setup_vscode_mcp, setup_mcp
 

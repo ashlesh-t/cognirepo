@@ -100,7 +100,7 @@ def auto_tag(text: str) -> tuple[Optional[str], Optional[str]]:
             break
     # AI-behaviour corrections are always global
     if learning_type == "correction":
-        for signal in {"ai model", "claude", "gemini", "cursor", "model"}:
+        for signal in ["ai model", "claude", "gemini", "cursor", "model"]:
             if signal in lower:
                 scope = "global"
                 break

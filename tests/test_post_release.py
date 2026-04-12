@@ -59,7 +59,7 @@ def test_hard_dependencies_importable():
             failures.append(f"{pkg_name} ({import_name}): {e}")
 
     assert not failures, (
-        f"Hard dependencies not importable — run 'pip install .[dev,security]':\n"
+        "Hard dependencies not importable — run 'pip install .[dev,security]':\n"
         + "\n".join(f"  {f}" for f in failures)
     )
 

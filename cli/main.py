@@ -151,8 +151,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False) -> int:
     # pylint: disable=too-many-locals, too-many-branches, too-many-statements
     # pylint: disable=too-many-return-statements
     # pylint: disable=import-outside-toplevel
-    import importlib  # pylint: disable=redefined-outer-name
-    import os  # pylint: disable=redefined-outer-name
+    import importlib  # pylint: disable=import-outside-toplevel
 
     # ── version ───────────────────────────────────────────────────────────────
     try:
@@ -395,7 +394,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False) -> int:
             elif _auto_start:
                 # lazy_grpc=true: server starts on first DEEP query — not a hard failure
                 _warn(
-                    f"gRPC server — not running (lazy mode, will start on first DEEP query)"
+                    "gRPC server — not running (lazy mode, will start on first DEEP query)"
                 )
             else:
                 _fail(
@@ -530,9 +529,8 @@ def _direct_history(limit):
 
 def _direct_index(path, embed: bool = True):
     """Index a repository directly. Exits with code 1 if *path* does not exist."""
-    import os as _os  # pylint: disable=import-outside-toplevel,redefined-outer-name
-    abs_path = _os.path.abspath(path)
-    if not _os.path.isdir(abs_path):
+    abs_path = os.path.abspath(path)
+    if not os.path.isdir(abs_path):
         print(
             f"Error: Directory does not exist: {abs_path}",
             file=sys.stderr,
@@ -1064,9 +1062,8 @@ def main():
     p_api.add_argument("--host", default="127.0.0.1")
     # Default port: read from .cognirepo/config.json api_port, fall back to 8080
     try:
-        import json as _json
         with open(get_path("config.json"), encoding="utf-8") as _f:
-            _api_port = _json.load(_f).get("api_port", 8080)
+            _api_port = json.load(_f).get("api_port", 8080)
     except Exception:  # pylint: disable=broad-except
         _api_port = 8080
     p_api.add_argument("--port", type=int, default=_api_port)
@@ -1384,8 +1381,6 @@ def main():
     if args.command == "index-repo":
         try:
             summary, kg, indexer = _direct_index(args.path, embed=not args.no_embed)
-        except SystemExit:
-            raise
         except Exception as exc:  # pylint: disable=broad-except
             log_path = _log_error_to_file(exc, context=f"index-repo {args.path}")
             print(
@@ -1421,8 +1416,7 @@ def main():
         from tools.benchmark import run_benchmark, print_report, load_last_run  # pylint: disable=import-outside-toplevel
         metrics = run_benchmark()
         if args.json:
-            import json as _json2  # pylint: disable=import-outside-toplevel,redefined-outer-name
-            print(_json2.dumps({k: v for k, v in metrics.items() if k != "_details"}, indent=2))
+            print(json.dumps({k: v for k, v in metrics.items() if k != "_details"}, indent=2))
         else:
             prev = load_last_run() if args.compare else None
             print_report(metrics, compare=prev)
@@ -1433,13 +1427,12 @@ def main():
         sys.exit(run_migrate_config(dry_run=getattr(args, "dry_run", False)))
 
     if args.command == "export-spec":
-        import json as _json  # pylint: disable=import-outside-toplevel,redefined-outer-name
         from adapters.openai_spec import export  # pylint: disable=import-outside-toplevel
         paths = export()
         # Also write openai_tools.json to stdout so `cognirepo export-spec > /tmp/spec.json` works
         if paths.get("openai_tools"):
             with open(paths["openai_tools"], encoding="utf-8") as _f:
-                _json.dump(_json.load(_f), sys.stdout, indent=2)
+                json.dump(json.load(_f), sys.stdout, indent=2)
             sys.stdout.write("\n")
         return
 
@@ -1467,7 +1460,6 @@ def main():
         return
 
     if args.command == "test-connection":
-        import os  # pylint: disable=redefined-outer-name
         _key_env = {
             "anthropic": "ANTHROPIC_API_KEY",
             "gemini": "GEMINI_API_KEY",

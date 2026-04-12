@@ -4,7 +4,7 @@
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
 # Licensed under AGPL v3. See LICENSE file in repository root.
 
-from utils import compute_hash, verify_hash
+from utils import verify_hash
 
 class AuthManager:
     def login(self, username: str, password: str) -> bool:

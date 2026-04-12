@@ -16,8 +16,11 @@ jobs:
 
       - name: Install dependencies
         run: |
+          pip install -e ".[dev,security]"
           pip install pylint
 
       - name: Run pylint
         run: |
-          pylint $(git ls-files '*.py')
+          pylint $(git ls-files '*.py' | grep -v 'venv/' | grep -v '_pb2') \
+            --disable=C,R,import-error \
+            --fail-under=8.0

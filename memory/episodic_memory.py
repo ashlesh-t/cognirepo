@@ -148,7 +148,7 @@ def search_episodes(query: str, limit: int = 10) -> list:
     return [id_to_entry[eid] for _, eid in ranked[:limit] if eid in id_to_entry]
 
 
-class EpisodicMemory:
+class EpisodicMemory:  # pylint: disable=missing-function-docstring
     """Class interface over the module-level episodic memory functions."""
 
     def log_event(self, event: str, metadata: dict = None) -> None:

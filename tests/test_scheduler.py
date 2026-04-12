@@ -8,8 +8,6 @@
 import threading
 import time
 
-import pytest
-
 from cron.scheduler import BackgroundScheduler
 
 

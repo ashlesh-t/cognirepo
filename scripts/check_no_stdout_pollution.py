@@ -61,7 +61,7 @@ def _scan_file(path: Path) -> list[tuple[int, str]]:
                 if count >= 2:
                     in_docstring = False
                 break
-            elif in_docstring and docstring_char == delim and count >= 1:
+            if in_docstring and docstring_char == delim and count >= 1:
                 in_docstring = False
                 break
 

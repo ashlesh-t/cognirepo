@@ -15,7 +15,6 @@ Import prompt_toolkit only inside RichUI to avoid readline conflicts.
 """
 from __future__ import annotations
 
-import sys
 from abc import ABC, abstractmethod
 from typing import Iterator, Optional
 
@@ -103,7 +102,7 @@ class RichUI(UI):
         from prompt_toolkit import prompt as pt_prompt  # pylint: disable=import-outside-toplevel
         from prompt_toolkit.history import InMemoryHistory  # pylint: disable=import-outside-toplevel
         if not hasattr(self, "_history"):
-            self._history = InMemoryHistory()
+            self._history = InMemoryHistory()  # pylint: disable=attribute-defined-outside-init
         return pt_prompt(ps, history=self._history)
 
     def tier_label(self, tier: str, model: str) -> None:
@@ -145,8 +144,8 @@ class RichUI(UI):
 def make_ui() -> UI:
     """Return RichUI if rich + prompt_toolkit are installed, else StdlibUI."""
     try:
-        import rich  # noqa: F401  # pylint: disable=import-outside-toplevel
-        import prompt_toolkit  # noqa: F401  # pylint: disable=import-outside-toplevel
+        import rich  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
+        import prompt_toolkit  # noqa: F401  # pylint: disable=import-outside-toplevel,unused-import
         return RichUI()
     except ImportError:
         return StdlibUI()
