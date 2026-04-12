@@ -13,6 +13,7 @@ Tests for multi-agent gRPC behaviour in rpc/client.py:
 All tests are unit-level (mocked stubs, no live server).
 """
 from __future__ import annotations
+import pytest
 
 import sys
 from unittest.mock import MagicMock, patch

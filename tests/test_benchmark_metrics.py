@@ -17,6 +17,7 @@ they require `cognirepo index-repo .` to have been run at least once.
 Skipped automatically if the index is empty.
 """
 from __future__ import annotations
+import pytest
 
 import os
 import time

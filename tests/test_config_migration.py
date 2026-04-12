@@ -6,6 +6,7 @@
 
 """Tests for Sprint 3.1 — tier rename migration."""
 from __future__ import annotations
+import pytest
 
 import json
 from pathlib import Path

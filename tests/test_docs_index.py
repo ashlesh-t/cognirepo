@@ -6,6 +6,7 @@
 
 """Tests for cli/docs_index.py — chunk, build, query, staleness, heuristic."""
 from __future__ import annotations
+import pytest
 
 import json
 from unittest.mock import MagicMock, patch

@@ -13,6 +13,8 @@ Covers:
   TASK-010: SubQueryStream uses stream_route (real streaming, not sentence-split)
 """
 from __future__ import annotations
+import os
+import pytest
 
 import json
 import time
