@@ -60,3 +60,15 @@ class SemanticMemory:
         """
         vector = self.model.encode(query)
         return self.db.search(vector, k=top_k)
+
+    def deprecate(self, text: str) -> int:
+        """
+        Soft-delete all semantic memory entries whose text matches exactly.
+        Returns the number of entries deprecated.
+        """
+        count = 0
+        for i, record in enumerate(self.db.metadata):
+            if record.get("text") == text and not record.get("deprecated", False):
+                self.db.deprecate_row(i)
+                count += 1
+        return count

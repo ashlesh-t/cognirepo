@@ -109,10 +109,23 @@ class LocalVectorDB:
 
         self.save()
 
+    def deprecate_row(self, faiss_row: int) -> bool:
+        """
+        Soft-delete a vector by row index.
+        The FAISS index is not rebuilt; the metadata entry is flagged so search
+        results skip it.  Returns True if the row was found and updated.
+        """
+        if faiss_row < 0 or faiss_row >= len(self.metadata):
+            return False
+        self.metadata[faiss_row]["deprecated"] = True
+        self._save_meta()
+        return True
+
     def search(self, vector, k=5, source: str | None = None):
         """
         Searches for the k most similar vectors to the given query vector.
         source — optional filter: "memory" | "symbol". None means no filter.
+        Deprecated entries are never returned.
         """
         vector = np.array([vector]).astype("float32")
 
@@ -127,6 +140,8 @@ class LocalVectorDB:
         for i in indices[0]:
             if i < len(self.metadata):
                 record = self.metadata[i]
+                if record.get("deprecated", False):
+                    continue
                 # entries without a "source" field are legacy memories
                 if source and record.get("source", "memory") != source:
                     continue
@@ -141,6 +156,7 @@ class LocalVectorDB:
         Like search() but each result also includes 'l2_distance' and 'faiss_row'.
         Used by HybridRetriever to compute vector_score = max(0, 1 - dist/2).
         source — optional filter: "memory" | "symbol". None means no filter.
+        Deprecated entries are never returned.
         """
         vector = np.array([vector]).astype("float32")
 
@@ -153,6 +169,8 @@ class LocalVectorDB:
         for dist, i in zip(distances[0], indices[0]):
             if 0 <= i < len(self.metadata):
                 record = self.metadata[i]
+                if record.get("deprecated", False):
+                    continue
                 if source and record.get("source", "memory") != source:
                     continue
                 entry = dict(record)

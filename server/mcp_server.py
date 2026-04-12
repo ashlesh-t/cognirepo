@@ -32,6 +32,8 @@ from memory.embeddings import evict_model
 from server.learning_middleware import intercept_after_store, intercept_after_episode
 from server.idle_manager import get_idle_manager
 
+_CONFLICT_OVERLAP_THRESHOLD = 0.35  # word-overlap ratio that triggers conflict warning
+
 mcp = FastMCP("cognirepo")
 
 # ── lazy singletons for graph + indexer ──────────────────────────────────────
@@ -99,10 +101,23 @@ def _traced(tool_name: str, fn, *args, **kwargs):
 
 @mcp.tool()
 def store_memory(text: str, source: str = "") -> dict:
-    """Store a semantic memory with an optional source label."""
+    """
+    Store a semantic memory with an optional source label.
+
+    The response includes a ``conflicts`` list — existing learnings with high
+    word-overlap to the new text.  A non-empty list means a potentially
+    contradictory memory already exists; use ``supersede_learning`` to replace
+    it rather than letting both co-exist.
+    """
     result = _traced("store_memory", _store_memory, text, source)
     # Auto-learning middleware: capture corrections/decisions/prod-issues
     intercept_after_store(text, source=source)
+    # Surface conflicts so the agent can decide whether to supersede
+    conflicts = get_learning_store().detect_conflicts(text, top_k=3)
+    result["conflicts"] = [
+        {"id": c.get("id"), "text": c.get("text"), "type": c.get("type")}
+        for c in conflicts
+    ]
     return result
 
 
@@ -164,6 +179,55 @@ def retrieve_learnings(
         types=types or [],
         scopes=scopes or ["project", "global"],
     )
+
+
+@mcp.tool()
+def deprecate_learning(record_id: str) -> dict:
+    """
+    Soft-delete a learning by its ID (returned when it was stored).
+    Deprecated learnings are excluded from all future retrieve_learnings calls
+    but are never physically deleted so the audit trail is preserved.
+
+    Returns ``{"found": bool, "scope": "project"|"global"|null}``.
+    """
+    store = get_learning_store()
+    result = store.deprecate_learning(record_id)
+    logger.info("mcp.deprecate_learning", extra={"id": record_id, "found": result.get("found")})
+    return result
+
+
+@mcp.tool()
+def supersede_learning(
+    old_id: str,
+    new_text: str,
+    learning_type: str,
+    scope: str = "auto",
+) -> dict:
+    """
+    Replace an existing learning with updated content.
+
+    Deprecates the record identified by *old_id* and stores *new_text* as its
+    replacement (carrying a ``supersedes`` back-reference).  Use this whenever
+    a user corrects or updates a previously recorded decision, bug fix, or
+    preference — do NOT call ``store_memory`` again and leave both versions.
+
+    learning_type : "correction" | "prod_issue" | "decision"
+    scope         : "project" | "global" | "auto" (default — inferred from text)
+
+    Returns ``{"found_old": bool, "new_id": str, "scope": str}``.
+    """
+    store = get_learning_store()
+    result = store.supersede_learning(
+        old_id=old_id,
+        new_text=new_text,
+        learning_type=learning_type,
+        scope=scope,
+    )
+    logger.info(
+        "mcp.supersede_learning",
+        extra={"old_id": old_id, "new_id": result.get("new_id"), "scope": result.get("scope")},
+    )
+    return result
 
 
 @mcp.tool()

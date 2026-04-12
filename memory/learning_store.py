@@ -152,6 +152,44 @@ class _LearningBackend:
         logger.debug("Stored learning %s (type=%s scope=%s)", record_id, learning_type, scope)
         return record_id
 
+    def deprecate(self, record_id: str) -> bool:
+        """
+        Soft-delete a learning by ID.  Returns True if the record was found.
+        Deprecated records are excluded from all future retrieve() calls.
+        """
+        records = self._load()
+        updated = False
+        for r in records:
+            if r.get("id") == record_id and not r.get("deprecated", False):
+                r["deprecated"] = True
+                r["deprecated_at"] = datetime.now(tz=timezone.utc).isoformat()
+                updated = True
+                break
+        if updated:
+            self._save(records)
+        return updated
+
+    def detect_conflicts(self, text: str, top_k: int = 3) -> list[dict]:
+        """
+        Return existing non-deprecated learnings with significant word overlap to
+        *text*.  Used to surface potential contradictions before a new learning is
+        stored — the caller decides whether a real conflict exists.
+
+        A record is returned when its word-overlap ratio with *text* exceeds 0.3.
+        """
+        records = self._load()
+        records = [r for r in records if not r.get("deprecated", False)]
+
+        words = set(text.lower().split())
+        scored: list[tuple[float, dict]] = []
+        for r in records:
+            existing_words = set(r.get("text", "").lower().split())
+            overlap = len(words & existing_words) / max(len(words), 1)
+            if overlap > 0.3:
+                scored.append((overlap, r))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [r for _, r in scored[:top_k]]
+
     def retrieve(
         self,
         query: str,
@@ -161,9 +199,10 @@ class _LearningBackend:
         """
         Return up to top_k learning records matching the query.
         Filtered by type if provided.  Ranked by recency (newest first)
-        then simple substring relevance.
+        then simple substring relevance.  Deprecated records are excluded.
         """
         records = self._load()
+        records = [r for r in records if not r.get("deprecated", False)]
         if types:
             records = [r for r in records if r.get("type") in types]
 
@@ -217,6 +256,32 @@ class ProjectLearningStore:
     ) -> list[dict]:
         return self._backend.retrieve(query, top_k, types)
 
+    def deprecate_learning(self, record_id: str) -> bool:
+        """Soft-delete a learning by ID. Returns True if found."""
+        return self._backend.deprecate(record_id)
+
+    def supersede_learning(
+        self,
+        old_id: str,
+        new_text: str,
+        learning_type: str,
+        metadata: Optional[dict] = None,
+    ) -> dict:
+        """
+        Deprecate *old_id* and immediately store *new_text* as its replacement.
+        The new record carries a ``supersedes`` field pointing at *old_id*.
+        Returns ``{"found_old": bool, "new_id": str}``.
+        """
+        found = self._backend.deprecate(old_id)
+        meta = dict(metadata or {})
+        meta["supersedes"] = old_id
+        new_id = self._backend.store(learning_type, new_text, meta, scope="project")
+        return {"found_old": found, "new_id": new_id}
+
+    def detect_conflicts(self, text: str, top_k: int = 3) -> list[dict]:
+        """Return existing learnings with high word-overlap to *text*."""
+        return self._backend.detect_conflicts(text, top_k)
+
 
 class GlobalLearningStore:
     """Stores learnings in ~/.cognirepo/learnings/ (cross-project)."""
@@ -244,6 +309,31 @@ class GlobalLearningStore:
         types: Optional[list[str]] = None,
     ) -> list[dict]:
         return self._backend.retrieve(query, top_k, types)
+
+    def deprecate_learning(self, record_id: str) -> bool:
+        """Soft-delete a learning by ID. Returns True if found."""
+        return self._backend.deprecate(record_id)
+
+    def supersede_learning(
+        self,
+        old_id: str,
+        new_text: str,
+        learning_type: str,
+        metadata: Optional[dict] = None,
+    ) -> dict:
+        """
+        Deprecate *old_id* and immediately store *new_text* as its replacement.
+        Returns ``{"found_old": bool, "new_id": str}``.
+        """
+        found = self._backend.deprecate(old_id)
+        meta = dict(metadata or {})
+        meta["supersedes"] = old_id
+        new_id = self._backend.store(learning_type, new_text, meta, scope="global")
+        return {"found_old": found, "new_id": new_id}
+
+    def detect_conflicts(self, text: str, top_k: int = 3) -> list[dict]:
+        """Return existing learnings with high word-overlap to *text*."""
+        return self._backend.detect_conflicts(text, top_k)
 
 
 class CompositeLearningStore:
@@ -304,6 +394,74 @@ class CompositeLearningStore:
             reverse=True,
         )
         return unique[:top_k]
+
+    def deprecate_learning(self, record_id: str) -> dict:
+        """
+        Soft-delete a learning by ID, searching project scope first then global.
+        Returns ``{"found": bool, "scope": "project"|"global"|None}``.
+        """
+        if self._project.deprecate_learning(record_id):
+            return {"found": True, "scope": "project"}
+        if self._global.deprecate_learning(record_id):
+            return {"found": True, "scope": "global"}
+        return {"found": False, "scope": None}
+
+    def supersede_learning(
+        self,
+        old_id: str,
+        new_text: str,
+        learning_type: str,
+        metadata: Optional[dict] = None,
+        scope: str = "auto",
+    ) -> dict:
+        """
+        Deprecate *old_id* (found in either scope) and store *new_text* as its
+        replacement.  The replacement scope is auto-detected from the text unless
+        *scope* is explicit.
+
+        Returns ``{"found_old": bool, "new_id": str, "scope": str}``.
+        """
+        # Deprecate the old record from whichever scope holds it
+        dep_result = self.deprecate_learning(old_id)
+
+        # Determine target scope for the replacement
+        if scope == "auto":
+            _, detected = auto_tag(new_text)
+            target_scope = detected or "project"
+        else:
+            target_scope = scope
+
+        meta = dict(metadata or {})
+        meta["supersedes"] = old_id
+
+        # Store replacement directly via the backend (old_id already deprecated above)
+        if target_scope == "global":
+            new_id = self._global._backend.store(learning_type, new_text, meta, scope="global")
+        else:
+            new_id = self._project._backend.store(learning_type, new_text, meta, scope="project")
+
+        return {
+            "found_old": dep_result["found"],
+            "new_id": new_id,
+            "scope": target_scope,
+        }
+
+    def detect_conflicts(self, text: str, top_k: int = 3) -> list[dict]:
+        """
+        Return existing learnings (from both scopes) with high word-overlap to
+        *text*.  De-duplicated and ranked by overlap.
+        """
+        seen: set[str] = set()
+        combined: list[dict] = []
+        for record in (
+            self._project.detect_conflicts(text, top_k)
+            + self._global.detect_conflicts(text, top_k)
+        ):
+            rid = record.get("id", "")
+            if rid not in seen:
+                seen.add(rid)
+                combined.append(record)
+        return combined[:top_k]
 
 
 # ── module-level singleton ────────────────────────────────────────────────────
