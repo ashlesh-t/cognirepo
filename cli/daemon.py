@@ -17,6 +17,7 @@ import os
 import signal
 import sys
 import threading
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -299,7 +300,7 @@ def daemonize(log_path: str) -> int:
         r_fd, w_fd = os.pipe()
         # Re-do: we need the pipe BEFORE forking. Use a different design:
         # Write grandchild PID to a side-channel temp file keyed on intermediate PID.
-        _wait_file = Path(f"/tmp/.cognirepo_daemon_{pid}")
+        _wait_file = Path(tempfile.gettempdir()) / f".cognirepo_daemon_{pid}"
         # Wait up to 2 s for the grandchild to write its PID
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
@@ -331,7 +332,7 @@ def daemonize(log_path: str) -> int:
 
     if pid2 > 0:
         # Intermediate child: write grandchild PID, then exit
-        wait_file = Path(f"/tmp/.cognirepo_daemon_{os.getpid()}")
+        wait_file = Path(tempfile.gettempdir()) / f".cognirepo_daemon_{os.getpid()}"
         try:
             wait_file.write_text(str(pid2))
         except OSError:

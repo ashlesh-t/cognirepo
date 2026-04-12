@@ -8,7 +8,7 @@
 Standalone Prometheus metrics HTTP server for pure-MCP deployments.
 
 Usage:
-    cognirepo metrics --host 0.0.0.0 --port 9090
+    cognirepo metrics --host 127.0.0.1 --port 9090
 
 Serves the same prometheus_client registry that the REST API exposes at
 /metrics, but on a separate HTTP port so MCP-only users can scrape it
@@ -53,7 +53,7 @@ class _MetricsHandler(http.server.BaseHTTPRequestHandler):
         logger.debug("metrics_server: " + fmt, *args)
 
 
-def run_metrics_server(host: str = "0.0.0.0", port: int = 9090) -> None:
+def run_metrics_server(host: str = "127.0.0.1", port: int = 9090) -> None:
     """Block serving /metrics on host:port until KeyboardInterrupt."""
     server = http.server.HTTPServer((host, port), _MetricsHandler)
     logger.info("CogniRepo metrics server listening on %s:%d", host, port)
@@ -66,7 +66,7 @@ def run_metrics_server(host: str = "0.0.0.0", port: int = 9090) -> None:
         server.server_close()
 
 
-def start_metrics_server_thread(host: str = "0.0.0.0", port: int = 9090) -> threading.Thread:
+def start_metrics_server_thread(host: str = "127.0.0.1", port: int = 9090) -> threading.Thread:
     """Start the metrics server in a daemon thread and return it."""
     t = threading.Thread(
         target=run_metrics_server,

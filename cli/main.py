@@ -1229,7 +1229,7 @@ def main():
         "metrics",
         help="Serve Prometheus /metrics on a standalone HTTP port (for MCP-only deployments)",
     )
-    p_metrics.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
+    p_metrics.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     p_metrics.add_argument("--port", type=int, default=9090, help="Port to listen on (default: 9090)")
 
     # list — process / daemon management

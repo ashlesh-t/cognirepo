@@ -47,9 +47,9 @@ Thumbs.db
 # ── Misc ──────────────────────────────────────────────────────────────────────
 *.log
 *.pid
-.claude/
-.gemini/
-.cognirepo
-
-
-
+.claude/*
+.gemini/*
+.cognirepo/*
+.cursor/*
+.vscode/*
+.mcp.json

@@ -9,7 +9,7 @@
       ]
     },
     "cognirepo-cognirepo": {
-      "command": "/home/ashlesh/my_works/cognirepo/venv/bin/cognirepo",
+      "command": "/home/ashlesh/.local/bin/cognirepo",
       "args": [
         "serve",
         "--project-dir",
