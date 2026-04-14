@@ -42,14 +42,12 @@ def test_hard_dependencies_importable():
         "sentence-transformers": "sentence_transformers",
         "mcp": "mcp",
         "fastapi": "fastapi",
-        "uvicorn": "uvicorn",
         "pydantic": "pydantic",
         "networkx": "networkx",
         "rank-bm25": "rank_bm25",
         "python-dotenv": "dotenv",
         "httpx": "httpx",
         "anthropic": "anthropic",
-        "grpcio": "grpc",
     }
     failures = []
     for pkg_name, import_name in hard_deps.items():

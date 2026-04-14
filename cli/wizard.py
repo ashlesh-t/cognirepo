@@ -158,7 +158,6 @@ def run_wizard() -> dict:
       password          str   initial API password
       port              int   local REST API port
       multi_model       bool  enable multi-model routing
-      lazy_grpc         bool  auto-start gRPC server on demand
       redis             bool  use Redis for session caching
       encrypt           bool  encrypt FAISS + episodic at rest
       install_languages bool  install extended tree-sitter language parsers
@@ -188,13 +187,6 @@ def run_wizard() -> dict:
     _section(2, STEPS, "Multi-model routing",
              "QUICK/FAST → Grok, BALANCED → Gemini, DEEP → Claude by default.")
     cfg["multi_model"] = _ask_yn("Enable multi-model routing?", default=True)
-
-    cfg["lazy_grpc"] = False
-    if cfg["multi_model"]:
-        print(f"\n  {_c(_DIM, 'gRPC lets DEEP queries delegate fast sub-lookups to lighter models.')}")
-        cfg["lazy_grpc"] = _ask_yn(
-            "Auto-start gRPC server lazily (on first DEEP query)?", default=True
-        )
 
     # ── 3. Redis caching ──────────────────────────────────────────────────────
     _section(3, STEPS, "Session caching",
@@ -301,7 +293,6 @@ def run_wizard() -> dict:
     rows = [
         ("Project",      cfg["project_name"]),
         ("Multi-model",  "yes" if cfg["multi_model"] else "no"),
-        ("Lazy gRPC",    "yes" if cfg["lazy_grpc"] else "no"),
         ("Redis cache",  "yes" if cfg["redis"] else "no"),
         ("Encryption",   "yes" if cfg["encrypt"] else "no"),
         ("Languages",    "extended" if cfg["install_languages"] else "Python only"),

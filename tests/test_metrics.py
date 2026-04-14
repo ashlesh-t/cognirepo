@@ -15,8 +15,8 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not _FASTAPI, reason="fastapi not installed")
 
-from api.main import app
-from api.metrics import metrics_available
+#removed: from api.main import app
+from server.metrics import metrics_available
 
 
 @pytest.fixture()
@@ -55,7 +55,7 @@ def test_memory_ops_counter_increments():
     if not metrics_available():
         pytest.skip("prometheus_client not installed")
 
-    from api.metrics import MEMORY_OPS_TOTAL
+    from server.metrics import MEMORY_OPS_TOTAL
     from prometheus_client import REGISTRY
 
     # Read current value — Counter family name is without _total in some prom versions;
@@ -80,7 +80,7 @@ def test_circuit_breaker_gauge_updates():
     if not metrics_available():
         pytest.skip("prometheus_client not installed")
 
-    from api.metrics import CB_STATE
+    from server.metrics import CB_STATE
     from prometheus_client import REGISTRY
 
     def _get_gauge():

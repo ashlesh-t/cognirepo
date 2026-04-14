@@ -30,7 +30,6 @@ all three transports consistent and testable.
 | `orchestrator/` | Classify, build context, route to model, post-process | Storage |
 | `server/` | MCP stdio adapter only | Any logic |
 | `api/` | REST adapter + JWT auth only | Any logic |
-| `rpc/` | gRPC adapter + context store only | Any logic |
 | `security/` | Encryption at rest, keychain integration | Auth (that is `api/`) |
 | `adapters/` | OpenAI spec + Cursor config export | Any logic |
 
@@ -42,8 +41,6 @@ all three transports consistent and testable.
 User / AI Tool
     │
     ├── MCP stdio         server/mcp_server.py
-    ├── REST (JWT)        api/main.py
-    └── gRPC              rpc/server.py
               │
          tools/           ← ONLY entry point to memory engine
               │
@@ -101,7 +98,7 @@ cli/wizard.py           — 7-step powerlevel10k-style prompt
 cli/init_project.py     — scaffold dirs, write config.json
     │
     ├── .cognirepo/config.json   — project_name, models{QUICK/STANDARD/COMPLEX/EXPERT},
-    │                              multi_agent, redis, storage.encrypt
+    │ redis, storage.encrypt
     ├── .claude/CLAUDE.md        — project instructions (from STD_PROMPTS/claude_mcp.md)
     ├── .claude/settings.json    — MCP connector: cognirepo-<name> → cognirepo serve --project-dir
     ├── .gemini/COGNIREPO.md     — Gemini instructions (from STD_PROMPTS/gemini_mcp.md)
@@ -138,7 +135,7 @@ All CogniRepo data lives under `.cognirepo/` in the project root. Nothing is wri
 
 ```
 .cognirepo/
-  config.json                  — project config (project_name, model registry, multi_agent, redis)
+  config.json                  — project config (project_name, model registry, redis)
   vector_db/
     faiss.index                — FAISS flat index (sentence-transformer embeddings)
     metadata.json              — per-vector metadata (text, source, importance, timestamp)
@@ -254,4 +251,3 @@ for v0.1.0 — they will be replaced with proper diagrams before v0.2.0.
 | `system-overview.png` | Full component map |
 | `data-flow.png` | Request path from tool call to model response |
 | `retrieval-pipeline.png` | Hybrid 3-signal retrieval pipeline (AST pre-scorer → vector+graph+behaviour merge) |
-| `multi-agent.png` | gRPC-based multi-agent topology |

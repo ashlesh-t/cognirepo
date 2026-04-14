@@ -54,7 +54,6 @@ User / AI Tool
     │
     ├── MCP stdio         (Claude Desktop, Gemini CLI, Cursor)
     ├── REST API (JWT)    (any language, any tool)
-    └── gRPC              (multi-agent / inter-model)
               │
          tools/           ← single entry point to memory engine
               │
@@ -79,7 +78,6 @@ embeddings + behaviour            tracker
 memory, retrieve memory, search docs, log episodes, lookup symbols, get graph stats, and
 more. Connect once; every AI tool sees the same accumulated context.
 
-**Part B — CLI orchestrator:** `cognirepo ask` and `cognirepo chat` route your queries
 through the multi-model orchestrator — classify complexity, build context from all memory
 sources, call the best model (Claude, Gemini, Grok, OpenAI), stream the response.
 
@@ -176,7 +174,6 @@ cp adapters/cursor_mcp_config.json .cursor/mcp.json
 
 ```bash
 # Start the API server
-cognirepo serve-api --port 8080
 
 # Get a JWT token
 TOKEN=$(curl -s -X POST http://localhost:8080/login \

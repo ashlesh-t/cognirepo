@@ -368,6 +368,29 @@ def lookup_symbol(name: str) -> dict:
     return result
 
 
+@mcp.tool()
+def search_token(word: str) -> dict:
+    """
+    Word-level reverse-index search.
+
+    Unlike lookup_symbol() which only matches defined symbol names,
+    search_token() finds any word that appears in symbol names,
+    docstrings, or inline comments across the indexed codebase.
+
+    Examples:
+      search_token("background")  → files containing 'background' in names/docs
+      search_token("validate")    → all functions whose docs mention validation
+      search_token("github")      → files where GitHub is referenced in comments
+
+    Returns a list of {file, line} dicts sorted by file path.
+    """
+    indexer = _get_indexer()
+    locations = indexer.lookup_word(word.lower().strip())
+    if not locations:
+        return {"results": [], "count": 0, "word": word}
+    return {"results": locations, "count": len(locations), "word": word}
+
+
 def _who_calls_dynamic_fallback(function_name: str) -> list[dict]:
     """
     String-literal grep fallback for dynamic dispatch patterns.
@@ -439,15 +462,29 @@ def who_calls(function_name: str) -> dict:
             return fallback
         return []
     result = []
-    for caller in graph.G.predecessors(callee_node):
-        edge_data = graph.G[caller][callee_node]
-        if edge_data.get("rel") == EdgeType.CALLED_BY:
+    # Primary: use indexed CALLS edges (callee → caller, set at index time)
+    for caller in graph.G.successors(callee_node):
+        edge_data = graph.G[callee_node][caller]
+        if edge_data.get("rel") == EdgeType.CALLS:
             node_data = dict(graph.G.nodes[caller])
             result.append({
                 "caller": caller,
                 "file": node_data.get("file", ""),
                 "line": node_data.get("line", -1),
+                "source": "graph",
             })
+    # Fallback: old graph pickle without CALLS edges — use predecessors + CALLED_BY
+    if not result:
+        for caller in graph.G.predecessors(callee_node):
+            edge_data = graph.G[caller][callee_node]
+            if edge_data.get("rel") == EdgeType.CALLED_BY:
+                node_data = dict(graph.G.nodes[caller])
+                result.append({
+                    "caller": caller,
+                    "file": node_data.get("file", ""),
+                    "line": node_data.get("line", -1),
+                    "source": "graph_legacy",
+                })
     if not result:
         # Graph has node but no callers — try dynamic dispatch fallback
         fallback = _who_calls_dynamic_fallback(function_name)
@@ -833,6 +870,19 @@ def run_server(project_dir: str | None = None) -> None:
             raise SystemExit(f"cognirepo serve: project-dir not found: {abs_dir}")
         cognirepo_subdir = os.path.join(abs_dir, ".cognirepo")
         set_cognirepo_dir(cognirepo_subdir)
+    # ── auto-start file watcher (background daemon, keeps index fresh) ────────
+    try:
+        _watch_cfg: dict = {}
+        _cfg_path = os.path.join(os.getcwd(), ".cognirepo", "config.json")
+        if os.path.exists(_cfg_path):
+            with open(_cfg_path, encoding="utf-8") as _wf:
+                _watch_cfg = json.load(_wf).get("watch", {})
+        if _watch_cfg.get("auto_enabled", True):
+            from cli.main import _start_watcher_bg  # pylint: disable=import-outside-toplevel
+            _start_watcher_bg(os.getcwd())
+    except Exception:  # pylint: disable=broad-except
+        pass  # watcher is best-effort — never block server startup
+
     _write_manifest()
     mcp.run(transport="stdio")
 

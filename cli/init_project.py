@@ -115,7 +115,6 @@ def _write_config(
     project_name: str = "",
     encrypt: bool = False,
     multi_model: bool = True,
-    lazy_grpc: bool = True,
     redis: bool = False,
     autosave_context: bool = True,
 ) -> str:
@@ -142,11 +141,7 @@ def _write_config(
             "storage":      {"encrypt": encrypt},
             "retrieval_weights": {"vector": 0.5, "graph": 0.3, "behaviour": 0.2},
             "models":       DEFAULT_MODELS,
-            "multi_agent":  {
-                "enabled":          multi_model,
-                "auto_start_grpc":  lazy_grpc,
-                "grpc_port":        50051,
-            },
+            "multi_model":  multi_model,
             "redis": {"enabled": redis, "url": "redis://localhost:6379"},
             "autosave_context": autosave_context,
         }
@@ -186,9 +181,8 @@ def _write_config(
     if config.setdefault("storage", {}).get("encrypt") != encrypt:
         config["storage"]["encrypt"] = encrypt
         changed = True
-    _ma = config.setdefault("multi_agent", {})
-    if _ma.get("enabled") != multi_model or _ma.get("auto_start_grpc") != lazy_grpc:
-        _ma.update({"enabled": multi_model, "auto_start_grpc": lazy_grpc, "grpc_port": 50051})
+    if config.get("multi_model") != multi_model:
+        config["multi_model"] = multi_model
         changed = True
     if config.setdefault("redis", {"url": "redis://localhost:6379"}).get("enabled") != redis:
         config["redis"]["enabled"] = redis
@@ -724,7 +718,6 @@ def init_project(
     project_name: str = "",
     encrypt: bool = False,
     multi_model: bool = True,
-    lazy_grpc: bool = True,
     redis: bool = False,
     mcp_targets: list[str] | None = None,
     mcp_global: bool = False,
@@ -758,7 +751,6 @@ def init_project(
             project_name = wizard_cfg.get("project_name", project_name)
             encrypt      = wizard_cfg.get("encrypt", encrypt)
             multi_model  = wizard_cfg.get("multi_model", multi_model)
-            lazy_grpc    = wizard_cfg.get("lazy_grpc", lazy_grpc)
             redis        = wizard_cfg.get("redis", redis)
             mcp_targets  = wizard_cfg.get("mcp_targets", mcp_targets or [])
             mcp_global   = wizard_cfg.get("mcp_global", mcp_global)
@@ -789,7 +781,6 @@ def init_project(
         project_name=project_name,
         encrypt=encrypt,
         multi_model=multi_model,
-        lazy_grpc=lazy_grpc,
         redis=redis,
         autosave_context=autosave_context,
     )
@@ -808,6 +799,17 @@ def init_project(
         encrypt_enabled = _cfg.get("storage", {}).get("encrypt", False)
     except (OSError, json.JSONDecodeError):
         encrypt_enabled = False
+
+    # ── dependency check: tiktoken (required for context_pack) ───────────────
+    try:
+        import tiktoken as _tk  # pylint: disable=import-outside-toplevel
+        _tk.get_encoding("cl100k_base")
+    except ImportError:
+        print(
+            "\n[WARNING] tiktoken not installed — context_pack will use "
+            "approximate token counts.\n"
+            "  Fix: pip install tiktoken"
+        )
 
     print("\nCogniRepo initialised.\n")
     if encrypt_enabled:
@@ -844,6 +846,16 @@ def init_project(
         _ctx.close()
 
     kg.save()
+
+    # seed documentation into semantic store (README, CHANGELOG, docs/)
+    try:
+        from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
+        _doc_summary = DocIngester(cwd).ingest()
+        if _doc_summary.get("chunks", 0) > 0:
+            print(f"  Seeded {_doc_summary['chunks']} doc chunks from "
+                  f"{_doc_summary['files']} file(s).")
+    except Exception:  # pylint: disable=broad-except
+        pass  # doc ingestion is best-effort
 
     # seed behaviour from git history
     try:

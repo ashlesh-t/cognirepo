@@ -85,12 +85,9 @@ cognirepo serve --project-dir /path/to/project
 
 ---
 
-## cognirepo serve-api
 
-Start the FastAPI REST server.
 
 ```
-cognirepo serve-api [OPTIONS]
 ```
 
 | Flag | Default | Description |
@@ -101,23 +98,17 @@ cognirepo serve-api [OPTIONS]
 
 **Examples:**
 ```bash
-cognirepo serve-api
-cognirepo serve-api --port 9000 --reload
 ```
 
 ---
 
-## cognirepo serve-grpc
 
-Start the gRPC server for multi-agent communication.
 
 ```
-cognirepo serve-grpc [OPTIONS]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--port INT` | `50051` | gRPC port to bind |
 | `--idle-timeout INT` | `300` | Seconds of inactivity before auto-shutdown |
 
 ---

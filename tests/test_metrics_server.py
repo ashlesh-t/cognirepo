@@ -11,7 +11,7 @@ import urllib.request
 
 import pytest
 
-from api.metrics import metrics_available
+from server.metrics import metrics_available
 from cli.metrics_server import start_metrics_server_thread
 
 

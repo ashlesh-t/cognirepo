@@ -372,3 +372,72 @@ def seed_from_git_log(
         result["learnings_from_comments"] = n_comments
 
     return result
+
+
+# ── post-session auto-seed ─────────────────────────────────────────────────────
+
+def seed_from_session(session_id: str | None = None) -> dict:
+    """
+    Called automatically at REPL exit (via atexit). Reads the last session from
+    .cognirepo/sessions/ and stores any high-importance exchanges that weren't
+    already auto-stored by AutoStore during the session.
+
+    Returns: {"seeded": int} — number of memories stored, or {} on any error.
+    """
+    try:
+        import json as _json   # pylint: disable=import-outside-toplevel
+        from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
+        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
+
+        sessions_dir = _Path(get_path("sessions"))
+        if not sessions_dir.exists():
+            return {}
+
+        # Locate session file
+        session_file: _Path | None = None
+        if session_id:
+            candidate = sessions_dir / f"{session_id}.json"
+            if candidate.exists():
+                session_file = candidate
+        if session_file is None:
+            # Fall back to most-recently modified session file
+            candidates = sorted(sessions_dir.glob("*.json"), key=lambda p: p.stat().st_mtime)
+            if candidates:
+                session_file = candidates[-1]
+        if session_file is None:
+            return {}
+
+        with open(session_file, encoding="utf-8") as f:
+            session = _json.load(f)
+
+        messages = session.get("messages", [])
+        seeded = 0
+        # Extract assistant turns that look like decisions/fixes/explanations
+        _importance_patterns = re.compile(
+            r"\b(fix(?:ed)?|bug|root cause|decision|should|must|never|always|"
+            r"warning|important|critical|resolved|workaround|approach)\b",
+            re.IGNORECASE,
+        )
+        for i, msg in enumerate(messages):
+            if msg.get("role") != "assistant":
+                continue
+            text = msg.get("content", "")
+            if len(text) < 80:
+                continue
+            if not _importance_patterns.search(text):
+                continue
+            # Prepend user question for context
+            user_q = ""
+            if i > 0 and messages[i - 1].get("role") == "user":
+                user_q = messages[i - 1].get("content", "")[:120]
+            memory_text = f"[session] Q: {user_q}\nA: {text[:600]}" if user_q else text[:600]
+            try:
+                store_memory(memory_text, source="session_seed", importance=0.6)
+                seeded += 1
+            except Exception:  # pylint: disable=broad-except
+                pass
+
+        return {"seeded": seeded}
+    except Exception:  # pylint: disable=broad-except
+        return {}  # always best-effort

@@ -32,7 +32,7 @@ class _MetricsHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        from api.metrics import metrics_available, get_metrics_output  # pylint: disable=import-outside-toplevel
+        from server.metrics import metrics_available, get_metrics_output  # pylint: disable=import-outside-toplevel
         if not metrics_available():
             body = b"prometheus_client not installed\n"
             self.send_response(501)

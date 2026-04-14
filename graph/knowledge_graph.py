@@ -86,7 +86,8 @@ class EdgeType:  # pylint: disable=too-few-public-methods
     """Relationship types between nodes."""
     RELATES_TO = "RELATES_TO"
     DEFINED_IN = "DEFINED_IN"
-    CALLED_BY = "CALLED_BY"
+    CALLED_BY = "CALLED_BY"   # caller → callee (forward call direction)
+    CALLS = "CALLS"            # callee → caller (reverse; enables BFS to find callers without predecessors())
     QUERIED_WITH = "QUERIED_WITH"
     CO_OCCURS = "CO_OCCURS"
 
@@ -281,11 +282,14 @@ class KnowledgeGraph:
 
         edges = []
         for u, v, d in ego.edges(data=True):
-            edges.append({
+            edge: dict = {
                 "src": u, "dst": v,
                 "rel": d.get("rel", "?"),
-                "weight": d.get("weight", 1.0)
-            })
+                "weight": d.get("weight", 1.0),
+            }
+            if "purpose" in d:
+                edge["purpose"] = d["purpose"]
+            edges.append(edge)
 
         return {"nodes": nodes, "edges": edges}
 

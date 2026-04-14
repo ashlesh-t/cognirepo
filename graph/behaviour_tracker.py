@@ -40,6 +40,9 @@ class BehaviourTracker:
     used by HybridRetriever._behaviour_score_normalized().
     """
 
+    # Number of queries to buffer before auto-summarising interaction style
+    _STYLE_SUMMARIZE_EVERY = 10
+
     def __init__(self, graph: KnowledgeGraph) -> None:
         self.graph = graph
         self.data: dict = {
@@ -50,6 +53,16 @@ class BehaviourTracker:
             "file_edit_cooccurrence": {},
             "error_patterns": {},
             "session_registry": {},
+            "interaction_style": {
+                # Ring buffer of recent query texts (capped at 50)
+                "query_patterns": [],
+                # Term frequency: {term: count} extracted from queries
+                "terminology": {},
+                # "detailed" | "concise" | "unknown" — inferred from query length
+                "preferred_depth": "unknown",
+                # ISO timestamp of last summarisation into semantic memory
+                "last_summarized": None,
+            },
         }
         self._observer = None
         self._load()
@@ -88,6 +101,29 @@ class BehaviourTracker:
             "retrieved_symbols": retrieved_symbols,
             "useful": None,
         }
+
+        # ── interaction style: buffer query text ─────────────────────────────
+        style = self.data.setdefault("interaction_style", {
+            "query_patterns": [], "terminology": {},
+            "preferred_depth": "unknown", "last_summarized": None,
+        })
+        patterns: list = style.setdefault("query_patterns", [])
+        patterns.append(query_text)
+        if len(patterns) > 50:
+            patterns.pop(0)  # keep last 50
+        # crude term frequency (split on non-alpha, skip short words)
+        terms: dict = style.setdefault("terminology", {})
+        for word in query_text.lower().split():
+            word = word.strip(".,!?;:()'\"")
+            if len(word) > 3:
+                terms[word] = terms.get(word, 0) + 1
+        # infer preferred depth from median query length
+        avg_len = sum(len(q) for q in patterns) / max(len(patterns), 1)
+        style["preferred_depth"] = (
+            "detailed" if avg_len > 120
+            else "concise" if avg_len < 40
+            else "medium"
+        )
 
         # graph: add QUERY node and edges to each retrieved symbol
         q_node = make_node_id("QUERY", query_id)
@@ -210,3 +246,40 @@ class BehaviourTracker:
             self._observer.stop()
             self._observer.join()
             self._observer = None
+
+    # ── interaction style summariser ──────────────────────────────────────────
+
+    def summarize_interaction_style(self) -> bool:
+        """
+        When query_patterns buffer reaches _STYLE_SUMMARIZE_EVERY entries,
+        build a natural-language summary and store it as a semantic memory
+        with importance=0.8 and source="interaction_style".
+
+        Returns True if a memory was stored, False otherwise.
+        """
+        style = self.data.get("interaction_style", {})
+        patterns: list = style.get("query_patterns", [])
+        if len(patterns) < self._STYLE_SUMMARIZE_EVERY:
+            return False
+
+        try:
+            from tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
+            # top 5 terms by frequency
+            terms: dict = style.get("terminology", {})
+            top_terms = sorted(terms, key=lambda k: terms[k], reverse=True)[:5]
+            depth = style.get("preferred_depth", "unknown")
+            sample_queries = patterns[-3:]  # last 3 for illustration
+
+            summary = (
+                f"User interaction style: prefers {depth} answers. "
+                f"Common terminology: {', '.join(top_terms) if top_terms else 'N/A'}. "
+                f"Recent query examples: {' | '.join(q[:80] for q in sample_queries)}."
+            )
+            store_memory(summary, source="interaction_style", importance=0.8)
+            style["last_summarized"] = _now()
+            # Clear buffer after summarising so next batch is fresh
+            style["query_patterns"] = []
+            style["terminology"] = {}
+            return True
+        except Exception:  # pylint: disable=broad-except
+            return False  # always best-effort

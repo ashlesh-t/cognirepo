@@ -165,8 +165,6 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | `cognirepo init --non-interactive` | ✅ | Uses all defaults; no prompts |
 | `cognirepo index-repo [path]` | ✅ | AST index + FAISS ingest + graph build |
 | `cognirepo serve` | ✅ | MCP stdio server |
-| `cognirepo serve-api` | ✅ | FastAPI REST server via uvicorn |
-| `cognirepo serve-grpc` | ✅ | gRPC server |
 | `cognirepo watch` | ✅ | File watcher (foreground or daemon) |
 | `cognirepo watch --ensure-running` | ✅ | Start if heartbeat stale |
 | `cognirepo store-memory <text>` | ✅ | Direct memory storage |
@@ -185,9 +183,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ---
 
-## 8. REST API (FastAPI)
 
-**File:** `api/main.py`, `api/routes/`
 
 ### Authentication
 | Feature | Status | Notes |
@@ -223,9 +219,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ---
 
-## 9. gRPC Server
 
-**Files:** `rpc/server.py`, `rpc/proto/cognirepo.proto`
 
 | Feature | Status | Notes |
 |---------|--------|-------|
@@ -233,9 +227,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | `ContextService.StreamContext` (server-streaming) | ✅ | Streams context pack chunks |
 | `QueryService.SubQueryStream` (client-streaming) | ✅ | Receives multiple sub-queries, aggregates |
 | Proto files committed + CI freshness check | ✅ | `make proto` regenerates; CI diffs to detect stale |
-| Lazy auto-start | ✅ | `_maybe_autostart_grpc()` in router |
 | Idle timeout | ✅ | `--idle-timeout` flag |
-| gRPC client | ✅ | `rpc/client.py` |
 
 ---
 
@@ -259,7 +251,6 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | Local resolver (QUICK short-circuits) | ✅ | `local_adapter.py` + `try_local_resolve()` — zero-API |
 | Provider fallback chain | ✅ | `_dispatch_with_fallback()` — anthropic → gemini → grok → openai |
 | `_available_providers()` | ✅ | Checks env vars for API keys |
-| gRPC sub-query stream (EXPERT tier, multi-agent) | ✅ | `stream_route()` + sub-agent panel |
 | Model adapters | ✅ | anthropic, gemini, grok, openai adapters in `orchestrator/model_adapters/` |
 | Retry with exponential backoff | ✅ | `orchestrator/model_adapters/retry.py` |
 | Error logging | ✅ | Date-stamped error logs in `.cognirepo/errors/` |
@@ -341,7 +332,6 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | `test_episodic_search.py` | BM25 ranking, cache lifecycle |
 | `test_stale_cleanup.py` | Graph removal, watcher integration |
 | `test_storage_adapter.py` | VectorStorageAdapter, FAISSAdapter, ChromaDB fallback |
-| `test_daemon_reliability.py` | Heartbeat, singleton, crash guard, gRPC stream |
 | `test_cursor_vscode.py` | MCP config generation, idempotency |
 | `test_proto_freshness.py` | .proto committed, pb2 importable |
 | `test_api_cache.py` | Redis cache round-trip, graceful degradation |

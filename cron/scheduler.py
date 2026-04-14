@@ -7,7 +7,7 @@
 """
 Lightweight background scheduler — stdlib threading.Timer only.
 
-Invoked by ``cognirepo serve-api`` on startup when
+Invoked on startup when
 ``config.json → prune.auto_enabled = true``.
 
 Reads the schedule from:

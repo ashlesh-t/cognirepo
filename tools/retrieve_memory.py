@@ -14,7 +14,7 @@ All retrieval goes through retrieval/hybrid.py.
 import sys
 
 from retrieval.hybrid import hybrid_retrieve
-from api.metrics import MEMORY_OPS_TOTAL
+from server.metrics import MEMORY_OPS_TOTAL
 
 
 def _dedup(results: list) -> list:
@@ -42,7 +42,12 @@ def _dedup(results: list) -> list:
     return deduped
 
 
-def retrieve_memory(query: str, top_k: int = 5, structured: bool = False) -> list | dict:
+def retrieve_memory(
+    query: str,
+    top_k: int = 5,
+    structured: bool = False,
+    min_score: float | None = None,
+) -> list | dict:
     """
     Search for memories using hybrid retrieval.
 
@@ -57,11 +62,14 @@ def retrieve_memory(query: str, top_k: int = 5, structured: bool = False) -> lis
       text, importance, source, final_score,
       vector_score, graph_score, behaviour_score
 
+    min_score: filter results below this threshold (default 0.35).
+               Pass 0.0 to disable. Configurable via COGNIREPO_MIN_RETRIEVAL_SCORE.
+
     Degrades gracefully: if the graph/index are empty (cold start),
     returns pure vector results with graph_score=0, behaviour_score=0.
     """
     try:
-        results = hybrid_retrieve(query, top_k)
+        results = hybrid_retrieve(query, top_k, min_score=min_score)
         results = _dedup(results)
         MEMORY_OPS_TOTAL.labels(op="retrieve", result="ok").inc()
 

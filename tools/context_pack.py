@@ -42,10 +42,13 @@ except Exception:  # pylint: disable=broad-except
 
 def _count_tokens(text: str) -> int:
     if not _TIKTOKEN_OK or _ENC is None:
-        raise RuntimeError(
-            "tiktoken is required but not installed. "
+        # Graceful fallback: ~4 chars per token (cl100k_base average)
+        import logging as _logging  # pylint: disable=import-outside-toplevel
+        _logging.getLogger(__name__).warning(
+            "tiktoken not available — using char/4 token estimate. "
             "Run: pip install tiktoken"
         )
+        return max(1, len(text) // 4)
     return len(_ENC.encode(text))
 
 # ── confidence gate ────────────────────────────────────────────────────────────

@@ -260,6 +260,114 @@ def _check_platform_compat(manifest: dict) -> bool:
     )
 
 
+# ── word reverse-index helpers ────────────────────────────────────────────────
+
+_STOP_WORDS: frozenset[str] = frozenset({
+    "the", "and", "for", "with", "from", "that", "this", "into", "are",
+    "not", "has", "was", "its", "use", "used", "using", "can", "will",
+    "when", "then", "else", "pass", "none", "true", "false", "self",
+    "cls", "args", "kwargs", "def", "class", "return", "import",
+    "raise", "yield", "async", "await", "lambda",
+})
+
+_PYTHON_BUILTINS: frozenset[str] = frozenset({
+    "int", "str", "list", "dict", "set", "tuple", "bool", "float",
+    "bytes", "type", "len", "range", "print", "input", "open",
+    "super", "object", "property", "staticmethod", "classmethod",
+    "isinstance", "issubclass", "hasattr", "getattr", "setattr",
+    "enumerate", "zip", "map", "filter", "sorted", "reversed",
+    "min", "max", "sum", "abs", "round", "any", "all", "next", "iter",
+})
+
+import re as _re_tok  # pylint: disable=wrong-import-position
+
+
+def _tokenize_identifier(name: str) -> list[str]:
+    """Split camelCase / snake_case / PascalCase identifiers into lowercase tokens."""
+    # Insert boundary before uppercase letters (camelCase / PascalCase)
+    spaced = _re_tok.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", name)
+    # Split on underscores, hyphens, dots, digits
+    parts = _re_tok.split(r"[_\-\.\d\s]+", spaced)
+    return [p.lower() for p in parts if len(p) >= 3]
+
+
+def _tokenize_text(text: str) -> list[str]:
+    """Tokenize free-form text (docstring / comment / identifier) into filtered words."""
+    # Split on whitespace + punctuation
+    raw = _re_tok.split(r"[\s\.,;:\"'()\[\]{}<>|=+\-*/%@!?\\`~^&]+", text)
+    tokens: list[str] = []
+    for tok in raw:
+        for word in _tokenize_identifier(tok) or ([tok.lower()] if len(tok) >= 3 else []):
+            if (
+                len(word) >= 3
+                and word not in _STOP_WORDS
+                and word not in _PYTHON_BUILTINS
+                and word.isalpha()
+            ):
+                tokens.append(word)
+    return tokens
+
+
+# ── semantic edge purpose extraction ─────────────────────────────────────────
+
+# Verb prefixes that hint at the call's purpose
+_PURPOSE_VERBS: dict[str, str] = {
+    "get": "fetches", "fetch": "fetches", "load": "loads", "read": "reads",
+    "set": "sets", "put": "stores", "save": "saves", "write": "writes",
+    "store": "stores", "cache": "caches",
+    "validate": "validates", "verify": "verifies", "check": "checks",
+    "assert": "asserts", "ensure": "ensures",
+    "send": "sends", "emit": "emits", "publish": "publishes", "notify": "notifies",
+    "log": "logs", "record": "records", "track": "tracks",
+    "parse": "parses", "decode": "decodes", "encode": "encodes",
+    "build": "builds", "create": "creates", "make": "makes", "init": "initializes",
+    "update": "updates", "patch": "patches", "merge": "merges",
+    "delete": "deletes", "remove": "removes", "clean": "cleans",
+    "handle": "handles", "process": "processes", "run": "runs",
+    "start": "starts", "stop": "stops", "close": "closes",
+    "convert": "converts", "transform": "transforms", "format": "formats",
+    "extract": "extracts", "filter": "filters", "sort": "sorts",
+    "compute": "computes", "calculate": "calculates",
+}
+
+
+def _extract_call_purpose(callee_name: str, caller_doc: str = "") -> str:
+    """Infer a human-readable purpose label for a caller→callee edge.
+
+    Strategy (in order):
+    1. Check caller docstring for the callee name + surrounding context
+    2. Match callee name's leading verb against _PURPOSE_VERBS
+    3. Default: "calls"
+    """
+    # Docstring hint: look for "call[s] X to <purpose>" patterns
+    if caller_doc and callee_name in caller_doc:
+        import re as _r  # pylint: disable=import-outside-toplevel
+        m = _r.search(
+            rf"\b{_r.escape(callee_name)}\b.*?\bto\s+(\w+)", caller_doc, _r.IGNORECASE
+        )
+        if m:
+            verb = m.group(1).lower()
+            if verb in _PURPOSE_VERBS:
+                return _PURPOSE_VERBS[verb]
+            if len(verb) >= 4:
+                return verb  # use the raw verb from docstring
+
+    # Verb prefix from callee name (snake_case or camelCase)
+    parts = _re_tok.split(r"[_]", callee_name)
+    if parts:
+        leading = parts[0].lower()
+        if leading in _PURPOSE_VERBS:
+            return _PURPOSE_VERBS[leading]
+        # camelCase fallback: get_TokenX → "get"
+        cam = _re_tok.match(r"[a-z]+", callee_name)
+        if cam:
+            verb = cam.group(0).lower()
+            if verb in _PURPOSE_VERBS:
+                return _PURPOSE_VERBS[verb]
+
+    return "calls"
+
+
 # ── tree-sitter extraction helpers ────────────────────────────────────────────
 
 def _ts_text(node, source: bytes) -> str:
@@ -610,6 +718,7 @@ class ASTIndexer:
             "repo_root": "",
             "files": {},
             "reverse_index": {},
+            "word_reverse_index": {},
             "faiss_index_file": _ast_faiss_file(),
             "total_symbols": 0,
         }
@@ -795,16 +904,35 @@ class ASTIndexer:
 
         # embed + add to FAISS (skipped when embed=False / --no-embed)
         embed_enabled = getattr(self, "_embed_enabled", True)
+
+        # Pre-read source lines once per file for body-snippet enrichment
+        _src_lines: list[str] = []
+        if embed_enabled:
+            try:
+                with open(abs_path, encoding="utf-8", errors="replace") as _sf:
+                    _src_lines = _sf.readlines()
+            except OSError:
+                pass
+
         for sym in raw_symbols:
             if embed_enabled:
-                # Richer embed text: type + name + decorator routes + docstring + top callees
+                # Enriched embed text: type + name + decorators + docstring +
+                # first 3 body lines (signature context) + top callees
                 dec_str = " ".join(sym.get("decorators", []))
                 calls_str = ", ".join(sym.get("calls", [])[:3])
+                # Extract first 3 lines after the definition line for signature/body context
+                body_snippet = ""
+                if _src_lines and sym["type"] in ("FUNCTION", "CLASS"):
+                    start = sym.get("start_line", 1)
+                    end = min(start + 3, sym.get("end_line", start + 3))
+                    snippet_lines = _src_lines[start - 1 : end]  # 0-indexed
+                    body_snippet = " ".join(l.strip() for l in snippet_lines if l.strip())[:200]
                 embed_text = " ".join(filter(None, [
                     sym["type"],
                     sym["name"],
                     dec_str,
                     sym.get("docstring", ""),
+                    body_snippet,
                     f"calls: {calls_str}" if calls_str else "",
                 ]))
                 vec = self.model.encode(embed_text).astype("float32")
@@ -833,13 +961,54 @@ class ASTIndexer:
             self.graph.add_node(sym_node, sym["type"], file=rel_path, line=sym["start_line"])
             self.graph.add_edge(sym_node, file_node, EdgeType.DEFINED_IN)
 
-        # call-graph edges
+        # ── file-level summary embedding ──────────────────────────────────────
+        # Enables "what does background_tasks.py do?" queries to land in FAISS
+        # even when no individual symbol name matches the query.
+        if embed_enabled and raw_symbols:
+            fn_names = [s["name"] for s in raw_symbols if s["type"] == "FUNCTION"][:8]
+            cls_names = [s["name"] for s in raw_symbols if s["type"] == "CLASS"][:4]
+            # Use docstring from first module-level function/class if available
+            _first_doc = next(
+                (s.get("docstring", "") for s in raw_symbols
+                 if s.get("docstring") and s["type"] in ("FUNCTION", "CLASS")),
+                "",
+            )
+            file_embed_text = " ".join(filter(None, [
+                "FILE",
+                os.path.basename(rel_path),
+                os.path.splitext(os.path.basename(rel_path))[0].replace("_", " "),
+                _first_doc[:120] if _first_doc else "",
+                f"functions: {', '.join(fn_names)}" if fn_names else "",
+                f"classes: {', '.join(cls_names)}" if cls_names else "",
+            ]))
+            try:
+                _fvec = self.model.encode(file_embed_text).astype("float32")
+                _fid = len(self.faiss_meta)
+                self.faiss_index.add_with_ids(
+                    np.array([_fvec], dtype="float32"),
+                    np.array([_fid], dtype=np.int64),
+                )
+                self.faiss_meta.append({
+                    "name": os.path.basename(rel_path),
+                    "type": "FILE",
+                    "file": rel_path,
+                    "start_line": 1,
+                    "docstring": _first_doc[:120],
+                    "source": "file_summary",
+                })
+            except Exception:  # pylint: disable=broad-except
+                pass  # file summary embedding is best-effort
+
+        # call-graph edges — bidirectional, with semantic purpose labels
         for sym in raw_symbols:
             caller_node = node_id_from_symbol_record(sym, rel_path)
+            caller_doc = sym.get("docstring", "") or ""
             for callee_name in sym.get("calls", []):
                 callee_node = f"symbol::{callee_name}"
+                purpose = _extract_call_purpose(callee_name, caller_doc)
                 self.graph.add_node(callee_node, NodeType.CONCEPT)
-                self.graph.add_edge(caller_node, callee_node, EdgeType.CALLED_BY)
+                self.graph.add_edge(caller_node, callee_node, EdgeType.CALLED_BY, purpose=purpose)
+                self.graph.add_edge(callee_node, caller_node, EdgeType.CALLS)
 
         file_record = {
             "indexed_at": _now(),
@@ -862,8 +1031,24 @@ class ASTIndexer:
             rev.setdefault(sym["name"], [])
             if entry not in rev[sym["name"]]:
                 rev[sym["name"]].append(entry)
-        # invalidate lookup cache so stale results are not served
+        # incrementally update word_reverse_index for this file
+        wrev = self.index_data.setdefault("word_reverse_index", {})
+        for word, locs in list(wrev.items()):
+            wrev[word] = [loc for loc in locs if loc[0] != rel_path]
+            if not wrev[word]:
+                del wrev[word]
+        for sym in raw_symbols:
+            line = sym["start_line"]
+            for text in [sym.get("name", ""), sym.get("docstring", "") or "", sym.get("inline_comment", "") or ""]:
+                for word in _tokenize_text(text):
+                    entry = [rel_path, line]
+                    wrev.setdefault(word, [])
+                    if entry not in wrev[word]:
+                        wrev[word].append(entry)
+
+        # invalidate lookup caches so stale results are not served
         type(self).lookup_symbol.cache_clear()
+        type(self).lookup_word.cache_clear()
 
         return file_record
 
@@ -884,8 +1069,47 @@ class ASTIndexer:
                 if entry not in rev[name]:
                     rev[name].append(entry)
         self.index_data["reverse_index"] = rev
+        # Build word reverse index from all symbols
+        self._build_word_reverse_index()
         # invalidate lookup cache so fresh results are served
         type(self).lookup_symbol.cache_clear()
+        type(self).lookup_word.cache_clear()
+
+    def _build_word_reverse_index(self) -> None:
+        """Build word_reverse_index: word → [[file, line], ...].
+
+        Tokenizes all symbol names, docstrings, and inline comments so
+        that non-symbol words (e.g. 'background', 'validate') are findable
+        even when they aren't standalone function/class names.
+
+        Token extraction:
+          - camelCase → ["camel", "case"]
+          - snake_case → ["snake", "case"]
+          - docstring words (first 200 chars)
+          - inline comment words
+
+        Filtered: stop-words, words < 3 chars, Python builtins.
+        """
+        import re as _re  # pylint: disable=import-outside-toplevel
+        word_idx: dict[str, list] = {}
+
+        for file_path, file_data in self.index_data["files"].items():
+            for sym in file_data.get("symbols", []):
+                line = sym["start_line"]
+                name = sym.get("name", "")
+                doc = sym.get("docstring", "") or ""
+                comment = sym.get("inline_comment", "") or ""
+
+                # Collect all text sources for this symbol
+                sources = [name, doc[:200], comment[:120]]
+                for text in sources:
+                    for word in _tokenize_text(text):
+                        entry = [file_path, line]
+                        word_idx.setdefault(word, [])
+                        if entry not in word_idx[word]:
+                            word_idx[word].append(entry)
+
+        self.index_data["word_reverse_index"] = word_idx
 
     # ── lookup ────────────────────────────────────────────────────────────────
 
@@ -894,6 +1118,26 @@ class ASTIndexer:
         """O(1) reverse-index lookup. Returns [{'file': str, 'line': int}]."""
         entries = self.index_data["reverse_index"].get(symbol_name, [])
         return [{"file": f, "line": l} for f, l in entries]
+
+    @functools.lru_cache(maxsize=512)
+    def lookup_word(self, word: str) -> list[dict]:
+        """Word-level reverse-index lookup.
+
+        Returns [{'file': str, 'line': int}] for all occurrences of *word*
+        in symbol names, docstrings, and inline comments.  Sorted by
+        file path for deterministic output.
+
+        Falls back to lookup_symbol() if no word-index entry found, so
+        callers can use this as the single lookup entry point.
+        """
+        word_lower = word.lower()
+        entries = self.index_data.get("word_reverse_index", {}).get(word_lower, [])
+        if not entries:
+            # fallback: exact symbol name match
+            return self.lookup_symbol(word)
+        results = [{"file": f, "line": l} for f, l in entries]
+        results.sort(key=lambda x: x["file"])
+        return results
 
     def get_symbol_table(self, file_path: str) -> SymbolTable:
         """Return a SymbolTable for bisect-based line-range queries."""

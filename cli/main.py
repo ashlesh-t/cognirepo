@@ -598,48 +598,6 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False) -> int:
         _fail(f"BM25 backend — {exc}")
         issues += 1
 
-    # ── Check 10: gRPC (only if multi-agent enabled) ──────────────────────────
-    if os.environ.get("COGNIREPO_MULTI_AGENT_ENABLED", "").lower() == "true":
-        _grpc_port = int(nonlocal_config.get("multi_agent", {}).get("grpc_port", 50051))
-        _auto_start = nonlocal_config.get("multi_agent", {}).get("auto_start_grpc", False)
-        import socket  # pylint: disable=import-outside-toplevel
-        _grpc_alive = False
-        try:
-            with socket.create_connection(("localhost", _grpc_port), timeout=1):
-                _grpc_alive = True
-        except Exception:  # pylint: disable=broad-except
-            pass
-
-        if _grpc_alive:
-            _ok(f"gRPC server — running on port {_grpc_port}")
-        else:
-            # Not running — trigger lazy auto-start now, then recheck
-            try:
-                from orchestrator.router import _maybe_autostart_grpc  # pylint: disable=import-outside-toplevel
-                _maybe_autostart_grpc("localhost", _grpc_port)
-                time.sleep(3.0)  # give the subprocess a moment to bind
-                try:
-                    with socket.create_connection(("localhost", _grpc_port), timeout=2):
-                        _grpc_alive = True
-                except Exception:  # pylint: disable=broad-except
-                    pass
-            except Exception:  # pylint: disable=broad-except
-                pass
-
-            if _grpc_alive:
-                _ok(f"gRPC server — auto-started on port {_grpc_port}")
-            elif _auto_start:
-                # lazy_grpc=true: server starts on first DEEP query — not a hard failure
-                _warn(
-                    "gRPC server — not running (lazy mode, will start on first DEEP query)"
-                )
-            else:
-                _fail(
-                    f"gRPC server — failed to start on port {_grpc_port}",
-                    f"Run manually: cognirepo serve-grpc --port {_grpc_port}",
-                )
-                issues += 1
-
     # ── Check N: AI tool MCP configs (informational, not failures) ───────────
     _tool_checks = [
         ("Claude Code", ".claude/settings.json", "mcpServers"),
@@ -1118,6 +1076,55 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
         print("[watcher] stopped.")
 
 
+def _start_watcher_bg(path: str) -> None:
+    """
+    Start the file watcher as a daemon thread — no kg/indexer required upfront.
+    Loads them lazily inside the thread. Safe to call from REPL/MCP server startup.
+    Silently skips if a watcher is already running for this path.
+    """
+    abs_path = os.path.abspath(path)
+    try:
+        from cli.daemon import is_watcher_running_for_path  # pylint: disable=import-outside-toplevel
+        if is_watcher_running_for_path(abs_path):
+            return  # already watching — skip silently
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+    def _run():
+        try:
+            from graph.knowledge_graph import KnowledgeGraph as _KG    # pylint: disable=import-outside-toplevel
+            from indexer.ast_indexer import ASTIndexer as _AI          # pylint: disable=import-outside-toplevel
+            from graph.behaviour_tracker import BehaviourTracker as _BT # pylint: disable=import-outside-toplevel
+            from indexer.file_watcher import create_watcher             # pylint: disable=import-outside-toplevel
+            from cli.daemon import run_watcher_with_crash_guard         # pylint: disable=import-outside-toplevel
+            import time as _time                                         # pylint: disable=import-outside-toplevel
+            _kg = _KG()
+            _indexer = _AI(graph=_kg)
+            _indexer.load()
+            _bt = _BT(graph=_kg)
+            _session_id = f"watch_auto_{int(_time.time())}"
+
+            def _make():
+                return create_watcher(abs_path, _indexer, _kg, _bt, _session_id)
+
+            def _stop(obs):
+                obs.stop()
+                obs.join()
+
+            run_watcher_with_crash_guard(
+                create_fn=_make,
+                stop_fn=_stop,
+                watcher_path=abs_path,
+                session_id=_session_id,
+            )
+        except Exception:  # pylint: disable=broad-except
+            pass  # watcher is best-effort
+
+    import threading as _threading  # pylint: disable=import-outside-toplevel
+    _t = _threading.Thread(target=_run, daemon=True, name="cognirepo-auto-watcher")
+    _t.start()
+
+
 def _test_connection(provider: str) -> dict:
     """Make a minimal API call to verify connectivity and credentials."""
     from orchestrator.model_adapters.errors import ModelCallError  # pylint: disable=import-outside-toplevel
@@ -1365,15 +1372,12 @@ def _print_help() -> None:
     # ── AI Query ──────────────────────────────────────────────────────────────
     _hdr("AI QUERY")
     _row("ask <query>",       "Route query through multi-model orchestrator")
-    _row("chat",              "Start interactive REPL (default with no args)")
     _row("sessions",          "List recent conversation sessions")
     _row("test-connection",   "Verify API key & connectivity per provider")
 
     # ── Servers ───────────────────────────────────────────────────────────────
     _hdr("SERVERS")
     _row("serve",             "Start MCP stdio server (used by Claude Code)")
-    _row("serve-api",         "Start FastAPI REST server")
-    _row("serve-grpc",        "Start gRPC inter-model server")
     _row("wait-api",          "Poll until REST API is ready (for scripts)")
     _row("export-spec",       "Export OpenAI/Cursor tool specs to adapters/")
 
@@ -1695,28 +1699,14 @@ def main():
             "Skips full repo walk — useful for git hooks and CI incremental runs."
         ),
     )
-
-    # serve-api
-    p_api = sub.add_parser("serve-api", help="Start the FastAPI REST server")
-    p_api.add_argument("--host", default="127.0.0.1")
-    # Default port: read from .cognirepo/config.json api_port, fall back to 8080
-    try:
-        with open(get_path("config.json"), encoding="utf-8") as _f:
-            _api_port = json.load(_f).get("api_port", 8080)
-    except Exception:  # pylint: disable=broad-except
-        _api_port = 8080
-    p_api.add_argument("--port", type=int, default=_api_port)
-    p_api.add_argument("--reload", action="store_true")
-
-    # serve-grpc
-    p_grpc = sub.add_parser("serve-grpc", help="Start the gRPC inter-model server")
-    p_grpc.add_argument("--port", type=int, default=50051)
-    p_grpc.add_argument("--daemon", action="store_true", help="Run in background as a daemon")
-    p_grpc.add_argument(
-        "--idle-timeout",
-        type=int,
-        default=0,
-        help="Shut down after N seconds of inactivity (0 to disable)",
+    p_idx.add_argument(
+        "--changed-only",
+        action="store_true",
+        default=False,
+        help=(
+            "Auto-detect changed files via git (git diff --name-only HEAD + "
+            "untracked files) and reindex only those. Ideal for post-commit hooks."
+        ),
     )
 
     # benchmark
@@ -1818,9 +1808,6 @@ def main():
     # sessions — list recent conversations
     p_sess = sub.add_parser("sessions", help="List recent conversation sessions")
     p_sess.add_argument("--limit", type=int, default=20, help="Max sessions to show (default: 20)")
-
-    # chat — interactive REPL
-    sub.add_parser("chat", help="Start interactive REPL (default when no args given)")
 
     # watch — standalone watcher management (--status, --ensure-running)
     p_watch_cmd = sub.add_parser("watch", help="Manage the background file-watcher daemon")
@@ -1953,8 +1940,7 @@ def main():
 
     if args.command is None:
         if sys.stdin.isatty():
-            from cli.repl import run_repl  # pylint: disable=import-outside-toplevel  # noqa: F401
-            run_repl()
+            _print_help()
             sys.exit(0)
         else:
             # piped input: read from stdin and route as a single query
@@ -2073,6 +2059,53 @@ def main():
         return
 
     if args.command == "index-repo":
+        # ── git-aware changed-only reindex ───────────────────────────────────
+        if getattr(args, "changed_only", False):
+            import subprocess as _sp  # pylint: disable=import-outside-toplevel
+            from graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
+            from indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
+            _supported_exts = {
+                ".py", ".js", ".ts", ".tsx", ".jsx", ".java",
+                ".cpp", ".c", ".h", ".go", ".rs", ".rb",
+            }
+            _changed: list[str] = []
+            try:
+                # staged + unstaged changes relative to HEAD
+                _diff = _sp.check_output(
+                    ["git", "diff", "--name-only", "HEAD"],
+                    stderr=_sp.DEVNULL,
+                    text=True,
+                ).splitlines()
+                # untracked files (new files not yet committed)
+                _untracked = _sp.check_output(
+                    ["git", "ls-files", "--others", "--exclude-standard"],
+                    stderr=_sp.DEVNULL,
+                    text=True,
+                ).splitlines()
+                _changed = [
+                    f for f in _diff + _untracked
+                    if os.path.splitext(f)[1] in _supported_exts and os.path.isfile(f)
+                ]
+            except (_sp.CalledProcessError, FileNotFoundError):
+                print("Warning: git not available — falling back to full reindex.", file=sys.stderr)
+            if _changed:
+                _kg = _KG()
+                _indexer = _AI(graph=_kg)
+                _indexed = 0
+                for _rel in _changed:
+                    _abs = os.path.abspath(_rel)
+                    try:
+                        _indexer.index_file(_rel, _abs)
+                        _indexed += 1
+                    except Exception as _exc:  # pylint: disable=broad-except
+                        log.debug("index-repo --changed-only: skip %s: %s", _rel, _exc)
+                _kg.save()
+                print(f"Re-indexed {_indexed} changed file(s): {', '.join(_changed[:5])}"
+                      + (" …" if len(_changed) > 5 else ""))
+            else:
+                print("No changed files detected.")
+            return
+
         # ── selective reindex (--files) ──────────────────────────────────────
         if getattr(args, "files", None):
             from graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
@@ -2106,24 +2139,6 @@ def main():
         _cmd_coverage()
         if not args.no_watch:
             _start_watcher(args.path, kg, indexer, daemon=args.daemon)
-        return
-
-    if args.command == "serve-api":
-        import uvicorn  # pylint: disable=import-outside-toplevel
-        uvicorn.run("api.main:app", host=args.host, port=args.port, reload=args.reload)
-        return
-
-    if args.command == "serve-grpc":
-        if args.daemon:
-            import subprocess as _sp  # pylint: disable=import-outside-toplevel
-            cmd = [sys.executable, "-m", "cognirepo", "serve-grpc", "--port", str(args.port)]
-            if args.idle_timeout:
-                cmd += ["--idle-timeout", str(args.idle_timeout)]
-            proc = _sp.Popen(cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)  # nosec B603
-            print(f"[gRPC] Daemon started (pid={proc.pid}) on port {args.port}")
-        else:
-            from rpc.server import start_server  # pylint: disable=import-outside-toplevel
-            start_server(port=args.port, block=True, idle_timeout=args.idle_timeout)
         return
 
     if args.command == "benchmark":
@@ -2210,11 +2225,6 @@ def main():
 
     if args.command == "sessions":
         _cmd_sessions(limit=args.limit)
-        return
-
-    if args.command == "chat":
-        from cli.repl import run_repl  # pylint: disable=import-outside-toplevel
-        run_repl()
         return
 
     if args.command == "verify-index":

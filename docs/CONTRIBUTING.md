@@ -11,7 +11,6 @@ Thank you for contributing! This guide covers dev setup, adding languages, addin
 git clone https://github.com/ashlesh-t/cognirepo
 cd cognirepo
 pip install -e ".[dev,security]"
-pip install grpcio grpcio-tools
 
 # Initialize the project
 cognirepo init --no-index

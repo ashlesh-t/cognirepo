@@ -10,7 +10,7 @@ Tool to store a text memory into semantic memory.
 import sys
 from memory.semantic_memory import SemanticMemory
 from memory.episodic_memory import log_event
-from api.metrics import MEMORY_OPS_TOTAL
+from server.metrics import MEMORY_OPS_TOTAL
 
 
 def store_memory(text: str, source: str = "") -> dict:

@@ -22,14 +22,6 @@ dependencies = [
     "sentence-transformers==5.3.0",
     # MCP server
     "mcp[cli]==1.26.0",
-    # REST API
-    "fastapi==0.135.2",
-    "uvicorn[standard]==0.42.0",
-    "python-multipart==0.0.22",
-    "starlette==1.0.0",
-    # auth
-    "PyJWT==2.12.1",
-    "bcrypt==5.0.0",
     # HTTP client (CLI --via-api)
     "httpx==0.28.1",
     # graph + indexer
@@ -39,10 +31,6 @@ dependencies = [
     # shared
     "pydantic==2.12.5",
     "anyio==4.12.1",
-    # gRPC
-    "grpcio>=1.60",
-    "grpcio-tools>=1.60",
-    "grpcio-health-checking>=1.60",
     # model providers
     "anthropic>=0.50",
     "google-generativeai>=0.8",

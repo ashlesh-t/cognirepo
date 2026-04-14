@@ -10,7 +10,6 @@ Complete documentation for every command, API endpoint, Docker service, and conf
 2. [CLI Commands](#cli-commands)
 3. [REST API](#rest-api)
 4. [MCP Server](#mcp-server)
-5. [gRPC Server](#grpc-server)
 6. [Docker](#docker)
 7. [Multi-Agent Mode](#multi-agent-mode)
 8. [Memory Pruning & Circuit Breaker](#memory-pruning--circuit-breaker)
@@ -57,14 +56,12 @@ docker compose up api   # REST API on :8080
 All commands support `--via-api` (routes through REST instead of in-process) and
 `--api-url URL` (override REST base URL).
 
-### `cognirepo chat`
 
 Start the interactive REPL (alias: `cognirepo` with no subcommand).
 
 ```bash
 cognirepo chat                                        # start REPL
 cognirepo chat --model claude-opus-4-6               # force model for all queries
-COGNIREPO_MULTI_AGENT_ENABLED=true cognirepo chat    # enable gRPC sub-agents
 ```
 
 On startup the REPL shows:
@@ -115,7 +112,6 @@ Scaffold `.cognirepo/` directory structure and write `config.json`.
 
 1. Project name (used to namespace your data in Claude/Gemini)
 2. Multi-model routing (QUICK→local, STANDARD→Gemini/Grok, COMPLEX→Gemini/Sonnet, EXPERT→Claude Opus)
-3. Lazy gRPC auto-start for sub-agent delegation
 4. Redis session cache
 5. Encryption at rest (Fernet — auto-installs `cognirepo[security]`)
 6. Extended language parsers (auto-installs `cognirepo[languages]`)
@@ -329,7 +325,6 @@ before it has fully started.
 
 ```bash
 # Start server in background, then wait before curling:
-cognirepo serve-api --port 8080 &
 cognirepo wait-api --timeout 30
 
 TOKEN=$(curl -s -X POST http://localhost:8080/login \
@@ -447,13 +442,9 @@ Blocked automatically if the circuit breaker is OPEN (RSS too high).
 
 ---
 
-### `cognirepo serve-api`
 
-Start the FastAPI REST server.
 
 ```bash
-cognirepo serve-api
-cognirepo serve-api --host 0.0.0.0 --port 8080 --reload
 ```
 
 Endpoints:
@@ -485,7 +476,6 @@ curl http://localhost:8080/status/detailed | python3 -m json.tool
 
 **Safe curl pattern** (use `cognirepo wait-api` or poll `/ready`):
 ```bash
-cognirepo serve-api --port 8080 &
 cognirepo wait-api                   # blocks until /ready returns 200
 TOKEN=$(curl -s -X POST http://localhost:8080/login \
   -H "Content-Type: application/json" \
@@ -495,13 +485,9 @@ TOKEN=$(curl -s -X POST http://localhost:8080/login \
 
 ---
 
-### `cognirepo serve-grpc`
 
-Start the gRPC inter-model server (used for multi-agent mode).
 
 ```bash
-cognirepo serve-grpc
-cognirepo serve-grpc --port 50052
 ```
 
 Services: `QueryService` (SubQuery, SubQueryStream), `ContextService` (PushContext, GetContext, ListSessions).
@@ -635,44 +621,24 @@ Tool schemas are in `server/manifest.json` and exportable via `cognirepo export-
 
 ---
 
-## gRPC Server
 
 ### Port selection and on/off switch
 
 | Environment variable | Default | Purpose |
 |---|---|---|
-| `COGNIREPO_GRPC_PORT` | `50051` | Port the gRPC server listens on |
-| `COGNIREPO_MULTI_AGENT_ENABLED` | `false` | Enable gRPC sub-query delegation to sub-agents |
 
 ```bash
-# Start the gRPC server on default port 50051
-cognirepo serve-grpc
 
 # Use a custom port
-COGNIREPO_GRPC_PORT=50052 cognirepo serve-grpc --port 50052
 
-# Disable multi-agent mode (gRPC sub-queries never fired)
-COGNIREPO_MULTI_AGENT_ENABLED=false cognirepo
 ```
 
-When `COGNIREPO_MULTI_AGENT_ENABLED=false` (the default), no gRPC calls are made
 and the server does not need to be running. All queries are handled by the primary
 model directly.
 
 ### Health endpoint
 
-The gRPC server exposes the standard health protocol (requires
-`grpcio-health-checking`).  The client provides a `health()` helper:
 
-```python
-from rpc.client import CogniRepoClient
-
-with CogniRepoClient(port=50051) as c:
-    if c.health():          # True = SERVING
-        print("server up")
-    if c.health("QueryService"):   # service-level check
-        print("QueryService ready")
-```
 
 The CI pipeline polls `health()` before running integration tests to avoid
 races during server startup.
@@ -694,24 +660,6 @@ resp = c.sub_query(
 
 ### QueryService
 
-```python
-from rpc.client import CogniRepoClient
-
-with CogniRepoClient(port=50051) as c:
-    # Delegate a sub-query to the model router
-    resp = c.sub_query(
-        query="what does verify_token return on expiry?",
-        context_id="q_abc123",
-        source_model="claude-sonnet-4-6",
-        target_tier="STANDARD",   # hint: use lightweight model
-        max_tokens=256,
-    )
-    print(resp.result, resp.confidence)
-
-    # Streaming version
-    for chunk in c.sub_query_stream("explain auth flow", target_tier="STANDARD"):
-        print(chunk.result, end="")
-```
 
 ### ContextService
 
@@ -738,9 +686,7 @@ Session data persists in `.cognirepo/sessions/<context_id>.json`.
 
 | Service | Profile | Port | Purpose |
 |---|---|---|---|
-| `api` | default | 8080 | FastAPI REST server |
 | `mcp` | default | stdio | MCP server for Claude Desktop |
-| `grpc` | `grpc` | 50051 | gRPC inter-model server |
 | `pruner` | `pruner` | — | Daily memory pruning cron |
 
 ### Commands
@@ -749,18 +695,14 @@ Session data persists in `.cognirepo/sessions/<context_id>.json`.
 # Start REST API (always on)
 docker compose up -d api
 
-# Start with gRPC (for multi-agent)
-docker compose --profile grpc up -d
 
 # Start with pruner
 docker compose --profile pruner up -d
 
 # Start everything
-docker compose --profile grpc --profile pruner up -d
 
 # View logs
 docker compose logs -f api
-docker compose logs -f grpc
 
 # Run CLI commands inside container
 docker compose exec api cognirepo retrieve-memory "auth bug"
@@ -816,18 +758,13 @@ docker compose exec api cognirepo ask "why is auth slow?" --verbose
 **Off by default.** Enable with:
 
 ```bash
-export COGNIREPO_MULTI_AGENT_ENABLED=true
-# or in .env: COGNIREPO_MULTI_AGENT_ENABLED=true
 ```
 
-Requires gRPC server running:
 
 ```bash
 # Terminal 1
-cognirepo serve-grpc
 
 # Terminal 2
-COGNIREPO_MULTI_AGENT_ENABLED=true cognirepo ask \
   "design jwt_auth compare verify_token with check_session" --verbose
 ```
 
@@ -897,7 +834,6 @@ get_breaker().reset()
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `password_hash` | string | — | bcrypt hash of API password |
-| `api_port` | int | 8080 | FastAPI port |
 | `api_url` | string | `http://localhost:8080` | Full API URL |
 | `retrieval_weights.vector` | float | 0.5 | Weight for FAISS vector score |
 | `retrieval_weights.graph` | float | 0.3 | Weight for graph hop score |
@@ -923,10 +859,6 @@ get_breaker().reset()
 | `OPENAI_BASE_URL` | — | Override endpoint (Ollama: `http://localhost:11434/v1`) |
 | `COGNIREPO_JWT_SECRET` | — | JWT signing secret — replaces OS keychain in CI/Docker |
 | `COGNIREPO_PASSWORD_HASH` | — | Bcrypt password hash — replaces OS keychain in CI/Docker |
-| `COGNIREPO_MULTI_AGENT_ENABLED` | `false` | Enable gRPC sub-query delegation |
-| `COGNIREPO_GRPC_HOST` | `localhost` | gRPC server host |
-| `COGNIREPO_GRPC_PORT` | `50051` | gRPC server port |
-| `COGNIREPO_GRPC_ENABLED` | `false` | Auto-start gRPC with serve-api |
 | `COGNIREPO_CB_RSS_LIMIT_MB` | 80% RAM | Circuit breaker RSS threshold |
 | `COGNIREPO_CB_COOLDOWN_SEC` | `30` | Circuit breaker cooldown seconds |
 | `COGNIREPO_API_URL` | `http://localhost:8080` | REST base URL for `--via-api` |

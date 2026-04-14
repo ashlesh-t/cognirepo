@@ -266,7 +266,7 @@ class CircuitBreaker:
     def _update_metric(self) -> None:
         """Update the Prometheus CB_STATE gauge (no-op if prometheus not installed)."""
         try:
-            from api.metrics import CB_STATE  # pylint: disable=import-outside-toplevel
+            from server.metrics import CB_STATE  # pylint: disable=import-outside-toplevel
             _state_value = {"CLOSED": 0, "HALF_OPEN": 1, "OPEN": 2}
             CB_STATE.set(_state_value.get(self._state.value, 0))
         except Exception:  # pylint: disable=broad-except

@@ -43,8 +43,6 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ### Added
 
 - **Sprint 3.2** — `orchestrator/model_adapters/local_adapter.py`: zero-API QUICK-tier resolver. Raises `NoLocalAnswer` to promote queries to STANDARD. Provider fallback chain in `_dispatch_with_fallback()` with retry on `UNAVAILABLE`/`DEADLINE_EXCEEDED`.
-- **Sprint 3.3** — `HealthServicer` on gRPC server (standard health proto). `client.health()` method with port-open fallback when `grpcio-health-checking` is not installed. `sub_query()` retries 3× with exponential backoff; `trace_id` propagated through gRPC metadata.
-- **Sprint 3.3** — CI job `grpc-multiagent`: unit tests (health + retry), integration test with live gRPC server (health-poll gate before running tests).
 - **Sprint 3.4** — `cli/repl/agents_panel.py`: `AgentRegistry` (thread-safe), `SubAgent` dataclass, `render_agents_panel()` Rich panel (greyed-out dim style), `stream_agents_panel()` at 10 Hz.
 - **Sprint 3.4** — `/agents` slash command: lists sub-agent sessions, supports `cancel <id>`. `/status` shows active sub-agents when multi-agent is enabled.
 - **Sprint 3.4** — EXPERT-tier REPL queries fire a background gRPC sub-agent; results stored in `session["sub_queries"]`.
@@ -141,14 +139,10 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - Automatic provider fallback chain with exponential backoff retry (3 attempts)
 - Streaming output via `stream_route()`
 - Conversation history — session IDs, persistent exchange history, `--continue` flag
-- Interactive REPL — `cognirepo chat`, readline history, special commands
 - Local resolver — FAST-tier queries answered from local index with no model API call
-- Multi-agent mode — DEEP queries delegate fast sub-lookups via gRPC (off by default)
 
 **Transport layer**
 - MCP stdio server — 8 tools for Claude Desktop, Gemini CLI, and other MCP clients
-- FastAPI REST server — JWT auth, memory + episodic + graph routes, Swagger at /docs
-- gRPC server — QueryService + ContextService for inter-model communication
 
 **Operational**
 - Memory pruner — importance × recency decay, archive mode, dry-run
