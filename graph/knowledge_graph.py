@@ -24,6 +24,47 @@ import networkx as nx
 
 
 from config.paths import get_path
+from config.lock import store_lock
+
+# Python builtins + common dunder names that must never dominate the concept
+# space.  Exported so mcp_server.py can reuse the same set.
+PYTHON_BUILTINS: frozenset[str] = frozenset({
+    # built-in functions
+    "len", "str", "int", "float", "bool", "list", "dict", "set", "tuple",
+    "bytes", "bytearray", "memoryview", "complex", "type", "object",
+    "range", "enumerate", "zip", "map", "filter", "reversed", "sorted",
+    "sum", "min", "max", "abs", "round", "pow", "divmod",
+    "open", "print", "input", "repr", "hash", "id", "iter", "next",
+    "any", "all", "isinstance", "issubclass", "hasattr", "getattr",
+    "setattr", "delattr", "callable", "vars", "dir", "locals", "globals",
+    "super", "property", "classmethod", "staticmethod",
+    "format", "chr", "ord", "hex", "oct", "bin", "eval", "exec",
+    # common list/dict/str methods (added as call nodes by the indexer)
+    "append", "extend", "insert", "remove", "pop", "clear", "copy",
+    "update", "keys", "values", "items", "get", "setdefault",
+    "join", "split", "rsplit", "splitlines", "strip", "lstrip", "rstrip",
+    "replace", "startswith", "endswith", "find", "rfind", "index",
+    "encode", "decode", "upper", "lower", "capitalize", "title",
+    "read", "readline", "readlines", "write", "writelines", "close",
+    "seek", "tell", "flush", "fileno",
+    # exceptions
+    "Exception", "BaseException", "ValueError", "TypeError", "KeyError",
+    "IndexError", "AttributeError", "RuntimeError", "StopIteration",
+    "GeneratorExit", "OSError", "IOError", "FileNotFoundError",
+    "NotImplementedError", "ImportError", "ModuleNotFoundError",
+    "OverflowError", "ZeroDivisionError", "MemoryError", "RecursionError",
+    "NameError", "UnboundLocalError", "PermissionError", "TimeoutError",
+    # dunders
+    "__init__", "__new__", "__del__", "__str__", "__repr__", "__bytes__",
+    "__len__", "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__",
+    "__hash__", "__bool__", "__iter__", "__next__", "__reversed__",
+    "__contains__", "__getitem__", "__setitem__", "__delitem__",
+    "__enter__", "__exit__", "__call__", "__get__", "__set__",
+    "__add__", "__radd__", "__iadd__", "__sub__", "__mul__", "__truediv__",
+    "__class__", "__dict__", "__doc__", "__module__", "__slots__",
+    "__all__", "__name__", "__file__", "__spec__", "__path__",
+})
+
 
 def _graph_file() -> str:
     return get_path("graph/graph.pkl")
@@ -85,7 +126,11 @@ class KnowledgeGraph:
         self._load()
 
     def save(self) -> None:
-        """Serialize the graph to a pickle file; encrypt if needed."""
+        """Serialize the graph to a pickle file; encrypt if needed.
+        Acquires a cross-process file lock to prevent concurrent writes
+        from multiple MCP server processes (e.g. Claude + Gemini) from
+        corrupting the pickle.
+        """
         os.makedirs(os.path.dirname(_graph_file()), exist_ok=True)
         from security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
@@ -93,8 +138,9 @@ class KnowledgeGraph:
         if encrypt:
             from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
             raw = encrypt_bytes(raw, get_or_create_key(project_id))
-        with open(_graph_file(), "wb") as f:
-            f.write(raw)
+        with store_lock():
+            with open(_graph_file(), "wb") as f:
+                f.write(raw)
 
     # ── mutation ──────────────────────────────────────────────────────────────
 
@@ -225,6 +271,10 @@ class KnowledgeGraph:
 
         nodes = []
         for n, d in ego.nodes(data=True):
+            # Skip builtin names — they add noise, not signal, to neighbourhoods
+            bare = n.split("::")[-1]
+            if d.get("type") == "CONCEPT" and bare in PYTHON_BUILTINS:
+                continue
             entry = dict(d)
             entry["node_id"] = n
             nodes.append(entry)

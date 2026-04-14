@@ -51,6 +51,10 @@ dependencies = [
     "python-dotenv>=1.0",
     # BM25 keyword retrieval (episodic search)
     "rank-bm25>=0.2.2",
+    # cross-process file locking (concurrent agent writes)
+    "filelock>=3.12",
+    # token counting — hard dependency, no silent fallback
+    "tiktoken>=0.7",
 ]
 
 [project.urls]
@@ -81,6 +85,7 @@ cli = [
     "rich>=13.7",
     "prompt_toolkit>=3.0",
     "tomli-w>=1.0",
+    "pyfiglet>=1.0",
 ]
 dev = [
     "pytest>=8.0",

@@ -10,28 +10,45 @@ CogniRepo is the **local cognitive infrastructure layer** wired into this projec
 It gives you semantic memory, AST code indexing, a knowledge graph, and episodic history — all
 accessible via MCP tools without consuming tokens for repeated context retrieval.
 
-## MCP Tools Available
+## CogniRepo Tool Routing (follow strictly)
 
-Use these tools **before and after** answering complex questions:
+| When | Action |
+|------|--------|
+| BEFORE reading any file >100 lines | call `context_pack(query)` first |
+| BEFORE grepping for a function | call `lookup_symbol(name)` first |
+| BEFORE grepping for callers | call `who_calls(fn_name)` first — if empty → then grep |
+| BEFORE asking about architecture | call `retrieve_learnings("architecture overview")` |
+| AFTER every non-trivial decision | run `store_memory("decision: [what and why]")` |
+| AFTER finding a bug or quirk | run `store_memory("quirk: [what and where]")` |
+| NEVER read multiple files manually | when `context_pack` covers the query |
+
+**Fallback rules:**
+- If `context_pack` returns `status: "no_confident_match"` → fall back to grep/Read
+- If `who_calls` returns `found_via: "dynamic_dispatch_fallback"` → treat as medium confidence, verify with one Read call
+
+## MCP Tools Available
 
 | Tool | Description | When to use |
 |------|-------------|-------------|
-| `retrieve_memory(query, top_k=5)` | Semantic similarity search over stored memories | Before answering — pull relevant past context |
-| `search_docs(query)` | Full-text search in all `.md` files with snippets | Documentation lookups, finding specs |
-| `lookup_symbol(name)` | Find where a function/class is defined (file + line) | Before reading code — locate symbols fast |
-| `who_calls(function_name)` | Trace callers of a function in the call graph | Impact analysis, refactoring |
+| `context_pack(query)` | Token-efficient code context (code-first, no README noise) | FIRST call before any file read |
+| `lookup_symbol(name)` | O(1) symbol lookup — file + line | Before reading code |
+| `who_calls(function_name)` | Trace callers + dynamic dispatch fallback | Impact analysis, refactoring |
+| `retrieve_memory(query, top_k=5)` | Semantic similarity search over stored memories | Before answering — pull past context |
+| `retrieve_learnings(query)` | Structured learnings: decisions, bugs, quirks | Architecture questions |
+| `search_docs(query)` | Full-text search in all `.md` files with snippets | Documentation lookups |
 | `store_memory(text, source="")` | Persist a memory to the FAISS index | After solving bugs, recording decisions |
 | `log_episode(event, metadata={})` | Record a significant event to episodic log | Track important milestones |
-| `subgraph(entity, depth=1)` | Local knowledge graph neighbourhood | Understand relationships between entities |
-| `graph_stats()` | Node/edge count and health of knowledge graph | Check if graph has data before querying |
-| `episodic_search(query, limit=10)` | Keyword search in event history | Find past decisions or debug sessions |
+| `subgraph(entity, depth=1)` | Local knowledge graph neighbourhood | Understand relationships |
+| `graph_stats()` | Node/edge count and graph health | Check if graph has data |
+| `episodic_search(query, limit=10)` | Keyword search in event history | Find past decisions |
 
 ## Recommended Workflow
 
 ### On Complex Code Questions
-1. `retrieve_memory("{question keyword}")` → pull relevant past context
-2. `lookup_symbol("ClassName or function_name")` → find source location
-3. Answer based on combined context
+1. `context_pack("{question}")` → packed code + memory context, called **before** any file read
+2. `retrieve_memory("{question keyword}")` → pull relevant past context
+3. `lookup_symbol("ClassName or function_name")` → find source location
+4. Answer based on combined context
 
 ### After Solving a Bug
 ```
@@ -64,3 +81,5 @@ Never call tools expecting cross-project context.
 - Index this repo periodically: `cognirepo index-repo .`
 - Prune stale memories: `cognirepo prune`
 - Check health: `cognirepo doctor`
+- Seed from git history: `cognirepo seed --from-git`
+- Session bootstrap: `cognirepo prime`

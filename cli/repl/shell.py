@@ -131,9 +131,16 @@ def run_repl() -> None:
     ui = make_ui()
 
     # ── imports deferred to avoid startup cost ────────────────────────────────
-    from orchestrator.classifier import classify  # pylint: disable=import-outside-toplevel
-    from orchestrator.context_builder import build as build_context  # pylint: disable=import-outside-toplevel
-    from orchestrator.router import try_local_resolve, stream_route  # pylint: disable=import-outside-toplevel
+    try:
+        from orchestrator.classifier import classify  # pylint: disable=import-outside-toplevel
+        from orchestrator.context_builder import build as build_context  # pylint: disable=import-outside-toplevel
+        from orchestrator.router import try_local_resolve, stream_route  # pylint: disable=import-outside-toplevel
+    except Exception as exc:  # pylint: disable=broad-except
+        ui.error_panel(
+            "Failed to load orchestrator — run `cognirepo init` first.",
+            detail=str(exc),
+        )
+        return
 
     project_name, memory_count, graph_nodes = _get_project_stats()
 
@@ -159,14 +166,14 @@ def run_repl() -> None:
     except Exception:  # pylint: disable=broad-except
         pass
 
-    ui.print(f"╔═ CogniRepo v{VERSION} ══════════════════════════════════════╗")
-    ui.print(f"  Project : {project_name}")
-    ui.print(f"  Index   : {memory_count} memories · {graph_nodes} graph nodes")
-    ui.print(f"  Tiers   : {_tier_summary}")
-    ui.print(f"  API keys: {', '.join(_keys_present) if _keys_present else '⚠ none set — QUICK tier only'}")
-    ui.print(f"  Agents  : {'enabled (gRPC)' if _multi_agent else 'disabled  (set COGNIREPO_MULTI_AGENT_ENABLED=true)'}")
-    ui.print("  Help    : /help · /status · /model · /exit or Ctrl+D")
-    ui.print("")
+    ui.banner(
+        project_name=project_name,
+        memory_count=memory_count,
+        graph_nodes=graph_nodes,
+        tier_summary=_tier_summary,
+        keys_present=_keys_present,
+        multi_agent=_multi_agent,
+    )
 
     # ── warm up the embedded docs index (background, never blocks startup) ────
     try:
@@ -249,7 +256,11 @@ def run_repl() -> None:
             continue
 
         # ── classify ───────────────────────────────────────────────────────────
-        clf = classify(query, force_model=state.get("force_model"))
+        try:
+            clf = classify(query, force_model=state.get("force_model"))
+        except Exception as exc:  # pylint: disable=broad-except
+            ui.error_panel("Query classification failed.", detail=str(exc))
+            continue
 
         # ── QUICK/FAST: try local resolver ────────────────────────────────────
         if clf.tier in ("QUICK", "STANDARD") and not state.get("force_model"):
@@ -272,6 +283,7 @@ def run_repl() -> None:
 
         # ── stream from model ──────────────────────────────────────────────────
         ui.tier_label(clf.tier, clf.model)
+        response_text = ""
         try:
             response_text = ui.stream_chunks(
                 stream_route(
@@ -282,6 +294,12 @@ def run_repl() -> None:
             )
         except KeyboardInterrupt:
             ui.print("")
+            continue
+        except Exception as exc:  # pylint: disable=broad-except
+            ui.error_panel(
+                "Model call failed — check your API key or network.",
+                detail=str(exc),
+            )
             continue
 
         # ── render sub-agent panel after primary response ─────────────────────

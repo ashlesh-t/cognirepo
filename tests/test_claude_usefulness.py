@@ -49,8 +49,21 @@ def reset_cwd_and_path():
     _paths._OVERRIDE_DIR = _orig_override
 
 
+_tiktoken_missing = pytest.importorskip.__module__  # noqa: F841
+try:
+    import tiktoken as _tiktoken  # noqa: F401
+    _TIKTOKEN_AVAILABLE = True
+except ImportError:
+    _TIKTOKEN_AVAILABLE = False
+
+_skip_no_tiktoken = pytest.mark.skipif(
+    not _TIKTOKEN_AVAILABLE, reason="tiktoken not installed"
+)
+
+
 # ── 1. Token reduction ────────────────────────────────────────────────────────
 
+@_skip_no_tiktoken
 class TestTokenReduction:
     """context_pack must use fewer tokens than reading source files directly."""
 
@@ -218,6 +231,7 @@ class TestMemoryRecall:
 
 # ── 5. Answer grounding (context_pack quality) ───────────────────────────────
 
+@_skip_no_tiktoken
 class TestAnswerGrounding:
     """context_pack must return sections with actual code/memory content."""
 

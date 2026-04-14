@@ -17,10 +17,43 @@ from retrieval.hybrid import hybrid_retrieve
 from api.metrics import MEMORY_OPS_TOTAL
 
 
-def retrieve_memory(query: str, top_k: int = 5) -> list:
+def _dedup(results: list) -> list:
+    """
+    Remove entries that share the same file:line fingerprint as an earlier
+    result.  This prevents retrieve_memory from echoing the same symbol
+    pointer that semantic_search_code already returned.
+    """
+    seen: set[str] = set()
+    deduped = []
+    for entry in results:
+        text = entry.get("text", "")
+        # Extract "path:lineno" reference when the text follows the AST format
+        # "FUNCTION foo in src/bar.py:42 — …"
+        ref = None
+        if " in " in text:
+            try:
+                ref = text.split(" in ", 1)[1].split(" — ")[0].strip()
+            except IndexError:
+                pass
+        key = ref if ref else text[:120]
+        if key not in seen:
+            seen.add(key)
+            deduped.append(entry)
+    return deduped
+
+
+def retrieve_memory(query: str, top_k: int = 5, structured: bool = False) -> list | dict:
     """
     Search for memories using hybrid retrieval.
-    Returns a list of result dicts, each containing:
+
+    When structured=True, returns a structured dict:
+    {
+        "code_hits": [{"symbol", "file", "line", "score"}, ...],
+        "doc_hits": [{"source", "section", "score"}, ...],
+        "confidence": "high" | "medium" | "low"
+    }
+
+    When structured=False (default), returns flat list for backward compatibility:
       text, importance, source, final_score,
       vector_score, graph_score, behaviour_score
 
@@ -29,11 +62,83 @@ def retrieve_memory(query: str, top_k: int = 5) -> list:
     """
     try:
         results = hybrid_retrieve(query, top_k)
+        results = _dedup(results)
         MEMORY_OPS_TOTAL.labels(op="retrieve", result="ok").inc()
+
+        if structured:
+            return _structure_results(results)
         return results
     except Exception:
         MEMORY_OPS_TOTAL.labels(op="retrieve", result="error").inc()
         raise
+
+
+def _structure_results(results: list) -> dict:
+    """
+    Split flat hybrid results into code_hits + doc_hits buckets.
+    Agents use code_hits immediately; doc_hits only when code hits insufficient.
+    """
+    code_hits = []
+    doc_hits = []
+
+    for r in results:
+        text = r.get("text", "")
+        score = r.get("final_score", r.get("importance", 0.0))
+        source = r.get("source", "")
+
+        if source == "ast" or (source == "semantic" and " in " in text and ":" in text):
+            # AST hit: extract symbol + file:line
+            symbol = ""
+            file_path = ""
+            line = 0
+            if " in " in text:
+                try:
+                    parts = text.split(" in ", 1)
+                    sym_part = parts[0].strip().split()
+                    symbol = sym_part[-1] if sym_part else text[:40]
+                    loc = parts[1].split(" — ")[0].strip()
+                    if ":" in loc:
+                        file_path, line_s = loc.rsplit(":", 1)
+                        line = int(line_s)
+                    else:
+                        file_path = loc
+                except (ValueError, IndexError):
+                    symbol = text[:40]
+            code_hits.append({
+                "symbol": symbol or text[:40],
+                "file": file_path,
+                "line": line,
+                "score": round(float(score), 4),
+                "text": text,
+            })
+        else:
+            # Doc/memory hit
+            section = ""
+            if "—" in text:
+                section = text.split("—", 1)[1].strip()[:100]
+            doc_hits.append({
+                "source": source or "memory",
+                "section": section or text[:80],
+                "score": round(float(score), 4),
+                "text": text,
+            })
+
+    # Determine confidence
+    best_code = max((h["score"] for h in code_hits), default=0.0)
+    best_doc = max((h["score"] for h in doc_hits), default=0.0)
+    best = max(best_code, best_doc)
+    if best >= 0.60:
+        confidence = "high"
+    elif best >= 0.35:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    return {
+        "code_hits": code_hits,
+        "doc_hits": doc_hits,
+        "confidence": confidence,
+    }
 
 
 if __name__ == "__main__":

@@ -161,6 +161,7 @@ class BackgroundScheduler:
 # ── module-level auto-prune scheduler ────────────────────────────────────────
 
 _AUTO_PRUNE_SCHEDULER: BackgroundScheduler | None = None
+_CLEANUP_SCHEDULER: BackgroundScheduler | None = None
 
 
 def _run_auto_prune() -> None:
@@ -170,12 +171,19 @@ def _run_auto_prune() -> None:
     logger.info("[auto-prune] result: %s", result)
 
 
+def _run_cleanup_suppressed() -> None:
+    """Thin wrapper that drains the suppression cleanup queue."""
+    from cron.prune_memory import cleanup_suppressed  # pylint: disable=import-outside-toplevel
+    result = cleanup_suppressed()
+    logger.info("[cleanup-suppressed] result: %s", result)
+
+
 def start_auto_prune_scheduler() -> BackgroundScheduler | None:
     """
-    Start the auto-prune background scheduler if config enables it.
-    Returns the scheduler, or None if disabled or already started.
+    Start the auto-prune and suppression-cleanup background schedulers if
+    config enables them.  Returns the prune scheduler, or None if disabled.
     """
-    global _AUTO_PRUNE_SCHEDULER  # pylint: disable=global-statement
+    global _AUTO_PRUNE_SCHEDULER, _CLEANUP_SCHEDULER  # pylint: disable=global-statement
 
     if _AUTO_PRUNE_SCHEDULER is not None:
         return _AUTO_PRUNE_SCHEDULER  # already running
@@ -185,13 +193,27 @@ def start_auto_prune_scheduler() -> BackgroundScheduler | None:
         return None
 
     hours = _schedule_interval_hours()
+    interval_sec = hours * 3600
+
     scheduler = BackgroundScheduler(
         fn=_run_auto_prune,
-        interval_sec=hours * 3600,
+        interval_sec=interval_sec,
         name="auto-prune",
     )
     scheduler.start()
     _AUTO_PRUNE_SCHEDULER = scheduler
+
+    # Cleanup suppressed entries runs on the same interval as auto-prune
+    if _CLEANUP_SCHEDULER is None:
+        cleanup_sched = BackgroundScheduler(
+            fn=_run_cleanup_suppressed,
+            interval_sec=interval_sec,
+            name="cleanup-suppressed",
+        )
+        cleanup_sched.start()
+        _CLEANUP_SCHEDULER = cleanup_sched
+        logger.info("[Scheduler] cleanup-suppressed started, interval=%sh", hours)
+
     return scheduler
 
 

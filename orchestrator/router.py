@@ -91,6 +91,27 @@ _GRPC_PROCESS: subprocess.Popen | None = None  # auto-started gRPC subprocess
 _GRPC_AUTOSTART_DONE: bool = False   # autostart attempted this session?
 
 
+def _tier_retrieval_params(tier: str, caller_top_k: int, caller_episodes: int) -> tuple[int, int]:
+    """
+    Return (top_k, episode_limit) for the given tier.
+    Overrides caller-supplied values to match the tier's retrieval depth:
+
+      QUICK:    semantic_search_code only — skip graph, no episodes
+      STANDARD: semantic + learnings — light episodes
+      COMPLEX:  full hybrid + learnings — moderate episodes
+      EXPERT:   full hybrid + graph + session prime — maximum depth
+    """
+    TIER_PARAMS = {
+        "QUICK":    (3,  0),
+        "STANDARD": (5,  3),
+        "COMPLEX":  (10, 5),
+        "EXPERT":   (20, 10),
+    }
+    defaults = TIER_PARAMS.get(tier, (caller_top_k, caller_episodes))
+    # If the caller explicitly passed higher values, respect them
+    return (max(defaults[0], caller_top_k), max(defaults[1], caller_episodes))
+
+
 def _multi_agent_enabled() -> bool:
     return os.environ.get("COGNIREPO_MULTI_AGENT_ENABLED", "false").lower() in ("1", "true", "yes")
 
@@ -221,8 +242,10 @@ def route(
                 response=local_resp, classifier=local_clf, bundle=_fast_bundle,
             )
 
-    # ── 2. build context (tier controls token budget) ────────────────────────
-    bundle = build_context(query, top_k=top_k, episode_limit=episode_limit, tier=clf.tier)
+    # ── 2. build context (tier controls token budget AND retrieval depth) ──────
+    # Tier-aware retrieval depth: QUICK uses fast-path only, EXPERT uses full stack
+    tier_top_k, tier_episodes = _tier_retrieval_params(clf.tier, top_k, episode_limit)
+    bundle = build_context(query, top_k=tier_top_k, episode_limit=tier_episodes, tier=clf.tier)
 
     # ── 3. multi-agent sub-queries (DEEP only, off by default) ───────────────
     sub_queries: list[dict] = []
@@ -755,7 +778,8 @@ def stream_route(
             yield local_answer
             return
 
-    bundle = build_context(query, top_k=top_k, episode_limit=episode_limit, tier=clf.tier)
+    tier_top_k, tier_episodes = _tier_retrieval_params(clf.tier, top_k, episode_limit)
+    bundle = build_context(query, top_k=tier_top_k, episode_limit=tier_episodes, tier=clf.tier)
 
     full_text: list[str] = []
     usage: dict = {}

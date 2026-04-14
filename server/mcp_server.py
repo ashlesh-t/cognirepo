@@ -84,6 +84,79 @@ _idle.register_evict(evict_model)
 _idle.register_evict(_evict_singletons)
 
 
+# ── auto-store helpers ────────────────────────────────────────────────────────
+
+def _extract_auto_store_text(tool_name: str, result) -> str:
+    """
+    Extract a storable text summary from a tool result.
+    Returns empty string if the result has nothing worth storing.
+    """
+    try:
+        if tool_name == "context_pack" and isinstance(result, dict):
+            sections = result.get("sections", [])
+            parts = [
+                s.get("content", "")
+                for s in sections
+                if float(s.get("score", 0)) > 0.5 and s.get("content")
+            ]
+            return "\n\n".join(parts[:5])
+
+        if tool_name == "semantic_search_code" and isinstance(result, list):
+            parts = [
+                f"{r.get('type','FUNCTION')} {r.get('name','')} in {r.get('file','')}:{r.get('line','')}"
+                for r in result if r.get("name")
+            ]
+            return "\n".join(parts)
+
+        if tool_name == "search_docs" and isinstance(result, list):
+            parts = [r.get("snippet") or r.get("text") or "" for r in result if r]
+            return "\n\n".join(p for p in parts if p)
+
+        if tool_name == "who_calls" and isinstance(result, list):
+            if not result:
+                return ""
+            callers = [r.get("caller", "") for r in result if r.get("caller")]
+            return f"callers: {', '.join(callers[:20])}"
+
+        if tool_name == "subgraph" and isinstance(result, dict):
+            nodes = result.get("nodes", [])
+            if not nodes:
+                return ""
+            node_strs = [f"{n.get('type','?')}:{n.get('node_id','')}" for n in nodes[:20]]
+            return "subgraph nodes: " + ", ".join(node_strs)
+
+        if tool_name == "dependency_graph" and isinstance(result, dict):
+            parts = []
+            for key in ("imports", "imported_by", "dependencies"):
+                items = result.get(key, [])
+                if items:
+                    parts.append(f"{key}: {', '.join(str(i) for i in items[:15])}")
+            return "\n".join(parts)
+
+        if tool_name == "explain_change" and isinstance(result, dict):
+            return result.get("explanation") or result.get("summary") or str(result)
+
+    except Exception:  # pylint: disable=broad-except
+        pass
+    return ""
+
+
+def _auto_store_hook(tool_name: str, result) -> None:
+    """
+    Best-effort auto-store for high-value tool results.
+    Runs after the tool returns; never raises; never blocks the caller.
+    """
+    try:
+        text = _extract_auto_store_text(tool_name, result)
+        if not text:
+            return
+        from memory.auto_store import AutoStore  # pylint: disable=import-outside-toplevel
+        importance = AutoStore.importance_for(tool_name, result)
+        AutoStore().store_if_novel(text, source_tool=tool_name, importance=importance)
+    except Exception:  # pylint: disable=broad-except
+        pass  # auto-store is always best-effort
+
+
 _EMPTY_GRAPH_WARNING = {
     "warning": "Graph is empty. Run 'cognirepo index-repo .' first.",
     "results": [],
@@ -169,7 +242,9 @@ def retrieve_memory(query: str, top_k: int = 5) -> list:
 @mcp.tool()
 def search_docs(query: str) -> list:
     """Search all markdown documentation files for the given query string."""
-    return _search_docs(query)
+    result = _search_docs(query)
+    _auto_store_hook("search_docs", result)
+    return result
 
 
 @mcp.tool()
@@ -293,15 +368,75 @@ def lookup_symbol(name: str) -> dict:
     return result
 
 
+def _who_calls_dynamic_fallback(function_name: str) -> list[dict]:
+    """
+    String-literal grep fallback for dynamic dispatch patterns.
+    Finds function_name as a string argument to add_job(), connect(), app.route(), etc.
+    Returns hits labelled found_via=dynamic_dispatch_fallback.
+    """
+    import subprocess  # pylint: disable=import-outside-toplevel
+    import re as _re  # pylint: disable=import-outside-toplevel
+    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+
+    repo_root = os.environ.get("COGNIREPO_ROOT", os.getcwd())
+    results = []
+    try:
+        # Search for function_name as a string argument in source files
+        pattern = rf'["\']?{_re.escape(function_name)}["\']?\s*[,)]'
+        proc = subprocess.run(  # nosec B603
+            ["grep", "-rn", "--include=*.py", "--include=*.js", "--include=*.ts",
+             function_name, repo_root],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in proc.stdout.splitlines():
+            parts = line.split(":", 2)
+            if len(parts) < 3:
+                continue
+            fpath, lineno_s, code = parts
+            # Only include lines that look like dynamic registration (not definitions)
+            if (f"def {function_name}" in code or f"class {function_name}" in code):
+                continue
+            # Check for string argument or scheduler/signal patterns
+            if (function_name in code and
+                    (f'"{function_name}"' in code or f"'{function_name}'" in code or
+                     any(kw in code for kw in ["add_job", "connect", "route", "task",
+                                               "signal", "register", "handler", "callback"]))):
+                try:
+                    rel_path = os.path.relpath(fpath, repo_root)
+                except ValueError:
+                    rel_path = fpath
+                results.append({
+                    "caller": f"dynamic_dispatch::{rel_path}:{lineno_s}",
+                    "file": rel_path,
+                    "line": int(lineno_s),
+                    "code_snippet": code.strip()[:120],
+                    "found_via": "dynamic_dispatch_fallback",
+                })
+    except Exception:  # pylint: disable=broad-except
+        pass
+    return results
+
+
 @mcp.tool()
 def who_calls(function_name: str) -> dict:
-    """Return every caller of a function across the indexed repo."""
+    """
+    Return every caller of a function across the indexed repo.
+
+    First searches the call graph (AST-indexed edges).
+    If empty, falls back to string-literal grep for dynamic dispatch patterns
+    (APScheduler add_job, Django signals, Flask routes, Celery tasks, etc.).
+    Dynamic hits are labelled with found_via=dynamic_dispatch_fallback.
+    """
     if _graph_is_empty():
         return _EMPTY_GRAPH_WARNING
     from graph.knowledge_graph import EdgeType  # pylint: disable=import-outside-toplevel
     graph = _get_graph()
     callee_node = f"symbol::{function_name}"
     if not graph.node_exists(callee_node):
+        # Try dynamic dispatch fallback immediately — graph has no node at all
+        fallback = _who_calls_dynamic_fallback(function_name)
+        if fallback:
+            return fallback
         return []
     result = []
     for caller in graph.G.predecessors(callee_node):
@@ -313,6 +448,12 @@ def who_calls(function_name: str) -> dict:
                 "file": node_data.get("file", ""),
                 "line": node_data.get("line", -1),
             })
+    if not result:
+        # Graph has node but no callers — try dynamic dispatch fallback
+        fallback = _who_calls_dynamic_fallback(function_name)
+        if fallback:
+            result = fallback
+    _auto_store_hook("who_calls", result)
     return result
 
 
@@ -325,7 +466,9 @@ def subgraph(entity: str, depth: int = 2) -> dict:
     candidates = [entity, f"symbol::{entity}", f"concept::{entity.lower()}"]
     for candidate in candidates:
         if graph.node_exists(candidate):
-            return graph.subgraph_around(candidate, radius=depth)
+            result = graph.subgraph_around(candidate, radius=depth)
+            _auto_store_hook("subgraph", result)
+            return result
     return {"nodes": [], "edges": []}
 
 
@@ -340,8 +483,10 @@ def graph_stats() -> dict:
     """Return a health summary of the current graph state."""
     graph = _get_graph()
     stats = graph.stats()
+    from graph.knowledge_graph import PYTHON_BUILTINS  # pylint: disable=import-outside-toplevel
     concept_nodes = [
-        n for n, d in graph.G.nodes(data=True) if d.get("type") == "CONCEPT"
+        n for n, d in graph.G.nodes(data=True)
+        if d.get("type") == "CONCEPT" and n.split("::")[-1] not in PYTHON_BUILTINS
     ]
     top_concepts = sorted(
         concept_nodes,
@@ -372,7 +517,9 @@ def semantic_search_code(
     Semantic vector search over indexed code symbols only (no episodic memory
     mixed in).  Optionally filter by language: "python", "typescript", "go", etc.
     """
-    return _traced("semantic_search_code", _semantic_search_code, query=query, top_k=top_k, language=language)
+    result = _traced("semantic_search_code", _semantic_search_code, query=query, top_k=top_k, language=language)
+    _auto_store_hook("semantic_search_code", result)
+    return result
 
 
 @mcp.tool()
@@ -386,7 +533,9 @@ def dependency_graph(
     direction: "imports" | "imported_by" | "both".
     depth: transitive traversal depth (1 = direct only).
     """
-    return _dependency_graph(module=module, direction=direction, depth=depth)
+    result = _dependency_graph(module=module, direction=direction, depth=depth)
+    _auto_store_hook("dependency_graph", result)
+    return result
 
 
 @mcp.tool()
@@ -399,7 +548,9 @@ def explain_change(
     Explain what changed in a file or function recently by cross-referencing
     git history with episodic memory events mentioning the same target.
     """
-    return _explain_change(target=target, since=since, max_commits=max_commits)
+    result = _explain_change(target=target, since=since, max_commits=max_commits)
+    _auto_store_hook("explain_change", result)
+    return result
 
 
 @mcp.tool()
@@ -415,7 +566,7 @@ def context_pack(
     block ready for injection into the next prompt.  Call this BEFORE reading
     any source file to avoid wasting tokens on raw file reads.
     """
-    return _traced(
+    result = _traced(
         "context_pack",
         _context_pack,
         query=query,
@@ -424,6 +575,8 @@ def context_pack(
         include_symbols=include_symbols,
         window_lines=window_lines,
     )
+    _auto_store_hook("context_pack", result)
+    return result
 
 
 def _build_manifest() -> dict:

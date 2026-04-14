@@ -9,7 +9,10 @@ tests/test_context_pack.py — unit tests for the context_pack tool.
 """
 from __future__ import annotations
 
+import pytest
 from unittest.mock import patch
+
+_tiktoken_available = pytest.importorskip("tiktoken", reason="tiktoken not installed")
 
 
 class TestContextPack:

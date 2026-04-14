@@ -9,23 +9,43 @@
 CogniRepo provides local semantic memory, AST code indexing, and knowledge graph capabilities
 as an MCP server. Use its tools to retrieve project context without repeated token overhead.
 
+Note: CogniRepo MCP tools are registered. Use them. Do not default to shell commands
+when CogniRepo tools cover the query.
+
+## CogniRepo Tool Routing (Gemini — follow strictly)
+
+| When | Action |
+|------|--------|
+| BEFORE reading any file >100 lines | call `context_pack(query)` first |
+| BEFORE grepping for a function | call `lookup_symbol(name)` first |
+| BEFORE grepping for callers | call `who_calls(fn_name)` first — if empty → then grep |
+| BEFORE asking about architecture | call `retrieve_learnings("architecture overview")` |
+| AFTER every non-trivial decision | run `store_memory("decision: [what and why]")` |
+| AFTER finding a bug or quirk | run `store_memory("quirk: [what and where]")` |
+
+**Fallback rules:**
+- If `context_pack` returns `status: "no_confident_match"` → fall back to grep/Read
+- If `who_calls` returns `found_via: "dynamic_dispatch_fallback"` → treat as medium confidence
+
 ## MCP Tools Available
 
-| Tool | Description |
-|------|-------------|
-| `retrieve_memory(query)` | Semantic search over stored memories |
-| `search_docs(query)` | Full-text search in `.md` files with context snippets |
-| `lookup_symbol(name)` | Locate a symbol (function/class) in the codebase |
-| `who_calls(function_name)` | Find all callers of a function |
-| `store_memory(text)` | Save a memory for future retrieval |
-| `log_episode(event)` | Record an event to episodic history |
-| `graph_stats()` | Check knowledge graph health |
-| `episodic_search(query)` | Search past events and decisions |
+| Tool | Description | When to use |
+|------|-------------|-------------|
+| `context_pack(query)` | Token-efficient code context (code-first) | FIRST call before any file read |
+| `lookup_symbol(name)` | O(1) symbol lookup — file + line | Before reading code |
+| `who_calls(function_name)` | Trace callers + dynamic dispatch fallback | Impact analysis |
+| `retrieve_memory(query)` | Semantic search over stored memories | Before answering |
+| `retrieve_learnings(query)` | Structured learnings: decisions, bugs | Architecture questions |
+| `search_docs(query)` | Full-text search in `.md` files | Documentation lookups |
+| `store_memory(text)` | Save a memory for future retrieval | After solving bugs |
+| `log_episode(event)` | Record an event to episodic history | Track milestones |
+| `graph_stats()` | Check knowledge graph health | Before graph queries |
+| `episodic_search(query)` | Search past events and decisions | Find past decisions |
 
 ## Recommended Workflow
 
 Before answering code questions:
-1. Call `retrieve_memory` with the query topic
+1. Call `context_pack` with the query — gets packed code context, no README noise
 2. Call `lookup_symbol` for any specific function/class mentioned
 3. Combine retrieved context with your response
 
@@ -37,3 +57,4 @@ After solving complex bugs or making important decisions:
 All data is isolated to `{project_path}/.cognirepo/` — not shared with other projects.
 
 Run `cognirepo doctor` to verify the setup is healthy.
+Run `cognirepo prime` for session bootstrap context.

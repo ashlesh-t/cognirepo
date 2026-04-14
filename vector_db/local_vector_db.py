@@ -11,11 +11,17 @@ Local vector database module using FAISS for storing and searching semantic embe
 
 import os
 import json
+from datetime import datetime, timezone
 # pylint: disable=import-error
 import faiss
 import numpy as np
 
 from config.paths import get_path
+from config.lock import store_lock
+
+
+def _now_iso() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
 
 def _index_file() -> str:
     return get_path("vector_db/semantic.index")
@@ -33,9 +39,25 @@ class LocalVectorDB:
         """
         Initializes the LocalVectorDB with the specified dimensionality.
         """
+        import logging  # pylint: disable=import-outside-toplevel
         self.dim = dim
         if os.path.exists(_index_file()):
-            self.index = faiss.read_index(_index_file())
+            try:
+                self.index = faiss.read_index(_index_file())
+            except Exception as exc:  # pylint: disable=broad-except
+                logging.getLogger(__name__).warning(
+                    "semantic.index could not be loaded (%s). "
+                    "This may be a platform mismatch (e.g. x86 index on ARM) or "
+                    "a corrupted file. Starting with an empty index — re-run "
+                    "`cognirepo index-repo .` to rebuild.",
+                    exc,
+                )
+                stale = _index_file() + ".stale"
+                try:
+                    os.rename(_index_file(), stale)
+                except OSError:
+                    pass
+                self.index = faiss.IndexFlatL2(dim)
         else:
             self.index = faiss.IndexFlatL2(dim)
 
@@ -88,9 +110,13 @@ class LocalVectorDB:
     def save(self):
         """
         Saves the FAISS index and metadata to disk.
+        Acquires a cross-process file lock so concurrent MCP server writes
+        (e.g. Claude + Gemini both calling store_memory at the same time)
+        do not corrupt the FAISS binary or metadata JSON.
         """
-        faiss.write_index(self.index, _index_file())
-        self._save_meta()
+        with store_lock():
+            faiss.write_index(self.index, _index_file())
+            self._save_meta()
 
     def add(self, vector, text, importance, source: str = "memory"):
         """
@@ -121,6 +147,39 @@ class LocalVectorDB:
         self._save_meta()
         return True
 
+    def suppress_row(self, faiss_row: int, reason: str = "auto_superseded", similarity: float = 1.0) -> bool:
+        """
+        Auto-suppress a vector row — distinct from user-initiated deprecate_row().
+
+        Marks the entry as suppressed=True so it is excluded from all searches,
+        then enqueues it in CleanupQueue for deferred hard-deletion by the cron
+        cleanup job.  The FAISS index is not rebuilt immediately.
+
+        Returns True if the row was found and updated.
+        """
+        if faiss_row < 0 or faiss_row >= len(self.metadata):
+            return False
+        entry = self.metadata[faiss_row]
+        if entry.get("suppressed") or entry.get("deprecated"):
+            return False  # already suppressed/deprecated
+        entry["suppressed"] = True
+        entry["suppress_reason"] = reason
+        entry["suppressed_at"] = _now_iso()
+        self._save_meta()
+        # Enqueue for priority-queue cleanup
+        try:
+            from memory.cleanup_queue import CleanupQueue  # pylint: disable=import-outside-toplevel
+            CleanupQueue().push(
+                entry_id=faiss_row,
+                store="semantic",
+                importance=float(entry.get("importance", 0.5)),
+                suppressed_at=entry["suppressed_at"],
+                similarity_score=float(similarity),
+            )
+        except Exception:  # pylint: disable=broad-except
+            pass  # queue is best-effort
+        return True
+
     def search(self, vector, k=5, source: str | None = None):
         """
         Searches for the k most similar vectors to the given query vector.
@@ -140,7 +199,7 @@ class LocalVectorDB:
         for i in indices[0]:
             if i < len(self.metadata):
                 record = self.metadata[i]
-                if record.get("deprecated", False):
+                if record.get("deprecated", False) or record.get("suppressed", False):
                     continue
                 # entries without a "source" field are legacy memories
                 if source and record.get("source", "memory") != source:
@@ -169,7 +228,7 @@ class LocalVectorDB:
         for dist, i in zip(distances[0], indices[0]):
             if 0 <= i < len(self.metadata):
                 record = self.metadata[i]
-                if record.get("deprecated", False):
+                if record.get("deprecated", False) or record.get("suppressed", False):
                     continue
                 if source and record.get("source", "memory") != source:
                     continue
