@@ -155,8 +155,6 @@ def run_wizard() -> dict:
     Run the interactive init wizard. Returns a configuration dict with keys:
 
       project_name      str   human-readable project label
-      password          str   initial API password
-      port              int   local REST API port
       multi_model       bool  enable multi-model routing
       redis             bool  use Redis for session caching
       encrypt           bool  encrypt FAISS + episodic at rest
@@ -185,7 +183,7 @@ def run_wizard() -> dict:
 
     # ── 2. Multi-model routing ────────────────────────────────────────────────
     _section(2, STEPS, "Multi-model routing",
-             "QUICK/FAST → Grok, BALANCED → Gemini, DEEP → Claude by default.")
+             "QUICK → local, STANDARD → Haiku, COMPLEX → Sonnet, EXPERT → Opus.")
     cfg["multi_model"] = _ask_yn("Enable multi-model routing?", default=True)
 
     # ── 3. Redis caching ──────────────────────────────────────────────────────
@@ -268,11 +266,31 @@ def run_wizard() -> dict:
             "Register globally (available in all sessions)?", default=True
         )
 
-    # ── 7. REST API ───────────────────────────────────────────────────────────
-    _section(7, STEPS, "REST API settings",
-             "Local FastAPI server — needed only for --via-api mode or REST clients.")
-    cfg["port"] = int(_ask_text("API port", default="8000"))
-    cfg["password"] = _ask_text("API password", default="changeme")  # nosec B106
+    # ── 7. Organization membership ────────────────────────────────────────────
+    _section(7, STEPS, "Organization membership",
+             "Group related repositories to share context and findings.")
+    from config.orgs import list_orgs  # pylint: disable=import-outside-toplevel
+    orgs = list_orgs()
+    org_choices = ["None / Personal project"]
+    org_choices.extend(list(orgs.keys()))
+    org_choices.append("Create new organization...")
+
+    org_idx = _ask_choice(
+        "Join organization:",
+        org_choices,
+        default=0
+    )
+
+    if org_idx == 0:
+        cfg["org"] = None
+    elif org_idx == len(org_choices) - 1:
+        new_org = _ask_text("New organization name", default="")
+        if new_org:
+            cfg["org"] = new_org
+        else:
+            cfg["org"] = None
+    else:
+        cfg["org"] = org_choices[org_idx]
 
     # ── Confirmation summary ──────────────────────────────────────────────────
     # Inner width = 2 (pad) + 14 (label) + 2 (gap) + 29 (value) + 2 (pad) = 49
@@ -292,13 +310,13 @@ def run_wizard() -> dict:
     print(f"  ├{_sep}┤")
     rows = [
         ("Project",      cfg["project_name"]),
+        ("Organization", cfg["org"] or "none"),
         ("Multi-model",  "yes" if cfg["multi_model"] else "no"),
         ("Redis cache",  "yes" if cfg["redis"] else "no"),
         ("Encryption",   "yes" if cfg["encrypt"] else "no"),
         ("Languages",    "extended" if cfg["install_languages"] else "Python only"),
         ("MCP targets",  ", ".join(cfg["mcp_targets"]) or "none"),
         ("MCP scope",    "global" if cfg.get("mcp_global") else "project-only"),
-        ("API port",     str(cfg["port"])),
     ]
     for label, value in rows:
         print(f"  │  {label:<14}  {value:<29}  │")

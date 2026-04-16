@@ -22,15 +22,12 @@ dependencies = [
     "sentence-transformers==5.3.0",
     # MCP server
     "mcp[cli]==1.26.0",
-    # HTTP client (CLI --via-api)
-    "httpx==0.28.1",
     # graph + indexer
     "networkx>=3.3",
     "watchdog>=4.0",
     "tree-sitter>=0.23",
     # shared
     "pydantic==2.12.5",
-    "anyio==4.12.1",
     # model providers
     "anthropic>=0.50",
     "google-generativeai>=0.8",
@@ -90,7 +87,7 @@ cognirepo = "cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["_bm25*", "adapters*", "api*", "cli*", "config*", "cron*", "graph*", "indexer*", "memory*", "orchestrator*", "retrieval*", "rpc*", "security*", "server*", "tools*", "vector_db*"]
+include = ["_bm25*", "adapters*", "cli*", "config*", "cron*", "graph*", "indexer*", "memory*", "orchestrator*", "retrieval*", "security*", "server*", "tools*", "vector_db*"]
 exclude = ["venv*", "*.egg-info*"]
 
 [build-system]
@@ -117,7 +114,6 @@ omit = [
     "tests/*",
     "venv/*",
     ".venv/*",
-    "rpc/proto/*",
     "scripts/*",
     "deploy/*",
     "docs/*",

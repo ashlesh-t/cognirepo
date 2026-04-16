@@ -66,6 +66,10 @@ def get_global_path(subpath: str) -> str:
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     return full_path
 
+def get_orgs_path() -> str:
+    """Return the absolute path to the global organizations registry."""
+    return get_global_path("orgs.json")
+
 def get_cognirepo_dir() -> str:
     """
     Determine the base directory for .cognirepo storage.

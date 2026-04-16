@@ -234,121 +234,56 @@ def store_memory(text: str, source: str = "") -> dict:
 
 
 @mcp.tool()
-def retrieve_memory(query: str, top_k: int = 5) -> list:
-    """Retrieve the top-k memories most similar to the query."""
-    return _traced("retrieve_memory", _retrieve_memory, query, top_k)
+def retrieve_memory(query: str, top_k: int = 5, include_org: bool = False) -> list:
+    """
+    Retrieve the top-k memories most similar to the query.
+    If include_org=True, also queries sibling repositories in the same organization.
+    """
+    results = _traced("retrieve_memory", _retrieve_memory, query, top_k)
+    
+    if include_org:
+        from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+        router = CrossRepoRouter()
+        org_results = router.query_org_memories(query, top_k=top_k)
+        # Merge and re-sort
+        results.extend(org_results)
+        results.sort(key=lambda x: x.get("score", 1.0))
+        results = results[:top_k]
+        
+    return results
 
 
 @mcp.tool()
-def search_docs(query: str) -> list:
-    """Search all markdown documentation files for the given query string."""
-    result = _search_docs(query)
-    _auto_store_hook("search_docs", result)
-    return result
+def org_search(query: str, top_k: int = 5) -> list:
+    """
+    Search for code symbols and memories across all repositories in the organization.
+    Returns a list of results annotated with source repository.
+    """
+    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    router = CrossRepoRouter()
+    return router.query_org_memories(query, top_k=top_k)
 
 
 @mcp.tool()
-def log_episode(event: str, metadata: dict = None) -> dict:
-    """Append an episodic event with optional metadata to the event log."""
-    log_event(event, metadata or {})
-    intercept_after_episode(event, metadata=metadata or {})
-    return {"status": "logged", "event": event}
+def org_dependencies() -> dict:
+    """
+    Returns a list of all repositories in the same organization.
+    Future: will return inter-repo dependency graph.
+    """
+    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    router = CrossRepoRouter()
+    return {
+        "organization": router.org_name,
+        "repositories": router.get_sibling_repos() + [os.path.abspath(".")]
+    }
 
 
 @mcp.tool()
-def log_learning(
-    type: str,  # pylint: disable=redefined-builtin
-    text: str,
-    context_summary: str = "",
-    scope: str = "auto",
-) -> dict:
-    """
-    Explicitly record a learning (correction / prod_issue / decision).
-    type  : "correction" | "prod_issue" | "decision"
-    scope : "project" | "global" | "auto" (auto-detected from text)
-    """
-    store = get_learning_store()
-    metadata = {"context_summary": context_summary}
-    result = store.store_learning(type, text, metadata, scope=scope)
-    logger.info("mcp.log_learning", extra={"type": type, "scope": result.get("scope")})
-    return {"status": "stored", **result}
-
-
-@mcp.tool()
-def retrieve_learnings(
-    query: str,
-    top_k: int = 5,
-    types: list = None,
-    scopes: list = None,
-) -> list:
-    """
-    Retrieve learnings (corrections, prod issues, decisions) relevant to query.
-    types  : filter list e.g. ["correction", "prod_issue"]
-    scopes : ["project", "global"] (default: both)
-    """
-    store = get_learning_store()
-    return store.retrieve_learnings(
-        query,
-        top_k=top_k,
-        types=types or [],
-        scopes=scopes or ["project", "global"],
-    )
-
-
-@mcp.tool()
-def deprecate_learning(record_id: str) -> dict:
-    """
-    Soft-delete a learning by its ID (returned when it was stored).
-    Deprecated learnings are excluded from all future retrieve_learnings calls
-    but are never physically deleted so the audit trail is preserved.
-
-    Returns ``{"found": bool, "scope": "project"|"global"|null}``.
-    """
-    store = get_learning_store()
-    result = store.deprecate_learning(record_id)
-    logger.info("mcp.deprecate_learning", extra={"id": record_id, "found": result.get("found")})
-    return result
-
-
-@mcp.tool()
-def supersede_learning(
-    old_id: str,
-    new_text: str,
-    learning_type: str,
-    scope: str = "auto",
-) -> dict:
-    """
-    Replace an existing learning with updated content.
-
-    Deprecates the record identified by *old_id* and stores *new_text* as its
-    replacement (carrying a ``supersedes`` back-reference).  Use this whenever
-    a user corrects or updates a previously recorded decision, bug fix, or
-    preference — do NOT call ``store_memory`` again and leave both versions.
-
-    learning_type : "correction" | "prod_issue" | "decision"
-    scope         : "project" | "global" | "auto" (default — inferred from text)
-
-    Returns ``{"found_old": bool, "new_id": str, "scope": str}``.
-    """
-    store = get_learning_store()
-    result = store.supersede_learning(
-        old_id=old_id,
-        new_text=new_text,
-        learning_type=learning_type,
-        scope=scope,
-    )
-    logger.info(
-        "mcp.supersede_learning",
-        extra={"old_id": old_id, "new_id": result.get("new_id"), "scope": result.get("scope")},
-    )
-    return result
-
-
-@mcp.tool()
-def lookup_symbol(name: str) -> dict:
+def lookup_symbol(name: str, include_org: bool = False) -> list:
     """
     Return all locations where a symbol is defined or called,
     with file, line, and type.
+    If include_org=True, also searches sibling repositories in the same organization.
     """
     if _graph_is_empty():
         return _EMPTY_GRAPH_WARNING
@@ -364,7 +299,29 @@ def lookup_symbol(name: str) -> dict:
             if sym["name"] == name and sym["start_line"] == line:
                 sym_type = sym["type"]
                 break
-        result.append({"file": file_path, "line": line, "type": sym_type})
+        result.append({"file": file_path, "line": line, "type": sym_type, "repo": "local"})
+
+    if include_org:
+        from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+        from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+        from config.paths import set_cognirepo_dir, get_cognirepo_dir  # pylint: disable=import-outside-toplevel
+        
+        router = CrossRepoRouter()
+        original_dir = get_cognirepo_dir()
+        for repo in router.get_sibling_repos():
+            cognirepo_dir = os.path.join(repo, ".cognirepo")
+            if not os.path.isdir(cognirepo_dir): continue
+            try:
+                set_cognirepo_dir(cognirepo_dir)
+                sib_indexer = ASTIndexer()
+                sib_indexer.load()
+                sib_locs = sib_indexer.lookup_symbol(name)
+                for sl in sib_locs:
+                    sl["repo"] = os.path.basename(repo)
+                    result.append(sl)
+            except Exception: pass
+            finally: set_cognirepo_dir(original_dir)
+            
     return result
 
 
@@ -591,6 +548,34 @@ def explain_change(
 
 
 @mcp.tool()
+def architecture_overview(scope: str = "root") -> str:
+    """
+    Retrieve pre-computed architectural summaries.
+    scope: 'root' for repo summary, a directory path, or a file path.
+    """
+    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    summary_path = get_path("index/summaries.json")
+    if not os.path.exists(summary_path):
+        return "Summaries not found. Ask the user to run 'cognirepo summarize' first."
+    
+    with open(summary_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        
+    if scope == "root":
+        return data.get("repo", "No repository summary available.")
+    
+    # Try directory match
+    if scope in data.get("directories", {}):
+        return data["directories"][scope]
+    
+    # Try file match
+    if scope in data.get("files", {}):
+        return data["files"][scope]
+        
+    return f"No summary found for scope: {scope}"
+
+
+@mcp.tool()
 def context_pack(
     query: str,
     max_tokens: int = 2000,
@@ -651,8 +636,33 @@ def _build_manifest() -> dict:
                             "description": "Number of results",
                             "default": 5
                         },
+                        "include_org": {
+                            "type": "boolean",
+                            "description": "Search across all repos in the organization",
+                            "default": false
+                        },
                     },
                     "required": ["query"],
+                },
+            },
+            {
+                "name": "org_search",
+                "description": "Semantic search across all repositories in the organization.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                        "top_k": {"type": "integer", "default": 5},
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "org_dependencies",
+                "description": "List all repositories linked within the same local organization.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
                 },
             },
             {
@@ -697,6 +707,11 @@ def _build_manifest() -> dict:
                     "type": "object",
                     "properties": {
                         "name": {"type": "string", "description": "Symbol name to look up"},
+                        "include_org": {
+                            "type": "boolean",
+                            "description": "Search across sibling repos in the organization",
+                            "default": false
+                        },
                     },
                     "required": ["name"],
                 },
@@ -797,6 +812,20 @@ def _build_manifest() -> dict:
                         "max_commits": {"type": "integer", "default": 10},
                     },
                     "required": ["target"],
+                },
+            },
+            {
+                "name": "architecture_overview",
+                "description": "Retrieve pre-computed high-level architectural summaries.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "scope": {
+                            "type": "string",
+                            "description": "Scope: 'root' for repo, a directory path, or a file path.",
+                            "default": "root"
+                        },
+                    },
                 },
             },
             {

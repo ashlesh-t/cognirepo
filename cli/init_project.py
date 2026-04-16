@@ -15,7 +15,6 @@ Non-interactive mode (--no-index / scripting): skips wizard, uses CLI flags.
 import json
 import os
 import re
-import secrets
 import shutil
 import sys
 import uuid
@@ -27,15 +26,9 @@ try:
 except ImportError:
     _KEYRING_AVAILABLE = False
 
-import bcrypt as _bcrypt
-
-
 from config.paths import get_path
 
 _KEYCHAIN_SERVICE = "cognirepo"
-
-DEFAULT_PASSWORD = "changeme"
-DEFAULT_PORT = 8000
 
 # Blanket ignore — nothing under .cognirepo/ ever reaches git.
 GITIGNORE_CONTENT = "*\n!.gitignore\n"
@@ -52,21 +45,6 @@ _STD_PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "STD_PROMPTS")
 
 
 # ── internal helpers ──────────────────────────────────────────────────────────
-
-def _hash_password(password: str) -> str:
-    return _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
-
-
-def _store_secret(key: str, value: str) -> bool:
-    """Store *value* under *key* in the OS keychain. Returns True on success."""
-    if not _KEYRING_AVAILABLE:
-        return False
-    try:
-        keyring.set_password(_KEYCHAIN_SERVICE, key, value)
-        return True
-    except Exception:  # pylint: disable=broad-except
-        return False
-
 
 def _write_gitignore() -> None:
     """Write (or overwrite) .cognirepo/.gitignore with the blanket pattern."""
@@ -110,9 +88,8 @@ def _init_empty_stores() -> None:
 
 
 def _write_config(
-    password: str,
-    port: int,
     project_name: str = "",
+    org: str | None = None,
     encrypt: bool = False,
     multi_model: bool = True,
     redis: bool = False,
@@ -121,23 +98,14 @@ def _write_config(
     """
     Write config.json (new) or backfill missing keys (existing).
     Returns the project_id (new or existing).
-
-    Secrets (password_hash, jwt_secret) are stored in the OS keychain when
-    available; a fallback copy goes into config.json only when keyring is absent.
     """
     if not os.path.exists(get_path("config.json")):
         project_id = str(uuid.uuid4())
-        jwt_secret = secrets.token_hex(32)
-        pw_hash = _hash_password(password)
-
-        in_keychain = _store_secret(f"{project_id}.jwt_secret", jwt_secret)
-        in_keychain = _store_secret(f"{project_id}.password_hash", pw_hash) and in_keychain
 
         config: dict = {
             "project_id":   project_id,
             "project_name": project_name or os.path.basename(os.getcwd()),
-            "api_port":     port,
-            "api_url":      f"http://localhost:{port}",
+            "org":          org,
             "storage":      {"encrypt": encrypt},
             "retrieval_weights": {"vector": 0.5, "graph": 0.3, "behaviour": 0.2},
             "models":       DEFAULT_MODELS,
@@ -145,17 +113,10 @@ def _write_config(
             "redis": {"enabled": redis, "url": "redis://localhost:6379"},
             "autosave_context": autosave_context,
         }
-        if not in_keychain:
-            config["password_hash"] = pw_hash
 
         with open(get_path("config.json"), "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
         print(f"Created {get_path('config.json')}")
-        print(f"  api_url  : http://localhost:{port}")
-        if in_keychain:
-            print("  secrets  : stored in OS keychain (never written to disk)")
-        else:
-            print("  secrets  : stored in config.json (install keyring for keychain storage)")
         return project_id
 
     # ── existing config — backfill missing keys ───────────────────────────────
@@ -166,8 +127,6 @@ def _write_config(
     defaults: list[tuple] = [
         ("project_id",    str(uuid.uuid4())),
         ("project_name",  project_name or os.path.basename(os.getcwd())),
-        ("api_port",      port),
-        ("api_url",       f"http://localhost:{config.get('api_port', port)}"),
         ("retrieval_weights", {"vector": 0.5, "graph": 0.3, "behaviour": 0.2}),
         ("models",        DEFAULT_MODELS),
         ("autosave_context", True),
@@ -196,6 +155,10 @@ def _write_config(
     # Always apply user-specified autosave_context
     if config.get("autosave_context") != autosave_context:
         config["autosave_context"] = autosave_context
+        changed = True
+
+    if config.get("org") != org:
+        config["org"] = org
         changed = True
 
     if changed:
@@ -709,13 +672,12 @@ def _seed_learnings_from_docs(repo_root: str) -> int:
 # ── public API ────────────────────────────────────────────────────────────────
 
 def init_project(
-    password: str = DEFAULT_PASSWORD,
-    port: int = DEFAULT_PORT,
     no_index: bool = False,
     interactive: bool = True,
     non_interactive: bool = False,
     # wizard-supplied overrides (used when interactive=False or wizard ran)
     project_name: str = "",
+    org: str | None = None,
     encrypt: bool = False,
     multi_model: bool = True,
     redis: bool = False,
@@ -746,9 +708,8 @@ def init_project(
         try:
             from cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
             wizard_cfg = run_wizard()
-            password     = wizard_cfg.get("password", password)
-            port         = wizard_cfg.get("port", port)
             project_name = wizard_cfg.get("project_name", project_name)
+            org          = wizard_cfg.get("org", org)
             encrypt      = wizard_cfg.get("encrypt", encrypt)
             multi_model  = wizard_cfg.get("multi_model", multi_model)
             redis        = wizard_cfg.get("redis", redis)
@@ -776,15 +737,21 @@ def init_project(
     _scaffold_dirs()
     _init_empty_stores()
     _write_config(
-        password=password,
-        port=port,
         project_name=project_name,
+        org=org,
         encrypt=encrypt,
         multi_model=multi_model,
         redis=redis,
         autosave_context=autosave_context,
     )
     _write_gitignore()
+
+    # ── link to org ───────────────────────────────────────────────────────────
+    if org:
+        from config.orgs import create_org, link_repo_to_org  # pylint: disable=import-outside-toplevel
+        create_org(org)  # Ensure it exists
+        link_repo_to_org(os.getcwd(), org)
+        print(f"Linked repository to local organization: {org}")
 
     # ── set up MCP configs ────────────────────────────────────────────────────
     if mcp_targets:

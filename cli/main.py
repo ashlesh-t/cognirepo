@@ -37,15 +37,6 @@ from config.paths import get_path
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _load_api_url() -> str:
-    """Read api_url from .cognirepo/config.json, fall back to localhost:8000."""
-    try:
-        with open(get_path("config.json"), encoding="utf-8") as f:
-            cfg = json.load(f)
-        return cfg.get("api_url", "http://localhost:8000")
-    except (OSError, json.JSONDecodeError):
-        return "http://localhost:8000"
-
 
 def _print_results(results):
     if isinstance(results, list):
@@ -1378,7 +1369,6 @@ def _print_help() -> None:
     # ── Servers ───────────────────────────────────────────────────────────────
     _hdr("SERVERS")
     _row("serve",             "Start MCP stdio server (used by Claude Code)")
-    _row("wait-api",          "Poll until REST API is ready (for scripts)")
     _row("export-spec",       "Export OpenAI/Cursor tool specs to adapters/")
 
     # ── System ────────────────────────────────────────────────────────────────
@@ -1392,8 +1382,6 @@ def _print_help() -> None:
     # ── Global flags ──────────────────────────────────────────────────────────
     print(f"\n  {c(_B, 'GLOBAL FLAGS')}")
     print(f"  {'─' * W}")
-    _flag("--via-api",        "Route commands through REST API instead of in-process")
-    _flag("--api-url URL",    "Override REST API base URL")
     _flag("--verbose, -v",    "Verbose output (where supported)")
     _flag("-h, --help",       "Show this help screen")
 
@@ -1555,30 +1543,10 @@ def main():
         default=False,
         help="Show help and exit.",
     )
-    parser.add_argument(
-        "--via-api",
-        action="store_true",
-        default=False,
-        help="Route commands through the REST API instead of calling tools directly.",
-    )
-    parser.add_argument(
-        "--api-url",
-        default=None,
-        metavar="URL",
-        help=(
-            "Override REST API base URL "
-            "(default: from .cognirepo/config.json or http://localhost:8000)."
-        ),
-    )
-
     sub = parser.add_subparsers(dest="command")
 
     # init
     p_init = sub.add_parser("init", help="Scaffold .cognirepo/ and config")
-    p_init.add_argument("--password", default="changeme",  # nosec B105
-                        help="Initial API password (default: changeme)")
-    p_init.add_argument("--port", type=int, default=8000,
-                        help="API port to record in config (default: 8000)")
     p_init.add_argument(
         "--no-index",
         action="store_true",
@@ -1613,21 +1581,6 @@ def main():
             "Required when Claude has multiple projects open simultaneously "
             "so each connector sees only its own data."
         ),
-    )
-
-    # wait-api  — poll /ready until the REST server is accepting connections
-    p_wait = sub.add_parser(
-        "wait-api",
-        help="Wait until the local REST API is ready (poll /ready). "
-             "Use before curl /login to avoid JSONDecodeError.",
-    )
-    p_wait.add_argument(
-        "--timeout", type=int, default=30,
-        help="Maximum seconds to wait (default: 30).",
-    )
-    p_wait.add_argument(
-        "--interval", type=float, default=0.3,
-        help="Poll interval in seconds (default: 0.3).",
     )
 
     # store-memory
@@ -1842,6 +1795,12 @@ def main():
         help="Show per-directory symbol counts; warn on unindexed Python packages",
     )
 
+    # summarize — generate hierarchical architectural summaries (Level 1-3)
+    sub.add_parser(
+        "summarize",
+        help="Generate hierarchical architectural summaries (Level 1-3) via LLM",
+    )
+
     # doctor — environment health check
     p_doctor = sub.add_parser("doctor", help="Check CogniRepo installation health")
     p_doctor.add_argument(
@@ -1874,6 +1833,23 @@ def main():
 
     # status — show live signal weights and cold-start progress (P1-A)
     sub.add_parser("status", help="Show live retrieval signal weights and index health")
+
+    # org — local organization management (cross-repo context)
+    p_org = sub.add_parser("org", help="Manage local repository organizations (cross-repo context)")
+    org_sub = p_org.add_subparsers(dest="org_command")
+
+    p_org_create = org_sub.add_parser("create", help="Create a new local organization")
+    p_org_create.add_argument("name", help="Name of the organization")
+
+    p_org_list = org_sub.add_parser("list", help="List all local organizations and member repos")
+
+    p_org_link = org_sub.add_parser("link", help="Link a repository to an organization")
+    p_org_link.add_argument("org_name", help="Organization name")
+    p_org_link.add_argument("path", nargs="?", default=".", help="Repo path (default: current)")
+
+    p_org_unlink = org_sub.add_parser("unlink", help="Unlink a repository from an organization")
+    p_org_unlink.add_argument("org_name", help="Organization name")
+    p_org_unlink.add_argument("path", nargs="?", default=".", help="Repo path (default: current)")
 
     # setup-env — interactive API key wizard
     p_setup_env = sub.add_parser(
@@ -1963,34 +1939,11 @@ def main():
         run_metrics_server(host=args.host, port=args.port)
         sys.exit(0)
 
-    if args.command == "wait-api":
-        import urllib.request  # pylint: disable=import-outside-toplevel
-        api_url = args.api_url or _load_api_url()
-        ready_url = f"{api_url.rstrip('/')}/ready"
-        deadline = time.time() + args.timeout
-        sys.stdout.write(f"Waiting for API at {api_url} ")
-        sys.stdout.flush()
-        while time.time() < deadline:
-            try:
-                with urllib.request.urlopen(ready_url, timeout=1) as resp:  # nosec B310
-                    if resp.status == 200:
-                        print(" ready.")
-                        sys.exit(0)
-            except Exception:  # pylint: disable=broad-except
-                pass
-            sys.stdout.write(".")
-            sys.stdout.flush()
-            time.sleep(args.interval)
-        print(f"\nTimeout: API not ready after {args.timeout}s.", file=sys.stderr)
-        sys.exit(1)
-
     if args.command == "init":
         # interactive=True runs the wizard; --no-index or --non-interactive skips it
         non_interactive = getattr(args, "non_interactive", False)
         interactive = not args.no_index and not non_interactive and sys.stdin.isatty()
         summary, kg, indexer = init_project(
-            password=args.password,
-            port=args.port,
             no_index=args.no_index,
             interactive=interactive,
             non_interactive=non_interactive,
@@ -2230,6 +2183,15 @@ def main():
     if args.command == "verify-index":
         sys.exit(_cmd_verify_index())
 
+    if args.command == "summarize":
+        from indexer.summarizer import SummarizationEngine
+        engine = SummarizationEngine()
+        result = engine.run_full_summarization()
+        print("\n--- Repository Summary ---")
+        print(result["repo"])
+        print("\nSummaries saved to .cognirepo/index/summaries.json")
+        return
+
     if args.command == "coverage":
         sys.exit(_cmd_coverage())
 
@@ -2245,6 +2207,35 @@ def main():
 
     if args.command == "status":
         _cmd_status()
+        return
+
+    if args.command == "org":
+        from config.orgs import create_org, list_orgs, link_repo_to_org, unlink_repo_from_org
+        if args.org_command == "create":
+            if create_org(args.name):
+                print(f"Created organization: {args.name}")
+            else:
+                print(f"Organization '{args.name}' already exists.")
+        elif args.org_command == "list":
+            orgs = list_orgs()
+            if not orgs:
+                print("No organizations found. Create one with: cognirepo org create <name>")
+            else:
+                print("Local Organizations:")
+                for name, data in orgs.items():
+                    print(f"  {name}:")
+                    for repo in data.get("repos", []):
+                        print(f"    - {repo}")
+        elif args.org_command == "link":
+            if link_repo_to_org(args.path, args.org_name):
+                print(f"Linked {os.path.abspath(args.path)} to org '{args.org_name}'")
+            else:
+                print(f"Org '{args.org_name}' not found.")
+        elif args.org_command == "unlink":
+            if unlink_repo_from_org(args.path, args.org_name):
+                print(f"Unlinked {os.path.abspath(args.path)} from org '{args.org_name}'")
+            else:
+                print(f"Failed to unlink. Org '{args.org_name}' or repo path not found.")
         return
 
     if args.command == "watch":
@@ -2342,33 +2333,8 @@ def main():
             print(text)
         return
 
-    # ── routable commands: direct vs API ──────────────────────────────────
-    if args.via_api:
-        from cli.api_client import ApiClient
-        client = ApiClient(api_url=args.api_url)
-
-        if args.command == "store-memory":
-            result = client.store_memory(args.text, args.source)
-            _print_results(result)
-
-        elif args.command == "retrieve-memory":
-            _print_results(client.retrieve_memory(args.query, args.top_k))
-
-        elif args.command == "search-docs":
-            _print_results(client.search_docs(args.query))
-
-        elif args.command == "log-episode":
-            try:
-                meta = json.loads(args.meta)
-            except json.JSONDecodeError as exc:
-                print(f"--meta must be valid JSON: {exc}", file=sys.stderr)
-                sys.exit(1)
-            _print_results(client.log_episode(args.event, meta))
-
-        elif args.command == "history":
-            _print_results(client.get_history(args.limit))
-
-    else:
+    # ── routable commands ─────────────────────────────────────────────────
+    if True:
         if args.command == "store-memory":
             _print_results(_direct_store(args.text, args.source, getattr(args, "global_scope", False)))
 

@@ -2,40 +2,6 @@ version: "3.9"
 
 services:
 
-  # ── REST API (FastAPI + JWT) ────────────────────────────────────────────────
-  api:
-    build:
-      context: .
-      target: runtime
-    container_name: cognirepo-api
-    ports:
-      - "8080:8080"
-    volumes:
-      - cognirepo_data:/app/.cognirepo
-      - cognirepo_vectors:/app/vector_db
-    environment:
-      COGNIREPO_PASSWORD: ${COGNIREPO_PASSWORD:-changeme}
-      COGNIREPO_JWT_SECRET: ${COGNIREPO_JWT_SECRET}
-      COGNIREPO_PASSWORD_HASH: ${COGNIREPO_PASSWORD_HASH}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      COGNIREPO_MULTI_AGENT_ENABLED: ${COGNIREPO_MULTI_AGENT_ENABLED:-false}
-      COGNIREPO_GRPC_HOST: grpc
-      COGNIREPO_GRPC_PORT: 50051
-      COGNIREPO_CB_RSS_LIMIT_MB: ${COGNIREPO_CB_RSS_LIMIT_MB:-}
-    command: >
-      sh -c "cognirepo init --password ${COGNIREPO_PASSWORD:-changeme} &&
-             uvicorn api.main:app --host 0.0.0.0 --port 8080"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
-
   # ── MCP stdio server (for Claude Desktop / Cursor) ─────────────────────────
   mcp:
     build:
@@ -46,34 +12,16 @@ services:
       - cognirepo_data:/app/.cognirepo
       - cognirepo_vectors:/app/vector_db
     environment:
-      COGNIREPO_API_URL: http://api:8080
-    command: cognirepo serve
-    stdin_open: true
-    tty: false
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-
-  # ── gRPC inter-model server (optional, off by default) ────────────────────
-  grpc:
-    build:
-      context: .
-      target: runtime
-    container_name: cognirepo-grpc
-    ports:
-      - "50051:50051"
-    volumes:
-      - cognirepo_data:/app/.cognirepo
-      - cognirepo_vectors:/app/vector_db
-    environment:
-      COGNIREPO_API_URL: http://api:8080
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-    command: python -m rpc.server --port 50051
-    profiles:
-      - grpc   # start only when: docker compose --profile grpc up
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      COGNIREPO_CB_RSS_LIMIT_MB: ${COGNIREPO_CB_RSS_LIMIT_MB:-}
+    command: >
+      sh -c "cognirepo init --non-interactive &&
+             cognirepo serve"
+    stdin_open: true
+    tty: false
     restart: unless-stopped
 
   # ── Memory pruner cron ────────────────────────────────────────────────────
