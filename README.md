@@ -5,7 +5,7 @@
 [![CI](https://github.com/ashlesh-t/cognirepo/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlesh-t/cognirepo/actions/workflows/ci.yml)
 [![Security](https://github.com/ashlesh-t/cognirepo/actions/workflows/security.yml/badge.svg)](https://github.com/ashlesh-t/cognirepo/actions/workflows/security.yml)
 [![PyPI version](https://badge.fury.io/py/cognirepo.svg)](https://badge.fury.io/py/cognirepo)
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
@@ -53,8 +53,6 @@ Run `cognirepo benchmark` on your own codebase to reproduce. See [METRICS.md](ME
 User / AI Tool
     │
     ├── MCP stdio         (Claude Desktop, Gemini CLI, Cursor)
-    ├── REST API (JWT)    (any language, any tool)
-    └── gRPC              (multi-agent / inter-model)
               │
          tools/           ← single entry point to memory engine
               │
@@ -75,11 +73,10 @@ embeddings + behaviour            tracker
 
 **Two parts, one system:**
 
-**Part A — MCP tools layer:** Eight tools exposed via MCP stdio, REST, and gRPC — store
-memory, retrieve memory, search docs, log episodes, lookup symbols, get graph stats, and
-more. Connect once; every AI tool sees the same accumulated context.
+**Part A — MCP tools layer:** Tools exposed via MCP stdio — store memory, retrieve memory,
+search docs, log episodes, lookup symbols, get graph stats, and more. Connect once;
+every AI tool sees the same accumulated context.
 
-**Part B — CLI orchestrator:** `cognirepo ask` and `cognirepo chat` route your queries
 through the multi-model orchestrator — classify complexity, build context from all memory
 sources, call the best model (Claude, Gemini, Grok, OpenAI), stream the response.
 
@@ -107,11 +104,11 @@ pip install cognirepo[security]
 ### Run
 
 ```bash
-# Interactive wizard — asks about multi-model, Redis, encryption, Claude/Gemini MCP:
+# Interactive wizard — asks about encryption, languages, Claude/Gemini/Cursor MCP, org:
 cognirepo init
 
 # Non-interactive (CI / scripting):
-cognirepo init --no-index --password mypass --port 8080
+cognirepo init --no-index
 
 cognirepo index-repo .                  # index your codebase (watcher runs in foreground)
 cognirepo index-repo . --daemon         # index and run watcher in background
@@ -172,35 +169,11 @@ cp adapters/cursor_mcp_config.json .cursor/mcp.json
 # Restart Cursor — CogniRepo tools appear in the tool selector
 ```
 
-### REST API (any language)
-
-```bash
-# Start the API server
-cognirepo serve-api --port 8080
-
-# Get a JWT token
-TOKEN=$(curl -s -X POST http://localhost:8080/login \
-  -H "Content-Type: application/json" \
-  -d '{"password":"changeme"}' | jq -r .token)
-
-# Store a memory
-curl -X POST http://localhost:8080/memory/store \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"text": "JWT tokens expire after 24h", "source": "auth-docs"}'
-
-# Retrieve memories
-curl -X POST http://localhost:8080/memory/retrieve \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "token expiry", "top_k": 5}'
-```
-
 ### Docker
 
 ```bash
-cp .env.example .env   # add your API keys
-docker compose up api  # REST API on :8080
+cp .env.example .env          # add your API keys
+docker compose up mcp         # MCP stdio server
 ```
 
 ---
@@ -246,7 +219,7 @@ Full details and roadmap: [LANGUAGES.md](LANGUAGES.md)
 | Document | Description |
 |----------|-------------|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design, component responsibilities, data flow |
-| [USAGE.md](USAGE.md) | Complete CLI, REST API, MCP, and Docker reference |
+| [USAGE.md](USAGE.md) | Complete CLI, MCP, and Docker reference |
 | [METRICS.md](METRICS.md) | Quantitative benchmarks: token reduction, lookup speedup, recall |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to add adapters, tools, and language support |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, data handling, trust model |
@@ -256,16 +229,11 @@ Full details and roadmap: [LANGUAGES.md](LANGUAGES.md)
 
 ## License
 
-CogniRepo is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
+CogniRepo is licensed under the **MIT License**.
 
 **What this means:**
 - ✓ Free to use, study, modify, and distribute
-- ✓ Contributions and modifications must be published under AGPL v3
-- ✗ You cannot offer CogniRepo as a hosted service or embed it in a closed-source
-  product without open sourcing your entire stack
+- ✓ Use in proprietary products and commercial services — no restrictions
+- ✓ No requirement to open-source your application
 
-**Commercial licensing:**
-If you need to use CogniRepo in a proprietary product or hosted service without open
-sourcing your application, a commercial license is available. Contact: ashleshat5@gmail.com
-
-See [LICENSE](LICENSE) and [NOTICE](NOTICE) for full details.
+See [LICENSE](LICENSE) for full details.

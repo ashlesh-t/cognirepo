@@ -99,7 +99,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 ## License
 
 By contributing, you agree that your contributions are licensed under
-**AGPL-3.0-or-later**. See [LICENSE](LICENSE).
+**MIT**. See [LICENSE](LICENSE).
 
 ---
 

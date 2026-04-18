@@ -48,6 +48,10 @@ jobs:
     name: Wheel smoke test
     needs: build
     runs-on: ubuntu-latest
+    # Give the full pip install (faiss-cpu, sentence-transformers) room to breathe.
+    # Without an explicit timeout the job can hang silently and cause publish-pypi
+    # to be skipped with no clear error message.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -75,6 +79,12 @@ jobs:
       (github.event_name == 'release' && contains(github.ref, '-alpha')) ||
       (github.event_name == 'release' && contains(github.ref, '-beta')) ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'testpypi')
+    # ── OIDC SETUP REQUIRED (one-time, manual) ────────────────────────────────
+    # 1. GitHub: Settings → Environments → New environment → name "testpypi"
+    #    No required reviewers needed.
+    # 2. PyPI: test.pypi.org → Account → Publishing → Add trusted publisher:
+    #    Owner=ashlesh-t  Repo=cognirepo  Workflow=publish.yml  Env=testpypi
+    # Without both steps this job will fail with "403 Forbidden" on the publish step.
     environment:
       name: testpypi
       url: https://test.pypi.org/p/cognirepo
@@ -99,13 +109,14 @@ jobs:
     name: Publish to PyPI
     needs: [build, wheel-smoke]
     runs-on: ubuntu-latest
-    # Only publish to PyPI for stable releases (no rc/alpha/beta suffix)
+    # Only publishes for stable releases (no rc/alpha/beta suffix).
+    # workflow_dispatch with target=pypi also triggers this job.
     if: |
-      github.event_name == 'release' &&
-      !contains(github.ref, '-rc') &&
-      !contains(github.ref, '-alpha') &&
-      !contains(github.ref, '-beta') &&
-      (github.event_name != 'workflow_dispatch' || github.event.inputs.target == 'pypi')
+      (github.event_name == 'release' &&
+       !contains(github.ref, '-rc') &&
+       !contains(github.ref, '-alpha') &&
+       !contains(github.ref, '-beta')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'pypi')
     environment:
       name: pypi
       url: https://pypi.org/p/cognirepo

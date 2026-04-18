@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 tests/test_claude_usefulness.py — CogniRepo usefulness benchmarks.
@@ -49,8 +49,21 @@ def reset_cwd_and_path():
     _paths._OVERRIDE_DIR = _orig_override
 
 
+_tiktoken_missing = pytest.importorskip.__module__  # noqa: F841
+try:
+    import tiktoken as _tiktoken  # noqa: F401
+    _TIKTOKEN_AVAILABLE = True
+except ImportError:
+    _TIKTOKEN_AVAILABLE = False
+
+_skip_no_tiktoken = pytest.mark.skipif(
+    not _TIKTOKEN_AVAILABLE, reason="tiktoken not installed"
+)
+
+
 # ── 1. Token reduction ────────────────────────────────────────────────────────
 
+@_skip_no_tiktoken
 class TestTokenReduction:
     """context_pack must use fewer tokens than reading source files directly."""
 
@@ -218,6 +231,7 @@ class TestMemoryRecall:
 
 # ── 5. Answer grounding (context_pack quality) ───────────────────────────────
 
+@_skip_no_tiktoken
 class TestAnswerGrounding:
     """context_pack must return sections with actual code/memory content."""
 

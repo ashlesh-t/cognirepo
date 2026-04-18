@@ -1,9 +1,9 @@
 # pylint: disable=duplicate-code
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Local vector database module using FAISS for storing and searching semantic embeddings.
@@ -11,11 +11,18 @@ Local vector database module using FAISS for storing and searching semantic embe
 
 import os
 import json
+from datetime import datetime, timezone
 # pylint: disable=import-error
 import faiss
 import numpy as np
 
 from config.paths import get_path
+from config.lock import store_lock
+from vector_db.adapter import VectorStorageAdapter
+
+
+def _now_iso() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
 
 def _index_file() -> str:
     return get_path("vector_db/semantic.index")
@@ -24,7 +31,7 @@ def _meta_file() -> str:
     return get_path("memory/semantic_metadata.json")
 
 
-class LocalVectorDB:
+class LocalVectorDB(VectorStorageAdapter):
     """
     Local vector database using FAISS for storing and searching semantic embeddings.
     """
@@ -33,9 +40,25 @@ class LocalVectorDB:
         """
         Initializes the LocalVectorDB with the specified dimensionality.
         """
+        import logging  # pylint: disable=import-outside-toplevel
         self.dim = dim
         if os.path.exists(_index_file()):
-            self.index = faiss.read_index(_index_file())
+            try:
+                self.index = faiss.read_index(_index_file())
+            except Exception as exc:  # pylint: disable=broad-except
+                logging.getLogger(__name__).warning(
+                    "semantic.index could not be loaded (%s). "
+                    "This may be a platform mismatch (e.g. x86 index on ARM) or "
+                    "a corrupted file. Starting with an empty index — re-run "
+                    "`cognirepo index-repo .` to rebuild.",
+                    exc,
+                )
+                stale = _index_file() + ".stale"
+                try:
+                    os.rename(_index_file(), stale)
+                except OSError:
+                    pass
+                self.index = faiss.IndexFlatL2(dim)
         else:
             self.index = faiss.IndexFlatL2(dim)
 
@@ -88,11 +111,15 @@ class LocalVectorDB:
     def save(self):
         """
         Saves the FAISS index and metadata to disk.
+        Acquires a cross-process file lock so concurrent MCP server writes
+        (e.g. Claude + Gemini both calling store_memory at the same time)
+        do not corrupt the FAISS binary or metadata JSON.
         """
-        faiss.write_index(self.index, _index_file())
-        self._save_meta()
+        with store_lock():
+            faiss.write_index(self.index, _index_file())
+            self._save_meta()
 
-    def add(self, vector, text, importance, source: str = "memory"):
+    def add(self, vector, text, importance, source: str = "memory", behaviour_score: float = 0.0):
         """
         Adds a new vector and its associated metadata to the database.
         source — "memory" for episodic/semantic memories, "symbol" for code symbols.
@@ -105,9 +132,18 @@ class LocalVectorDB:
             "text": text,
             "importance": importance,
             "source": source,
+            "behaviour_score": behaviour_score,
         })
 
         self.save()
+
+    def update_behaviour_score(self, row_id: int, new_score: float) -> bool:
+        """Update behaviour_score for an existing entry by row index."""
+        if row_id < 0 or row_id >= len(self.metadata):
+            return False
+        self.metadata[row_id]["behaviour_score"] = float(new_score)
+        self._save_meta()
+        return True
 
     def deprecate_row(self, faiss_row: int) -> bool:
         """
@@ -119,6 +155,39 @@ class LocalVectorDB:
             return False
         self.metadata[faiss_row]["deprecated"] = True
         self._save_meta()
+        return True
+
+    def suppress_row(self, faiss_row: int, reason: str = "auto_superseded", similarity: float = 1.0) -> bool:
+        """
+        Auto-suppress a vector row — distinct from user-initiated deprecate_row().
+
+        Marks the entry as suppressed=True so it is excluded from all searches,
+        then enqueues it in CleanupQueue for deferred hard-deletion by the cron
+        cleanup job.  The FAISS index is not rebuilt immediately.
+
+        Returns True if the row was found and updated.
+        """
+        if faiss_row < 0 or faiss_row >= len(self.metadata):
+            return False
+        entry = self.metadata[faiss_row]
+        if entry.get("suppressed") or entry.get("deprecated"):
+            return False  # already suppressed/deprecated
+        entry["suppressed"] = True
+        entry["suppress_reason"] = reason
+        entry["suppressed_at"] = _now_iso()
+        self._save_meta()
+        # Enqueue for priority-queue cleanup
+        try:
+            from memory.cleanup_queue import CleanupQueue  # pylint: disable=import-outside-toplevel
+            CleanupQueue().push(
+                entry_id=faiss_row,
+                store="semantic",
+                importance=float(entry.get("importance", 0.5)),
+                suppressed_at=entry["suppressed_at"],
+                similarity_score=float(similarity),
+            )
+        except Exception:  # pylint: disable=broad-except
+            pass  # queue is best-effort
         return True
 
     def search(self, vector, k=5, source: str | None = None):
@@ -140,7 +209,7 @@ class LocalVectorDB:
         for i in indices[0]:
             if i < len(self.metadata):
                 record = self.metadata[i]
-                if record.get("deprecated", False):
+                if record.get("deprecated", False) or record.get("suppressed", False):
                     continue
                 # entries without a "source" field are legacy memories
                 if source and record.get("source", "memory") != source:
@@ -169,14 +238,29 @@ class LocalVectorDB:
         for dist, i in zip(distances[0], indices[0]):
             if 0 <= i < len(self.metadata):
                 record = self.metadata[i]
-                if record.get("deprecated", False):
+                if record.get("deprecated", False) or record.get("suppressed", False):
                     continue
                 if source and record.get("source", "memory") != source:
                     continue
                 entry = dict(record)
                 entry["l2_distance"] = float(dist)
                 entry["faiss_row"] = int(i)
+                l2_score = max(0.0, 1.0 - float(dist) / 2.0)
+                b_score = float(record.get("behaviour_score", 0.0))
+                entry["combined_score"] = round(l2_score * 0.8 + b_score * 0.2, 4)
                 results.append(entry)
                 if len(results) == k:
                     break
         return results
+
+    def remove(self, ids: list[int]) -> None:
+        """Soft-remove via deprecate_row — FAISS does not support in-place deletion."""
+        import logging  # pylint: disable=import-outside-toplevel
+        _log = logging.getLogger(__name__)
+        for row_id in ids:
+            if not self.deprecate_row(row_id):
+                _log.warning("LocalVectorDB.remove(): row %d out of range", row_id)
+
+    def persist(self) -> None:
+        """Flush index + metadata to disk."""
+        self.save()

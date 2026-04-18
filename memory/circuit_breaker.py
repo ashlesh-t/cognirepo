@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Circuit Breaker — prevents OOM by monitoring RSS memory usage before
@@ -266,7 +266,7 @@ class CircuitBreaker:
     def _update_metric(self) -> None:
         """Update the Prometheus CB_STATE gauge (no-op if prometheus not installed)."""
         try:
-            from api.metrics import CB_STATE  # pylint: disable=import-outside-toplevel
+            from server.metrics import CB_STATE  # pylint: disable=import-outside-toplevel
             _state_value = {"CLOSED": 0, "HALF_OPEN": 1, "OPEN": 2}
             CB_STATE.set(_state_value.get(self._state.value, 0))
         except Exception:  # pylint: disable=broad-except

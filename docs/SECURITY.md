@@ -38,7 +38,6 @@ pip install cognirepo[security]  # installs cryptography + keyring
 
 ## Authentication (REST API)
 
-The FastAPI REST API uses **JWT Bearer token** authentication.
 
 ### Login
 ```bash

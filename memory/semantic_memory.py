@@ -1,15 +1,15 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Module for managing and retrieving semantic memories using vector embeddings.
 """
 import logging
 
-from vector_db.local_vector_db import LocalVectorDB
+from vector_db.factory import get_vector_adapter
 from memory.embeddings import get_model
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class SemanticMemory:
         Initialize the embedding model and vector database.
         """
         self.model = get_model()
-        self.db = LocalVectorDB()
+        self.db = get_vector_adapter(dim=384)
 
     def compute_importance(self, text):
         """

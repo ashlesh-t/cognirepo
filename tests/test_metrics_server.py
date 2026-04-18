@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """Tests for cli/metrics_server.py — standalone metrics HTTP server."""
 import socket
@@ -11,7 +11,7 @@ import urllib.request
 
 import pytest
 
-from api.metrics import metrics_available
+from server.metrics import metrics_available
 from cli.metrics_server import start_metrics_server_thread
 
 

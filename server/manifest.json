@@ -38,11 +38,44 @@
             "type": "integer",
             "description": "Number of results",
             "default": 5
+          },
+          "include_org": {
+            "type": "boolean",
+            "description": "Search across all repos in the organization",
+            "default": false
           }
         },
         "required": [
           "query"
         ]
+      }
+    },
+    {
+      "name": "org_search",
+      "description": "Semantic search across all repositories in the organization.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query"
+          },
+          "top_k": {
+            "type": "integer",
+            "default": 5
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "org_dependencies",
+      "description": "List all repositories linked within the same local organization.",
+      "parameters": {
+        "type": "object",
+        "properties": {}
       }
     },
     {
@@ -91,6 +124,11 @@
           "name": {
             "type": "string",
             "description": "Symbol name to look up"
+          },
+          "include_org": {
+            "type": "boolean",
+            "description": "Search across sibling repos in the organization",
+            "default": false
           }
         },
         "required": [
@@ -238,6 +276,20 @@
         "required": [
           "target"
         ]
+      }
+    },
+    {
+      "name": "architecture_overview",
+      "description": "Retrieve pre-computed high-level architectural summaries.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "Scope: 'root' for repo, a directory path, or a file path.",
+            "default": "root"
+          }
+        }
       }
     },
     {

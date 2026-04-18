@@ -1,10 +1,10 @@
 # pylint: disable=missing-docstring, unnecessary-lambda, import-outside-toplevel, too-few-public-methods, duplicate-code
 # pylint: disable=redefined-outer-name, unused-argument, broad-exception-caught, protected-access
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 tests/test_init_seed.py — A2.1 init UX and A2.2 git-seed tests.
@@ -40,9 +40,9 @@ class TestInitProject:
         assert os.path.exists(".cognirepo/config.json")
         with open(".cognirepo/config.json", encoding="utf-8") as f:
             data = json.load(f)
-        # Secrets no longer live in config — project_id and api_url must be present
+        # Secrets no longer live in config — project_id and model key must be present
         assert "project_id" in data
-        assert "api_url" in data
+        assert "model" in data
         assert "storage" in data
 
     def test_no_index_returns_none_triple(self):
@@ -56,20 +56,15 @@ class TestInitProject:
         init_project(no_index=True)
         with open(".cognirepo/config.json", encoding="utf-8") as f:
             original_id = json.load(f)["project_id"]
-        init_project(password="newpass", no_index=True)  # nosec B105
+        init_project(no_index=True)
         with open(".cognirepo/config.json", encoding="utf-8") as f:
             current_id = json.load(f)["project_id"]
         assert current_id == original_id
 
     def test_no_secrets_in_config_when_keyring_available(self, monkeypatch):
-        """When keyring is present, jwt_secret and password_hash must not be in config."""
-        from unittest import mock
+        """Config must not contain password_hash or jwt_secret (removed in v0.2)."""
         from cli.init_project import init_project
-
-        with mock.patch("cli.init_project._KEYRING_AVAILABLE", True), \
-             mock.patch("cli.init_project._store_secret", return_value=True):
-            init_project(no_index=True)
-
+        init_project(no_index=True)
         with open(".cognirepo/config.json", encoding="utf-8") as f:
             data = json.load(f)
         assert "password_hash" not in data

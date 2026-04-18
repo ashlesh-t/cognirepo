@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 vector_db/adapter.py — Abstract base class for CogniRepo vector storage backends.
@@ -33,8 +33,13 @@ class VectorStorageAdapter(ABC):
         text: str,
         importance: float,
         source: str = "memory",
+        behaviour_score: float = 0.0,
     ) -> None:
         """Add one vector with associated metadata."""
+
+    @abstractmethod
+    def update_behaviour_score(self, row_id: int, new_score: float) -> bool:
+        """Update behaviour_score for an existing entry. Returns True on success."""
 
     @abstractmethod
     def search(

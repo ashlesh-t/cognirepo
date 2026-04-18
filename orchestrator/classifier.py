@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Complexity Classifier — rule-based, multi-signal weighted scorer.
@@ -105,6 +105,20 @@ class ClassifierResult:
     overrides: list[str] = field(default_factory=list)
 
 
+def _resolve_provider(provider: str) -> str:
+    """Resolve 'auto' provider by checking env vars in priority order."""
+    if provider != "auto":
+        return provider
+    for p, env in [
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("gemini",    "GEMINI_API_KEY"),
+        ("openai",    "OPENAI_API_KEY"),
+    ]:
+        if os.environ.get(env):
+            return p
+    return "anthropic"  # fallback
+
+
 def _load_model_registry() -> dict:
     default = {
         "QUICK":    {"provider": "local",     "model": "local-resolver"},
@@ -117,8 +131,23 @@ def _load_model_registry() -> dict:
     try:
         with open(_config_file(), encoding="utf-8") as f:
             cfg = json.load(f)
+
+        # New schema: single "model" key — expand to per-tier registry
+        if "model" in cfg and "models" not in cfg:
+            single = cfg["model"]
+            provider = _resolve_provider(single.get("provider", "auto"))
+            model_id = single.get("model", "auto")
+            # QUICK always stays local; other tiers use configured provider
+            expanded = {
+                "QUICK":    {"provider": "local",  "model": "local-resolver"},
+                "STANDARD": {"provider": provider, "model": model_id if model_id != "auto" else "claude-haiku-4-5"},
+                "COMPLEX":  {"provider": provider, "model": model_id if model_id != "auto" else "claude-sonnet-4-6"},
+                "EXPERT":   {"provider": provider, "model": model_id if model_id != "auto" else "claude-opus-4-6"},
+            }
+            return expanded
+
+        # Legacy multi-tier schema — still supported for existing installs
         models = cfg.get("models", default)
-        # Detect legacy tier names and raise a migration error
         legacy_found = [k for k in models if k in _LEGACY_TIER_MAP]
         if legacy_found:
             raise ConfigMigrationError(
