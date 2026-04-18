@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Centralized path management for CogniRepo storage.
@@ -65,6 +65,10 @@ def get_global_path(subpath: str) -> str:
     full_path = os.path.join(get_global_dir(), subpath)
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     return full_path
+
+def get_orgs_path() -> str:
+    """Return the absolute path to the global organizations registry."""
+    return get_global_path("orgs.json")
 
 def get_cognirepo_dir() -> str:
     """

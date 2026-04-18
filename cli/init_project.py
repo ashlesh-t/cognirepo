@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Module to initialize the cognirepo project structure.
@@ -14,10 +14,11 @@ Non-interactive mode (--no-index / scripting): skips wizard, uses CLI flags.
 """
 import json
 import os
-import secrets
+import re
 import shutil
 import sys
 import uuid
+from pathlib import Path
 
 try:
     import keyring  # pylint: disable=import-error
@@ -25,46 +26,20 @@ try:
 except ImportError:
     _KEYRING_AVAILABLE = False
 
-import bcrypt as _bcrypt
-
-
 from config.paths import get_path
 
 _KEYCHAIN_SERVICE = "cognirepo"
 
-DEFAULT_PASSWORD = "changeme"
-DEFAULT_PORT = 8000
-
 # Blanket ignore — nothing under .cognirepo/ ever reaches git.
 GITIGNORE_CONTENT = "*\n!.gitignore\n"
 
-DEFAULT_MODELS = {
-    "QUICK":    {"provider": "grok",      "model": "llama-3.1-8b-instant"},
-    "STANDARD": {"provider": "gemini",    "model": "gemini-2.0-flash"},
-    "COMPLEX":  {"provider": "gemini",    "model": "gemini-2.0-flash"},
-    "EXPERT":   {"provider": "anthropic", "model": "claude-sonnet-4-6"},
-}
+DEFAULT_MODEL = {"provider": "auto", "model": "auto"}
 
 # Path to the bundled MCP prompt templates (relative to this file)
 _STD_PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "STD_PROMPTS")
 
 
 # ── internal helpers ──────────────────────────────────────────────────────────
-
-def _hash_password(password: str) -> str:
-    return _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
-
-
-def _store_secret(key: str, value: str) -> bool:
-    """Store *value* under *key* in the OS keychain. Returns True on success."""
-    if not _KEYRING_AVAILABLE:
-        return False
-    try:
-        keyring.set_password(_KEYCHAIN_SERVICE, key, value)
-        return True
-    except Exception:  # pylint: disable=broad-except
-        return False
-
 
 def _write_gitignore() -> None:
     """Write (or overwrite) .cognirepo/.gitignore with the blanket pattern."""
@@ -108,55 +83,34 @@ def _init_empty_stores() -> None:
 
 
 def _write_config(
-    password: str,
-    port: int,
     project_name: str = "",
+    org: str | None = None,
+    project: str | None = None,
     encrypt: bool = False,
-    multi_model: bool = True,
-    lazy_grpc: bool = True,
-    redis: bool = False,
+    vector_backend: str = "faiss",
+    autosave_context: bool = True,
 ) -> str:
     """
     Write config.json (new) or backfill missing keys (existing).
     Returns the project_id (new or existing).
-
-    Secrets (password_hash, jwt_secret) are stored in the OS keychain when
-    available; a fallback copy goes into config.json only when keyring is absent.
     """
     if not os.path.exists(get_path("config.json")):
         project_id = str(uuid.uuid4())
-        jwt_secret = secrets.token_hex(32)
-        pw_hash = _hash_password(password)
-
-        in_keychain = _store_secret(f"{project_id}.jwt_secret", jwt_secret)
-        in_keychain = _store_secret(f"{project_id}.password_hash", pw_hash) and in_keychain
 
         config: dict = {
             "project_id":   project_id,
             "project_name": project_name or os.path.basename(os.getcwd()),
-            "api_port":     port,
-            "api_url":      f"http://localhost:{port}",
-            "storage":      {"encrypt": encrypt},
+            "org":          org,
+            "project":      project,
+            "storage":      {"encrypt": encrypt, "vector_backend": vector_backend},
             "retrieval_weights": {"vector": 0.5, "graph": 0.3, "behaviour": 0.2},
-            "models":       DEFAULT_MODELS,
-            "multi_agent":  {
-                "enabled":          multi_model,
-                "auto_start_grpc":  lazy_grpc,
-                "grpc_port":        50051,
-            },
-            "redis": {"enabled": redis, "url": "redis://localhost:6379"},
+            "model":        DEFAULT_MODEL,
+            "autosave_context": autosave_context,
         }
-        if not in_keychain:
-            config["password_hash"] = pw_hash
 
         with open(get_path("config.json"), "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2)
         print(f"Created {get_path('config.json')}")
-        print(f"  api_url  : http://localhost:{port}")
-        if in_keychain:
-            print("  secrets  : stored in OS keychain (never written to disk)")
-        else:
-            print("  secrets  : stored in config.json (install keyring for keychain storage)")
         return project_id
 
     # ── existing config — backfill missing keys ───────────────────────────────
@@ -167,31 +121,39 @@ def _write_config(
     defaults: list[tuple] = [
         ("project_id",    str(uuid.uuid4())),
         ("project_name",  project_name or os.path.basename(os.getcwd())),
-        ("api_port",      port),
-        ("api_url",       f"http://localhost:{config.get('api_port', port)}"),
         ("retrieval_weights", {"vector": 0.5, "graph": 0.3, "behaviour": 0.2}),
-        ("models",        DEFAULT_MODELS),
+        ("model",         DEFAULT_MODEL),
+        ("autosave_context", True),
+        ("project",       None),
     ]
     for key, val in defaults:
         if key not in config:
             config[key] = val
             changed = True
 
-    # Always apply user-specified wizard settings (not just backfill)
-    if config.setdefault("storage", {}).get("encrypt") != encrypt:
-        config["storage"]["encrypt"] = encrypt
+    # Remove phantom keys from old installs
+    for old_key in ("api_port", "api_url", "multi_model", "models"):
+        if old_key in config:
+            del config[old_key]
+            changed = True
+
+    # Always apply user-specified wizard settings
+    storage = config.setdefault("storage", {})
+    if storage.get("encrypt") != encrypt:
+        storage["encrypt"] = encrypt
         changed = True
-    _ma = config.setdefault("multi_agent", {})
-    if _ma.get("enabled") != multi_model or _ma.get("auto_start_grpc") != lazy_grpc:
-        _ma.update({"enabled": multi_model, "auto_start_grpc": lazy_grpc, "grpc_port": 50051})
-        changed = True
-    if config.setdefault("redis", {"url": "redis://localhost:6379"}).get("enabled") != redis:
-        config["redis"]["enabled"] = redis
+    if storage.get("vector_backend") != vector_backend:
+        storage["vector_backend"] = vector_backend
         changed = True
 
-    # Ensure QUICK tier is in models
-    if "QUICK" not in config.get("models", {}):
-        config.setdefault("models", {})["QUICK"] = DEFAULT_MODELS["QUICK"]
+    if config.get("autosave_context") != autosave_context:
+        config["autosave_context"] = autosave_context
+        changed = True
+    if config.get("org") != org:
+        config["org"] = org
+        changed = True
+    if project is not None and config.get("project") != project:
+        config["project"] = project
         changed = True
 
     if changed:
@@ -252,6 +214,9 @@ def setup_mcp(
 
     if "vscode" in targets:
         _setup_vscode_mcp(project_name, project_path)
+
+    if "copilot" in targets:
+        _setup_copilot(project_name, project_path)
 
 
 def _setup_claude_mcp(
@@ -468,6 +433,19 @@ def _setup_cursor_mcp(project_name: str, project_path: str) -> None:
         json.dump(mcp_cfg, f, indent=2)
     print(f"  Wrote {mcp_json_path}  (Cursor MCP server: {server_name})")
 
+    # ── .cursor/rules/cognirepo.mdc — routing rules for Cursor AI ────────────
+    rules_dir = os.path.join(cursor_dir, "rules")
+    os.makedirs(rules_dir, exist_ok=True)
+    rules_path = os.path.join(rules_dir, "cognirepo.mdc")
+    template = _load_template("cursor_rules.mdc")
+    if template:
+        content = _render_template(template, project_name, project_path)
+    else:
+        content = _minimal_cursor_rules(project_name, project_path)
+    with open(rules_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"  Wrote {rules_path}")
+
 
 def _setup_vscode_mcp(project_name: str, project_path: str) -> None:
     """
@@ -508,6 +486,101 @@ def _setup_vscode_mcp(project_name: str, project_path: str) -> None:
         json.dump(mcp_cfg, f, indent=2)
     print(f"  Wrote {mcp_json_path}  (VS Code MCP server: {server_name})")
 
+    # ── .vscode/tasks.json — run cognirepo prime on folder open ─────────────
+    tasks_path = os.path.join(vscode_dir, "tasks.json")
+    tasks_cfg = {}
+    if os.path.exists(tasks_path):
+        try:
+            with open(tasks_path, encoding="utf-8") as f:
+                tasks_cfg = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            tasks_cfg = {}
+    tasks_cfg.setdefault("version", "2.0.0")
+    existing_tasks = [t for t in tasks_cfg.get("tasks", []) if t.get("label") != "CogniRepo: Refresh Context"]
+    existing_tasks.append({
+        "label": "CogniRepo: Refresh Context",
+        "type": "shell",
+        "command": f"cognirepo prime > ~/.cognirepo/{project_name or '${workspaceFolderBasename}'}/last_context.json",
+        "runOptions": {"runOn": "folderOpen"},
+        "presentation": {"reveal": "silent"},
+    })
+    tasks_cfg["tasks"] = existing_tasks
+    with open(tasks_path, "w", encoding="utf-8") as f:
+        json.dump(tasks_cfg, f, indent=2)
+    print(f"  Wrote {tasks_path}  (auto-refresh context on folder open)")
+
+
+def _minimal_cursor_rules(project_name: str, project_path: str) -> str:
+    safe_name = re.sub(r"[^a-zA-Z0-9_]", "_", project_name or "cognirepo")
+    return f"""---
+description: CogniRepo tool routing rules for {project_name}
+globs: ["**/*.py", "**/*.ts", "**/*.js", "**/*.go", "**/*.rs"]
+alwaysApply: true
+---
+
+## CogniRepo Tool Routing
+
+Project: {project_name}
+Data: {project_path}/.cognirepo/
+
+BEFORE reading any file >100 lines:   use mcp_{safe_name}_context_pack first.
+BEFORE searching for a function:      use mcp_{safe_name}_lookup_symbol first.
+BEFORE tracing callers:               use mcp_{safe_name}_who_calls first.
+AFTER a non-trivial decision:         use mcp_{safe_name}_store_memory to record it.
+
+If context_pack returns no_confident_match → fall back to file read.
+"""
+
+
+def _setup_copilot(project_name: str, project_path: str) -> None:
+    """
+    Write .github/copilot-instructions.md for GitHub Copilot.
+    Copilot reads this file for project-level instructions.
+    """
+    github_dir = ".github"
+    os.makedirs(github_dir, exist_ok=True)
+
+    template = _load_template("copilot_instructions.md")
+    if template:
+        content = _render_template(template, project_name, project_path)
+    else:
+        content = _minimal_copilot_instructions(project_name, project_path)
+
+    path = os.path.join(github_dir, "copilot-instructions.md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(f"  Wrote {path}")
+
+
+def _minimal_copilot_instructions(project_name: str, project_path: str) -> str:
+    return f"""# CogniRepo Context for {project_name}
+
+This repo uses CogniRepo for indexed symbol lookup and semantic memory.
+Before suggesting changes, check: ~/.cognirepo/{project_name}/last_context.json
+
+Key decisions stored via: `cognirepo retrieve-learnings "<topic>"`
+Dynamic dispatch patterns: use `cognirepo who-calls <fn>` for scheduler/signal hooks.
+"""
+
+
+def _detect_agents() -> list[str]:
+    """
+    Detect which AI agents are present on this system.
+    Returns list of detected agent names.
+    """
+    agents = []
+    if shutil.which("claude"):
+        agents.append("claude")
+    if shutil.which("gemini"):
+        agents.append("gemini")
+    if Path(".cursor").exists() or shutil.which("cursor"):
+        agents.append("cursor")
+    if Path(".github").exists() or shutil.which("gh"):
+        agents.append("copilot")
+    if Path(".vscode").exists() or shutil.which("code"):
+        agents.append("vscode")
+    return agents
+
 
 def _minimal_claude_md(project_name: str, project_path: str) -> str:
     return f"""# CogniRepo — {project_name}
@@ -535,22 +608,80 @@ Data stored in `.cognirepo/` — project-scoped.
 """
 
 
+# ── doc seeding ───────────────────────────────────────────────────────────────
+
+def autosave_context_enabled() -> bool:
+    """Return True if autosave_context is enabled in .cognirepo/config.json."""
+    try:
+        with open(get_path("config.json"), encoding="utf-8") as _f:
+            return bool(json.load(_f).get("autosave_context", True))
+    except Exception:  # pylint: disable=broad-except
+        return True  # default on
+
+
+def _seed_learnings_from_docs(repo_root: str) -> int:
+    """
+    Seed the LearningStore with sections from README/ARCHITECTURE/docs markdown files.
+    Called during init so retrieve_learnings() has data immediately.
+    Returns the number of sections stored.
+    """
+    from memory.learning_store import ProjectLearningStore  # pylint: disable=import-outside-toplevel
+    store = ProjectLearningStore()
+    md_candidates = [
+        "README.md", "ARCHITECTURE.md", "CONTRIBUTING.md",
+        "DESIGN.md", "OVERVIEW.md", "docs",
+    ]
+    files: list[Path] = []
+    for name in md_candidates:
+        p = Path(repo_root) / name
+        if p.is_file():
+            files.append(p)
+        elif p.is_dir():
+            files.extend(sorted(p.rglob("*.md"))[:5])
+    files = files[:10]  # hard cap
+
+    stored = 0
+    for md_file in files:
+        try:
+            text = md_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        sections = re.split(r'\n(?=#{1,3} )', text)
+        for section in sections:
+            section = section.strip()
+            if len(section) < 150:
+                continue
+            try:
+                store.store_learning(
+                    learning_type="documentation",
+                    text=section[:2000],
+                    context_summary=f"from {md_file.name}",
+                    tags=["auto-seeded", md_file.stem.lower()],
+                )
+                stored += 1
+            except Exception:  # pylint: disable=broad-except
+                continue
+    return stored
+
+
 # ── public API ────────────────────────────────────────────────────────────────
 
 def init_project(
-    password: str = DEFAULT_PASSWORD,
-    port: int = DEFAULT_PORT,
     no_index: bool = False,
     interactive: bool = True,
     non_interactive: bool = False,
     # wizard-supplied overrides (used when interactive=False or wizard ran)
     project_name: str = "",
+    org: str | None = None,
+    project: str | None = None,
     encrypt: bool = False,
-    multi_model: bool = True,
-    lazy_grpc: bool = True,
-    redis: bool = False,
+    vector_backend: str = "faiss",
     mcp_targets: list[str] | None = None,
     mcp_global: bool = False,
+    autosave_context: bool = True,
+    # deprecated — accepted but ignored for backward compat
+    multi_model: bool = True,
+    redis: bool = False,
 ):
     """
     Scaffold .cognirepo/ directories, write config.json, write .gitignore.
@@ -575,15 +706,14 @@ def init_project(
         try:
             from cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
             wizard_cfg = run_wizard()
-            password     = wizard_cfg.get("password", password)
-            port         = wizard_cfg.get("port", port)
-            project_name = wizard_cfg.get("project_name", project_name)
-            encrypt      = wizard_cfg.get("encrypt", encrypt)
-            multi_model  = wizard_cfg.get("multi_model", multi_model)
-            lazy_grpc    = wizard_cfg.get("lazy_grpc", lazy_grpc)
-            redis        = wizard_cfg.get("redis", redis)
-            mcp_targets  = wizard_cfg.get("mcp_targets", mcp_targets or [])
-            mcp_global   = wizard_cfg.get("mcp_global", mcp_global)
+            project_name   = wizard_cfg.get("project_name", project_name)
+            org            = wizard_cfg.get("org", org)
+            project        = wizard_cfg.get("project", project)
+            encrypt        = wizard_cfg.get("encrypt", encrypt)
+            vector_backend = wizard_cfg.get("vector_backend", vector_backend)
+            mcp_targets    = wizard_cfg.get("mcp_targets", mcp_targets or [])
+            mcp_global     = wizard_cfg.get("mcp_global", mcp_global)
+            autosave_context = wizard_cfg.get("autosave_context", autosave_context)
         except (ImportError, KeyboardInterrupt):
             # Fall back to non-interactive with defaults
             mcp_targets = mcp_targets or []
@@ -591,19 +721,35 @@ def init_project(
     if mcp_targets is None:
         mcp_targets = []
 
+    # ── autosave_context prompt (non-wizard interactive) ─────────────────────
+    if not non_interactive and sys.stdin.isatty():
+        try:
+            _ans = input(
+                "\nAuto-save context for inter-agent sharing? (y/n) [y]: "
+            ).strip().lower()
+            autosave_context = _ans not in ("n", "no")
+        except (EOFError, KeyboardInterrupt):
+            autosave_context = True  # default yes
+
     # ── scaffold directories and write config ─────────────────────────────────
     _scaffold_dirs()
     _init_empty_stores()
     _write_config(
-        password=password,
-        port=port,
         project_name=project_name,
+        org=org,
+        project=project,
         encrypt=encrypt,
-        multi_model=multi_model,
-        lazy_grpc=lazy_grpc,
-        redis=redis,
+        vector_backend=vector_backend,
+        autosave_context=autosave_context,
     )
     _write_gitignore()
+
+    # ── link to org ───────────────────────────────────────────────────────────
+    if org:
+        from config.orgs import create_org, link_repo_to_org  # pylint: disable=import-outside-toplevel
+        create_org(org)  # Ensure it exists
+        link_repo_to_org(os.getcwd(), org)
+        print(f"Linked repository to local organization: {org}")
 
     # ── set up MCP configs ────────────────────────────────────────────────────
     if mcp_targets:
@@ -618,6 +764,17 @@ def init_project(
         encrypt_enabled = _cfg.get("storage", {}).get("encrypt", False)
     except (OSError, json.JSONDecodeError):
         encrypt_enabled = False
+
+    # ── dependency check: tiktoken (required for context_pack) ───────────────
+    try:
+        import tiktoken as _tk  # pylint: disable=import-outside-toplevel
+        _tk.get_encoding("cl100k_base")
+    except ImportError:
+        print(
+            "\n[WARNING] tiktoken not installed — context_pack will use "
+            "approximate token counts.\n"
+            "  Fix: pip install tiktoken"
+        )
 
     print("\nCogniRepo initialised.\n")
     if encrypt_enabled:
@@ -655,11 +812,41 @@ def init_project(
 
     kg.save()
 
+    # seed documentation into semantic store (README, CHANGELOG, docs/)
+    try:
+        from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
+        _doc_summary = DocIngester(cwd).ingest()
+        if _doc_summary.get("chunks", 0) > 0:
+            print(f"  Seeded {_doc_summary['chunks']} doc chunks from "
+                  f"{_doc_summary['files']} file(s).")
+    except Exception:  # pylint: disable=broad-except
+        pass  # doc ingestion is best-effort
+
     # seed behaviour from git history
     try:
         from cli.seed import seed_from_git_log  # pylint: disable=import-outside-toplevel
         seed_from_git_log(repo_root=cwd, indexer=indexer)
     except Exception:  # pylint: disable=broad-except
         pass  # seeding is best-effort
+
+    # seed semantic store from docs / git log (cold-start fix)
+    try:
+        from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
+        doc_summary = DocIngester(cwd).ingest()
+        if doc_summary.get("chunks", 0) > 0:
+            print(
+                f"  Seeded {doc_summary['chunks']} doc chunk(s) from "
+                f"{doc_summary['files']} file(s) into semantic store."
+            )
+    except Exception:  # pylint: disable=broad-except
+        pass  # doc ingestion is best-effort
+
+    # seed LearningStore from docs so retrieve_learnings() works on day 1
+    try:
+        _n_learnings = _seed_learnings_from_docs(cwd)
+        if _n_learnings > 0:
+            print(f"  Seeded {_n_learnings} learning(s) from documentation.")
+    except Exception:  # pylint: disable=broad-except
+        pass  # best-effort
 
     return summary, kg, indexer

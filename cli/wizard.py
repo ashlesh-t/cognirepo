@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Interactive terminal wizard for `cognirepo init`.
@@ -34,13 +34,6 @@ _USE_COLOR: bool = bool(
 
 
 def _c(first_code: str, *rest: str) -> str:
-    """
-    Apply ANSI codes to the last argument (the text).
-
-    _c(_CYAN, "hello")              → cyan hello
-    _c(_CYAN, _BOLD, "hello")       → cyan+bold hello
-    When color is disabled, returns the last argument unchanged.
-    """
     if not _USE_COLOR:
         return rest[-1]
     codes = first_code + "".join(rest[:-1])
@@ -58,7 +51,6 @@ def _warn(msg: str) -> None:
 # ── prompt primitives ─────────────────────────────────────────────────────────
 
 def _ask_yn(prompt: str, default: bool = True) -> bool:
-    """Yes/No prompt. Enter key accepts *default*."""
     hint = _c(_DIM, "(Y/n)" if default else "(y/N)")
     while True:
         try:
@@ -76,7 +68,6 @@ def _ask_yn(prompt: str, default: bool = True) -> bool:
 
 
 def _ask_text(prompt: str, default: str) -> str:
-    """Free-text prompt with a default value."""
     try:
         raw = input(
             f"  {_c(_CYAN, '?')} {prompt} {_c(_DIM, f'[{default}]')}: "
@@ -93,9 +84,6 @@ def _ask_choice(
     descriptions: list[str] | None = None,
     default: int = 0,
 ) -> int:
-    """
-    Numbered single-select menu.  Returns 0-based index of the chosen item.
-    """
     print(f"\n  {_c(_CYAN, '?')} {prompt}")
     for i, choice in enumerate(choices):
         num = _c(_GREEN, f"({i + 1})") if i == default else f"({i + 1})"
@@ -136,7 +124,6 @@ def _section(step: int, total: int, title: str, subtitle: str = "") -> None:
 # ── pip install helper ────────────────────────────────────────────────────────
 
 def _pip_install(extra: str) -> bool:
-    """Install ``cognirepo[extra]`` silently. Returns True on success."""
     try:
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install", f"cognirepo[{extra}]", "-q"],
@@ -155,16 +142,15 @@ def run_wizard() -> dict:
     Run the interactive init wizard. Returns a configuration dict with keys:
 
       project_name      str   human-readable project label
-      password          str   initial API password
-      port              int   local REST API port
-      multi_model       bool  enable multi-model routing
-      lazy_grpc         bool  auto-start gRPC server on demand
-      redis             bool  use Redis for session caching
       encrypt           bool  encrypt FAISS + episodic at rest
+      vector_backend    str   "faiss" | "chroma"
       install_languages bool  install extended tree-sitter language parsers
-      mcp_targets       list  subset of ["claude", "gemini"]
+      mcp_targets       list  subset of ["claude", "gemini", "cursor", "vscode"]
+      mcp_global        bool  register MCP server globally
+      org               str | None  organization name
+      project           str | None  project within org
     """
-    STEPS = 7
+    STEPS = 5
 
     print()
     print("  ╔══════════════════════════════════════════════════════╗")
@@ -179,33 +165,14 @@ def run_wizard() -> dict:
 
     # ── 1. Project name ───────────────────────────────────────────────────────
     _section(1, STEPS, "Project name",
-             "Used to namespace data in global AI tool configs (Claude, Gemini).")
+             "Used to namespace data in global AI tool configs (Claude, Gemini, Cursor).")
     cfg["project_name"] = _ask_text(
         "Project name", default=os.path.basename(os.getcwd())
     )
 
-    # ── 2. Multi-model routing ────────────────────────────────────────────────
-    _section(2, STEPS, "Multi-model routing",
-             "QUICK/FAST → Grok, BALANCED → Gemini, DEEP → Claude by default.")
-    cfg["multi_model"] = _ask_yn("Enable multi-model routing?", default=True)
-
-    cfg["lazy_grpc"] = False
-    if cfg["multi_model"]:
-        print(f"\n  {_c(_DIM, 'gRPC lets DEEP queries delegate fast sub-lookups to lighter models.')}")
-        cfg["lazy_grpc"] = _ask_yn(
-            "Auto-start gRPC server lazily (on first DEEP query)?", default=True
-        )
-
-    # ── 3. Redis caching ──────────────────────────────────────────────────────
-    _section(3, STEPS, "Session caching",
-             "Redis caches query context for faster repeated access (requires Redis).")
-    cfg["redis"] = _ask_yn("Enable Redis session cache?", default=False)
-    if cfg["redis"]:
-        print(f"  {_c(_DIM, '  Verify Redis is running: redis-cli ping → PONG')}")
-
-    # ── 4. Encryption at rest ─────────────────────────────────────────────────
-    _section(4, STEPS, "Encryption at rest",
-             "Fernet AES-128 for the FAISS index + episodic log. Key in OS keychain.")
+    # ── 2. Encryption + vector backend ───────────────────────────────────────
+    _section(2, STEPS, "Storage",
+             "Encryption uses Fernet AES-128 (key in OS keychain). ChromaDB optional.")
     cfg["encrypt"] = _ask_yn("Enable encryption at rest?", default=False)
     if cfg["encrypt"]:
         print(f"  {_c(_DIM, '  Installing cognirepo[security] ...')}", end="", flush=True)
@@ -214,9 +181,30 @@ def run_wizard() -> dict:
         else:
             _warn("Install failed — run: pip install cognirepo[security]")
 
-    # ── 5. Language support ───────────────────────────────────────────────────
-    _section(5, STEPS, "Extended language support",
-             "Adds tree-sitter parsers for JS/TS, Java, Go, Rust, C/C++ etc.")
+    vb_idx = _ask_choice(
+        "Vector backend:",
+        ["FAISS  (local, no extra install)", "ChromaDB  (persistent client, richer metadata)"],
+        descriptions=[
+            "Default — fast, zero config",
+            "Run: pip install chromadb",
+        ],
+        default=0,
+    )
+    cfg["vector_backend"] = "faiss" if vb_idx == 0 else "chroma"
+    if cfg["vector_backend"] == "chroma":
+        print(f"  {_c(_DIM, '  Installing chromadb ...')}", end="", flush=True)
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "chromadb", "-q"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            _ok("chromadb installed")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            _warn("Install failed — run: pip install chromadb")
+
+    # ── 3. Language support ───────────────────────────────────────────────────
+    _section(3, STEPS, "Extended language support",
+             "Adds tree-sitter parsers for JS/TS, Java, Go, Rust, C/C++.")
     cfg["install_languages"] = _ask_yn(
         "Install extended language parsers?", default=False
     )
@@ -227,8 +215,8 @@ def run_wizard() -> dict:
         else:
             _warn("Install failed — run: pip install cognirepo[languages]")
 
-    # ── 6. AI tool MCP integration ────────────────────────────────────────────
-    _section(6, STEPS, "AI tool MCP integration",
+    # ── 4. AI tool MCP integration ────────────────────────────────────────────
+    _section(4, STEPS, "AI tool MCP integration",
              "Wire CogniRepo memory + code search into Claude / Gemini / Cursor / VS Code.")
     mcp_idx = _ask_choice(
         "Set up MCP server for:",
@@ -276,21 +264,57 @@ def run_wizard() -> dict:
             "Register globally (available in all sessions)?", default=True
         )
 
-    # ── 7. REST API ───────────────────────────────────────────────────────────
-    _section(7, STEPS, "REST API settings",
-             "Local FastAPI server — needed only for --via-api mode or REST clients.")
-    cfg["port"] = int(_ask_text("API port", default="8000"))
-    cfg["password"] = _ask_text("API password", default="changeme")  # nosec B106
+    # ── 5. Organization + Project ─────────────────────────────────────────────
+    _section(5, STEPS, "Organisation & Project",
+             "Group repos for cross-repo knowledge sharing.")
+    from config.orgs import list_orgs, list_projects, create_project  # pylint: disable=import-outside-toplevel
+    orgs = list_orgs()
+    org_choices = ["None / Personal project"]
+    org_choices.extend(list(orgs.keys()))
+    org_choices.append("Create new organization...")
+
+    org_idx = _ask_choice("Join organization:", org_choices, default=0)
+
+    cfg["org"] = None
+    cfg["project"] = None
+
+    if org_idx == 0:
+        pass  # no org
+    elif org_idx == len(org_choices) - 1:
+        new_org = _ask_text("New organization name", default="")
+        if new_org:
+            cfg["org"] = new_org
+    else:
+        cfg["org"] = org_choices[org_idx]
+
+    if cfg["org"]:
+        want_project = _ask_yn("Link to a project within this org?", default=True)
+        if want_project:
+            existing = list_projects(cfg["org"])
+            proj_choices = list(existing.keys()) + ["Create new project..."]
+            if len(proj_choices) > 1:
+                proj_idx = _ask_choice("Select project:", proj_choices, default=0)
+                if proj_idx == len(proj_choices) - 1:
+                    proj_name = _ask_text("Project name", default="main")
+                    proj_desc = _ask_text("Description (optional)", default="")
+                    if proj_name:
+                        create_project(cfg["org"], proj_name, proj_desc)
+                        cfg["project"] = proj_name
+                else:
+                    cfg["project"] = proj_choices[proj_idx]
+            else:
+                proj_name = _ask_text("Project name", default="main")
+                proj_desc = _ask_text("Description (optional)", default="")
+                if proj_name:
+                    create_project(cfg["org"], proj_name, proj_desc)
+                    cfg["project"] = proj_name
 
     # ── Confirmation summary ──────────────────────────────────────────────────
-    # Inner width = 2 (pad) + 14 (label) + 2 (gap) + 29 (value) + 2 (pad) = 49
     _INNER = 49
     _sep = "─" * _INNER
 
     def _box_title(text: str) -> str:
-        """Return a box title row with correct visible-width padding."""
         colored = _c(_GREEN, _BOLD, text)
-        # Pad based on visible (plain) length, not colored string length
         padding = " " * (_INNER - 2 - len(text) - 2)
         return f"  │  {colored}{padding}  │"
 
@@ -299,15 +323,14 @@ def run_wizard() -> dict:
     print(_box_title("Configuration Summary"))
     print(f"  ├{_sep}┤")
     rows = [
-        ("Project",      cfg["project_name"]),
-        ("Multi-model",  "yes" if cfg["multi_model"] else "no"),
-        ("Lazy gRPC",    "yes" if cfg["lazy_grpc"] else "no"),
-        ("Redis cache",  "yes" if cfg["redis"] else "no"),
-        ("Encryption",   "yes" if cfg["encrypt"] else "no"),
-        ("Languages",    "extended" if cfg["install_languages"] else "Python only"),
-        ("MCP targets",  ", ".join(cfg["mcp_targets"]) or "none"),
-        ("MCP scope",    "global" if cfg.get("mcp_global") else "project-only"),
-        ("API port",     str(cfg["port"])),
+        ("Project",       cfg["project_name"]),
+        ("Encryption",    "yes" if cfg["encrypt"] else "no"),
+        ("Vector backend", cfg["vector_backend"]),
+        ("Languages",     "extended" if cfg["install_languages"] else "Python only"),
+        ("MCP targets",   ", ".join(cfg["mcp_targets"]) or "none"),
+        ("MCP scope",     "global" if cfg.get("mcp_global") else "project-only"),
+        ("Organisation",  cfg["org"] or "none"),
+        ("Project",       cfg["project"] or "none"),
     ]
     for label, value in rows:
         print(f"  │  {label:<14}  {value:<29}  │")

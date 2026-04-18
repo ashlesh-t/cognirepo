@@ -14,11 +14,6 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
     "encrypt": false,
     "vector_backend": "faiss"
   },
-  "multi_agent": {
-    "enabled": false,
-    "grpc_port": 50051,
-    "auto_start_grpc": false
-  },
   "models": {
     "enabled": true,
     "fast_model": "gemini-2.0-flash",
@@ -36,9 +31,6 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 | `port` | int | `8000` | REST API port |
 | `storage.encrypt` | bool | `false` | Enable AES-256 encryption at rest |
 | `storage.vector_backend` | string | `"faiss"` | Vector backend: `"faiss"` or `"chroma"` |
-| `multi_agent.enabled` | bool | `false` | Enable multi-agent gRPC routing |
-| `multi_agent.grpc_port` | int | `50051` | gRPC server port |
-| `multi_agent.auto_start_grpc` | bool | `false` | Auto-start gRPC server on first query |
 | `models.enabled` | bool | `true` | Enable multi-model routing |
 | `models.fast_model` | string | `"gemini-2.0-flash"` | Model for fast/simple queries |
 | `models.smart_model` | string | `"claude-opus-4-6"` | Model for complex reasoning |
@@ -52,7 +44,6 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 |----------|-------------|---------|
 | `COGNIREPO_REDIS_URL` | Redis connection URL | `redis://localhost:6379` |
 | `COGNIREPO_ENCRYPT_KEY` | Encryption key (overrides keychain) | `<hex-encoded AES key>` |
-| `COGNIREPO_MULTI_AGENT_ENABLED` | Enable multi-agent mode | `"true"` |
 | `COGNIREPO_JWT_SECRET` | JWT signing secret for REST API | `<random hex 32 bytes>` |
 | `COGNIREPO_PASSWORD_HASH` | Bcrypt hash of the API password | `$2b$12$...` |
 | `ANTHROPIC_API_KEY` | Anthropic/Claude API key | `sk-ant-...` |
@@ -122,7 +113,6 @@ Cache TTL defaults to 300 seconds. The REST API gracefully degrades if Redis is 
 
 ```bash
 export COGNIREPO_REDIS_URL=redis://localhost:6379
-cognirepo serve-api
 ```
 
 ---

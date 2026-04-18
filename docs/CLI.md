@@ -9,7 +9,6 @@ Full reference for the `cognirepo` interactive REPL and all slash commands.
 ```bash
 cognirepo                          # start interactive REPL
 cognirepo --model claude-opus-4-6  # force a specific model for all queries
-COGNIREPO_MULTI_AGENT_ENABLED=true cognirepo  # enable gRPC sub-agents
 ```
 
 On startup the REPL shows:
@@ -86,18 +85,13 @@ Session files live in `.cognirepo/sessions/`.
 
 ## Multi-agent mode
 
-Enable with `COGNIREPO_MULTI_AGENT_ENABLED=true`. Requires a running gRPC server:
 
 ```bash
-# Terminal 1 — start the gRPC sub-agent server
-cognirepo serve-grpc
 
 # Terminal 2 — start the REPL with multi-agent enabled
-COGNIREPO_MULTI_AGENT_ENABLED=true cognirepo
 ```
 
 For **EXPERT**-tier queries, the REPL:
-1. Fires a background gRPC sub-query for a lightweight lookup
 2. Shows a greyed-out sub-agent panel after the primary response
 3. Stores sub-query results in the session JSON under `sub_queries[]`
 
@@ -109,8 +103,6 @@ Use `/agents` to inspect sub-agent state and `/agents cancel <id>` to stop one.
 
 | Variable | Default | Description |
 |---|---|---|
-| `COGNIREPO_MULTI_AGENT_ENABLED` | `false` | Enable gRPC sub-agent delegation |
-| `COGNIREPO_GRPC_PORT` | `50051` | gRPC server port |
 | `COGNIREPO_LOG_LEVEL` | `WARNING` | Log level (DEBUG/INFO/WARNING/ERROR) |
 | `COGNIREPO_LOG_FORMAT` | `json` in non-tty, `text` in tty | Log format |
 | `ANTHROPIC_API_KEY` | — | Claude API key |

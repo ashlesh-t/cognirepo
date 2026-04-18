@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Real MCP server for CogniRepo — stdio transport, works with Claude Desktop
@@ -84,6 +84,79 @@ _idle.register_evict(evict_model)
 _idle.register_evict(_evict_singletons)
 
 
+# ── auto-store helpers ────────────────────────────────────────────────────────
+
+def _extract_auto_store_text(tool_name: str, result) -> str:
+    """
+    Extract a storable text summary from a tool result.
+    Returns empty string if the result has nothing worth storing.
+    """
+    try:
+        if tool_name == "context_pack" and isinstance(result, dict):
+            sections = result.get("sections", [])
+            parts = [
+                s.get("content", "")
+                for s in sections
+                if float(s.get("score", 0)) > 0.5 and s.get("content")
+            ]
+            return "\n\n".join(parts[:5])
+
+        if tool_name == "semantic_search_code" and isinstance(result, list):
+            parts = [
+                f"{r.get('type','FUNCTION')} {r.get('name','')} in {r.get('file','')}:{r.get('line','')}"
+                for r in result if r.get("name")
+            ]
+            return "\n".join(parts)
+
+        if tool_name == "search_docs" and isinstance(result, list):
+            parts = [r.get("snippet") or r.get("text") or "" for r in result if r]
+            return "\n\n".join(p for p in parts if p)
+
+        if tool_name == "who_calls" and isinstance(result, list):
+            if not result:
+                return ""
+            callers = [r.get("caller", "") for r in result if r.get("caller")]
+            return f"callers: {', '.join(callers[:20])}"
+
+        if tool_name == "subgraph" and isinstance(result, dict):
+            nodes = result.get("nodes", [])
+            if not nodes:
+                return ""
+            node_strs = [f"{n.get('type','?')}:{n.get('node_id','')}" for n in nodes[:20]]
+            return "subgraph nodes: " + ", ".join(node_strs)
+
+        if tool_name == "dependency_graph" and isinstance(result, dict):
+            parts = []
+            for key in ("imports", "imported_by", "dependencies"):
+                items = result.get(key, [])
+                if items:
+                    parts.append(f"{key}: {', '.join(str(i) for i in items[:15])}")
+            return "\n".join(parts)
+
+        if tool_name == "explain_change" and isinstance(result, dict):
+            return result.get("explanation") or result.get("summary") or str(result)
+
+    except Exception:  # pylint: disable=broad-except
+        pass
+    return ""
+
+
+def _auto_store_hook(tool_name: str, result) -> None:
+    """
+    Best-effort auto-store for high-value tool results.
+    Runs after the tool returns; never raises; never blocks the caller.
+    """
+    try:
+        text = _extract_auto_store_text(tool_name, result)
+        if not text:
+            return
+        from memory.auto_store import AutoStore  # pylint: disable=import-outside-toplevel
+        importance = AutoStore.importance_for(tool_name, result)
+        AutoStore().store_if_novel(text, source_tool=tool_name, importance=importance)
+    except Exception:  # pylint: disable=broad-except
+        pass  # auto-store is always best-effort
+
+
 _EMPTY_GRAPH_WARNING = {
     "warning": "Graph is empty. Run 'cognirepo index-repo .' first.",
     "results": [],
@@ -161,119 +234,113 @@ def store_memory(text: str, source: str = "") -> dict:
 
 
 @mcp.tool()
-def retrieve_memory(query: str, top_k: int = 5) -> list:
-    """Retrieve the top-k memories most similar to the query."""
-    return _traced("retrieve_memory", _retrieve_memory, query, top_k)
+def retrieve_memory(query: str, top_k: int = 5, include_org: bool = False) -> list:
+    """
+    Retrieve the top-k memories most similar to the query.
+    If include_org=True, also queries sibling repositories in the same organization.
+    """
+    results = _traced("retrieve_memory", _retrieve_memory, query, top_k)
+    
+    if include_org:
+        from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+        router = CrossRepoRouter()
+        org_results = router.query_org_memories(query, top_k=top_k)
+        # Merge and re-sort
+        results.extend(org_results)
+        results.sort(key=lambda x: x.get("score", 1.0))
+        results = results[:top_k]
+        
+    return results
 
 
 @mcp.tool()
-def search_docs(query: str) -> list:
-    """Search all markdown documentation files for the given query string."""
-    return _search_docs(query)
+def org_search(query: str, top_k: int = 5) -> list:
+    """
+    Search for code symbols and memories across all repositories in the organization.
+    Returns a list of results annotated with source repository.
+    """
+    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    router = CrossRepoRouter()
+    return router.query_org_memories(query, top_k=top_k)
 
 
 @mcp.tool()
-def log_episode(event: str, metadata: dict = None) -> dict:
-    """Append an episodic event with optional metadata to the event log."""
-    log_event(event, metadata or {})
-    intercept_after_episode(event, metadata=metadata or {})
-    return {"status": "logged", "event": event}
+def org_wide_search(query: str, top_k: int = 5) -> list:
+    """
+    Search memories across ALL repositories in the organization (broad scope).
+    Prefer cross_repo_search(scope="project") when you only need project-scoped results.
+
+    Claude: use this when the user explicitly asks about org-wide patterns,
+    or when project-scoped search returns no results.
+    """
+    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    router = CrossRepoRouter()
+    return router.query_org_memories(query, top_k=top_k)
 
 
 @mcp.tool()
-def log_learning(
-    type: str,  # pylint: disable=redefined-builtin
-    text: str,
-    context_summary: str = "",
-    scope: str = "auto",
-) -> dict:
+def cross_repo_search(query: str, scope: str = "project", top_k: int = 5) -> dict:
     """
-    Explicitly record a learning (correction / prod_issue / decision).
-    type  : "correction" | "prod_issue" | "decision"
-    scope : "project" | "global" | "auto" (auto-detected from text)
+    Search knowledge from sibling repositories.
+
+    scope="project" — only repos in same project (recommended, high relevance).
+    scope="org"     — all repos in organization (broader, use sparingly).
+
+    Claude: call this when:
+    - lookup_symbol returned empty and the symbol may live in a sibling repo
+    - The architecture question spans multiple services in the same project
+    - User asks "how does X work across the system" or "what does repo Y do"
+    - Importing from a sibling repo and need context on its internals
     """
-    store = get_learning_store()
-    metadata = {"context_summary": context_summary}
-    result = store.store_learning(type, text, metadata, scope=scope)
-    logger.info("mcp.log_learning", extra={"type": type, "scope": result.get("scope")})
-    return {"status": "stored", **result}
+    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    router = CrossRepoRouter()
+    if scope == "project":
+        results = router.query_project_memories(query, top_k=top_k)
+    else:
+        results = router.query_org_memories(query, top_k=top_k)
+    return {
+        "scope": scope,
+        "results": results,
+        "project": router._project_name,
+        "org": router.org_name,
+        "sibling_count": len(router.get_sibling_repos()),
+    }
 
 
 @mcp.tool()
-def retrieve_learnings(
-    query: str,
-    top_k: int = 5,
-    types: list = None,
-    scopes: list = None,
-) -> list:
+def list_org_context() -> dict:
     """
-    Retrieve learnings (corrections, prod issues, decisions) relevant to query.
-    types  : filter list e.g. ["correction", "prod_issue"]
-    scopes : ["project", "global"] (default: both)
+    Show what org, project, and sibling repositories the current repo belongs to.
+
+    Claude: call this FIRST when the user asks about cross-service or cross-repo topics.
+    Use the returned context to decide whether to call cross_repo_search,
+    and which scope (project vs org) is appropriate.
     """
-    store = get_learning_store()
-    return store.retrieve_learnings(
-        query,
-        top_k=top_k,
-        types=types or [],
-        scopes=scopes or ["project", "global"],
-    )
+    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    router = CrossRepoRouter()
+    return router.get_context_summary()
 
 
 @mcp.tool()
-def deprecate_learning(record_id: str) -> dict:
+def org_dependencies() -> dict:
     """
-    Soft-delete a learning by its ID (returned when it was stored).
-    Deprecated learnings are excluded from all future retrieve_learnings calls
-    but are never physically deleted so the audit trail is preserved.
-
-    Returns ``{"found": bool, "scope": "project"|"global"|null}``.
+    Returns a list of all repositories in the same organization.
+    Future: will return inter-repo dependency graph.
     """
-    store = get_learning_store()
-    result = store.deprecate_learning(record_id)
-    logger.info("mcp.deprecate_learning", extra={"id": record_id, "found": result.get("found")})
-    return result
+    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    router = CrossRepoRouter()
+    return {
+        "organization": router.org_name,
+        "repositories": router.get_sibling_repos() + [os.path.abspath(".")]
+    }
 
 
 @mcp.tool()
-def supersede_learning(
-    old_id: str,
-    new_text: str,
-    learning_type: str,
-    scope: str = "auto",
-) -> dict:
-    """
-    Replace an existing learning with updated content.
-
-    Deprecates the record identified by *old_id* and stores *new_text* as its
-    replacement (carrying a ``supersedes`` back-reference).  Use this whenever
-    a user corrects or updates a previously recorded decision, bug fix, or
-    preference — do NOT call ``store_memory`` again and leave both versions.
-
-    learning_type : "correction" | "prod_issue" | "decision"
-    scope         : "project" | "global" | "auto" (default — inferred from text)
-
-    Returns ``{"found_old": bool, "new_id": str, "scope": str}``.
-    """
-    store = get_learning_store()
-    result = store.supersede_learning(
-        old_id=old_id,
-        new_text=new_text,
-        learning_type=learning_type,
-        scope=scope,
-    )
-    logger.info(
-        "mcp.supersede_learning",
-        extra={"old_id": old_id, "new_id": result.get("new_id"), "scope": result.get("scope")},
-    )
-    return result
-
-
-@mcp.tool()
-def lookup_symbol(name: str) -> dict:
+def lookup_symbol(name: str, include_org: bool = False) -> list:
     """
     Return all locations where a symbol is defined or called,
     with file, line, and type.
+    If include_org=True, also searches sibling repositories in the same organization.
     """
     if _graph_is_empty():
         return _EMPTY_GRAPH_WARNING
@@ -289,30 +356,155 @@ def lookup_symbol(name: str) -> dict:
             if sym["name"] == name and sym["start_line"] == line:
                 sym_type = sym["type"]
                 break
-        result.append({"file": file_path, "line": line, "type": sym_type})
+        result.append({"file": file_path, "line": line, "type": sym_type, "repo": "local"})
+
+    if include_org:
+        from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+        from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+        from config.paths import set_cognirepo_dir, get_cognirepo_dir  # pylint: disable=import-outside-toplevel
+        
+        router = CrossRepoRouter()
+        original_dir = get_cognirepo_dir()
+        for repo in router.get_sibling_repos():
+            cognirepo_dir = os.path.join(repo, ".cognirepo")
+            if not os.path.isdir(cognirepo_dir): continue
+            try:
+                set_cognirepo_dir(cognirepo_dir)
+                sib_indexer = ASTIndexer()
+                sib_indexer.load()
+                sib_locs = sib_indexer.lookup_symbol(name)
+                for sl in sib_locs:
+                    sl["repo"] = os.path.basename(repo)
+                    result.append(sl)
+            except Exception: pass
+            finally: set_cognirepo_dir(original_dir)
+            
     return result
 
 
 @mcp.tool()
+def search_token(word: str) -> dict:
+    """
+    Word-level reverse-index search.
+
+    Unlike lookup_symbol() which only matches defined symbol names,
+    search_token() finds any word that appears in symbol names,
+    docstrings, or inline comments across the indexed codebase.
+
+    Examples:
+      search_token("background")  → files containing 'background' in names/docs
+      search_token("validate")    → all functions whose docs mention validation
+      search_token("github")      → files where GitHub is referenced in comments
+
+    Returns a list of {file, line} dicts sorted by file path.
+    """
+    indexer = _get_indexer()
+    locations = indexer.lookup_word(word.lower().strip())
+    if not locations:
+        return {"results": [], "count": 0, "word": word}
+    return {"results": locations, "count": len(locations), "word": word}
+
+
+def _who_calls_dynamic_fallback(function_name: str) -> list[dict]:
+    """
+    String-literal grep fallback for dynamic dispatch patterns.
+    Finds function_name as a string argument to add_job(), connect(), app.route(), etc.
+    Returns hits labelled found_via=dynamic_dispatch_fallback.
+    """
+    import subprocess  # pylint: disable=import-outside-toplevel
+    import re as _re  # pylint: disable=import-outside-toplevel
+    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+
+    repo_root = os.environ.get("COGNIREPO_ROOT", os.getcwd())
+    results = []
+    try:
+        # Search for function_name as a string argument in source files
+        pattern = rf'["\']?{_re.escape(function_name)}["\']?\s*[,)]'
+        proc = subprocess.run(  # nosec B603
+            ["grep", "-rn", "--include=*.py", "--include=*.js", "--include=*.ts",
+             function_name, repo_root],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in proc.stdout.splitlines():
+            parts = line.split(":", 2)
+            if len(parts) < 3:
+                continue
+            fpath, lineno_s, code = parts
+            # Only include lines that look like dynamic registration (not definitions)
+            if (f"def {function_name}" in code or f"class {function_name}" in code):
+                continue
+            # Check for string argument or scheduler/signal patterns
+            if (function_name in code and
+                    (f'"{function_name}"' in code or f"'{function_name}'" in code or
+                     any(kw in code for kw in ["add_job", "connect", "route", "task",
+                                               "signal", "register", "handler", "callback"]))):
+                try:
+                    rel_path = os.path.relpath(fpath, repo_root)
+                except ValueError:
+                    rel_path = fpath
+                results.append({
+                    "caller": f"dynamic_dispatch::{rel_path}:{lineno_s}",
+                    "file": rel_path,
+                    "line": int(lineno_s),
+                    "code_snippet": code.strip()[:120],
+                    "found_via": "dynamic_dispatch_fallback",
+                })
+    except Exception:  # pylint: disable=broad-except
+        pass
+    return results
+
+
+@mcp.tool()
 def who_calls(function_name: str) -> dict:
-    """Return every caller of a function across the indexed repo."""
+    """
+    Return every caller of a function across the indexed repo.
+
+    First searches the call graph (AST-indexed edges).
+    If empty, falls back to string-literal grep for dynamic dispatch patterns
+    (APScheduler add_job, Django signals, Flask routes, Celery tasks, etc.).
+    Dynamic hits are labelled with found_via=dynamic_dispatch_fallback.
+    """
     if _graph_is_empty():
         return _EMPTY_GRAPH_WARNING
     from graph.knowledge_graph import EdgeType  # pylint: disable=import-outside-toplevel
     graph = _get_graph()
     callee_node = f"symbol::{function_name}"
     if not graph.node_exists(callee_node):
+        # Try dynamic dispatch fallback immediately — graph has no node at all
+        fallback = _who_calls_dynamic_fallback(function_name)
+        if fallback:
+            return fallback
         return []
     result = []
-    for caller in graph.G.predecessors(callee_node):
-        edge_data = graph.G[caller][callee_node]
-        if edge_data.get("rel") == EdgeType.CALLED_BY:
+    # Primary: use indexed CALLS edges (callee → caller, set at index time)
+    for caller in graph.G.successors(callee_node):
+        edge_data = graph.G[callee_node][caller]
+        if edge_data.get("rel") == EdgeType.CALLS:
             node_data = dict(graph.G.nodes[caller])
             result.append({
                 "caller": caller,
                 "file": node_data.get("file", ""),
                 "line": node_data.get("line", -1),
+                "source": "graph",
             })
+    # Fallback: old graph pickle without CALLS edges — use predecessors + CALLED_BY
+    if not result:
+        for caller in graph.G.predecessors(callee_node):
+            edge_data = graph.G[caller][callee_node]
+            if edge_data.get("rel") == EdgeType.CALLED_BY:
+                node_data = dict(graph.G.nodes[caller])
+                result.append({
+                    "caller": caller,
+                    "file": node_data.get("file", ""),
+                    "line": node_data.get("line", -1),
+                    "source": "graph_legacy",
+                })
+    if not result:
+        # Graph has node but no callers — try dynamic dispatch fallback
+        fallback = _who_calls_dynamic_fallback(function_name)
+        if fallback:
+            result = fallback
+    _auto_store_hook("who_calls", result)
     return result
 
 
@@ -325,7 +517,9 @@ def subgraph(entity: str, depth: int = 2) -> dict:
     candidates = [entity, f"symbol::{entity}", f"concept::{entity.lower()}"]
     for candidate in candidates:
         if graph.node_exists(candidate):
-            return graph.subgraph_around(candidate, radius=depth)
+            result = graph.subgraph_around(candidate, radius=depth)
+            _auto_store_hook("subgraph", result)
+            return result
     return {"nodes": [], "edges": []}
 
 
@@ -340,8 +534,10 @@ def graph_stats() -> dict:
     """Return a health summary of the current graph state."""
     graph = _get_graph()
     stats = graph.stats()
+    from graph.knowledge_graph import PYTHON_BUILTINS  # pylint: disable=import-outside-toplevel
     concept_nodes = [
-        n for n, d in graph.G.nodes(data=True) if d.get("type") == "CONCEPT"
+        n for n, d in graph.G.nodes(data=True)
+        if d.get("type") == "CONCEPT" and n.split("::")[-1] not in PYTHON_BUILTINS
     ]
     top_concepts = sorted(
         concept_nodes,
@@ -372,7 +568,9 @@ def semantic_search_code(
     Semantic vector search over indexed code symbols only (no episodic memory
     mixed in).  Optionally filter by language: "python", "typescript", "go", etc.
     """
-    return _traced("semantic_search_code", _semantic_search_code, query=query, top_k=top_k, language=language)
+    result = _traced("semantic_search_code", _semantic_search_code, query=query, top_k=top_k, language=language)
+    _auto_store_hook("semantic_search_code", result)
+    return result
 
 
 @mcp.tool()
@@ -386,7 +584,9 @@ def dependency_graph(
     direction: "imports" | "imported_by" | "both".
     depth: transitive traversal depth (1 = direct only).
     """
-    return _dependency_graph(module=module, direction=direction, depth=depth)
+    result = _dependency_graph(module=module, direction=direction, depth=depth)
+    _auto_store_hook("dependency_graph", result)
+    return result
 
 
 @mcp.tool()
@@ -399,7 +599,37 @@ def explain_change(
     Explain what changed in a file or function recently by cross-referencing
     git history with episodic memory events mentioning the same target.
     """
-    return _explain_change(target=target, since=since, max_commits=max_commits)
+    result = _explain_change(target=target, since=since, max_commits=max_commits)
+    _auto_store_hook("explain_change", result)
+    return result
+
+
+@mcp.tool()
+def architecture_overview(scope: str = "root") -> str:
+    """
+    Retrieve pre-computed architectural summaries.
+    scope: 'root' for repo summary, a directory path, or a file path.
+    """
+    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    summary_path = get_path("index/summaries.json")
+    if not os.path.exists(summary_path):
+        return "Summaries not found. Ask the user to run 'cognirepo summarize' first."
+    
+    with open(summary_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        
+    if scope == "root":
+        return data.get("repo", "No repository summary available.")
+    
+    # Try directory match
+    if scope in data.get("directories", {}):
+        return data["directories"][scope]
+    
+    # Try file match
+    if scope in data.get("files", {}):
+        return data["files"][scope]
+        
+    return f"No summary found for scope: {scope}"
 
 
 @mcp.tool()
@@ -415,7 +645,7 @@ def context_pack(
     block ready for injection into the next prompt.  Call this BEFORE reading
     any source file to avoid wasting tokens on raw file reads.
     """
-    return _traced(
+    result = _traced(
         "context_pack",
         _context_pack,
         query=query,
@@ -424,6 +654,8 @@ def context_pack(
         include_symbols=include_symbols,
         window_lines=window_lines,
     )
+    _auto_store_hook("context_pack", result)
+    return result
 
 
 def _build_manifest() -> dict:
@@ -461,8 +693,33 @@ def _build_manifest() -> dict:
                             "description": "Number of results",
                             "default": 5
                         },
+                        "include_org": {
+                            "type": "boolean",
+                            "description": "Search across all repos in the organization",
+                            "default": False
+                        },
                     },
                     "required": ["query"],
+                },
+            },
+            {
+                "name": "org_search",
+                "description": "Semantic search across all repositories in the organization.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                        "top_k": {"type": "integer", "default": 5},
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "org_dependencies",
+                "description": "List all repositories linked within the same local organization.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
                 },
             },
             {
@@ -507,6 +764,11 @@ def _build_manifest() -> dict:
                     "type": "object",
                     "properties": {
                         "name": {"type": "string", "description": "Symbol name to look up"},
+                        "include_org": {
+                            "type": "boolean",
+                            "description": "Search across sibling repos in the organization",
+                            "default": False
+                        },
                     },
                     "required": ["name"],
                 },
@@ -610,6 +872,20 @@ def _build_manifest() -> dict:
                 },
             },
             {
+                "name": "architecture_overview",
+                "description": "Retrieve pre-computed high-level architectural summaries.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "scope": {
+                            "type": "string",
+                            "description": "Scope: 'root' for repo, a directory path, or a file path.",
+                            "default": "root"
+                        },
+                    },
+                },
+            },
+            {
                 "name": "context_pack",
                 "description": (
                     "Budget-pack the most relevant code + episodic context into a "
@@ -680,6 +956,19 @@ def run_server(project_dir: str | None = None) -> None:
             raise SystemExit(f"cognirepo serve: project-dir not found: {abs_dir}")
         cognirepo_subdir = os.path.join(abs_dir, ".cognirepo")
         set_cognirepo_dir(cognirepo_subdir)
+    # ── auto-start file watcher (background daemon, keeps index fresh) ────────
+    try:
+        _watch_cfg: dict = {}
+        _cfg_path = os.path.join(os.getcwd(), ".cognirepo", "config.json")
+        if os.path.exists(_cfg_path):
+            with open(_cfg_path, encoding="utf-8") as _wf:
+                _watch_cfg = json.load(_wf).get("watch", {})
+        if _watch_cfg.get("auto_enabled", True):
+            from cli.main import _start_watcher_bg  # pylint: disable=import-outside-toplevel
+            _start_watcher_bg(os.getcwd())
+    except Exception:  # pylint: disable=broad-except
+        pass  # watcher is best-effort — never block server startup
+
     _write_manifest()
     mcp.run(transport="stdio")
 

@@ -9,9 +9,9 @@ responsibilities, and data flow. Read this before touching any code.
 
 > **`tools/` is the only entry point to the memory engine.**
 >
-> MCP, REST, and gRPC are thin protocol wrappers. No business logic lives in adapters.
-> If you are writing logic in `server/mcp_server.py`, `api/routes/`, or `rpc/server.py`
-> — stop. Move it to a function in `tools/` and call that function from the adapter.
+> MCP stdio is the active transport. No business logic lives in adapters.
+> If you are writing logic in `server/mcp_server.py` — stop. Move it to a function
+> in `tools/` and call that function from the adapter.
 
 PRs that put logic directly in adapters will not be merged. This rule is what keeps
 all three transports consistent and testable.
@@ -23,16 +23,18 @@ all three transports consistent and testable.
 | Package | Owns | Does not own |
 |---|---|---|
 | `memory/` | FAISS store/retrieve, episodic log, embeddings, circuit breaker | Retrieval scoring |
+| `memory/project_memory.py` | Shared FAISS index per org/project — cross-repo knowledge layer | Per-project config |
 | `graph/` | NetworkX graph structure, behaviour tracker | Embedding, retrieval |
 | `indexer/` | tree-sitter parsing, file watching, reverse index | Graph building |
 | `retrieval/` | Hybrid 3-signal scoring (vector + graph + behaviour); AST is a pre-scorer | Direct FAISS calls |
+| `retrieval/cross_repo.py` | Project-scoped and org-scoped sibling repo search | Local memory |
 | `tools/` | Architecture rule enforcement — all callers go through here | Business logic |
 | `orchestrator/` | Classify, build context, route to model, post-process | Storage |
 | `server/` | MCP stdio adapter only | Any logic |
-| `api/` | REST adapter + JWT auth only | Any logic |
-| `rpc/` | gRPC adapter + context store only | Any logic |
-| `security/` | Encryption at rest, keychain integration | Auth (that is `api/`) |
+| `security/` | Encryption at rest, keychain integration | Any logic |
 | `adapters/` | OpenAI spec + Cursor config export | Any logic |
+| `vector_db/factory.py` | Selects FAISS or ChromaDB adapter via `config.json → storage.vector_backend` | Storage logic |
+| `config/orgs.py` | Org → Project → Repo hierarchy; shared memory path resolution | Memory storage |
 
 ---
 
@@ -42,8 +44,6 @@ all three transports consistent and testable.
 User / AI Tool
     │
     ├── MCP stdio         server/mcp_server.py
-    ├── REST (JWT)        api/main.py
-    └── gRPC              rpc/server.py
               │
          tools/           ← ONLY entry point to memory engine
               │
@@ -95,13 +95,13 @@ orchestrator/session.py         — persist exchange to .cognirepo/sessions/
 cognirepo init   (interactive TTY)
     │
     ▼
-cli/wizard.py           — 7-step powerlevel10k-style prompt
-    │  project name, multi-model, Redis, encrypt, languages, MCP targets, API port
+cli/wizard.py           — 5-step powerlevel10k-style prompt
+    │  project name, encrypt, languages, MCP targets, org/project
     ▼
 cli/init_project.py     — scaffold dirs, write config.json
     │
-    ├── .cognirepo/config.json   — project_name, models{QUICK/STANDARD/COMPLEX/EXPERT},
-    │                              multi_agent, redis, storage.encrypt
+    ├── .cognirepo/config.json   — project_name, model{provider/model},
+    │ storage.encrypt, storage.vector_backend, org, project
     ├── .claude/CLAUDE.md        — project instructions (from STD_PROMPTS/claude_mcp.md)
     ├── .claude/settings.json    — MCP connector: cognirepo-<name> → cognirepo serve --project-dir
     ├── .gemini/COGNIREPO.md     — Gemini instructions (from STD_PROMPTS/gemini_mcp.md)
@@ -138,7 +138,7 @@ All CogniRepo data lives under `.cognirepo/` in the project root. Nothing is wri
 
 ```
 .cognirepo/
-  config.json                  — project config (project_name, model registry, multi_agent, redis)
+  config.json                  — project config (project_name, model registry, redis)
   vector_db/
     faiss.index                — FAISS flat index (sentence-transformer embeddings)
     metadata.json              — per-vector metadata (text, source, importance, timestamp)
@@ -239,8 +239,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. In brief:
 
 1. Create `tools/<name>.py` — wraps existing `memory/` or `graph/` methods, no direct FAISS calls
 2. Add `@mcp.tool()` decorated function in `server/mcp_server.py`
-3. Add REST route in `api/routes/` — run `cognirepo export-spec` to regenerate
-   `server/manifest.json`
+3. Run `cognirepo export-spec` to regenerate `server/manifest.json`
 
 ---
 
@@ -254,4 +253,3 @@ for v0.1.0 — they will be replaced with proper diagrams before v0.2.0.
 | `system-overview.png` | Full component map |
 | `data-flow.png` | Request path from tool call to model response |
 | `retrieval-pipeline.png` | Hybrid 3-signal retrieval pipeline (AST pre-scorer → vector+graph+behaviour merge) |
-| `multi-agent.png` | gRPC-based multi-agent topology |

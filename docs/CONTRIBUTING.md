@@ -11,7 +11,6 @@ Thank you for contributing! This guide covers dev setup, adding languages, addin
 git clone https://github.com/ashlesh-t/cognirepo
 cd cognirepo
 pip install -e ".[dev,security]"
-pip install grpcio grpcio-tools
 
 # Initialize the project
 cognirepo init --no-index
@@ -203,5 +202,5 @@ Set these in: **GitHub repo → Settings → Secrets and variables → Actions**
 
 ## License
 
-By contributing, you agree your contributions are licensed under **AGPL-3.0-or-later**.
+By contributing, you agree your contributions are licensed under **MIT**.
 See [LICENSE](../LICENSE).

@@ -8,8 +8,6 @@
 User / AI Tool
     │
     ├── MCP stdio              (Claude Desktop, Gemini CLI, Cursor)
-    ├── REST API (JWT/FastAPI) (any language, any tool)
-    └── gRPC streaming         (multi-agent / inter-model)
               │
          tools/                ← SINGLE ENTRY POINT — all logic here
               │
@@ -29,7 +27,6 @@ episodic   vector + graph            KnowledgeGraph
 
 ### `tools/` — Single Source of Truth
 
-All MCP tools are implemented here. MCP server, FastAPI, and gRPC are thin adapters that
 forward requests to these functions. **Never duplicate logic in an adapter.**
 
 | Module | Responsibility |
@@ -129,9 +126,7 @@ Do not hardcode model names outside `classifier.py`.
 
 ---
 
-### `api/` — REST Adapter (FastAPI)
 
-JWT-authenticated REST API. Thin layer over `tools/`.
 
 Key routes:
 - `POST /auth/login` → returns JWT token
@@ -143,11 +138,9 @@ Key routes:
 
 ---
 
-### `rpc/` — gRPC Adapter
 
 Protocol Buffer streaming service for multi-agent communication.
 
-Services defined in `rpc/proto/cognirepo.proto`:
 - `QueryService.Query` — unary query
 - `ContextService.StreamContext` — server-streaming context pack
 - `QueryService.SubQueryStream` — client-stream of sub-queries

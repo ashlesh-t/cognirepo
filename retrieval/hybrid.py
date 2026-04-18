@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Hybrid retrieval — merges three signals into a single ranked result list.
@@ -283,11 +283,22 @@ _CACHE_HITS = 0
 _CACHE_MISSES = 0
 
 
-def hybrid_retrieve(query: str, top_k: int = 5) -> list[dict]:
+# Default 0.0 = no filtering. final_score on cold repos = 0.5*vector (graph+behaviour=0),
+# so a 0.35 final_score gate requires vector_score>=0.70 which is unreachable on cold index.
+# Let context_pack's _MIN_CODE_CONFIDENCE=0.25 gate handle quality at the pack layer.
+_DEFAULT_MIN_SCORE: float = float(os.environ.get("COGNIREPO_MIN_RETRIEVAL_SCORE", "0.0"))
+
+
+def hybrid_retrieve(query: str, top_k: int = 5, min_score: float | None = None) -> list[dict]:
     """
     Single entry point used by tools/retrieve_memory.py.
     Caches results for _HYBRID_CACHE_TTL seconds (default 5 min).
     Call invalidate_hybrid_cache() on file-change events to evict stale entries.
+
+    min_score: filter results with final_score below this threshold.
+               Default 0.0 (disabled) — set COGNIREPO_MIN_RETRIEVAL_SCORE env var to enable.
+               If threshold > 0 but all results fall below it, returns full unfiltered list
+               annotated with "_cold_fallback": True so callers can decide.
     """
     global _CACHE_HITS, _CACHE_MISSES  # pylint: disable=global-statement
     cache_key = (query, top_k)
@@ -297,11 +308,27 @@ def hybrid_retrieve(query: str, top_k: int = 5) -> list[dict]:
         result, ts = cached
         if now - ts < _HYBRID_CACHE_TTL:
             _CACHE_HITS += 1
-            return result
+            return _apply_min_score(result, min_score)
     _CACHE_MISSES += 1
     result = HybridRetriever().retrieve(query, top_k)
     _HYBRID_CACHE[cache_key] = (result, now)
-    return result
+    return _apply_min_score(result, min_score)
+
+
+def _apply_min_score(result: list[dict], min_score: float | None) -> list[dict]:
+    """
+    Apply min_score filter. If threshold > 0 but all results are below it
+    (cold index scenario), return full list annotated with _cold_fallback=True
+    rather than returning an empty list.
+    """
+    threshold = min_score if min_score is not None else _DEFAULT_MIN_SCORE
+    if threshold <= 0 or not result:
+        return result
+    filtered = [r for r in result if r.get("final_score", 0.0) >= threshold]
+    if not filtered:
+        # Cold index: all scores below threshold — return everything with warning flag
+        return [{**r, "_cold_fallback": True} for r in result]
+    return filtered
 
 
 def invalidate_hybrid_cache() -> None:

@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "Local cognitive infrastructure layer for AI agents"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
-license = "AGPL-3.0-or-later"
+license = "MIT"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -22,35 +22,28 @@ dependencies = [
     "sentence-transformers==5.3.0",
     # MCP server
     "mcp[cli]==1.26.0",
-    # REST API
-    "fastapi==0.135.2",
-    "uvicorn[standard]==0.42.0",
-    "python-multipart==0.0.22",
-    "starlette==1.0.0",
-    # auth
-    "PyJWT==2.12.1",
-    "bcrypt==5.0.0",
-    # HTTP client (CLI --via-api)
-    "httpx==0.28.1",
     # graph + indexer
     "networkx>=3.3",
     "watchdog>=4.0",
     "tree-sitter>=0.23",
     # shared
     "pydantic==2.12.5",
-    "anyio==4.12.1",
-    # gRPC
-    "grpcio>=1.60",
-    "grpcio-tools>=1.60",
-    "grpcio-health-checking>=1.60",
     # model providers
     "anthropic>=0.50",
     "google-generativeai>=0.8",
+    "google-genai>=0.3",
     "openai>=1.0",
     # env loading
     "python-dotenv>=1.0",
     # BM25 keyword retrieval (episodic search)
     "rank-bm25>=0.2.2",
+    # cross-process file locking (concurrent agent writes)
+    "filelock>=3.12",
+    # token counting — hard dependency, no silent fallback
+    "tiktoken>=0.7",
+    # system metrics + connectivity
+    "psutil>=6.0",
+    "requests>=2.32",
 ]
 
 [project.urls]
@@ -81,6 +74,7 @@ cli = [
     "rich>=13.7",
     "prompt_toolkit>=3.0",
     "tomli-w>=1.0",
+    "pyfiglet>=1.0",
 ]
 dev = [
     "pytest>=8.0",
@@ -97,7 +91,7 @@ cognirepo = "cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["_bm25*", "adapters*", "api*", "cli*", "config*", "cron*", "graph*", "indexer*", "memory*", "orchestrator*", "retrieval*", "rpc*", "security*", "server*", "tools*", "vector_db*"]
+include = ["_bm25*", "adapters*", "cli*", "config*", "cron*", "graph*", "indexer*", "memory*", "orchestrator*", "retrieval*", "security*", "server*", "tools*", "vector_db*"]
 exclude = ["venv*", "*.egg-info*"]
 
 [build-system]
@@ -124,7 +118,6 @@ omit = [
     "tests/*",
     "venv/*",
     ".venv/*",
-    "rpc/proto/*",
     "scripts/*",
     "deploy/*",
     "docs/*",

@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Tool to store a text memory into semantic memory.
@@ -10,7 +10,7 @@ Tool to store a text memory into semantic memory.
 import sys
 from memory.semantic_memory import SemanticMemory
 from memory.episodic_memory import log_event
-from api.metrics import MEMORY_OPS_TOTAL
+from server.metrics import MEMORY_OPS_TOTAL
 
 
 def store_memory(text: str, source: str = "") -> dict:
@@ -31,6 +31,22 @@ def store_memory(text: str, source: str = "") -> dict:
         event=f"store-memory: {text[:50]}...",
         metadata={"source": source, "importance": importance, "type": "semantic_storage"}
     )
+
+    # Mirror to shared project memory when autosave_context enabled
+    try:
+        from config.orgs import get_repo_project  # pylint: disable=import-outside-toplevel
+        import os  # pylint: disable=import-outside-toplevel
+        result = get_repo_project(os.getcwd())
+        if result:
+            from memory.project_memory import ProjectMemory  # pylint: disable=import-outside-toplevel
+            org, project = result
+            ProjectMemory(org, project).store(
+                text,
+                source_repo=os.path.basename(os.getcwd()),
+                importance=importance,
+            )
+    except Exception:  # pylint: disable=broad-except
+        pass  # project memory mirror is best-effort
 
     return {"status": "stored", "text": text, "source": source, "importance": importance}
 

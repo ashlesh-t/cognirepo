@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Model Router — the top-level orchestration entry point.
@@ -11,21 +11,8 @@ route(query) pipeline
 ─────────────────────
 1. Classify query          → tier (FAST/BALANCED/DEEP), model ID, provider
 2. Build context bundle    → memories + graph + episodic + AST hits + manifest
-3. [Optional] Multi-agent  → DEEP queries may spawn gRPC sub-queries (off by default)
-4. Dispatch to adapter     → anthropic | gemini | openai
-5. Post-process            → log episode, update behaviour graph
-
-Multi-Agent Mode
-----------------
-Controlled by environment variable (OFF by default):
-
-    COGNIREPO_MULTI_AGENT_ENABLED=true   # enable agent-to-agent delegation
-
-When enabled and tier == DEEP, the router may call rpc.client.sub_query() to
-delegate fast sub-lookups to a lighter model before calling the primary model.
-
-Agent topology: 1 orchestrator + N sub-agents (each = one model API call).
-Interaction depth: one level (orchestrator → sub-agent, no sub-agent chains).
+3. Dispatch to adapter     → anthropic | gemini | openai
+4. Post-process            → log episode, update behaviour graph
 
 Usage
 -----
@@ -35,12 +22,9 @@ Usage
 """
 from __future__ import annotations
 
-import atexit
 import json
 import logging
 import os
-import socket
-import subprocess
 import traceback
 from dataclasses import dataclass
 from typing import Generator
@@ -81,18 +65,27 @@ def _write_error_log(error_msg: str, query: str = "") -> str:
         return log_path
     except Exception:  # pylint: disable=broad-except
         return _error_log_dir()
-def _pid_file() -> str:
-    return get_path("grpc.pid")
-
-# ── multi-agent state (module-level, one per process) ─────────────────────────
-
-_GRPC_WARNED: bool = False           # warning shown this session?
-_GRPC_PROCESS: subprocess.Popen | None = None  # auto-started gRPC subprocess
-_GRPC_AUTOSTART_DONE: bool = False   # autostart attempted this session?
 
 
-def _multi_agent_enabled() -> bool:
-    return os.environ.get("COGNIREPO_MULTI_AGENT_ENABLED", "false").lower() in ("1", "true", "yes")
+def _tier_retrieval_params(tier: str, caller_top_k: int, caller_episodes: int) -> tuple[int, int]:
+    """
+    Return (top_k, episode_limit) for the given tier.
+    Overrides caller-supplied values to match the tier's retrieval depth:
+
+      QUICK:    semantic_search_code only — skip graph, no episodes
+      STANDARD: semantic + learnings — light episodes
+      COMPLEX:  full hybrid + learnings — moderate episodes
+      EXPERT:   full hybrid + graph + session prime — maximum depth
+    """
+    TIER_PARAMS = {
+        "QUICK":    (3,  0),
+        "STANDARD": (5,  3),
+        "COMPLEX":  (10, 5),
+        "EXPERT":   (20, 10),
+    }
+    defaults = TIER_PARAMS.get(tier, (caller_top_k, caller_episodes))
+    # If the caller explicitly passed higher values, respect them
+    return (max(defaults[0], caller_top_k), max(defaults[1], caller_episodes))
 
 
 def _load_config() -> dict:
@@ -101,64 +94,6 @@ def _load_config() -> dict:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return {}
-
-
-def _is_port_open(host: str, port: int) -> bool:
-    """Return True if something is listening on host:port."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(1.0)
-        return s.connect_ex((host, port)) == 0
-
-
-def _maybe_autostart_grpc(host: str, port: int) -> None:
-    """
-    If config has multi_agent.auto_start_grpc=true and the port is free,
-    spawn 'cognirepo serve-grpc' as a subprocess and record its PID.
-    Called at most once per session.
-    """
-    global _GRPC_PROCESS, _GRPC_AUTOSTART_DONE  # pylint: disable=global-statement
-    if _GRPC_AUTOSTART_DONE:
-        return
-    _GRPC_AUTOSTART_DONE = True
-
-    cfg = _load_config()
-    # auto_start_grpc=true in config OR COGNIREPO_MULTI_AGENT_ENABLED=true both trigger auto-start
-    if not (cfg.get("multi_agent", {}).get("auto_start_grpc", False) or _multi_agent_enabled()):
-        return
-    if _is_port_open(host, port):
-        logger.debug("gRPC port %d already in use — skipping auto-start", port)
-        return
-
-    try:
-        proc = subprocess.Popen(  # pylint: disable=consider-using-with  # nosec B603
-            ["cognirepo", "serve-grpc", "--port", str(port)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        _GRPC_PROCESS = proc
-        os.makedirs(get_path(""), exist_ok=True)
-        with open(_pid_file(), "w", encoding="utf-8") as f:
-            f.write(str(proc.pid))
-        logger.info("Auto-started gRPC server (pid=%d) on port %d", proc.pid, port)
-        atexit.register(_shutdown_grpc)
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.debug("Failed to auto-start gRPC: %s", exc)
-
-
-def _shutdown_grpc() -> None:
-    """atexit handler: stop auto-started gRPC subprocess and remove PID file."""
-    global _GRPC_PROCESS  # pylint: disable=global-statement
-    if _GRPC_PROCESS is not None:
-        try:
-            _GRPC_PROCESS.terminate()
-            _GRPC_PROCESS.wait(timeout=5)
-        except Exception:  # pylint: disable=broad-except
-            pass
-        _GRPC_PROCESS = None
-    try:
-        os.remove(_pid_file())
-    except OSError:
-        pass
 
 
 # ── public dataclass ──────────────────────────────────────────────────────────
@@ -170,11 +105,6 @@ class RouteResult:
     classifier: ClassifierResult
     bundle: ContextBundle
     error: str = ""
-    sub_queries: list[dict] = None  # populated when multi-agent is active
-
-    def __post_init__(self):
-        if self.sub_queries is None:
-            self.sub_queries = []
 
 
 # ── main entry point ──────────────────────────────────────────────────────────
@@ -221,22 +151,12 @@ def route(
                 response=local_resp, classifier=local_clf, bundle=_fast_bundle,
             )
 
-    # ── 2. build context (tier controls token budget) ────────────────────────
-    bundle = build_context(query, top_k=top_k, episode_limit=episode_limit, tier=clf.tier)
+    # ── 2. build context (tier controls token budget AND retrieval depth) ──────
+    # Tier-aware retrieval depth: QUICK uses fast-path only, EXPERT uses full stack
+    tier_top_k, tier_episodes = _tier_retrieval_params(clf.tier, top_k, episode_limit)
+    bundle = build_context(query, top_k=tier_top_k, episode_limit=tier_episodes, tier=clf.tier)
 
-    # ── 3. multi-agent sub-queries (DEEP only, off by default) ───────────────
-    sub_queries: list[dict] = []
-    if _multi_agent_enabled() and clf.tier == "EXPERT":
-        sub_queries = _run_sub_queries(query, bundle)
-        if sub_queries:
-            # Inject sub-query results into system prompt
-            sub_text = "\n".join(
-                f"  [{sq['target_tier']}] {sq['query'][:60]}: {sq['result'][:200]}"
-                for sq in sub_queries
-            )
-            bundle.system_prompt += f"\n\n## Sub-Query Results (from fast models)\n{sub_text}"
-
-    # ── 3.5 inject relevant past learnings (corrections/prod_issues) ─────────
+    # ── 3. inject relevant past learnings (corrections/prod_issues) ─────────
     try:
         from memory.learning_store import get_learning_store  # pylint: disable=import-outside-toplevel
         learnings = get_learning_store().retrieve_learnings(
@@ -289,7 +209,7 @@ def route(
         )
         return RouteResult(
             response=response, classifier=clf, bundle=bundle,
-            error=error_msg, sub_queries=sub_queries,
+            error=error_msg,
         )
     except Exception as exc:  # pylint: disable=broad-except
         full_tb = traceback.format_exc()
@@ -305,81 +225,15 @@ def route(
         )
         return RouteResult(
             response=response, classifier=clf, bundle=bundle,
-            error=error_msg, sub_queries=sub_queries,
+            error=error_msg,
         )
 
     # ── 5. post-process ───────────────────────────────────────────────────────
     _post_process(query=query, clf=clf, bundle=bundle, response=response)
 
     return RouteResult(
-        response=response, classifier=clf, bundle=bundle, sub_queries=sub_queries,
+        response=response, classifier=clf, bundle=bundle,
     )
-
-
-# ── multi-agent sub-query delegation ─────────────────────────────────────────
-
-def _run_sub_queries(query: str, bundle: ContextBundle) -> list[dict]:
-    """
-    For DEEP queries, extract entity lookups and delegate them to FAST tier
-    via gRPC sub-query.  Returns list of {query, result, target_tier} dicts.
-
-    If the gRPC server is unreachable, logs a visible WARNING once per session
-    (not silently discarded).  Supports auto-starting the server when
-    config.json has multi_agent.auto_start_grpc=true.
-    """
-    # pylint: disable=unused-argument
-    global _GRPC_WARNED  # pylint: disable=global-statement
-
-    results: list[dict] = []
-    try:
-        from graph.graph_utils import extract_entities_from_text  # pylint: disable=import-outside-toplevel
-        from rpc.client import CogniRepoClient  # pylint: disable=import-outside-toplevel
-
-        entities = extract_entities_from_text(query)[:2]  # max 2 sub-queries
-        if not entities:
-            return results
-
-        grpc_host = os.environ.get("COGNIREPO_GRPC_HOST", "localhost")
-        grpc_port = int(os.environ.get("COGNIREPO_GRPC_PORT", "50051"))
-
-        # Attempt auto-start before checking port
-        _maybe_autostart_grpc(grpc_host, grpc_port)
-
-        # Verify gRPC is reachable — warn once if not
-        if not _is_port_open(grpc_host, grpc_port):
-            if not _GRPC_WARNED:
-                _GRPC_WARNED = True
-                logger.warning(
-                    "Multi-agent enabled but gRPC server is not reachable on port %d. "
-                    "Sub-queries disabled. Start with: cognirepo serve-grpc",
-                    grpc_port,
-                )
-            return []
-
-        import uuid  # pylint: disable=import-outside-toplevel
-        context_id = "q_" + uuid.uuid4().hex[:8]
-
-        with CogniRepoClient(host=grpc_host, port=grpc_port) as client:
-            for entity in entities:
-                sub_q = f"Where is {entity} defined and what does it do?"
-                resp = client.sub_query(
-                    query=sub_q,
-                    context_id=context_id,
-                    source_model="orchestrator",
-                    target_tier="STANDARD",
-                    max_tokens=256,
-                    timeout=10.0,
-                )
-                if not resp.error:
-                    results.append({
-                        "query": sub_q,
-                        "result": resp.result,
-                        "target_tier": "STANDARD",
-                        "model_used": resp.model_used,
-                    })
-    except Exception as exc:  # pylint: disable=broad-except
-        logger.debug("Multi-agent sub-query failed: %s", exc)
-    return results
 
 
 # ── provider availability + fallback chain ────────────────────────────────────
@@ -755,7 +609,8 @@ def stream_route(
             yield local_answer
             return
 
-    bundle = build_context(query, top_k=top_k, episode_limit=episode_limit, tier=clf.tier)
+    tier_top_k, tier_episodes = _tier_retrieval_params(clf.tier, top_k, episode_limit)
+    bundle = build_context(query, top_k=tier_top_k, episode_limit=tier_episodes, tier=clf.tier)
 
     full_text: list[str] = []
     usage: dict = {}
@@ -872,7 +727,6 @@ def _post_process(
                 "provider": clf.provider,
                 "score": clf.score,
                 "tokens_out": response.usage.get("output_tokens", 0),
-                "multi_agent": _multi_agent_enabled(),
             },
         )
     except Exception:  # pylint: disable=broad-except

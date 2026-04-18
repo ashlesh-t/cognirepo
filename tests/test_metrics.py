@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """Tests for api/metrics.py — Prometheus metrics."""
 import pytest
@@ -15,21 +15,25 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not _FASTAPI, reason="fastapi not installed")
 
-from api.main import app
-from api.metrics import metrics_available
+from server.metrics import metrics_available
+
+# REST API removed — HTTP endpoint tests are skipped until a web server is re-added.
+_NO_APP = pytest.mark.skip(reason="REST API removed; no HTTP app available")
 
 
 @pytest.fixture()
 def client():
-    return TestClient(app, raise_server_exceptions=False)
+    pytest.skip("REST API removed; no HTTP app to test against")
 
 
+@_NO_APP
 def test_metrics_endpoint_exists(client):
     """GET /metrics must return 200 (with prometheus_client) or 501 (without)."""
     resp = client.get("/metrics")
     assert resp.status_code in (200, 501)
 
 
+@_NO_APP
 def test_metrics_content_when_available(client):
     """If prometheus_client is installed, /metrics returns Prometheus text format."""
     if not metrics_available():
@@ -37,13 +41,13 @@ def test_metrics_content_when_available(client):
     resp = client.get("/metrics")
     assert resp.status_code == 200
     assert "text/plain" in resp.headers.get("content-type", "")
-    # At minimum the endpoint itself should have generated some metric lines
     assert b"cognirepo_" in resp.content or b"# HELP" in resp.content
 
 
+@_NO_APP
 def test_metrics_501_when_unavailable(client, monkeypatch):
     """Without prometheus_client, /metrics returns 501 with an informative message."""
-    import api.metrics as m
+    import server.metrics as m
     monkeypatch.setattr(m, "_PROM_AVAILABLE", False)
     resp = client.get("/metrics")
     assert resp.status_code == 501
@@ -55,7 +59,7 @@ def test_memory_ops_counter_increments():
     if not metrics_available():
         pytest.skip("prometheus_client not installed")
 
-    from api.metrics import MEMORY_OPS_TOTAL
+    from server.metrics import MEMORY_OPS_TOTAL
     from prometheus_client import REGISTRY
 
     # Read current value — Counter family name is without _total in some prom versions;
@@ -80,7 +84,7 @@ def test_circuit_breaker_gauge_updates():
     if not metrics_available():
         pytest.skip("prometheus_client not installed")
 
-    from api.metrics import CB_STATE
+    from server.metrics import CB_STATE
     from prometheus_client import REGISTRY
 
     def _get_gauge():
