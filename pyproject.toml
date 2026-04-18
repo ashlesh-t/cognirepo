@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "Local cognitive infrastructure layer for AI agents"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
-license = "AGPL-3.0-or-later"
+license = "MIT"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

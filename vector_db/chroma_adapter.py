@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 vector_db/chroma_adapter.py — Optional VectorStorageAdapter backed by ChromaDB.
@@ -72,6 +72,7 @@ class ChromaDBAdapter(VectorStorageAdapter):
         text: str,
         importance: float,
         source: str = "memory",
+        behaviour_score: float = 0.0,
     ) -> None:
         doc_id = str(self._next_id)
         self._next_id += 1
@@ -79,8 +80,23 @@ class ChromaDBAdapter(VectorStorageAdapter):
             ids=[doc_id],
             embeddings=[vector.tolist()],
             documents=[text],
-            metadatas=[{"importance": importance, "source": source, "text": text}],
+            metadatas=[{
+                "importance": importance,
+                "source": source,
+                "text": text,
+                "behaviour_score": behaviour_score,
+            }],
         )
+
+    def update_behaviour_score(self, row_id: int, new_score: float) -> bool:
+        """Update behaviour_score metadata for a Chroma entry (row_id = insert order)."""
+        doc_id = str(row_id)
+        try:
+            self._col.update(ids=[doc_id], metadatas=[{"behaviour_score": float(new_score)}])
+            return True
+        except Exception as exc:  # pylint: disable=broad-except
+            log.warning("ChromaDBAdapter.update_behaviour_score() failed: %s", exc)
+            return False
 
     def search(
         self,
@@ -127,12 +143,17 @@ class ChromaDBAdapter(VectorStorageAdapter):
         metas = (res.get("metadatas") or [[]])[0]
         dists = (res.get("distances") or [[]])[0]
         for i, meta in enumerate(metas):
+            dist = float(dists[i]) if i < len(dists) else 0.0
+            l2_score = max(0.0, 1.0 - dist / 2.0)
+            b_score = float(meta.get("behaviour_score", 0.0))
             entry = {
                 "text": meta.get("text", ""),
                 "importance": meta.get("importance", 0.5),
                 "source": meta.get("source", "memory"),
-                "l2_distance": float(dists[i]) if i < len(dists) else 0.0,
+                "behaviour_score": b_score,
+                "l2_distance": dist,
                 "faiss_row": i,
+                "combined_score": round(l2_score * 0.8 + b_score * 0.2, 4),
             }
             results.append(entry)
         return results

@@ -300,7 +300,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | OS keychain key storage | ✅ | `keyring` library |
 | JWT authentication (REST) | ✅ | `api/auth.py` |
 | Bcrypt password hashing | ✅ | Used for API password verification |
-| AGPL-3.0 license headers | ✅ | All source files have SPDX headers |
+| MIT license headers | ✅ | All source files have SPDX headers |
 | CI security gates | ✅ | Bandit (HIGH), TruffleHog (--only-verified), Trivy (CRITICAL/HIGH), Snyk (CRITICAL) |
 | Secret scanning in CI | ✅ | TruffleHog on full git history |
 

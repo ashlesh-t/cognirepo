@@ -202,5 +202,5 @@ Set these in: **GitHub repo → Settings → Secrets and variables → Actions**
 
 ## License
 
-By contributing, you agree your contributions are licensed under **AGPL-3.0-or-later**.
+By contributing, you agree your contributions are licensed under **MIT**.
 See [LICENSE](../LICENSE).

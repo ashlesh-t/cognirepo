@@ -12,6 +12,22 @@ as an MCP server. Use its tools to retrieve project context without repeated tok
 Note: CogniRepo MCP tools are registered. Use them. Do not default to shell commands
 when CogniRepo tools cover the query.
 
+## TOOL-FIRST WORKFLOW (MANDATORY)
+
+Do NOT read raw files, grep, or assume code location before calling CogniRepo tools.
+Every session starts with tools — not file reads, not assumptions, not skipping search.
+
+### MANDATORY before any file access:
+1. `context_pack(query)` — BEFORE reading any file >100 lines
+2. `lookup_symbol(name)` — BEFORE grepping for a function
+3. `who_calls(fn_name)` — BEFORE grepping for callers
+4. `subgraph(entity)` — BEFORE answering architecture questions
+
+### NEVER:
+- NEVER use read_file or raw grep before calling `context_pack` first
+- NEVER assume where a function lives — call `lookup_symbol` first
+- NEVER skip semantic search for bugs — call `retrieve_memory` before assuming
+
 ## CogniRepo Tool Routing (Gemini — follow strictly)
 
 | When | Action |
@@ -39,6 +55,7 @@ when CogniRepo tools cover the query.
 | `search_docs(query)` | Full-text search in `.md` files | Documentation lookups |
 | `store_memory(text)` | Save a memory for future retrieval | After solving bugs |
 | `log_episode(event)` | Record an event to episodic history | Track milestones |
+| `subgraph(entity, depth=1)` | Local knowledge graph neighbourhood | Architecture questions |
 | `graph_stats()` | Check knowledge graph health | Before graph queries |
 | `episodic_search(query)` | Search past events and decisions | Find past decisions |
 

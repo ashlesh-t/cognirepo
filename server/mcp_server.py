@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Real MCP server for CogniRepo — stdio transport, works with Claude Desktop
@@ -262,6 +262,63 @@ def org_search(query: str, top_k: int = 5) -> list:
     from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
     router = CrossRepoRouter()
     return router.query_org_memories(query, top_k=top_k)
+
+
+@mcp.tool()
+def org_wide_search(query: str, top_k: int = 5) -> list:
+    """
+    Search memories across ALL repositories in the organization (broad scope).
+    Prefer cross_repo_search(scope="project") when you only need project-scoped results.
+
+    Claude: use this when the user explicitly asks about org-wide patterns,
+    or when project-scoped search returns no results.
+    """
+    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    router = CrossRepoRouter()
+    return router.query_org_memories(query, top_k=top_k)
+
+
+@mcp.tool()
+def cross_repo_search(query: str, scope: str = "project", top_k: int = 5) -> dict:
+    """
+    Search knowledge from sibling repositories.
+
+    scope="project" — only repos in same project (recommended, high relevance).
+    scope="org"     — all repos in organization (broader, use sparingly).
+
+    Claude: call this when:
+    - lookup_symbol returned empty and the symbol may live in a sibling repo
+    - The architecture question spans multiple services in the same project
+    - User asks "how does X work across the system" or "what does repo Y do"
+    - Importing from a sibling repo and need context on its internals
+    """
+    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    router = CrossRepoRouter()
+    if scope == "project":
+        results = router.query_project_memories(query, top_k=top_k)
+    else:
+        results = router.query_org_memories(query, top_k=top_k)
+    return {
+        "scope": scope,
+        "results": results,
+        "project": router._project_name,
+        "org": router.org_name,
+        "sibling_count": len(router.get_sibling_repos()),
+    }
+
+
+@mcp.tool()
+def list_org_context() -> dict:
+    """
+    Show what org, project, and sibling repositories the current repo belongs to.
+
+    Claude: call this FIRST when the user asks about cross-service or cross-repo topics.
+    Use the returned context to decide whether to call cross_repo_search,
+    and which scope (project vs org) is appropriate.
+    """
+    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    router = CrossRepoRouter()
+    return router.get_context_summary()
 
 
 @mcp.tool()
@@ -639,7 +696,7 @@ def _build_manifest() -> dict:
                         "include_org": {
                             "type": "boolean",
                             "description": "Search across all repos in the organization",
-                            "default": false
+                            "default": False
                         },
                     },
                     "required": ["query"],
@@ -710,7 +767,7 @@ def _build_manifest() -> dict:
                         "include_org": {
                             "type": "boolean",
                             "description": "Search across sibling repos in the organization",
-                            "default": false
+                            "default": False
                         },
                     },
                     "required": ["name"],

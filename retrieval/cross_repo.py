@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Cross-repository discovery and retrieval logic.
@@ -13,7 +13,7 @@ from Repo B if both are members of the same local organization.
 import json
 import os
 import logging
-from config.orgs import get_repo_org, list_orgs
+from config.orgs import get_repo_org, get_repo_project, get_project_repos, list_orgs
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,8 @@ class CrossRepoRouter:
     def __init__(self, current_repo_path: str = "."):
         self.repo_path = os.path.abspath(current_repo_path)
         self.org_name = get_repo_org(self.repo_path)
+        _proj = get_repo_project(self.repo_path)
+        self._project_org, self._project_name = _proj if _proj else (None, None)
 
     def get_sibling_repos(self) -> list[str]:
         """Return absolute paths to all other repos in the same organization."""
@@ -75,3 +77,38 @@ class CrossRepoRouter:
         # Re-sort combined results by score (lower is better for L2 distance)
         all_results.sort(key=lambda x: x.get("score", 1.0))
         return all_results[:top_k]
+
+    def query_project_memories(self, query: str, top_k: int = 5) -> list[dict]:
+        """
+        Search shared ProjectMemory for the project this repo belongs to.
+        Narrower than query_org_memories — only the current project scope.
+        """
+        if not self._project_org or not self._project_name:
+            return []
+        try:
+            from memory.project_memory import ProjectMemory  # pylint: disable=import-outside-toplevel
+            pm = ProjectMemory(self._project_org, self._project_name)
+            results = pm.search(query, top_k=top_k)
+            for r in results:
+                r.setdefault("scope", "project")
+                r.setdefault("project", self._project_name)
+                r.setdefault("org", self._project_org)
+            return results
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error("query_project_memories failed: %s", exc)
+            return []
+
+    def get_context_summary(self) -> dict:
+        """Return org/project/sibling context for the current repo."""
+        proj_repos = (
+            get_project_repos(self._project_org, self._project_name)
+            if self._project_org and self._project_name
+            else []
+        )
+        return {
+            "org": self.org_name,
+            "project": self._project_name,
+            "project_org": self._project_org,
+            "sibling_repos": self.get_sibling_repos(),
+            "project_repos": [r for r in proj_repos if os.path.abspath(r) != self.repo_path],
+        }

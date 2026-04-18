@@ -10,6 +10,22 @@ CogniRepo is the **local cognitive infrastructure layer** wired into this projec
 It gives you semantic memory, AST code indexing, a knowledge graph, and episodic history — all
 accessible via MCP tools without consuming tokens for repeated context retrieval.
 
+## TOOL-FIRST WORKFLOW (MANDATORY)
+
+Do NOT read raw files, grep, or assume code location before calling CogniRepo tools.
+Every session starts with tools — not file reads, not assumptions, not skipping search.
+
+### MANDATORY before any file access:
+1. `context_pack(query)` — BEFORE reading any file >100 lines
+2. `lookup_symbol(name)` — BEFORE grepping for a function
+3. `who_calls(fn_name)` — BEFORE grepping for callers
+4. `subgraph(entity)` — BEFORE answering architecture questions
+
+### NEVER:
+- NEVER use read_file or raw grep before calling `context_pack` first
+- NEVER assume where a function lives — call `lookup_symbol` first
+- NEVER skip semantic search for bugs — call `retrieve_memory` before assuming
+
 ## CogniRepo Tool Routing (follow strictly)
 
 | When | Action |

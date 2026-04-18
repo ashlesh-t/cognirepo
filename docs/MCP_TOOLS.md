@@ -281,3 +281,68 @@ Explain what changed between two code versions.
   "impact": ["api/routes/memory.py", "api/routes/graph.py"]
 }
 ```
+
+---
+
+## cross_repo_search
+
+**Signature:** `cross_repo_search(query: str, scope: str = "project", top_k: int = 5) → dict`
+
+Search knowledge from sibling repositories in the same org or project.
+
+`scope="project"` — only repos in same project (recommended, high relevance).
+`scope="org"` — all repos in organization (broader, use sparingly).
+
+**When to call:**
+- `lookup_symbol` returned empty and the symbol may live in a sibling repo
+- Architecture question spans multiple services in the same project
+- User asks "how does X work across the system"
+- Importing from a sibling repo and need context on its internals
+
+Call `list_org_context()` first to verify siblings exist before calling this.
+
+**Input:**
+```json
+{ "query": "authentication flow", "scope": "project", "top_k": 5 }
+```
+
+**Output:**
+```json
+{
+  "scope": "project",
+  "query": "authentication flow",
+  "results": [{"text": "...", "source": "repo_a", "importance": 0.8}],
+  "result_count": 3,
+  "repos_searched": ["auth-service", "api-gateway"]
+}
+```
+
+---
+
+## list_org_context
+
+**Signature:** `list_org_context() → dict`
+
+Returns org/project membership and sibling repos for the current repository.
+
+**When to call:** FIRST when user asks about other services, related repos, cross-service behavior, or architecture spanning multiple codebases. Use the result to decide whether `cross_repo_search()` is worthwhile.
+
+**Output:**
+```json
+{
+  "org": "my-company",
+  "project": "backend",
+  "sibling_repos": ["/abs/path/auth-service"],
+  "project_repos": ["/abs/path/api", "/abs/path/auth-service"]
+}
+```
+
+---
+
+## org_wide_search *(replaces deprecated `org_search`)*
+
+**Signature:** `org_wide_search(query: str, top_k: int = 5) → list`
+
+Search memories across ALL repositories in the organization. Prefer `cross_repo_search(scope="project")` for project-scoped queries.
+
+`org_search` is a backward-compat alias — prefer `org_wide_search` in new integrations.

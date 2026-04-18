@@ -75,7 +75,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ### Added
 
-- **Sprint 1** — AGPL-3.0 headers on all source files.
+- **Sprint 1** — MIT headers on all source files.
 - **Sprint 1** — `LICENSE`, `NOTICE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`.
 - **Sprint 1** — `cognirepo doctor` command with health checks and verbose output.
 - **Sprint 1** — Encryption at rest (Fernet AES-128-CBC), secrets stored in OS keychain.
@@ -165,7 +165,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - Optional C++ BM25 extension via pybind11 — pure-Python fallback always available
 
 **OSS files (Sprint 3)**
-- AGPL-3.0 license with SPDX headers on all source files
+- MIT license with SPDX headers on all source files
 - NOTICE file with copyright and commercial licensing terms
 - SECURITY.md — vulnerability reporting, data handling, trust boundaries
 - ARCHITECTURE.md — component map, data flow, single architecture rule

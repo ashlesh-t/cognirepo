@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Task 3.4 — Make cognirepo init actually initialize.
@@ -33,8 +33,6 @@ def test_init_creates_index(tmp_path, monkeypatch):
 
     from cli.init_project import init_project
     summary, kg, indexer = init_project(
-        password="changeme",
-        port=8000,
         no_index=False,
         interactive=False,
         non_interactive=True,
@@ -66,8 +64,6 @@ def test_no_index_flag_skips_indexing(tmp_path, monkeypatch):
 
     from cli.init_project import init_project
     result = init_project(
-        password="changeme",
-        port=8000,
         no_index=True,
         interactive=False,
         non_interactive=True,

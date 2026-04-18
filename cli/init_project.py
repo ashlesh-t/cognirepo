@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Module to initialize the cognirepo project structure.
@@ -33,12 +33,7 @@ _KEYCHAIN_SERVICE = "cognirepo"
 # Blanket ignore — nothing under .cognirepo/ ever reaches git.
 GITIGNORE_CONTENT = "*\n!.gitignore\n"
 
-DEFAULT_MODELS = {
-    "QUICK":    {"provider": "grok",      "model": "llama-3.1-8b-instant"},
-    "STANDARD": {"provider": "gemini",    "model": "gemini-2.0-flash"},
-    "COMPLEX":  {"provider": "gemini",    "model": "gemini-2.0-flash"},
-    "EXPERT":   {"provider": "anthropic", "model": "claude-sonnet-4-6"},
-}
+DEFAULT_MODEL = {"provider": "auto", "model": "auto"}
 
 # Path to the bundled MCP prompt templates (relative to this file)
 _STD_PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "..", "STD_PROMPTS")
@@ -90,9 +85,9 @@ def _init_empty_stores() -> None:
 def _write_config(
     project_name: str = "",
     org: str | None = None,
+    project: str | None = None,
     encrypt: bool = False,
-    multi_model: bool = True,
-    redis: bool = False,
+    vector_backend: str = "faiss",
     autosave_context: bool = True,
 ) -> str:
     """
@@ -106,11 +101,10 @@ def _write_config(
             "project_id":   project_id,
             "project_name": project_name or os.path.basename(os.getcwd()),
             "org":          org,
-            "storage":      {"encrypt": encrypt},
+            "project":      project,
+            "storage":      {"encrypt": encrypt, "vector_backend": vector_backend},
             "retrieval_weights": {"vector": 0.5, "graph": 0.3, "behaviour": 0.2},
-            "models":       DEFAULT_MODELS,
-            "multi_model":  multi_model,
-            "redis": {"enabled": redis, "url": "redis://localhost:6379"},
+            "model":        DEFAULT_MODEL,
             "autosave_context": autosave_context,
         }
 
@@ -128,37 +122,38 @@ def _write_config(
         ("project_id",    str(uuid.uuid4())),
         ("project_name",  project_name or os.path.basename(os.getcwd())),
         ("retrieval_weights", {"vector": 0.5, "graph": 0.3, "behaviour": 0.2}),
-        ("models",        DEFAULT_MODELS),
+        ("model",         DEFAULT_MODEL),
         ("autosave_context", True),
+        ("project",       None),
     ]
     for key, val in defaults:
         if key not in config:
             config[key] = val
             changed = True
 
-    # Always apply user-specified wizard settings (not just backfill)
-    if config.setdefault("storage", {}).get("encrypt") != encrypt:
-        config["storage"]["encrypt"] = encrypt
+    # Remove phantom keys from old installs
+    for old_key in ("api_port", "api_url", "multi_model", "models"):
+        if old_key in config:
+            del config[old_key]
+            changed = True
+
+    # Always apply user-specified wizard settings
+    storage = config.setdefault("storage", {})
+    if storage.get("encrypt") != encrypt:
+        storage["encrypt"] = encrypt
         changed = True
-    if config.get("multi_model") != multi_model:
-        config["multi_model"] = multi_model
-        changed = True
-    if config.setdefault("redis", {"url": "redis://localhost:6379"}).get("enabled") != redis:
-        config["redis"]["enabled"] = redis
+    if storage.get("vector_backend") != vector_backend:
+        storage["vector_backend"] = vector_backend
         changed = True
 
-    # Ensure QUICK tier is in models
-    if "QUICK" not in config.get("models", {}):
-        config.setdefault("models", {})["QUICK"] = DEFAULT_MODELS["QUICK"]
-        changed = True
-
-    # Always apply user-specified autosave_context
     if config.get("autosave_context") != autosave_context:
         config["autosave_context"] = autosave_context
         changed = True
-
     if config.get("org") != org:
         config["org"] = org
+        changed = True
+    if project is not None and config.get("project") != project:
+        config["project"] = project
         changed = True
 
     if changed:
@@ -678,12 +673,15 @@ def init_project(
     # wizard-supplied overrides (used when interactive=False or wizard ran)
     project_name: str = "",
     org: str | None = None,
+    project: str | None = None,
     encrypt: bool = False,
-    multi_model: bool = True,
-    redis: bool = False,
+    vector_backend: str = "faiss",
     mcp_targets: list[str] | None = None,
     mcp_global: bool = False,
     autosave_context: bool = True,
+    # deprecated — accepted but ignored for backward compat
+    multi_model: bool = True,
+    redis: bool = False,
 ):
     """
     Scaffold .cognirepo/ directories, write config.json, write .gitignore.
@@ -708,13 +706,13 @@ def init_project(
         try:
             from cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
             wizard_cfg = run_wizard()
-            project_name = wizard_cfg.get("project_name", project_name)
-            org          = wizard_cfg.get("org", org)
-            encrypt      = wizard_cfg.get("encrypt", encrypt)
-            multi_model  = wizard_cfg.get("multi_model", multi_model)
-            redis        = wizard_cfg.get("redis", redis)
-            mcp_targets  = wizard_cfg.get("mcp_targets", mcp_targets or [])
-            mcp_global   = wizard_cfg.get("mcp_global", mcp_global)
+            project_name   = wizard_cfg.get("project_name", project_name)
+            org            = wizard_cfg.get("org", org)
+            project        = wizard_cfg.get("project", project)
+            encrypt        = wizard_cfg.get("encrypt", encrypt)
+            vector_backend = wizard_cfg.get("vector_backend", vector_backend)
+            mcp_targets    = wizard_cfg.get("mcp_targets", mcp_targets or [])
+            mcp_global     = wizard_cfg.get("mcp_global", mcp_global)
             autosave_context = wizard_cfg.get("autosave_context", autosave_context)
         except (ImportError, KeyboardInterrupt):
             # Fall back to non-interactive with defaults
@@ -739,9 +737,9 @@ def init_project(
     _write_config(
         project_name=project_name,
         org=org,
+        project=project,
         encrypt=encrypt,
-        multi_model=multi_model,
-        redis=redis,
+        vector_backend=vector_backend,
         autosave_context=autosave_context,
     )
     _write_gitignore()

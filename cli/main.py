@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Main entry point for the cognirepo CLI.
@@ -528,7 +528,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False) -> int:
                 f"Language support — {_mlang}: grammar not installed",
                 f"Run: pip install {_mpkg}" if _mpkg else "",
             )
-            issues += 1
+            # optional grammars are warnings, not hard failures
     except Exception as exc:  # pylint: disable=broad-except
         _ok(f"Language support — Python (built-in) [{exc}]")
 
@@ -566,7 +566,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False) -> int:
                 f"Daemon heartbeat — STALE ({_hb_age:.0f}s since last beat)",
                 "Daemon may be dead. Run: cognirepo watch --ensure-running .",
             )
-            issues += 1
+            # stale daemon is a warning — file watcher is optional for MCP operation
     except Exception as exc:  # pylint: disable=broad-except
         _ok(f"Daemon heartbeat — skipped ({exc})")
 
@@ -1851,6 +1851,28 @@ def main():
     p_org_unlink.add_argument("org_name", help="Organization name")
     p_org_unlink.add_argument("path", nargs="?", default=".", help="Repo path (default: current)")
 
+    # org project subcommands
+    p_org_proj = org_sub.add_parser("project", help="Manage projects within an organization")
+    proj_sub = p_org_proj.add_subparsers(dest="project_command")
+
+    p_proj_create = proj_sub.add_parser("create", help="Create a project in an org")
+    p_proj_create.add_argument("org", help="Organization name")
+    p_proj_create.add_argument("project", help="Project name")
+    p_proj_create.add_argument("--description", default="", help="Project description")
+
+    p_proj_list = proj_sub.add_parser("list", help="List projects in an org")
+    p_proj_list.add_argument("org", help="Organization name")
+
+    p_proj_link = proj_sub.add_parser("link", help="Link a repo to a project")
+    p_proj_link.add_argument("org", help="Organization name")
+    p_proj_link.add_argument("project", help="Project name")
+    p_proj_link.add_argument("path", nargs="?", default=".", help="Repo path (default: current)")
+
+    p_proj_unlink = proj_sub.add_parser("unlink", help="Unlink a repo from a project")
+    p_proj_unlink.add_argument("org", help="Organization name")
+    p_proj_unlink.add_argument("project", help="Project name")
+    p_proj_unlink.add_argument("path", nargs="?", default=".", help="Repo path (default: current)")
+
     # setup-env — interactive API key wizard
     p_setup_env = sub.add_parser(
         "setup-env",
@@ -2210,7 +2232,10 @@ def main():
         return
 
     if args.command == "org":
-        from config.orgs import create_org, list_orgs, link_repo_to_org, unlink_repo_from_org
+        from config.orgs import (  # pylint: disable=import-outside-toplevel
+            create_org, list_orgs, link_repo_to_org, unlink_repo_from_org,
+            create_project, list_projects, link_repo_to_project, unlink_repo_from_project,
+        )
         if args.org_command == "create":
             if create_org(args.name):
                 print(f"Created organization: {args.name}")
@@ -2225,7 +2250,12 @@ def main():
                 for name, data in orgs.items():
                     print(f"  {name}:")
                     for repo in data.get("repos", []):
-                        print(f"    - {repo}")
+                        print(f"    - {repo} (org-level)")
+                    for proj_name, proj in data.get("projects", {}).items():
+                        desc = f"  [{proj.get('description', '')}]" if proj.get("description") else ""
+                        print(f"    project: {proj_name}{desc}")
+                        for repo in proj.get("repos", []):
+                            print(f"      - {repo}")
         elif args.org_command == "link":
             if link_repo_to_org(args.path, args.org_name):
                 print(f"Linked {os.path.abspath(args.path)} to org '{args.org_name}'")
@@ -2236,6 +2266,35 @@ def main():
                 print(f"Unlinked {os.path.abspath(args.path)} from org '{args.org_name}'")
             else:
                 print(f"Failed to unlink. Org '{args.org_name}' or repo path not found.")
+        elif args.org_command == "project":
+            if args.project_command == "create":
+                if create_project(args.org, args.project, args.description):
+                    print(f"Created project '{args.project}' in org '{args.org}'")
+                else:
+                    print(f"Project '{args.project}' already exists in org '{args.org}'.")
+            elif args.project_command == "list":
+                projects = list_projects(args.org)
+                if not projects:
+                    print(f"No projects in org '{args.org}'.")
+                else:
+                    print(f"Projects in '{args.org}':")
+                    for pname, pdata in projects.items():
+                        desc = pdata.get("description", "")
+                        print(f"  {pname}" + (f"  — {desc}" if desc else ""))
+                        for repo in pdata.get("repos", []):
+                            print(f"    - {repo}")
+            elif args.project_command == "link":
+                if link_repo_to_project(args.path, args.org, args.project):
+                    print(f"Linked {os.path.abspath(args.path)} to project '{args.org}/{args.project}'")
+                else:
+                    print(f"Project '{args.project}' not found in org '{args.org}'.")
+            elif args.project_command == "unlink":
+                if unlink_repo_from_project(args.path, args.org, args.project):
+                    print(f"Unlinked {os.path.abspath(args.path)} from '{args.org}/{args.project}'")
+                else:
+                    print(f"Repo not linked to '{args.org}/{args.project}'.")
+            else:
+                print("Usage: cognirepo org project <create|list|link|unlink> ...")
         return
 
     if args.command == "watch":

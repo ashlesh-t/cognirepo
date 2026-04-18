@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Behaviour tracker — records query-retrieval-edit chains and file co-occurrence
@@ -43,8 +43,9 @@ class BehaviourTracker:
     # Number of queries to buffer before auto-summarising interaction style
     _STYLE_SUMMARIZE_EVERY = 10
 
-    def __init__(self, graph: KnowledgeGraph) -> None:
+    def __init__(self, graph: KnowledgeGraph, db_adapter=None) -> None:
         self.graph = graph
+        self._db_adapter = db_adapter  # VectorStorageAdapter | None
         self.data: dict = {
             "version": 1,
             "updated_at": _now(),
@@ -91,14 +92,17 @@ class BehaviourTracker:
         query_id: str,
         query_text: str,
         retrieved_symbols: list[str],
+        faiss_rows: list[int] | None = None,
     ) -> None:
         """
         Log a retrieval event. Adds QUERY node + QUERIED_WITH edges to graph.
+        faiss_rows — parallel list of vector DB row indices for retrieved_symbols.
         """
         self.data["query_history"][query_id] = {
             "query_text": query_text,
             "timestamp": _now(),
             "retrieved_symbols": retrieved_symbols,
+            "faiss_rows": faiss_rows or [],
             "useful": None,
         }
 
@@ -154,14 +158,20 @@ class BehaviourTracker:
 
         if useful:
             sw = self.data["symbol_weights"]
-            for sym in qh.get("retrieved_symbols", []):
+            faiss_rows = qh.get("faiss_rows", [])
+            for idx, sym in enumerate(qh.get("retrieved_symbols", [])):
                 if sym not in sw:
                     sw[sym] = {"hit_count": 0, "last_hit": None, "relevance_feedback": 0.0}
                 sw[sym]["hit_count"] += 1
                 sw[sym]["last_hit"] = _now()
-                sw[sym]["relevance_feedback"] = min(
-                    1.0, sw[sym]["relevance_feedback"] + 0.1
-                )
+                new_score = min(1.0, sw[sym]["relevance_feedback"] + 0.1)
+                sw[sym]["relevance_feedback"] = new_score
+                # propagate score back into vector store
+                if self._db_adapter is not None and idx < len(faiss_rows):
+                    try:
+                        self._db_adapter.update_behaviour_score(faiss_rows[idx], new_score)
+                    except Exception:  # pylint: disable=broad-except
+                        pass  # best-effort
 
     def record_file_edit(self, file_path: str, session_id: str) -> None:
         """

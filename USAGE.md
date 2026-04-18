@@ -203,3 +203,15 @@ export COGNIREPO_CB_RSS_LIMIT_MB=3000   # trip at 3 GB RSS
 | `retrieval_weights.behaviour` | float | 0.2 | Weight for behaviour hit count |
 | `models.STANDARD.model` | string | `gemini-2.0-flash` | Model for STANDARD tier |
 | `idle_ttl_seconds` | int | `600` | Inactivity timeout for heavy resources |
+
+## Prometheus Metrics
+
+When `prometheus_client` is installed, CogniRepo exposes a `/metrics` endpoint via the serve API.
+
+```bash
+pip install prometheus_client
+cognirepo serve
+# metrics available at the /metrics path on the server port
+```
+
+The `/metrics` endpoint follows the Prometheus text exposition format.

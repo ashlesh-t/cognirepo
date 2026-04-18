@@ -1,9 +1,9 @@
 # pylint: disable=duplicate-code
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Local vector database module using FAISS for storing and searching semantic embeddings.
@@ -18,6 +18,7 @@ import numpy as np
 
 from config.paths import get_path
 from config.lock import store_lock
+from vector_db.adapter import VectorStorageAdapter
 
 
 def _now_iso() -> str:
@@ -30,7 +31,7 @@ def _meta_file() -> str:
     return get_path("memory/semantic_metadata.json")
 
 
-class LocalVectorDB:
+class LocalVectorDB(VectorStorageAdapter):
     """
     Local vector database using FAISS for storing and searching semantic embeddings.
     """
@@ -118,7 +119,7 @@ class LocalVectorDB:
             faiss.write_index(self.index, _index_file())
             self._save_meta()
 
-    def add(self, vector, text, importance, source: str = "memory"):
+    def add(self, vector, text, importance, source: str = "memory", behaviour_score: float = 0.0):
         """
         Adds a new vector and its associated metadata to the database.
         source — "memory" for episodic/semantic memories, "symbol" for code symbols.
@@ -131,9 +132,18 @@ class LocalVectorDB:
             "text": text,
             "importance": importance,
             "source": source,
+            "behaviour_score": behaviour_score,
         })
 
         self.save()
+
+    def update_behaviour_score(self, row_id: int, new_score: float) -> bool:
+        """Update behaviour_score for an existing entry by row index."""
+        if row_id < 0 or row_id >= len(self.metadata):
+            return False
+        self.metadata[row_id]["behaviour_score"] = float(new_score)
+        self._save_meta()
+        return True
 
     def deprecate_row(self, faiss_row: int) -> bool:
         """
@@ -235,7 +245,22 @@ class LocalVectorDB:
                 entry = dict(record)
                 entry["l2_distance"] = float(dist)
                 entry["faiss_row"] = int(i)
+                l2_score = max(0.0, 1.0 - float(dist) / 2.0)
+                b_score = float(record.get("behaviour_score", 0.0))
+                entry["combined_score"] = round(l2_score * 0.8 + b_score * 0.2, 4)
                 results.append(entry)
                 if len(results) == k:
                     break
         return results
+
+    def remove(self, ids: list[int]) -> None:
+        """Soft-remove via deprecate_row — FAISS does not support in-place deletion."""
+        import logging  # pylint: disable=import-outside-toplevel
+        _log = logging.getLogger(__name__)
+        for row_id in ids:
+            if not self.deprecate_row(row_id):
+                _log.warning("LocalVectorDB.remove(): row %d out of range", row_id)
+
+    def persist(self) -> None:
+        """Flush index + metadata to disk."""
+        self.save()
