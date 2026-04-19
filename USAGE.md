@@ -192,6 +192,23 @@ export COGNIREPO_CB_RSS_LIMIT_MB=3000   # trip at 3 GB RSS
 
 ---
 
+## Maintenance Commands
+
+### `cognirepo migrate-config`
+
+Rename deprecated tier names in `.cognirepo/config.json` to their current equivalents.
+Run this once after upgrading from CogniRepo < 0.2.0; the command auto-detects any
+stale tier keys and rewrites them to `STANDARD`, `COMPLEX`, or `EXPERT`.
+
+```bash
+cognirepo migrate-config           # apply changes in place
+cognirepo migrate-config --dry-run # preview changes without writing
+```
+
+Safe to run on already-migrated configs.
+
+---
+
 ## Configuration Reference
 
 ### `.cognirepo/config.json`
@@ -203,6 +220,7 @@ export COGNIREPO_CB_RSS_LIMIT_MB=3000   # trip at 3 GB RSS
 | `retrieval_weights.behaviour` | float | 0.2 | Weight for behaviour hit count |
 | `models.STANDARD.model` | string | `gemini-2.0-flash` | Model for STANDARD tier |
 | `idle_ttl_seconds` | int | `600` | Inactivity timeout for heavy resources |
+| `episodic_max_events` | int | `10000` | Max episodic events before oldest 20% are rotated to `episodic_archive.json` |
 
 ## Prometheus Metrics
 

@@ -6,7 +6,7 @@
 
 """
 Complexity Classifier — rule-based, multi-signal weighted scorer.
-No ML training required. Decides QUICK / FAST / BALANCED / DEEP tier for every query.
+No ML training required. Decides QUICK / STANDARD / COMPLEX / EXPERT tier for every query.
 
 Signal table (from ARCHITECTURE.md):
 ┌────────────────────────────────────────────────┬────────┬──────────────────────────┐
@@ -18,10 +18,10 @@ Signal table (from ARCHITECTURE.md):
 │ Cross-entity count (fn/file/class mentions)    │  +1.5  │ per entity above 2       │
 │ Context dependency (episodic/graph history ref)│  +3    │ binary                   │
 │ Query token length                             │ +0.5   │ per 10 tok after first 20│
-│ Imperative+abstract combo (implement,build,…) │  +4    │ binary                   │
+│ Imperative+abstract combo (implement,build,…) │  +5    │ binary                   │
 └────────────────────────────────────────────────┴────────┴──────────────────────────┘
 
-Tiers:   0–2 → QUICK (Grok)   3–4 → STANDARD   5–9 → COMPLEX   10+ → EXPERT
+Tiers:   ≤2 → QUICK (local resolver)   ≤4 → STANDARD   ≤9 → COMPLEX   >9 → EXPERT
 
 Hard overrides (bypass score):
   "full context" / "everything related"   → EXPERT

@@ -157,9 +157,11 @@ memories, graph, and index — **never mixing data across projects or teams**.
 > **Manual setup:** copy the block above into `.claude/settings.json` in your project root,
 > replacing the path and project name.
 
-CogniRepo's 9 memory tools (`retrieve_memory`, `lookup_symbol`, `search_docs`, `store_memory`,
-`who_calls`, `log_episode`, `subgraph`, `graph_stats`, `episodic_search`) appear in Claude's
-tool list. The `.claude/CLAUDE.md` file instructs Claude when and how to use each tool.
+CogniRepo's 18 MCP tools (`retrieve_memory`, `store_memory`, `lookup_symbol`, `who_calls`,
+`context_pack`, `search_docs`, `semantic_search_code`, `subgraph`, `graph_stats`,
+`episodic_search`, `log_episode`, `org_search`, `org_wide_search`, `cross_repo_search`,
+`list_org_context`, `dependency_graph`, `explain_change`, `architecture_overview`) appear in
+Claude's tool list. The `.claude/CLAUDE.md` file instructs Claude when and how to use each tool.
 
 ### Cursor / Copilot
 
