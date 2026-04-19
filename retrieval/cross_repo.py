@@ -47,32 +47,31 @@ class CrossRepoRouter:
 
         all_results = []
         from memory.semantic_memory import ProjectSemanticMemory  # pylint: disable=import-outside-toplevel
-        from config.paths import set_cognirepo_dir, get_cognirepo_dir  # pylint: disable=import-outside-toplevel
-
-        original_dir = get_cognirepo_dir()
+        from config.paths import _CTX_DIR  # pylint: disable=import-outside-toplevel
 
         for repo in siblings:
             cognirepo_dir = os.path.join(repo, ".cognirepo")
             if not os.path.isdir(cognirepo_dir):
                 continue
-            
+
+            # Use ContextVar for thread-safe per-task directory switching.
+            # This avoids mutating the process-wide _OVERRIDE_DIR global
+            # which would race under concurrent MCP calls.
+            token = _CTX_DIR.set(cognirepo_dir)
             try:
-                # Temporarily switch context to sibling repo
-                set_cognirepo_dir(cognirepo_dir)
                 mem = ProjectSemanticMemory()
                 results = mem.search(query, top_k=top_k)
-                
+
                 repo_name = os.path.basename(repo)
                 for r in results:
                     r["source_repo"] = repo_name
                     r["repo_path"] = repo
-                
+
                 all_results.extend(results)
             except Exception as exc:
                 logger.error("Failed to query sibling repo %s: %s", repo, exc)
             finally:
-                # Always restore original context
-                set_cognirepo_dir(original_dir)
+                _CTX_DIR.reset(token)
 
         # Re-sort combined results by score (lower is better for L2 distance)
         all_results.sort(key=lambda x: x.get("score", 1.0))

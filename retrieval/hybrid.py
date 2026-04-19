@@ -25,6 +25,7 @@ Default: {"vector": 0.5, "graph": 0.3, "behaviour": 0.2}
 import json
 import math
 import os
+import threading
 import time
 
 import numpy as np
@@ -34,7 +35,7 @@ from graph.behaviour_tracker import BehaviourTracker
 from graph.graph_utils import extract_entities_from_text, make_node_id
 from graph.knowledge_graph import KnowledgeGraph
 from indexer.ast_indexer import ASTIndexer
-from memory.embeddings import get_model
+from memory.embeddings import encode_with_timeout
 from memory.episodic_memory import get_history
 from vector_db.local_vector_db import LocalVectorDB
 
@@ -68,7 +69,6 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
 
     def __init__(self) -> None:
         self.weights = _load_weights()
-        self.model = get_model()
         self.db = LocalVectorDB()
         self.graph = KnowledgeGraph()
         self.behaviour = BehaviourTracker(self.graph)
@@ -85,7 +85,13 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
           text, importance, source, final_score,
           vector_score, graph_score, behaviour_score
         """
-        query_vector = self.model.encode(query).astype("float32")
+        if len(query) > MAX_QUERY_LEN:
+            raise ValueError(
+                f"Query too long ({len(query):,} chars). "
+                f"Maximum: {MAX_QUERY_LEN:,}. "
+                "Truncate or set COGNIREPO_MAX_QUERY_LEN to override."
+            )
+        query_vector = encode_with_timeout(query).astype("float32")
 
         # 1. wider vector net before re-ranking
         vector_candidates = self._vector_retrieve(query_vector, top_k * 3)
@@ -281,12 +287,14 @@ _HYBRID_CACHE: dict[tuple, tuple] = {}
 _HYBRID_CACHE_TTL = 300  # 5 minutes
 _CACHE_HITS = 0
 _CACHE_MISSES = 0
+_CACHE_LOCK = threading.Lock()
 
 
 # Default 0.0 = no filtering. final_score on cold repos = 0.5*vector (graph+behaviour=0),
 # so a 0.35 final_score gate requires vector_score>=0.70 which is unreachable on cold index.
 # Let context_pack's _MIN_CODE_CONFIDENCE=0.25 gate handle quality at the pack layer.
 _DEFAULT_MIN_SCORE: float = float(os.environ.get("COGNIREPO_MIN_RETRIEVAL_SCORE", "0.0"))
+MAX_QUERY_LEN: int = int(os.environ.get("COGNIREPO_MAX_QUERY_LEN", "50000"))
 
 
 def hybrid_retrieve(query: str, top_k: int = 5, min_score: float | None = None) -> list[dict]:
@@ -303,15 +311,23 @@ def hybrid_retrieve(query: str, top_k: int = 5, min_score: float | None = None) 
     global _CACHE_HITS, _CACHE_MISSES  # pylint: disable=global-statement
     cache_key = (query, top_k)
     now = time.monotonic()
-    cached = _HYBRID_CACHE.get(cache_key)
-    if cached is not None:
-        result, ts = cached
-        if now - ts < _HYBRID_CACHE_TTL:
-            _CACHE_HITS += 1
-            return _apply_min_score(result, min_score)
-    _CACHE_MISSES += 1
+
+    with _CACHE_LOCK:
+        cached = _HYBRID_CACHE.get(cache_key)
+        if cached is not None:
+            result, ts = cached
+            if now - ts < _HYBRID_CACHE_TTL:
+                _CACHE_HITS += 1
+                return _apply_min_score(result, min_score)
+        _CACHE_MISSES += 1
+
+    # Heavy compute outside the lock — two concurrent misses both compute,
+    # which is safe (idempotent) and avoids blocking during expensive retrieval.
     result = HybridRetriever().retrieve(query, top_k)
-    _HYBRID_CACHE[cache_key] = (result, now)
+
+    with _CACHE_LOCK:
+        _HYBRID_CACHE[cache_key] = (result, now)
+
     return _apply_min_score(result, min_score)
 
 
@@ -333,12 +349,14 @@ def _apply_min_score(result: list[dict], min_score: float | None) -> list[dict]:
 
 def invalidate_hybrid_cache() -> None:
     """Evict all cached results. Call this on any file-change event."""
-    _HYBRID_CACHE.clear()
+    with _CACHE_LOCK:
+        _HYBRID_CACHE.clear()
 
 
 def cache_stats() -> dict:
     """Return cache hit/miss counts for cognirepo doctor."""
-    return {"hits": _CACHE_HITS, "misses": _CACHE_MISSES}
+    with _CACHE_LOCK:
+        return {"hits": _CACHE_HITS, "misses": _CACHE_MISSES}
 
 
 # ── episodic BM25 filter ──────────────────────────────────────────────────────

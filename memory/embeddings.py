@@ -8,11 +8,17 @@
 Utility to load and retrieve the embedding model.
 """
 # pylint: disable=import-error
+import concurrent.futures
 import logging
+import os
 
 from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
+
+# Shared executor for encode() calls — bounded to 2 workers to avoid thread exhaustion
+_ENCODE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+_EMBED_TIMEOUT_SEC = float(os.environ.get("COGNIREPO_EMBED_TIMEOUT_SEC", "30"))
 
 # Silence harmless "UNEXPECTED" weight loading reports from transformers
 try:
@@ -37,6 +43,24 @@ def get_model():
         MODEL = SentenceTransformer("all-MiniLM-L6-v2")
 
     return MODEL
+
+
+def encode_with_timeout(text: str, timeout: float | None = None):
+    """
+    Encode text using the embedding model with a timeout guard.
+    Raises concurrent.futures.TimeoutError if encoding exceeds the timeout.
+    Configurable via COGNIREPO_EMBED_TIMEOUT_SEC env var (default 30s).
+    """
+    t = timeout if timeout is not None else _EMBED_TIMEOUT_SEC
+    model = get_model()
+    future = _ENCODE_EXECUTOR.submit(model.encode, text)
+    try:
+        return future.result(timeout=t)
+    except concurrent.futures.TimeoutError:
+        logger.error(
+            "Embedding encode() timed out after %.1fs for input len=%d", t, len(text)
+        )
+        raise
 
 
 def evict_model() -> None:

@@ -11,6 +11,7 @@ Two storage scopes:
   - Project scope : .cognirepo/ in the project root (FAISS, graph, AST, project config)
   - Global scope  : ~/.cognirepo/ (user behaviour, preferences, cross-project settings)
 """
+import contextvars
 import hashlib
 import os
 from pathlib import Path
@@ -22,6 +23,12 @@ def get_project_hash(project_path: str) -> str:
 
 _OVERRIDE_DIR = None
 _OVERRIDE_GLOBAL_DIR = None
+
+# Per-task/thread context override — used by CrossRepoRouter to safely switch
+# directory context without mutating the process-wide _OVERRIDE_DIR global.
+_CTX_DIR: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "cognirepo_ctx_dir", default=None
+)
 
 
 def set_cognirepo_dir(path: str):
@@ -73,13 +80,18 @@ def get_orgs_path() -> str:
 def get_cognirepo_dir() -> str:
     """
     Determine the base directory for .cognirepo storage.
-    
+
     Priority:
-    1. Explicit override via set_cognirepo_dir()
-    2. COGNIREPO_DIR environment variable
-    3. Local .cognirepo/ directory in CWD (if it exists)
-    4. Global ~/.cognirepo/storage/<hash_of_cwd>/
+    1. Per-task context override via _CTX_DIR (used by CrossRepoRouter for thread safety)
+    2. Explicit process-wide override via set_cognirepo_dir()
+    3. COGNIREPO_DIR environment variable
+    4. Local .cognirepo/ directory in CWD (if it exists)
+    5. Global ~/.cognirepo/storage/<hash_of_cwd>/
     """
+    ctx = _CTX_DIR.get()
+    if ctx is not None:
+        return ctx
+
     if _OVERRIDE_DIR:
         return _OVERRIDE_DIR
 

@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -467,11 +468,14 @@ class CompositeLearningStore:
 # ── module-level singleton ────────────────────────────────────────────────────
 
 _STORE: Optional[CompositeLearningStore] = None
+_STORE_LOCK = threading.Lock()
 
 
 def get_learning_store() -> CompositeLearningStore:
-    """Return the process-wide composite learning store."""
+    """Return the process-wide composite learning store (double-checked locking)."""
     global _STORE  # pylint: disable=global-statement
     if _STORE is None:
-        _STORE = CompositeLearningStore()
+        with _STORE_LOCK:
+            if _STORE is None:
+                _STORE = CompositeLearningStore()
     return _STORE

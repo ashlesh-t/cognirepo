@@ -48,34 +48,40 @@ mcp = FastMCP("cognirepo")
 # ── lazy singletons for graph + indexer ──────────────────────────────────────
 _GRAPH = None  # pylint: disable=invalid-name
 _INDEXER = None  # pylint: disable=invalid-name
+_SINGLETON_LOCK = threading.Lock()
 
 
 def _get_graph():
-    """Lazily load KnowledgeGraph."""
+    """Lazily load KnowledgeGraph (double-checked locking for thread safety)."""
     global _GRAPH  # pylint: disable=global-statement
     if _GRAPH is None:
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-        _GRAPH = KnowledgeGraph()
+        with _SINGLETON_LOCK:
+            if _GRAPH is None:
+                from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+                _GRAPH = KnowledgeGraph()
     return _GRAPH
 
 
 def _get_indexer():
-    """Lazily load ASTIndexer."""
+    """Lazily load ASTIndexer (double-checked locking for thread safety)."""
     global _INDEXER  # pylint: disable=global-statement
     if _INDEXER is None:
-        from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-        _INDEXER = ASTIndexer(_get_graph())
-        _INDEXER.load()
+        with _SINGLETON_LOCK:
+            if _INDEXER is None:
+                from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+                _INDEXER = ASTIndexer(_get_graph())
+                _INDEXER.load()
     return _INDEXER
 
 
 def _evict_singletons() -> None:
     """Release graph and indexer singletons so they reload on next use."""
     global _GRAPH, _INDEXER  # pylint: disable=global-statement
-    if _GRAPH is not None or _INDEXER is not None:
-        _GRAPH = None
-        _INDEXER = None
-        logger.info("idle: graph and indexer evicted from memory")
+    with _SINGLETON_LOCK:
+        if _GRAPH is not None or _INDEXER is not None:
+            _GRAPH = None
+            _INDEXER = None
+            logger.info("idle: graph and indexer evicted from memory")
 
 
 # ── idle resource manager — evict heavy objects after TTL of inactivity ───────
