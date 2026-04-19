@@ -362,8 +362,10 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False) -> int:
         print(f"  \u2717  {msg}")
         if hint:
             print(f"       {hint}")
-    def _warn(msg: str):
-        print(msg)
+    def _warn(msg: str, hint: str = "") -> None:
+        print(f"  \u26a0  {msg}")
+        if hint:
+            print(f"       {hint}")
 
     # ── Check 1: config ───────────────────────────────────────────────────────
     nonlocal_config: dict = {}
@@ -422,7 +424,19 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False) -> int:
                 _ast_data = json.load(_af)
             _ast_files = _ast_data.get("files", {})
             _sym_count = sum(len(v.get("symbols", [])) for v in _ast_files.values())
-            _ok(f"AST index — {_sym_count} symbols across {len(_ast_files)} files")
+            if _sym_count == 0 and len(_ast_files) > 0:
+                _warn(
+                    f"AST index — {len(_ast_files)} files indexed but 0 symbols parsed."
+                    " Queries will return empty results.",
+                    "Run: cognirepo index-repo . (check language support with --verbose)",
+                )
+                issues += 1
+            elif _sym_count == 0:
+                _warn("AST index — file exists but contains no symbols.",
+                      "Run: cognirepo index-repo .")
+                issues += 1
+            else:
+                _ok(f"AST index — {_sym_count:,} symbols across {len(_ast_files)} files")
             if verbose:
                 print(f"       {os.path.abspath(_ast_path)}")
         except Exception as exc:  # pylint: disable=broad-except
@@ -708,6 +722,41 @@ def _cmd_status() -> None:
             print(f"\n  Behaviour warm-up: {b_count}/50 queries needed")
         else:
             print("\n  Status: fully warm (all signals active)")
+
+        # ── memory health ─────────────────────────────────────────────────────
+        print("\n  Memory health:")
+        try:
+            from memory.episodic_memory import _load as _ep_load, _get_max_events  # pylint: disable=import-outside-toplevel
+            ep_data    = _ep_load()
+            ep_count   = len(ep_data)
+            ep_cap     = _get_max_events()
+            cap_pct    = ep_count / ep_cap * 100 if ep_cap > 0 else 0
+            cap_label  = ""
+            if cap_pct >= 80:
+                cap_label = f"  ⚠  {cap_pct:.0f}% of cap ({ep_cap:,}) — rotation imminent"
+            elif cap_pct >= 50:
+                cap_label = f"  ({cap_pct:.0f}% of cap)"
+            print(f"    episodic events : {ep_count:,}{cap_label}")
+            archive_path = get_path("memory/episodic_archive.json")
+            if os.path.exists(archive_path):
+                arch_kb = os.path.getsize(archive_path) / 1024
+                print(f"    episodic archive: {arch_kb:.1f} KB")
+        except Exception:  # pylint: disable=broad-except
+            print("    episodic events : (unavailable)")
+
+        try:
+            sem_meta = get_path("memory/semantic_metadata.json")
+            if os.path.exists(sem_meta):
+                with open(sem_meta, encoding="utf-8") as _smf:
+                    _sm_data = json.load(_smf)
+                sm_count = len(_sm_data)
+                sm_kb    = os.path.getsize(sem_meta) / 1024
+                print(f"    semantic memories: {sm_count:,} entries ({sm_kb:.1f} KB)")
+            else:
+                print("    semantic memories: 0 (not yet stored)")
+        except Exception:  # pylint: disable=broad-except
+            print("    semantic memories: (unavailable)")
+
     except Exception as exc:  # pylint: disable=broad-except
         print(f"  Error reading status: {exc}")
     print()
@@ -1209,13 +1258,34 @@ def _direct_ask(
             messages_history=messages_history,
         )
         if verbose:
-            print(f"[tier={result.classifier.tier} score={result.classifier.score} "
-                  f"model={result.classifier.model} provider={result.classifier.provider}]")
-            if result.classifier.signals:
-                print(f"[signals={result.classifier.signals}]")
+            clf = result.classifier
             b = result.bundle
-            print(f"[context tokens={b.token_count}/{b.max_tokens}"
-                  + (" TRIMMED" if b.was_trimmed else "") + "]")
+            W = 60
+            print(f"\n\u250c\u2500 Classifier {'─' * (W - 13)}")
+            print(f"\u2502  tier     : {clf.tier}")
+            print(f"\u2502  score    : {clf.score:.1f}")
+            print(f"\u2502  model    : {clf.model}  ({clf.provider})")
+            if clf.signals:
+                print("\u2502  signals  :")
+                for sig, val in sorted(clf.signals.items(),
+                                       key=lambda x: abs(x[1]), reverse=True):
+                    bar = f"+{val:.1f}" if val >= 0 else f"{val:.1f}"
+                    print(f"\u2502    {sig:<28} {bar}")
+            if getattr(clf, "overrides", None):
+                print(f"\u2502  overrides: {', '.join(clf.overrides)}")
+            print(f"\u251c\u2500 Context bundle {'─' * (W - 17)}")
+            trimmed_flag = "  [TRIMMED]" if b.was_trimmed else ""
+            print(f"\u2502  tokens   : {b.token_count:,}/{b.max_tokens:,}{trimmed_flag}")
+            mem_count = len(b.memories) + len(b.ast_hits)
+            ep_count  = len(b.recent_episodes)
+            print(f"\u2502  memories : {mem_count} retrieved  ·  episodes: {ep_count}")
+            top_hits = (b.memories + b.ast_hits)[:5]
+            for hit in top_hits:
+                score = hit.get("final_score", hit.get("importance", 0.0))
+                src   = hit.get("text", "")[:50].replace("\n", " ")
+                print(f"\u2502    [{score:.2f}] {src}")
+            print(f"\u2514{'─' * W}")
+            print()
         if result.error:
             print(f"ERROR: {result.error}", file=sys.stderr)
         if result.response.tool_calls:

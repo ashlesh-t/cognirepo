@@ -7,10 +7,13 @@
 """
 Tool to store a text memory into semantic memory.
 """
+import logging
 import sys
 from memory.semantic_memory import SemanticMemory
 from memory.episodic_memory import log_event
 from server.metrics import MEMORY_OPS_TOTAL
+
+logger = logging.getLogger(__name__)
 
 
 def store_memory(text: str, source: str = "") -> dict:
@@ -45,8 +48,8 @@ def store_memory(text: str, source: str = "") -> dict:
                 source_repo=os.path.basename(os.getcwd()),
                 importance=importance,
             )
-    except Exception:  # pylint: disable=broad-except
-        pass  # project memory mirror is best-effort
+    except Exception as _mirror_exc:  # pylint: disable=broad-except
+        logger.warning("project memory mirror failed (store succeeded): %s", _mirror_exc)
 
     return {"status": "stored", "text": text, "source": source, "importance": importance}
 
