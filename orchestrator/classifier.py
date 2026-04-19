@@ -46,6 +46,14 @@ _REASONING_KW = {
     # depth/quality modifiers
     "detail", "detailed", "improve", "improvements", "thorough",
     "comprehensive", "complex", "advanced", "in-depth", "deep dive",
+    # security / reliability — require multi-file cross-cutting analysis
+    "security", "vulnerability", "vulnerabilities", "audit", "exploit",
+    "attack surface", "injection", "authentication", "authorization",
+    # performance / scalability — need call-graph and hot-path understanding
+    "performance", "bottleneck", "optimize", "optimization", "latency",
+    "throughput", "scalability", "scalable", "reliability", "reliable",
+    # guided walkthrough — explicit request for detailed step-by-step response
+    "step by step", "walk me through", "walk through",
 }
 _LOOKUP_KW = {
     "what is", "what are", "show", "list", "find", "get", "display",
@@ -59,6 +67,10 @@ _CONTEXT_DEP = {
     "last time", "earlier", "previously", "history", "before",
     "session", "remember", "recall", "as discussed", "you said",
     "what i", "my last",
+    # repo-scoped signals — query is about THIS codebase, not generic knowledge
+    "in this repo", "in our repo", "in our codebase", "in my project",
+    "in this codebase", "in this project", "our implementation",
+    "our code", "this codebase", "this repo",
 }
 _FULL_CONTEXT = {"full context", "everything related", "all related", "complete context"}
 _DOCS_QUERY_PATTERN = re.compile(
