@@ -115,9 +115,13 @@ class LocalVectorDB(VectorStorageAdapter):
         (e.g. Claude + Gemini both calling store_memory at the same time)
         do not corrupt the FAISS binary or metadata JSON.
         """
+        from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+        breaker = get_breaker()
+        breaker.check()
         with store_lock():
             faiss.write_index(self.index, _index_file())
             self._save_meta()
+        breaker.record_success()
 
     def add(self, vector, text, importance, source: str = "memory", behaviour_score: float = 0.0):
         """

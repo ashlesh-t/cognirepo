@@ -698,6 +698,106 @@ def _extract_symbols_py(tree: ast.AST, _file_path: str) -> list[dict]:
 
 # ── main indexer class ────────────────────────────────────────────────────────
 
+def _find_entry_points(tracked: "set[str]") -> "list[str]":
+    """Return likely entry-point files from the tracked set, ordered by priority."""
+    priority = [
+        "__main__.py", "main.py", "app.py", "manage.py",
+        "run.py", "server.py", "cli.py", "start.py", "wsgi.py", "asgi.py",
+    ]
+    found = []
+    for name in priority:
+        for f in sorted(tracked):
+            if Path(f).name == name:
+                found.append(f)
+    # Fallback: top-level .py files
+    if not found:
+        found = [f for f in sorted(tracked) if "/" not in f and f.endswith(".py")]
+    return found
+
+
+def _expand_from_entry_points(
+    entry_points: "list[str]",
+    tracked: "set[str]",
+    repo_root: str,
+) -> "set[str]":
+    """BFS from entry points following Python imports within the tracked file set."""
+    import ast as _ast  # local to avoid polluting module namespace
+
+    # Map: dotted-module-path → rel_file_path for all tracked .py files
+    py_files = {f for f in tracked if f.endswith(".py")}
+    module_map: "dict[str, str]" = {}
+    for f in py_files:
+        parts = Path(f).with_suffix("").parts
+        module_map[".".join(parts)] = f
+        # Also map without trailing __init__
+        if parts and parts[-1] == "__init__":
+            module_map[".".join(parts[:-1])] = f
+
+    def _resolve(module: str, current_file: str) -> "list[str]":
+        """Try to resolve an import module name to a tracked rel path."""
+        candidates = []
+        # absolute import
+        if module in module_map:
+            candidates.append(module_map[module])
+        # parent package prefix (e.g. "cognirepo.cli" matches "cognirepo/cli.py")
+        for key, val in module_map.items():
+            if key == module or key.startswith(module + "."):
+                candidates.append(val)
+                break
+        return candidates
+
+    visited: "set[str]" = set(entry_points)
+    queue = list(entry_points)
+    while queue:
+        current = queue.pop(0)
+        abs_path = os.path.join(repo_root, current)
+        if not os.path.isfile(abs_path):
+            continue
+        try:
+            source = Path(abs_path).read_bytes()
+            tree = _ast.parse(source.decode("utf-8", errors="ignore"), filename=abs_path)
+        except (SyntaxError, Exception):  # pylint: disable=broad-except
+            continue
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.Import):
+                for alias in node.names:
+                    for target in _resolve(alias.name, current):
+                        if target not in visited:
+                            visited.add(target)
+                            queue.append(target)
+            elif isinstance(node, _ast.ImportFrom):
+                if node.module and node.level == 0:
+                    for target in _resolve(node.module, current):
+                        if target not in visited:
+                            visited.add(target)
+                            queue.append(target)
+                elif node.module and node.level > 0:
+                    # relative import — resolve from current package
+                    pkg_parts = Path(current).parent.parts
+                    if node.level <= len(pkg_parts):
+                        base = ".".join(pkg_parts[: len(pkg_parts) - node.level + 1])
+                        full = f"{base}.{node.module}" if base else node.module
+                        for target in _resolve(full, current):
+                            if target not in visited:
+                                visited.add(target)
+                                queue.append(target)
+    return visited
+
+
+def _git_tracked_files(repo_root: str) -> "set[str] | None":
+    try:
+        proc = subprocess.run(
+            ["git", "-C", repo_root, "ls-files", "--recurse-submodules"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    paths = {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+    return paths if paths else None
+
+
 class ASTIndexer:
     """
     Index a multi-language repo: extract symbols → embed → FAISS + reverse index.
@@ -790,12 +890,35 @@ class ASTIndexer:
 
         skip_dirs = _effective_skip_dirs()
 
+        # ── git-first + entry-point file discovery ──────────────────────────────
+        _git_root = os.path.join(repo_root, ".git")
+        _tracked: "set[str] | None" = None
+        if os.path.exists(_git_root):
+            _tracked = _git_tracked_files(repo_root)
+            if _tracked is not None:
+                _entries = _find_entry_points(_tracked)
+                if _entries:
+                    _reachable = _expand_from_entry_points(_entries, _tracked, repo_root)
+                    _non_py = {f for f in _tracked if not f.endswith(".py")}
+                    _tracked = _reachable | _non_py
+                    print(
+                        f"  Git repo + entry-point traversal: {len(_tracked)} file(s) "
+                        f"reachable from {len(_entries)} entry point(s) "
+                        f"({', '.join(Path(e).name for e in _entries[:3])}"
+                        f"{'...' if len(_entries) > 3 else ''})"
+                    )
+                else:
+                    print(f"  Git repo detected — indexing {len(_tracked)} tracked file(s).")
+
         # ── large-repo warning (embed pass only) ────────────────────────────────
         if embed:
-            _n_candidates = 0
-            for _dp, _dns, _fns in os.walk(repo_root):
-                _dns[:] = [d for d in _dns if d not in skip_dirs]
-                _n_candidates += sum(1 for f in _fns if is_supported(Path(f)))
+            if _tracked is not None:
+                _n_candidates = sum(1 for f in _tracked if is_supported(Path(f)))
+            else:
+                _n_candidates = 0
+                for _dp, _dns, _fns in os.walk(repo_root):
+                    _dns[:] = [d for d in _dns if d not in skip_dirs]
+                    _n_candidates += sum(1 for f in _fns if is_supported(Path(f)))
             if _n_candidates > _LARGE_REPO_FILE_THRESHOLD:
                 print(
                     f"  ⚠  Large repo detected ({_n_candidates} source files). "
@@ -807,29 +930,46 @@ class ASTIndexer:
         skipped_exts: set[str] = set()
         total_files = 0
 
-        for dirpath, dirnames, filenames in os.walk(repo_root):
-            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
-            for fname in filenames:
-                ext = Path(fname).suffix
-                if not is_supported(Path(fname)):
-                    # Track extensions we know exist but have no grammar for
-                    if ext and ext not in {
-                        ".md", ".txt", ".json", ".yaml", ".yml", ".toml",
-                        ".cfg", ".ini", ".lock", ".gitignore", ".env",
-                        ".png", ".jpg", ".gif", ".svg", ".ico",
-                        ".whl", ".zip", ".tar", ".gz",
-                    }:
+        _skip_noise = {
+            ".md", ".txt", ".json", ".yaml", ".yml", ".toml",
+            ".cfg", ".ini", ".lock", ".gitignore", ".env",
+            ".png", ".jpg", ".gif", ".svg", ".ico",
+            ".whl", ".zip", ".tar", ".gz",
+        }
+
+        if _tracked is not None:
+            for rel_path in sorted(_tracked):
+                abs_path = os.path.join(repo_root, rel_path)
+                if not os.path.isfile(abs_path):
+                    continue
+                ext = Path(rel_path).suffix
+                if not is_supported(Path(rel_path)):
+                    if ext and ext not in _skip_noise:
                         skipped_exts.add(ext)
                     continue
-
-                abs_path = os.path.join(dirpath, fname)
-                rel_path = os.path.relpath(abs_path, repo_root)
                 try:
                     self.index_file(rel_path, abs_path)
                     lang_file_counts[lang_label(ext)] += 1
                     total_files += 1
                 except Exception as exc:  # pylint: disable=broad-except
                     log.debug("  [skip] %s: %s", rel_path, exc)
+        else:
+            for dirpath, dirnames, filenames in os.walk(repo_root):
+                dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+                for fname in filenames:
+                    ext = Path(fname).suffix
+                    if not is_supported(Path(fname)):
+                        if ext and ext not in _skip_noise:
+                            skipped_exts.add(ext)
+                        continue
+                    abs_path = os.path.join(dirpath, fname)
+                    rel_path = os.path.relpath(abs_path, repo_root)
+                    try:
+                        self.index_file(rel_path, abs_path)
+                        lang_file_counts[lang_label(ext)] += 1
+                        total_files += 1
+                    except Exception as exc:  # pylint: disable=broad-except
+                        log.debug("  [skip] %s: %s", rel_path, exc)
 
         self._build_reverse_index()
         total_symbols = sum(

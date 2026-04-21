@@ -361,6 +361,43 @@ def cache_stats() -> dict:
 
 # ── episodic BM25 filter ──────────────────────────────────────────────────────
 
+# Mtime-keyed cache: rebuild only when episodic.json changes on disk.
+_BM25_CACHE: dict = {"mtime": -1.0, "bm25": None, "events": None}
+_BM25_LOCK = threading.Lock()
+
+
+def _get_cached_bm25() -> tuple:
+    """Return (bm25, events, id_to_event) rebuilding only when episodic file changes."""
+    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    ep_file = get_path("episodic/episodic.json")
+    try:
+        mtime = os.path.getmtime(ep_file)
+    except FileNotFoundError:
+        mtime = 0.0
+
+    with _BM25_LOCK:
+        if _BM25_CACHE["mtime"] == mtime and _BM25_CACHE["bm25"] is not None:
+            return _BM25_CACHE["bm25"], _BM25_CACHE["events"]
+
+        events = get_history(limit=10_000)
+        docs = [
+            _Document(
+                id=ev.get("id", str(i)),
+                text=ev.get("event", "") + " " + " ".join(
+                    str(v) for v in ev.get("metadata", {}).values()
+                ),
+            )
+            for i, ev in enumerate(events)
+        ]
+        bm25 = _BM25()
+        if docs:
+            bm25.index(docs)
+        _BM25_CACHE["mtime"] = mtime
+        _BM25_CACHE["bm25"] = bm25
+        _BM25_CACHE["events"] = events
+        return bm25, events
+
+
 def episodic_bm25_filter(
     query: str,
     time_range: tuple[str, str] | None = None,
@@ -376,7 +413,7 @@ def episodic_bm25_filter(
     time_range — optional (iso_start, iso_end) to restrict events by timestamp
     top_k      — max events to return
     """
-    events = get_history(limit=10_000)
+    bm25, events = _get_cached_bm25()
 
     if time_range:
         start_str, end_str = time_range
@@ -388,20 +425,6 @@ def episodic_bm25_filter(
     if not events:
         return []
 
-    # Build a BM25 corpus from the event log
-    # Document text = event string + serialised metadata for richer matching
-    docs = [
-        _Document(
-            id=ev.get("id", str(i)),
-            text=ev.get("event", "") + " " + " ".join(
-                str(v) for v in ev.get("metadata", {}).values()
-            ),
-        )
-        for i, ev in enumerate(events)
-    ]
-
-    bm25 = _BM25()
-    bm25.index(docs)
     ranked = bm25.search(query, top_k=top_k)
 
     if not ranked:

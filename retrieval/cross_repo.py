@@ -13,7 +13,8 @@ from Repo B if both are members of the same local organization.
 import json
 import os
 import logging
-from config.orgs import get_repo_org, get_repo_project, get_project_repos, list_orgs
+from config.orgs import get_repo_org, get_repo_project, get_project_repos, list_orgs, purge_stale_repos
+from config.paths import get_cognirepo_dir_for_repo
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +29,10 @@ class CrossRepoRouter:
         """Return absolute paths to all other repos in the same organization."""
         if not self.org_name:
             return []
-        
+        purge_stale_repos(self.org_name)
         orgs = list_orgs()
         org_data = orgs.get(self.org_name, {})
         repos = org_data.get("repos", [])
-        
-        # Return all repos except the current one
         return [r for r in repos if os.path.abspath(r) != self.repo_path]
 
     def query_org_memories(self, query: str, top_k: int = 5) -> list[dict]:
@@ -46,11 +45,11 @@ class CrossRepoRouter:
             return []
 
         all_results = []
-        from memory.semantic_memory import ProjectSemanticMemory  # pylint: disable=import-outside-toplevel
+        from memory.semantic_memory import SemanticMemory  # pylint: disable=import-outside-toplevel
         from config.paths import _CTX_DIR  # pylint: disable=import-outside-toplevel
 
         for repo in siblings:
-            cognirepo_dir = os.path.join(repo, ".cognirepo")
+            cognirepo_dir = get_cognirepo_dir_for_repo(repo)
             if not os.path.isdir(cognirepo_dir):
                 continue
 
@@ -59,7 +58,7 @@ class CrossRepoRouter:
             # which would race under concurrent MCP calls.
             token = _CTX_DIR.set(cognirepo_dir)
             try:
-                mem = ProjectSemanticMemory()
+                mem = SemanticMemory()
                 results = mem.search(query, top_k=top_k)
 
                 repo_name = os.path.basename(repo)

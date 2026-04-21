@@ -367,12 +367,12 @@ def lookup_symbol(name: str, include_org: bool = False) -> list:
     if include_org:
         from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
         from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-        from config.paths import set_cognirepo_dir, get_cognirepo_dir  # pylint: disable=import-outside-toplevel
+        from config.paths import set_cognirepo_dir, get_cognirepo_dir, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
         
         router = CrossRepoRouter()
         original_dir = get_cognirepo_dir()
         for repo in router.get_sibling_repos():
-            cognirepo_dir = os.path.join(repo, ".cognirepo")
+            cognirepo_dir = get_cognirepo_dir_for_repo(repo)
             if not os.path.isdir(cognirepo_dir): continue
             try:
                 set_cognirepo_dir(cognirepo_dir)
@@ -956,22 +956,29 @@ def run_server(project_dir: str | None = None) -> None:
     from dotenv import load_dotenv  # pylint: disable=import-outside-toplevel
     load_dotenv()
     if project_dir:
-        from config.paths import set_cognirepo_dir  # pylint: disable=import-outside-toplevel
+        from config.paths import (  # pylint: disable=import-outside-toplevel
+            set_cognirepo_dir, get_cognirepo_dir_for_repo,
+        )
         abs_dir = os.path.abspath(project_dir)
         if not os.path.isdir(abs_dir):
             raise SystemExit(f"cognirepo serve: project-dir not found: {abs_dir}")
-        cognirepo_subdir = os.path.join(abs_dir, ".cognirepo")
-        set_cognirepo_dir(cognirepo_subdir)
+        # Resolve correctly: use local .cognirepo/ if present, else global fallback.
+        resolved_dir = get_cognirepo_dir_for_repo(abs_dir)
+        set_cognirepo_dir(resolved_dir)
+        # Discard any singleton loaded before the dir was set.
+        _evict_singletons()
+        logger.info("run_server: project_dir=%s resolved_cognirepo=%s", abs_dir, resolved_dir)
     # ── auto-start file watcher (background daemon, keeps index fresh) ────────
     try:
         _watch_cfg: dict = {}
-        _cfg_path = os.path.join(os.getcwd(), ".cognirepo", "config.json")
+        from config.paths import get_path as _get_path  # pylint: disable=import-outside-toplevel
+        _cfg_path = _get_path("config.json")
         if os.path.exists(_cfg_path):
             with open(_cfg_path, encoding="utf-8") as _wf:
                 _watch_cfg = json.load(_wf).get("watch", {})
         if _watch_cfg.get("auto_enabled", True):
             from cli.main import _start_watcher_bg  # pylint: disable=import-outside-toplevel
-            _start_watcher_bg(os.getcwd())
+            _start_watcher_bg(project_dir or os.getcwd())
     except Exception:  # pylint: disable=broad-except
         pass  # watcher is best-effort — never block server startup
 

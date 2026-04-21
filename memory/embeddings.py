@@ -51,15 +51,22 @@ def encode_with_timeout(text: str, timeout: float | None = None):
     Raises concurrent.futures.TimeoutError if encoding exceeds the timeout.
     Configurable via COGNIREPO_EMBED_TIMEOUT_SEC env var (default 30s).
     """
+    from memory.circuit_breaker import get_breaker, CircuitOpenError  # pylint: disable=import-outside-toplevel
+    breaker = get_breaker()
+    breaker.check()
     t = timeout if timeout is not None else _EMBED_TIMEOUT_SEC
     model = get_model()
     future = _ENCODE_EXECUTOR.submit(model.encode, text)
     try:
-        return future.result(timeout=t)
+        result = future.result(timeout=t)
+        breaker.record_success()
+        return result
     except concurrent.futures.TimeoutError:
         logger.error(
             "Embedding encode() timed out after %.1fs for input len=%d", t, len(text)
         )
+        raise
+    except CircuitOpenError:
         raise
 
 

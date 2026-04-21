@@ -26,7 +26,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter
+from retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter, MAX_QUERY_LEN
 
 try:
     import tiktoken as _tiktoken
@@ -155,6 +155,12 @@ def context_pack(
     # ── file-mode: return all indexed context for a specific file ────────────
     if file:
         return _file_mode_context(file, max_tokens, window_lines)
+
+    if len(query) > MAX_QUERY_LEN:
+        raise ValueError(
+            f"Query too long ({len(query):,} chars > {MAX_QUERY_LEN:,}). "
+            "Truncate or set COGNIREPO_MAX_QUERY_LEN env var."
+        )
 
     sections: list[dict] = []
     token_budget = max_tokens

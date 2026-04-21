@@ -497,10 +497,15 @@ def _setup_vscode_mcp(project_name: str, project_path: str) -> None:
             tasks_cfg = {}
     tasks_cfg.setdefault("version", "2.0.0")
     existing_tasks = [t for t in tasks_cfg.get("tasks", []) if t.get("label") != "CogniRepo: Refresh Context"]
+    from config.paths import get_project_hash  # pylint: disable=import-outside-toplevel
+    _cwd = os.path.abspath(os.getcwd())
+    _pname = project_name or os.path.basename(_cwd)
+    _storage_subdir = f"{_pname}_{get_project_hash(_cwd)}"
+    _last_ctx_path = f"~/.cognirepo/storage/{_storage_subdir}/last_context.json"
     existing_tasks.append({
         "label": "CogniRepo: Refresh Context",
         "type": "shell",
-        "command": f"cognirepo prime > ~/.cognirepo/{project_name or '${workspaceFolderBasename}'}/last_context.json",
+        "command": f"cognirepo prime > {_last_ctx_path}",
         "runOptions": {"runOn": "folderOpen"},
         "presentation": {"reveal": "silent"},
     })
@@ -746,10 +751,16 @@ def init_project(
 
     # ── link to org ───────────────────────────────────────────────────────────
     if org:
-        from config.orgs import create_org, link_repo_to_org  # pylint: disable=import-outside-toplevel
+        from config.orgs import (  # pylint: disable=import-outside-toplevel
+            create_org, link_repo_to_org, create_project, link_repo_to_project,
+        )
         create_org(org)  # Ensure it exists
         link_repo_to_org(os.getcwd(), org)
         print(f"Linked repository to local organization: {org}")
+        if project:
+            create_project(org, project)
+            link_repo_to_project(os.getcwd(), org, project)
+            print(f"Linked repository to project: {org}/{project}")
 
     # ── set up MCP configs ────────────────────────────────────────────────────
     if mcp_targets:
@@ -812,41 +823,14 @@ def init_project(
 
     kg.save()
 
-    # seed documentation into semantic store (README, CHANGELOG, docs/)
-    try:
-        from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
-        _doc_summary = DocIngester(cwd).ingest()
-        if _doc_summary.get("chunks", 0) > 0:
-            print(f"  Seeded {_doc_summary['chunks']} doc chunks from "
-                  f"{_doc_summary['files']} file(s).")
-    except Exception:  # pylint: disable=broad-except
-        pass  # doc ingestion is best-effort
-
-    # seed behaviour from git history
+    # seed behaviour weights from git history (fast — no embedding, just git log)
     try:
         from cli.seed import seed_from_git_log  # pylint: disable=import-outside-toplevel
-        seed_from_git_log(repo_root=cwd, indexer=indexer)
+        _seed_result = seed_from_git_log(repo_root=cwd, indexer=indexer)
+        _n_seeded = _seed_result.get("seeded", 0) if isinstance(_seed_result, dict) else 0
+        if _n_seeded > 0:
+            print(f"  Seeded {_n_seeded} symbols from last 100 commits.")
     except Exception:  # pylint: disable=broad-except
         pass  # seeding is best-effort
-
-    # seed semantic store from docs / git log (cold-start fix)
-    try:
-        from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
-        doc_summary = DocIngester(cwd).ingest()
-        if doc_summary.get("chunks", 0) > 0:
-            print(
-                f"  Seeded {doc_summary['chunks']} doc chunk(s) from "
-                f"{doc_summary['files']} file(s) into semantic store."
-            )
-    except Exception:  # pylint: disable=broad-except
-        pass  # doc ingestion is best-effort
-
-    # seed LearningStore from docs so retrieve_learnings() works on day 1
-    try:
-        _n_learnings = _seed_learnings_from_docs(cwd)
-        if _n_learnings > 0:
-            print(f"  Seeded {_n_learnings} learning(s) from documentation.")
-    except Exception:  # pylint: disable=broad-except
-        pass  # best-effort
 
     return summary, kg, indexer

@@ -115,6 +115,26 @@ def get_cognirepo_dir() -> str:
     project_storage = os.path.join(global_base, f"{project_name}_{project_hash}")
     return project_storage
 
+def get_cognirepo_dir_for_repo(repo_path: str) -> str:
+    """
+    Resolve the .cognirepo storage directory for an arbitrary repo path.
+    Mirrors get_cognirepo_dir() priority but accepts an explicit path instead
+    of using CWD.  Used by CrossRepoRouter and run_server().
+
+    Priority:
+    1. Local .cognirepo/ inside repo_path (if it exists)
+    2. Global ~/.cognirepo/storage/<name>_<hash>/  (fallback)
+    """
+    abs_path = os.path.abspath(repo_path)
+    local_dir = os.path.join(abs_path, ".cognirepo")
+    if os.path.isdir(local_dir):
+        return local_dir
+    project_name = os.path.basename(abs_path)
+    project_hash = get_project_hash(abs_path)
+    global_base = os.path.join(str(Path.home()), ".cognirepo", "storage")
+    return os.path.join(global_base, f"{project_name}_{project_hash}")
+
+
 def get_path(subpath: str) -> str:
     """
     Get the absolute path for a file or directory under .cognirepo.

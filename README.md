@@ -87,7 +87,7 @@ sources, call the best model (Claude, Gemini, Grok, OpenAI), stream the response
 ### Requirements
 
 - Python 3.11+
-- At least one API key: `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `GROK_API_KEY`
+- API key (optional — only needed for `cognirepo ask`): `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `GROK_API_KEY`. Indexing, memory, and all MCP tools work fully offline.
 
 ### Install
 
@@ -118,9 +118,6 @@ cognirepo ask "why is auth slow?"       # route a query through the orchestrator
 cognirepo list                          # show all running watcher daemons
 cognirepo list -n <PID> --view          # tail the log of a specific watcher
 cognirepo list -n <PID> --stop          # stop a watcher
-
-# Interactive REPL:
-cognirepo chat
 
 # System health check:
 cognirepo doctor
