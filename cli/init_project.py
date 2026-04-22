@@ -47,6 +47,26 @@ def _write_gitignore() -> None:
         f.write(GITIGNORE_CONTENT)
 
 
+def _seed_dotenv() -> None:
+    """Copy .env.example → .env on first init so users discover all env vars."""
+    dotenv_dest = Path(".env")
+    if dotenv_dest.exists():
+        return
+    # Source 1: repo root (dev install)
+    here = Path(__file__).parent.parent
+    example = here / ".env.example"
+    # Source 2: installed package data
+    if not example.exists():
+        import importlib.resources as _ir  # pylint: disable=import-outside-toplevel
+        try:
+            example = Path(str(_ir.files("cognirepo").joinpath(".env.example")))
+        except Exception:  # pylint: disable=broad-except
+            example = Path("")
+    if example.exists():
+        shutil.copy(example, dotenv_dest)
+        print(".env created from .env.example — review it to tune circuit breaker limits or add API keys.")
+
+
 def _scaffold_dirs() -> None:
     os.makedirs(get_path("memory"), exist_ok=True)
     os.makedirs(get_path("docs"), exist_ok=True)
@@ -748,6 +768,7 @@ def init_project(
         autosave_context=autosave_context,
     )
     _write_gitignore()
+    _seed_dotenv()
 
     # ── link to org ───────────────────────────────────────────────────────────
     if org:
@@ -832,5 +853,33 @@ def init_project(
             print(f"  Seeded {_n_seeded} symbols from last 100 commits.")
     except Exception:  # pylint: disable=broad-except
         pass  # seeding is best-effort
+
+    # ── auto-summarize: generate architectural summaries if not present ───────
+    _summaries_path = get_path("index/summaries.json")
+    _should_summarize = not os.path.exists(_summaries_path)
+
+    if _should_summarize and sys.stdin.isatty() and not non_interactive:
+        try:
+            _ans = input(
+                "\nGenerate architectural summaries for this repo? "
+                "(y/n) [y]: "
+            ).strip().lower()
+            _should_summarize = _ans not in ("n", "no")
+        except (EOFError, KeyboardInterrupt):
+            _should_summarize = True  # default yes
+
+    if _should_summarize:
+        print("\nGenerating architectural summaries …")
+        try:
+            from indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
+            _engine = SummarizationEngine()
+            _sum_result = _engine.run_full_summarization()
+            print("  Summaries saved to .cognirepo/index/summaries.json")
+            if _sum_result.get("repo"):
+                _preview = _sum_result["repo"][:200].replace("\n", " ")
+                print(f"  Preview: {_preview}…")
+        except Exception as _sum_exc:  # pylint: disable=broad-except
+            print(f"  Summarization skipped ({_sum_exc}).")
+            print("  Run 'cognirepo summarize' once an LLM API key is configured.")
 
     return summary, kg, indexer

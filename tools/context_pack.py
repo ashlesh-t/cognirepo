@@ -65,12 +65,13 @@ _DOC_INTENT_PATTERN = re.compile(
 )
 
 
-def _read_window(file_path: str, center_line: int, window_lines: int) -> str:
+
+def _read_window(file_path: str, center_line: int, window_lines: int, repo_root: str | None = None) -> str:
     """
     Read ±window_lines around center_line from file_path.
     Returns the extracted text, or empty string if the file is unreadable.
     """
-    repo_root = os.environ.get("COGNIREPO_ROOT", os.getcwd())
+    repo_root = repo_root or os.environ.get("COGNIREPO_ROOT", os.getcwd())
     abs_path = (
         file_path if os.path.isabs(file_path)
         else os.path.join(repo_root, file_path)
@@ -123,6 +124,7 @@ def context_pack(
     include_symbols: bool = True,
     window_lines: int = 15,
     file: str = "",
+    repo_root: str | None = None,
 ) -> dict:
     """
     Pack the most relevant code/episodic context into a token-bounded block.
@@ -154,7 +156,7 @@ def context_pack(
     """
     # ── file-mode: return all indexed context for a specific file ────────────
     if file:
-        return _file_mode_context(file, max_tokens, window_lines)
+        return _file_mode_context(file, max_tokens, window_lines, repo_root=repo_root)
 
     if len(query) > MAX_QUERY_LEN:
         raise ValueError(
@@ -223,7 +225,7 @@ def context_pack(
                     if ":" in location_part:
                         fpath, lineno_str = location_part.rsplit(":", 1)
                         lineno = int(lineno_str)
-                        window_text = _read_window(fpath, lineno, window_lines)
+                        window_text = _read_window(fpath, lineno, window_lines, repo_root)
                         file_ref = f"{fpath}:{lineno}"
                 except (ValueError, IndexError):
                     pass
@@ -304,7 +306,7 @@ def context_pack(
     return result
 
 
-def _file_mode_context(file_path: str, max_tokens: int, window_lines: int) -> dict:
+def _file_mode_context(file_path: str, max_tokens: int, window_lines: int, repo_root: str | None = None) -> dict:
     """Return all indexed context for a specific file (Cursor-style file mode)."""
     from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
     from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
@@ -318,14 +320,14 @@ def _file_mode_context(file_path: str, max_tokens: int, window_lines: int) -> di
         # Normalize path
         rel_path = file_path
         if os.path.isabs(file_path):
-            repo_root = os.environ.get("COGNIREPO_ROOT", os.getcwd())
-            rel_path = os.path.relpath(file_path, repo_root)
+            _root = repo_root or os.environ.get("COGNIREPO_ROOT", os.getcwd())
+            rel_path = os.path.relpath(file_path, _root)
 
         file_data = indexer.index_data.get("files", {}).get(rel_path, {})
         symbols = file_data.get("symbols", [])
 
         for sym in symbols:
-            content = _read_window(rel_path, sym["start_line"], window_lines)
+            content = _read_window(rel_path, sym["start_line"], window_lines, repo_root)
             if not content:
                 continue
             tok = _count_tokens(content)

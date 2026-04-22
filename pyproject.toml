@@ -8,12 +8,17 @@ license = "MIT"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "Topic :: Software Development :: Libraries",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Version Control",
+    "Typing :: Typed",
 ]
 dependencies = [
     # core
@@ -61,6 +66,8 @@ languages = [
     "tree-sitter-cpp>=0.23",
     "tree-sitter-go>=0.23",
     "tree-sitter-rust>=0.23",
+    "tree-sitter-bash>=0.23",
+    "tree-sitter-yaml>=0.6",
 ]
 cpp = [
     "pybind11>=2.12",
@@ -93,6 +100,9 @@ cognirepo = "cli.main:main"
 where = ["."]
 include = ["_bm25*", "adapters*", "cli*", "config*", "cron*", "graph*", "indexer*", "memory*", "orchestrator*", "retrieval*", "security*", "server*", "tools*", "vector_db*"]
 exclude = ["venv*", "*.egg-info*"]
+
+[tool.setuptools.package-data]
+"*" = [".env.example"]
 
 [build-system]
 requires = ["setuptools>=61.0"]

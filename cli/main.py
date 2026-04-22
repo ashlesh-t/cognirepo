@@ -2055,37 +2055,9 @@ def main():
              "Omit to test all configured providers.",
     )
 
-    # ask
-    p_ask = sub.add_parser("ask", help="Route a query through the multi-model orchestrator")
-    p_ask.add_argument("query", help="Natural language query")
-    p_ask.add_argument("--model", default=None, metavar="MODEL_ID",
-                       help="Force a specific model ID (e.g. claude-opus-4-6)")
-    p_ask.add_argument("--top-k", type=int, default=5,
-                       help="Memories to retrieve for context (default: 5)")
-    p_ask.add_argument("--verbose", action="store_true",
-                       help="Print classifier tier/score/signals before response")
-    p_ask.add_argument(
-        "--no-stream",
-        action="store_true",
-        default=False,
-        help="Collect full response before printing (useful for piping to other commands).",
-    )
-    p_ask.add_argument(
-        "--continue", dest="continue_session",
-        action="store_true", default=False,
-        help="Continue the most recent conversation session.",
-    )
-    p_ask.add_argument(
-        "--session",
-        default=None,
-        metavar="ID",
-        help="Resume a specific session by ID or ID prefix.",
-    )
-    p_ask.add_argument(
-        "--no-history",
-        action="store_true", default=False,
-        help="Disable session tracking for this query (one-shot / privacy mode).",
-    )
+    # ask — placeholder (not yet implemented)
+    p_ask = sub.add_parser("ask", help="[coming soon] Route a query through the multi-model orchestrator")
+    p_ask.add_argument("query", nargs="?", help="Natural language query")
 
     # sessions — list recent conversations
     p_sess = sub.add_parser("sessions", help="List recent conversation sessions")
@@ -2799,15 +2771,11 @@ def main():
         return
 
     if args.command == "ask":
-        text = _direct_ask(
-            args.query, args.model, args.top_k, args.verbose,
-            no_stream=args.no_stream,
-            continue_session=args.continue_session,
-            session_id=args.session,
-            no_history=args.no_history,
+        print(
+            "cognirepo ask is not yet available in this release.\n"
+            "Use your AI agent (Claude Code, Cursor, etc.) with the MCP tools instead:\n"
+            "  cognirepo init  →  adds MCP server to your editor automatically."
         )
-        if args.no_stream:
-            print(text)
         return
 
     # ── routable commands ─────────────────────────────────────────────────

@@ -80,6 +80,7 @@ class NodeType:  # pylint: disable=too-few-public-methods
     SESSION = "SESSION"
     USER_ACTION = "USER_ACTION"
     MEMORY = "MEMORY"          # cross-agent memory nodes (synced from Claude/Gemini/etc.)
+    ERROR = "ERROR"            # error pattern nodes for tracking recurring mistakes
 
 
 class EdgeType:  # pylint: disable=too-few-public-methods
@@ -90,6 +91,9 @@ class EdgeType:  # pylint: disable=too-few-public-methods
     CALLS = "CALLS"            # callee → caller (reverse; enables BFS to find callers without predecessors())
     QUERIED_WITH = "QUERIED_WITH"
     CO_OCCURS = "CO_OCCURS"
+    IMPORTS = "IMPORTS"        # file A imports module/file B
+    INHERITS = "INHERITS"      # class A inherits from class B
+    SIMILAR_TO = "SIMILAR_TO"  # semantically similar symbols (embedding distance < threshold)
 
 
 class KnowledgeGraph:

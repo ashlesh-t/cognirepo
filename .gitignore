@@ -50,6 +50,9 @@ tmp.*/
 # ── Misc ──────────────────────────────────────────────────────────────────────
 *.log
 *.pid
+*.xlsx
+*.xls
+test_suite.md
 .claude/*
 .gemini/*
 .cognirepo/*

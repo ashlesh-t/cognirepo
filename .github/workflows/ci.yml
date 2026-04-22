@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    name: Tests — Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install system deps
+        run: sudo apt-get install -y libgomp1
+
+      - name: Install package + dev extras
+        run: pip install -e ".[dev,languages]"
+        timeout-minutes: 15
+
+      - name: Bootstrap .cognirepo index
+        # Tests in test_claude_usefulness.py look up symbols in the real project index.
+        # We create config.json first so the CLI skips the interactive init prompt,
+        # then run index-repo to populate the AST + FAISS + graph stores.
+        run: |
+          mkdir -p .cognirepo
+          python - <<'PYEOF'
+          import json
+          cfg = {
+              "project_name": "cognirepo",
+              "version": "0.2.0",
+              "retrieval_weights": {"vector": 0.5, "graph": 0.3, "behaviour": 0.2},
+              "storage": {"encrypt": False},
+              "watch": {"auto_enabled": False},
+              "autosave_context": True
+          }
+          with open(".cognirepo/config.json", "w") as f:
+              json.dump(cfg, f)
+          PYEOF
+          cognirepo index-repo .
+
+      - name: Run tests
+        run: |
+          python -m pytest tests/ \
+            -q \
+            --tb=short \
+            --cov=. \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --cov-fail-under=50 \
+            -x
+        env:
+          COGNIREPO_DIR: .cognirepo
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: matrix.python-version == '3.11'
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 14

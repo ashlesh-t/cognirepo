@@ -37,6 +37,10 @@ _GRAMMAR_MAP: dict[str, str] = {
     ".hpp":  "tree_sitter_cpp",
     ".go":   "tree_sitter_go",
     ".rs":   "tree_sitter_rust",
+    ".sh":   "tree_sitter_bash",
+    ".bash": "tree_sitter_bash",
+    ".yml":  "tree_sitter_yaml",
+    ".yaml": "tree_sitter_yaml",
 }
 
 # Some grammar packages expose multiple language() functions instead of
@@ -60,6 +64,11 @@ _LANG_LABELS: dict[str, str] = {
     ".hpp":  "C++",
     ".go":   "Go",
     ".rs":   "Rust",
+    ".sh":   "Shell",
+    ".bash": "Shell",
+    ".pyi":  "Python",
+    ".yml":  "YAML",
+    ".yaml": "YAML",
 }
 
 # Language identifiers used internally (e.g. for docstring extraction heuristics)
@@ -76,10 +85,15 @@ _LANG_NAMES: dict[str, str] = {
     ".hpp":  "cpp",
     ".go":   "go",
     ".rs":   "rust",
+    ".sh":   "bash",
+    ".bash": "bash",
+    ".pyi":  "python",
+    ".yml":  "yaml",
+    ".yaml": "yaml",
 }
 
 # Python can be indexed via stdlib ast even without tree-sitter-python
-_PYTHON_FALLBACK_EXTS: frozenset[str] = frozenset({".py"})
+_PYTHON_FALLBACK_EXTS: frozenset[str] = frozenset({".py", ".pyi"})
 
 # Module level cache: ext → Language object or None
 _lang_cache: dict[str, object] = {}

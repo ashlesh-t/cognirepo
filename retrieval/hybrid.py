@@ -93,24 +93,31 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
             )
         query_vector = encode_with_timeout(query).astype("float32")
 
-        # 1. wider vector net before re-ranking
+        # 1. wider vector net before re-ranking (semantic memory FAISS)
         vector_candidates = self._vector_retrieve(query_vector, top_k * 3)
 
-        # 2. AST reverse-index expansion
+        # 2. AST reverse-index exact lookup (entity names extracted from query)
         entities = extract_entities_from_text(query)
-        ast_candidates = self._ast_retrieve(entities)
+        ast_exact_candidates = self._ast_retrieve(entities)
 
-        # 3. merge + dedup
-        all_candidates = self._merge_candidates(vector_candidates, ast_candidates)
+        # 3. AST FAISS semantic search — works on fresh repos with no stored memories.
+        #    This is the primary code-search path when the semantic memory is cold.
+        ast_faiss_candidates = self._ast_faiss_retrieve(query_vector, top_k * 2)
+
+        # 4. merge + dedup (AST exact overrides FAISS when same symbol; vector_score
+        #    from FAISS is promoted to exact candidates that had score=0.0)
+        all_candidates = self._merge_candidates(
+            vector_candidates, ast_exact_candidates, ast_faiss_candidates
+        )
 
         if not all_candidates:
             return []
 
-        # 4. score
+        # 5. score
         all_counts = self.behaviour.get_all_scores()
         scored = self._score_candidates(all_candidates, entities, all_counts)
 
-        # 5. sort + truncate
+        # 6. sort + truncate
         scored.sort(key=lambda x: x["final_score"], reverse=True)
         return scored[:top_k]
 
@@ -164,18 +171,93 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
                     })
         return results
 
+    def _ast_faiss_retrieve(self, query_vector: np.ndarray, k: int) -> list[dict]:
+        """
+        Semantic FAISS search over AST-indexed code symbols.
+
+        Unlike _ast_retrieve() which does exact entity-name lookup, this queries
+        the AST FAISS index directly — works on fresh repos where no memories have
+        been stored yet and extract_entities_from_text() returns nothing.
+
+        Results use source="ast" and the same text format as _ast_retrieve so they
+        flow correctly through context_pack's window-extraction and confidence gate.
+        """
+        if self.indexer.faiss_index is None or self.indexer.faiss_index.ntotal == 0:
+            return []
+
+        fetch_k = min(k * 2, self.indexer.faiss_index.ntotal)
+        distances, ids = self.indexer.faiss_index.search(
+            np.array([query_vector], dtype="float32"), fetch_k
+        )
+
+        results: list[dict] = []
+        seen: set[str] = set()
+        for dist, fid in zip(distances[0], ids[0]):
+            if fid < 0 or fid >= len(self.indexer.faiss_meta):
+                continue
+            meta = self.indexer.faiss_meta[fid]
+            # include file_summary entries — they answer "what does X.py do?" queries
+
+            file_path = meta.get("file", "")
+            name = meta.get("name", "")
+            line = meta.get("start_line", -1)
+            sym_type = meta.get("type", "SYMBOL")
+            doc = meta.get("docstring", "")
+
+            key = f"{file_path}::{name}"
+            if key in seen:
+                continue
+            seen.add(key)
+
+            text = f"{sym_type} {name} in {file_path}:{line}" + (f" — {doc}" if doc else "")
+            raw_score = max(0.0, 1.0 - float(dist) / 2.0)
+            # Weight from crawl: 1.0=direct, 0.75=hop-2, 0.5=indirect
+            crawl_weight = float(meta.get("weight", 1.0))
+            score = raw_score * crawl_weight
+
+            results.append({
+                "text": text,
+                "importance": 0.6,
+                "source": "ast",
+                "vector_score": score,
+                "_id": key,
+                "_symbol": make_node_id(sym_type, name, file_path),
+                "_crawl_weight": crawl_weight,
+            })
+            if len(results) >= k:
+                break
+
+        return results
+
     def _merge_candidates(
         self,
         vector_candidates: list[dict],
-        ast_candidates: list[dict],
+        ast_exact: list[dict],
+        ast_faiss: list[dict] | None = None,
     ) -> list[dict]:
-        """Deduplicate by _id; AST candidates that match vector ones inherit vector_score."""
+        """
+        Deduplicate by _id across all three candidate lists.
+
+        Priority: vector_candidates > ast_exact > ast_faiss.
+        When the same symbol appears in multiple lists, the highest vector_score wins
+        so FAISS scores promote exact-match candidates that had vector_score=0.0.
+        """
         merged: dict[str, dict] = {}
         for c in vector_candidates:
             merged[c["_id"]] = c
-        for c in ast_candidates:
-            if c["_id"] not in merged:
+        for c in ast_exact:
+            existing = merged.get(c["_id"])
+            if existing is None:
                 merged[c["_id"]] = c
+            elif c.get("vector_score", 0.0) > existing.get("vector_score", 0.0):
+                merged[c["_id"]] = {**existing, "vector_score": c["vector_score"]}
+        for c in (ast_faiss or []):
+            existing = merged.get(c["_id"])
+            if existing is None:
+                merged[c["_id"]] = c
+            elif c.get("vector_score", 0.0) > existing.get("vector_score", 0.0):
+                # Promote the vector_score but keep other fields from the earlier entry
+                merged[c["_id"]] = {**existing, "vector_score": c["vector_score"]}
         return list(merged.values())
 
     def _score_candidates(

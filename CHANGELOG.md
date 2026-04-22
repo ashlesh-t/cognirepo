@@ -8,11 +8,46 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+---
+
+## [0.2.0] — 2026-04-23
+
 ### Added
+- **`.env` seeded on `cognirepo init`** (`cli/init_project.py`) — `.env.example` is now shipped as package data and automatically copied to `.env` on first init, so users discover circuit-breaker and API-key variables without reading docs.
+- **`.env.example` in package data** (`pyproject.toml`) — included via `[tool.setuptools.package-data]` so the template is present in pip-installed wheels.
+
+### Fixed
+- **Tree-sitter `_walk_ts` — decorators and tags** (`indexer/ast_indexer.py`) — `_walk_ts` now extracts decorator names for both FUNCTION and CLASS nodes via `_ts_decorators()`. Previously all decorator information was silently dropped when tree-sitter ran (the default path), meaning `@property`, `@classmethod`, `@app.route`, etc. were invisible to FAISS embed text, the reverse index, and the graph.
+- **Tree-sitter `_walk_ts` — base classes and INHERITS edges** — `_ts_bases()` added; CLASS nodes now populate `bases`. Consequently `EdgeType.INHERITS` edges are correctly written to the knowledge graph for the first time when tree-sitter-python is installed. Previously zero INHERITS edges existed in the default configuration.
+- **Tree-sitter `_walk_ts` — CLASS docstring always empty** — `_ts_docstring()` is now called for CLASS nodes; the hardcoded `"docstring": ""` is removed.
+- **CONSTANT / VARIABLE / TYPED_FIELD / LAMBDA absent from default index** (`indexer/ast_indexer.py`) — `_parse_file` now runs stdlib-ast after tree-sitter for Python files and merges the results: tree-sitter supplies FUNCTION/CLASS (richer call graph), stdlib-ast supplies CONSTANT/VARIABLE/TYPED_FIELD/LAMBDA (which tree-sitter `_walk_ts` never emitted). Module-level constants, type aliases, and dataclass fields are now indexed.
+- **Lambda dedup bug** (`indexer/ast_indexer.py`) — deduplication now uses a priority map (`LAMBDA > CONSTANT/VARIABLE`) so lambda-assignment symbols are no longer silently dropped by the first-seen `(name, start_line)` key.
+- **Dead `elif isinstance(target, ast.Name): pass` branch** (`indexer/ast_indexer.py`) — unreachable branch removed.
+- **Bare relative imports skipped** (`indexer/ast_indexer.py`) — `_extract_imports_py` now handles `from . import X` (where `node.module is None`) by emitting one IMPORTS entry per name. Previously these were silently dropped.
+- **Stale graph nodes on re-index** (`indexer/ast_indexer.py`) — `index_file()` now calls `graph.remove_file_nodes(rel_path)` before re-parsing, so deleted or renamed symbols no longer accumulate as orphan nodes with stale edges.
+- **All symbol types now embedded to FAISS** (`indexer/ast_indexer.py`) — the body-snippet enrichment block previously gated on `sym["type"] in ("FUNCTION", "CLASS")`. CONSTANT, VARIABLE, TYPED_FIELD, and LAMBDA symbols now also receive body-snippet context in their FAISS embed text.
+- **`file_summary` entries invisible to code retrieval** (`retrieval/hybrid.py`) — `_ast_faiss_retrieve` no longer skips entries with `source == "file_summary"`. File-level summary vectors now participate in hybrid retrieval, enabling "what does X.py do?" queries to return direct hits.
+- **`lookup_symbol(include_org=True)` cross-repo `ASTIndexer()` TypeError** (`server/mcp_server.py`) — `ASTIndexer()` requires a `KnowledgeGraph` argument; the cross-repo path was calling it with no args, causing a `TypeError` on any org-scoped lookup. Fixed by passing a fresh `KnowledgeGraph()` instance.
+- **Arrow functions and `const foo = () => ...` missed** (`indexer/ast_indexer.py`) — added `arrow_function` and `function_signature` to `_TS_FUNCTION_TYPES`; added a `lexical_declaration` / `variable_declarator` branch in `_walk_ts` to capture JS/TS arrow-function assignments by variable name.
+
+### Changed
+- **`cognirepo ask` removed from active CLI** (`cli/main.py`) — command now prints a clear "not yet available" message directing users to the MCP tools. The multi-model orchestrator is not functional in this release; shipping a silent no-op would mislead users. Will be re-enabled in a future release once the orchestrator is complete.
+- **`.env.example` API key comment updated** — removed `NOT-FUNCTIONAL-YET` annotation; comment now accurately states keys are reserved for the future `cognirepo ask` command.
+
+## [Unreleased — prev sprint notes, to be sorted into next release]
+
+### Added
+- **AST FAISS in hybrid retrieval** (`retrieval/hybrid.py`) — `HybridRetriever._ast_faiss_retrieve()` queries the AST FAISS index (code symbols) directly via vector similarity. Previously `context_pack` and `retrieve_memory` returned empty results on freshly-indexed repos because `hybrid_retrieve` only queried the semantic memory FAISS (empty until memories are stored) and did exact-name entity lookup (which returns nothing for natural-language queries). All three paths now feed `_merge_candidates()` with vector_score promotion so FAISS scores upgrade exact-match candidates that had `vector_score=0.0`.
+- **`repo_path` parameter on all MCP tools** (`server/mcp_server.py`) — `context_pack`, `lookup_symbol`, `who_calls`, `subgraph`, `graph_stats`, `search_token`, `semantic_search_code`, `retrieve_memory`, `store_memory`, `episodic_search`, `architecture_overview`, `dependency_graph`, `explain_change` now accept `repo_path: str | None = None`. When set, all reads/writes are scoped to that repo's storage directory using the thread-safe `_CTX_DIR` ContextVar, fresh graph/indexer instances are loaded (singletons untouched), and the correct source root is passed to `context_pack`'s file-window reader. Enables a single MCP server process to serve multiple indexed repos without cross-repo data leaks.
+- **`_repo_ctx()` context manager** (`server/mcp_server.py`) — thread-safe scope switch for one tool call. Sets `_CTX_DIR`, loads fresh `KnowledgeGraph` + `ASTIndexer` for the target repo, and resets on exit. Module-level singletons are never mutated by cross-repo calls.
+- **`repo_root` parameter on `context_pack()`** (`tools/context_pack.py`) — passed to `_read_window()` and `_file_mode_context()` so source file line-window extraction resolves paths relative to the target repo, not the server's working directory.
+- **CI test workflow** (`.github/workflows/ci.yml`) — runs `pytest` on Python 3.11 and 3.12, bootstraps the project's own `.cognirepo` index before the suite, collects coverage, enforces `--cov-fail-under=50`. Fixes the broken `ci.yml` badge in README.
 - **Idle resource eviction** — `server/idle_manager.py` (`IdleManager`) evicts the SentenceTransformer embedding model, KnowledgeGraph, and ASTIndexer from RAM after a configurable idle TTL (default 10 min). Controlled via `idle_ttl_seconds` in `.cognirepo/config.json`. Resources reload lazily on next tool call with ~2 s warm-up. Frees ~400 MB+ for users who leave the MCP server running overnight.
 
 ### Fixed
-- **Test suite cross-contamination** — eliminated all `sys.modules` pollution between test files. Root causes: unconditional `dotenv` stubbing clobbered real `python-dotenv` for `test_env_wizard.py`; `if dep not in sys.modules` stub guards installed MagicMocks when real packages existed but weren't cached yet; networkx DiGraph was mutated even on the real installed module; `rpc.proto.cognirepo_pb2_grpc` MagicMock caused `QueryServiceServicer` to be constructed as a Mock (inheriting from a Mock attribute loses all defined methods). Full suite: **850 passed, 15 skipped, 2 xfailed, 0 failures**.
+- **`lookup_symbol(include_org=True)` thread-safety** (`server/mcp_server.py`) — replaced `set_cognirepo_dir(original_dir)` / `get_cognirepo_dir()` process-wide globals (racy under concurrent MCP calls) with `_CTX_DIR.set()` / `_CTX_DIR.reset()` ContextVar pattern already used by `CrossRepoRouter`.
+- **`_who_calls_dynamic_fallback` repo root** (`server/mcp_server.py`) — grep fallback for dynamic dispatch now receives explicit `repo_root` from `_repo_ctx`, so it searches the correct directory when `repo_path` is specified.
+- **Test suite cross-contamination** — eliminated all `sys.modules` pollution between test files. Root causes: unconditional `dotenv` stubbing clobbered real `python-dotenv` for `test_env_wizard.py`; `if dep not in sys.modules` stub guards installed MagicMocks when real packages existed but weren't cached yet; networkx DiGraph was mutated even on the real installed module; `rpc.proto.cognirepo_pb2_grpc` MagicMock caused `QueryServiceServicer` to be constructed as a Mock (inheriting from a Mock attribute loses all defined methods). Full suite: **702 passed, 14 skipped, 2 xfailed, 0 failures**.
 
 ---
 

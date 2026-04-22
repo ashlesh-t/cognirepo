@@ -12,8 +12,10 @@ Persists to .cognirepo/graph/behaviour.json
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
 
@@ -34,6 +36,31 @@ def _now() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
 
+# Prevention hints keyed on common error type substrings
+_ERROR_HINTS: list[tuple[str, str]] = [
+    ("NameError",      "Undefined variable — check imports and scope before use."),
+    ("ImportError",    "Import failed — verify package is installed and module path is correct."),
+    ("AttributeError", "Object missing attribute — check type, None-guard, or spelling."),
+    ("TypeError",      "Wrong type — validate inputs at function boundary."),
+    ("KeyError",       "Missing dict key — use .get() with default or check existence first."),
+    ("IndexError",     "List out of range — guard with len() check before access."),
+    ("ValueError",     "Invalid value — add input validation before processing."),
+    ("SyntaxError",    "Syntax error — run a linter (ruff/flake8) before committing."),
+    ("RuntimeError",   "Runtime failure — add error logging at the call site."),
+    ("OSError",        "File/IO error — always guard file ops with try/except OSError."),
+    ("Timeout",        "Timeout — add explicit timeout parameter and retry logic."),
+    ("AssertionError", "Assertion failed — review invariants; do not use assert in prod."),
+]
+
+
+def _error_prevention_hint(error_type: str) -> str:
+    """Return a short prevention tip based on the error type name."""
+    for key, hint in _ERROR_HINTS:
+        if key.lower() in error_type.lower():
+            return hint
+    return "Track root cause and add a targeted guard at the call site."
+
+
 class BehaviourTracker:
     """
     Tracks developer and query behaviour to produce per-symbol hit counts
@@ -47,7 +74,7 @@ class BehaviourTracker:
         self.graph = graph
         self._db_adapter = db_adapter  # VectorStorageAdapter | None
         self.data: dict = {
-            "version": 1,
+            "version": 2,
             "updated_at": _now(),
             "symbol_weights": {},
             "query_history": {},
@@ -63,6 +90,10 @@ class BehaviourTracker:
                 "preferred_depth": "unknown",
                 # ISO timestamp of last summarisation into semantic memory
                 "last_summarized": None,
+                # Question type distribution: {type: count}
+                "question_types": {},
+                # Framing hints snapshot for Claude (rebuilt on summarize)
+                "framing_hints": "",
             },
         }
         self._observer = None
@@ -110,6 +141,7 @@ class BehaviourTracker:
         style = self.data.setdefault("interaction_style", {
             "query_patterns": [], "terminology": {},
             "preferred_depth": "unknown", "last_summarized": None,
+            "question_types": {}, "framing_hints": "",
         })
         patterns: list = style.setdefault("query_patterns", [])
         patterns.append(query_text)
@@ -128,6 +160,25 @@ class BehaviourTracker:
             else "concise" if avg_len < 40
             else "medium"
         )
+        # question type detection
+        q_lower = query_text.lower().strip()
+        qtypes: dict = style.setdefault("question_types", {})
+        _QTYPE_PATTERNS = [
+            ("why",     r"^why\b"),
+            ("what",    r"^what\b"),
+            ("how",     r"^how\b"),
+            ("fix",     r"^(fix|debug|resolve|solve|error|bug)\b"),
+            ("explain", r"^(explain|describe|tell me about|what does)\b"),
+            ("where",   r"^where\b"),
+            ("refactor",r"^(refactor|improve|optimize|simplify|clean)\b"),
+            ("add",     r"^(add|implement|create|write|build)\b"),
+        ]
+        for qtype, pattern in _QTYPE_PATTERNS:
+            if re.search(pattern, q_lower):
+                qtypes[qtype] = qtypes.get(qtype, 0) + 1
+                break
+        else:
+            qtypes["other"] = qtypes.get("other", 0) + 1
 
         # graph: add QUERY node and edges to each retrieved symbol
         q_node = make_node_id("QUERY", query_id)
@@ -217,15 +268,112 @@ class BehaviourTracker:
                     file_edited=file_path,
                 )
 
-    def record_error(self, error_type: str, file_path: str) -> None:
-        """Log a syntax or runtime error associated with a file."""
+    def record_error(
+        self,
+        error_type: str,
+        file_path: str,
+        message: str = "",
+        query_context: str = "",
+    ) -> None:
+        """Log a syntax or runtime error with dedup signature and context."""
         ep = self.data["error_patterns"]
         if error_type not in ep:
-            ep[error_type] = {"count": 0, "files": [], "last_seen": None}
+            ep[error_type] = {
+                "count": 0,
+                "files": [],
+                "last_seen": None,
+                "signature": hashlib.md5(error_type.encode()).hexdigest()[:8],
+                "occurrences": [],
+                "prevention_hint": _error_prevention_hint(error_type),
+            }
         ep[error_type]["count"] += 1
         ep[error_type]["last_seen"] = _now()
-        if file_path not in ep[error_type]["files"]:
+        if file_path and file_path not in ep[error_type]["files"]:
             ep[error_type]["files"].append(file_path)
+        # Keep last 5 detailed occurrences for context
+        occurrence = {"time": _now(), "file": file_path, "message": message[:300]}
+        if query_context:
+            occurrence["query"] = query_context[:200]
+        occurrences: list = ep[error_type].setdefault("occurrences", [])
+        occurrences.append(occurrence)
+        if len(occurrences) > 5:
+            occurrences.pop(0)
+
+    # ── user profile ──────────────────────────────────────────────────────────
+
+    def get_user_profile(self) -> dict:
+        """Return a comprehensive user behavior profile for Claude framing.
+
+        Includes: question types, depth preference, top terminology, framing hints.
+        """
+        style = self.data.get("interaction_style", {})
+        qtypes: dict = style.get("question_types", {})
+        terms: dict = style.get("terminology", {})
+        patterns: list = style.get("query_patterns", [])
+        depth = style.get("preferred_depth", "unknown")
+
+        # Top question type
+        top_qtype = max(qtypes, key=qtypes.get, default="unknown") if qtypes else "unknown"
+
+        # Top 10 domain terms (exclude stopwords already filtered)
+        top_terms = sorted(terms, key=lambda k: terms[k], reverse=True)[:10]
+
+        # Infer code-focus: queries containing identifiers (snake_case or CamelCase)
+        _ID_RE = re.compile(r'\b[a-z][a-z_]+[a-z]\b|[A-Z][a-zA-Z]+')
+        code_queries = sum(1 for q in patterns if _ID_RE.search(q))
+        code_focus_pct = round(100 * code_queries / max(len(patterns), 1))
+
+        # Build framing hints string
+        hints_parts = []
+        if depth != "unknown":
+            hints_parts.append(f"prefers {depth} responses")
+        if top_qtype not in ("unknown", "other"):
+            hints_parts.append(f"often asks '{top_qtype}' questions")
+        if code_focus_pct > 60:
+            hints_parts.append("focuses on code/symbols, not prose")
+        if top_terms:
+            hints_parts.append(f"domain vocabulary: {', '.join(top_terms[:5])}")
+
+        framing_hints = "; ".join(hints_parts) if hints_parts else "no profile yet"
+
+        sample_queries = patterns[-3:] if patterns else []
+
+        return {
+            "depth_preference": depth,
+            "top_question_type": top_qtype,
+            "question_type_distribution": qtypes,
+            "top_terminology": top_terms,
+            "code_focus_percent": code_focus_pct,
+            "framing_hints": framing_hints,
+            "sample_queries": sample_queries,
+            "total_queries_tracked": len(self.data.get("query_history", {})),
+        }
+
+    # ── error patterns ────────────────────────────────────────────────────────
+
+    def get_error_patterns(self, min_count: int = 1) -> list[dict]:
+        """Return error patterns sorted by frequency, with prevention hints.
+
+        min_count: only return patterns seen at least this many times.
+        """
+        ep = self.data.get("error_patterns", {})
+        result = []
+        for error_type, data in ep.items():
+            if data.get("count", 0) < min_count:
+                continue
+            result.append({
+                "error_type": error_type,
+                "count": data.get("count", 0),
+                "files": data.get("files", []),
+                "last_seen": data.get("last_seen"),
+                "signature": data.get("signature", ""),
+                "prevention_hint": data.get(
+                    "prevention_hint", _error_prevention_hint(error_type)
+                ),
+                "recent_context": (data.get("occurrences") or [{}])[-1].get("message", ""),
+            })
+        result.sort(key=lambda x: x["count"], reverse=True)
+        return result
 
     # ── score access ──────────────────────────────────────────────────────────
 
@@ -279,13 +427,25 @@ class BehaviourTracker:
             top_terms = sorted(terms, key=lambda k: terms[k], reverse=True)[:5]
             depth = style.get("preferred_depth", "unknown")
             sample_queries = patterns[-3:]  # last 3 for illustration
+            qtypes: dict = style.get("question_types", {})
+            top_qtype = max(qtypes, key=qtypes.get, default="N/A") if qtypes else "N/A"
 
             summary = (
                 f"User interaction style: prefers {depth} answers. "
+                f"Most common question type: {top_qtype}. "
                 f"Common terminology: {', '.join(top_terms) if top_terms else 'N/A'}. "
                 f"Recent query examples: {' | '.join(q[:80] for q in sample_queries)}."
             )
             store_memory(summary, source="interaction_style", importance=0.8)
+            # Build framing hints snapshot for get_user_profile()
+            hints_parts = []
+            if depth != "unknown":
+                hints_parts.append(f"prefers {depth} responses")
+            if top_qtype not in ("N/A", "other"):
+                hints_parts.append(f"often asks '{top_qtype}' questions")
+            if top_terms:
+                hints_parts.append(f"domain vocabulary: {', '.join(top_terms[:5])}")
+            style["framing_hints"] = "; ".join(hints_parts)
             style["last_summarized"] = _now()
             # Clear buffer after summarising so next batch is fresh
             style["query_patterns"] = []
