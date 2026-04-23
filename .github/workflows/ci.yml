@@ -34,7 +34,7 @@ jobs:
           key: hf-all-MiniLM-L6-v2-${{ runner.os }}
 
       - name: Install package + dev extras
-        run: pip install -e ".[dev,languages]"
+        run: pip install -e ".[dev,languages,security]"
         timeout-minutes: 15
 
       - name: Bootstrap .cognirepo index
