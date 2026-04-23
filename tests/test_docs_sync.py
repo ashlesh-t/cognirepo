@@ -7,7 +7,7 @@
 """
 Sprint 2 — Documentation truthfulness sync tests.
 
-Task 2.2 — Classifier thresholds match ARCHITECTURE.md
+Task 2.2 — Classifier thresholds match docs/architecture/SPECIFICATION.md
 Task 2.3 — Edge type names match docs/architecture/graph.md
 Task 2.5 — No 0-byte PNG diagram placeholders remain
 """
@@ -22,14 +22,14 @@ ROOT = Path(__file__).parent.parent
 def test_classifier_thresholds_match_docs():
     """
     The score thresholds in orchestrator/classifier.py must match the table in
-    ARCHITECTURE.md. Any drift here means users get a wrong mental model of
+    docs/architecture/SPECIFICATION.md. Any drift here means users get a wrong mental model of
     routing behaviour.
     """
     from orchestrator.classifier import _TIER_QUICK, _TIER_STANDARD, _TIER_COMPLEX
 
-    arch_text = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    arch_text = (ROOT / "docs" / "architecture" / "SPECIFICATION.md").read_text(encoding="utf-8")
 
-    # Extract the threshold lines from ARCHITECTURE.md
+    # Extract the threshold lines from SPECIFICATION.md
     # Expected patterns:  ≤2 → QUICK,  ≤4 → STANDARD,  ≤9 → COMPLEX,  >9 → EXPERT
     def find_threshold(tier_label: str) -> float | None:
         # Match patterns like "≤2" or ">9" before QUICK/STANDARD/COMPLEX/EXPERT
@@ -43,27 +43,27 @@ def test_classifier_thresholds_match_docs():
     doc_standard = find_threshold("STANDARD")
     doc_complex  = find_threshold("COMPLEX")
 
-    assert doc_quick is not None, "ARCHITECTURE.md missing QUICK threshold line"
-    assert doc_standard is not None, "ARCHITECTURE.md missing STANDARD threshold line"
-    assert doc_complex is not None, "ARCHITECTURE.md missing COMPLEX threshold line"
+    assert doc_quick is not None, "SPECIFICATION.md missing QUICK threshold line"
+    assert doc_standard is not None, "SPECIFICATION.md missing STANDARD threshold line"
+    assert doc_complex is not None, "SPECIFICATION.md missing COMPLEX threshold line"
 
     assert doc_quick == _TIER_QUICK, (
-        f"QUICK threshold mismatch: ARCHITECTURE.md={doc_quick}, code={_TIER_QUICK}"
+        f"QUICK threshold mismatch: SPECIFICATION.md={doc_quick}, code={_TIER_QUICK}"
     )
     assert doc_standard == _TIER_STANDARD, (
-        f"STANDARD threshold mismatch: ARCHITECTURE.md={doc_standard}, code={_TIER_STANDARD}"
+        f"STANDARD threshold mismatch: SPECIFICATION.md={doc_standard}, code={_TIER_STANDARD}"
     )
     assert doc_complex == _TIER_COMPLEX, (
-        f"COMPLEX threshold mismatch: ARCHITECTURE.md={doc_complex}, code={_TIER_COMPLEX}"
+        f"COMPLEX threshold mismatch: SPECIFICATION.md={doc_complex}, code={_TIER_COMPLEX}"
     )
 
 
 def test_classifier_imperative_weight_matches_docs():
-    """The imperative+abstract signal weight in ARCHITECTURE.md must match the code."""
-    arch_text = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    """The imperative+abstract signal weight in docs/architecture/SPECIFICATION.md must match the code."""
+    arch_text = (ROOT / "docs" / "architecture" / "SPECIFICATION.md").read_text(encoding="utf-8")
     # Match | +5 | binary | or similar in the signals table
     m = re.search(r"Imperative.*?\|\s*\+(\d+(?:\.\d+)?)\s*\|\s*binary", arch_text)
-    assert m is not None, "ARCHITECTURE.md imperative signal row not found"
+    assert m is not None, "SPECIFICATION.md imperative signal row not found"
     doc_weight = float(m.group(1))
 
     # Read the code value directly
@@ -73,7 +73,7 @@ def test_classifier_imperative_weight_matches_docs():
     code_weight = float(m2.group(1))
 
     assert doc_weight == code_weight, (
-        f"Imperative weight mismatch: ARCHITECTURE.md={doc_weight}, code={code_weight}"
+        f"Imperative weight mismatch: SPECIFICATION.md={doc_weight}, code={code_weight}"
     )
 
 
@@ -100,8 +100,8 @@ def test_edge_types_match_docs():
 
 
 def test_no_stale_edge_names_in_feature_md():
-    """FEATURE.md must not reference the old wrong edge type names as standalone tokens."""
-    feature_text = (ROOT / "FEATURE.md").read_text(encoding="utf-8")
+    """docs/FEATURES.md must not reference the old wrong edge type names as standalone tokens."""
+    feature_text = (ROOT / "docs" / "FEATURES.md").read_text(encoding="utf-8")
     # Check for old edge names as whole words (not as substrings of CALLED_BY etc.)
     stale_names = ["CONTAINS", "USES"]
     found = [name for name in stale_names if re.search(rf"\b{name}\b", feature_text)]
@@ -112,7 +112,7 @@ def test_no_stale_edge_names_in_feature_md():
         if "from CALLS edges" in feature_text:
             found.append("CALLS (in 'from CALLS edges')")
     assert not found, (
-        f"FEATURE.md still references old/wrong edge type names: {found}. "
+        f"docs/FEATURES.md still references old/wrong edge type names: {found}. "
         "Update to use actual EdgeType constants: RELATES_TO, DEFINED_IN, CALLED_BY, QUERIED_WITH, CO_OCCURS"
     )
 
@@ -181,10 +181,10 @@ _OLD_TIER_TOKENS = re.compile(r"(?<![A-Z_])(?:FAST|BALANCED|DEEP)(?![A-Z_])")
 
 
 def test_new_tier_names_in_architecture_md():
-    """ARCHITECTURE.md must use the new tier names: STANDARD, COMPLEX, EXPERT."""
-    arch_text = (ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    """docs/architecture/SPECIFICATION.md must use the new tier names: STANDARD, COMPLEX, EXPERT."""
+    arch_text = (ROOT / "docs" / "architecture" / "SPECIFICATION.md").read_text(encoding="utf-8")
     for name in ("STANDARD", "COMPLEX", "EXPERT"):
-        assert name in arch_text, f"ARCHITECTURE.md missing new tier name '{name}'"
+        assert name in arch_text, f"SPECIFICATION.md missing new tier name '{name}'"
 
 
 def test_no_old_tier_names_in_user_docs():
@@ -229,5 +229,5 @@ def test_metrics_endpoint_mentioned():
     )
     assert found, (
         "No doc file mentions '/metrics'. Add a Prometheus /metrics reference "
-        "to USAGE.md or docs/CLI.md."
+        "to docs/USAGE.md or docs/CLI.md."
     )

@@ -34,19 +34,19 @@ Only the **latest release** receives security patches. Older versions are unsupp
 
 ---
 
-## What CogniRepo Stores and Where
+## What Data is Stored and Where
 
-All data is local. Nothing is written outside `.cognirepo/` in your project root.
+All data is stored **locally in `.cognirepo/`** inside your project directory.
+CogniRepo never sends data to external servers.
 
-```
-Semantic memories      → .cognirepo/vector_db/      local disk only
-Episodic event log     → .cognirepo/episodic/        local disk only
-Knowledge graph        → .cognirepo/graph/           local disk only
-Session history        → .cognirepo/sessions/        local disk only
-Encryption key         → OS keychain                 never written to disk
-JWT secret             → OS keychain or env var      never in config.json
-Password hash          → OS keychain or env var      never in config.json
-```
+| Data | Location | Contains |
+|------|----------|---------|
+| Semantic memories | `.cognirepo/vector_db/` | FAISS embeddings + metadata |
+| Episodic events | `.cognirepo/episodic/` | Plain-text event log (JSONL) |
+| Knowledge graph | `.cognirepo/graph/` | NetworkX graph of code symbols |
+| AST index | `.cognirepo/index/` | Symbol → file/line mapping |
+| API tokens | OS keychain | JWT signing secret |
+| Encryption key | OS keychain | AES-256 key (never written to disk) |
 
 ### What leaves the machine
 
@@ -58,31 +58,52 @@ There is no CogniRepo home server. Your data stays on your machine.
 
 ---
 
-## Trust Boundaries
+## Encryption at Rest
 
-### REST API
+When `storage.encrypt: true` in `config.json`:
+
+- **Algorithm:** AES-256 GCM (authenticated encryption)
+- **Key management:** Key is generated once on `cognirepo init`, stored in the OS keychain via `keyring`. Never written to disk.
+- **Scope:** All files in `vector_db/`, `graph/`, `index/`
+- **Episodic log:** Not encrypted (plain JSONL); contains only event text you explicitly logged
+
+**To enable:**
+```bash
+pip install 'cognirepo[security]'  # installs cryptography + keyring
+# Set in .cognirepo/config.json:
+# "storage": { "encrypt": true }
+```
+
+---
+
+## Authentication (REST API)
+
 - JWT required on all routes except `GET /health`
 - Default bind: `localhost:8080` — safe for local use
 - **Never expose on `0.0.0.0` without a firewall rule in production**
-- Set a strong password on `cognirepo init --password <strong-password>`
 
-### gRPC
-- Unauthenticated by default — suitable for localhost multi-agent use only
-- Enable mTLS for any multi-machine or networked deployment
-
-### `.cognirepo/` storage
-- Protected by `.gitignore` emitted automatically on `cognirepo init`
-- Enable Fernet encryption at rest with `storage.encrypt: true` in `config.json`
-- Requires `pip install cognirepo[security]`
-- The encryption key is stored in the OS keychain — never on disk
-
-### Secrets in CI / Docker
-Use environment variables instead of the OS keychain in containerised environments:
-
+### Login Example
 ```bash
-COGNIREPO_JWT_SECRET=<32+ char random string>
-COGNIREPO_PASSWORD_HASH=<bcrypt hash>
-COGNIREPO_ENCRYPTION_KEY=<base64 Fernet key>  # if encrypt: true
+curl -X POST http://localhost:8080/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"password": "yourpassword"}'
+# Returns: { "access_token": "eyJ...", "token_type": "bearer" }
+```
+
+### Configuration
+| Environment Variable | Description |
+|---------------------|-------------|
+| `COGNIREPO_JWT_SECRET` | JWT signing secret (required in production) |
+| `COGNIREPO_PASSWORD_HASH` | Bcrypt hash of the API password |
+
+**Generate a JWT secret:**
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+**Generate a password hash:**
+```bash
+python -c "import bcrypt; print(bcrypt.hashpw(b'mypassword', bcrypt.gensalt()).decode())"
 ```
 
 ---
@@ -98,7 +119,17 @@ CogniRepo's CI pipeline runs four automated security tools on every push:
 | **Trivy** | Container image and filesystem scanning |
 | **TruffleHog** | Secrets accidentally committed to git history |
 
-Pre-commit hooks run Bandit and detect-private-key locally before every commit.
+### Secret Scanning Patterns
+The following patterns are watched by TruffleHog:
+- API keys (ANTHROPIC, GEMINI, OPENAI, GROK)
+- JWT secrets
+- Redis connection strings containing passwords
+- Any high-entropy strings in committed files
+
+**Never commit:**
+- `.env` files
+- `config.json` containing API keys
+- Private keys or certificates
 
 ---
 
@@ -110,3 +141,19 @@ Pre-commit hooks run Bandit and detect-private-key locally before every commit.
 - **Subprocess with list args** (`cognirepo seed`): Uses `subprocess.run` with a list
   argument (not a shell string), which is not injectable. The `# nosec B603` annotation
   is correct.
+
+---
+
+## Threat Model
+
+CogniRepo is designed for **local developer use**. The threat model assumes:
+
+1. **Trusted local user** — No multi-tenant isolation. `.cognirepo/` is user-owned.
+2. **Network access is optional** — MCP stdio and REST API bind to `localhost` by default.
+3. **Secrets never leave the machine** — API keys are passed via environment variables, not stored in `.cognirepo/`.
+4. **Encryption defends against disk theft** — Encrypts stored embeddings and graphs; does not protect against a compromised process.
+
+**Not in scope:**
+- Protection against malicious code being indexed (CogniRepo reads but does not execute indexed code)
+- Multi-user access control
+- Remote deployment hardening
