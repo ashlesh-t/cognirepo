@@ -653,8 +653,10 @@ def _seed_learnings_from_docs(repo_root: str) -> int:
     from memory.learning_store import ProjectLearningStore  # pylint: disable=import-outside-toplevel
     store = ProjectLearningStore()
     md_candidates = [
-        "README.md", "ARCHITECTURE.md", "CONTRIBUTING.md",
-        "DESIGN.md", "OVERVIEW.md", "docs",
+        "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md",
+        "docs/architecture/SPECIFICATION.md", "docs/ARCHITECTURE.md",
+        "docs/USAGE.md", "docs/FEATURES.md", "docs/DEVELOPER_GUIDE.md",
+        "docs",
     ]
     files: list[Path] = []
     for name in md_candidates:
@@ -662,8 +664,8 @@ def _seed_learnings_from_docs(repo_root: str) -> int:
         if p.is_file():
             files.append(p)
         elif p.is_dir():
-            files.extend(sorted(p.rglob("*.md"))[:5])
-    files = files[:10]  # hard cap
+            files.extend(sorted(p.rglob("*.md"))[:10])
+    files = files[:20]  # higher cap to include moved docs
 
     stored = 0
     for md_file in files:

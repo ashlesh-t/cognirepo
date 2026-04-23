@@ -64,7 +64,7 @@ Benchmarked across 6 real open-source repos (FastAPI, Flask, Celery, Ansible, Mo
 > 22-level variable precedence chains reduce retrieval confidence. The tool reports uncertainty
 > rather than hallucinating call chains.
 
-Run `cognirepo benchmark` on your own codebase to reproduce. See [METRICS.md](METRICS.md).
+Run `cognirepo benchmark` on your own codebase to reproduce. See [docs/METRICS.md](docs/METRICS.md).
 
 ---
 
@@ -453,7 +453,7 @@ All errors are logged to `.cognirepo/errors/<date>.log` — no raw tracebacks sh
 | Rust | `.rs` | `cognirepo[languages]` |
 | C / C++ | `.c` `.cpp` `.h` | `cognirepo[languages]` |
 
-Full details and roadmap: [LANGUAGES.md](LANGUAGES.md)
+Full details and roadmap: [docs/LANGUAGES.md](docs/LANGUAGES.md)
 
 ---
 
@@ -564,12 +564,13 @@ Priorities drawn from the v0.2.0 benchmark findings and community feedback.
 
 | Document | Description |
 |----------|-------------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | System design, component responsibilities, data flow |
-| [USAGE.md](USAGE.md) | Complete CLI, MCP, and Docker reference |
-| [METRICS.md](METRICS.md) | Quantitative benchmarks: token reduction, lookup speedup, recall |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, component responsibilities, data flow |
+| [docs/architecture/SPECIFICATION.md](docs/architecture/SPECIFICATION.md) | Technical spec, complexity signals, storage layout |
+| [docs/USAGE.md](docs/USAGE.md) | Complete CLI, MCP, and Docker reference |
+| [docs/METRICS.md](docs/METRICS.md) | Quantitative benchmarks: token reduction, lookup speedup, recall |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to add adapters, tools, and language support |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, data handling, trust model |
-| [LANGUAGES.md](LANGUAGES.md) | Language support details and roadmap |
+| [docs/LANGUAGES.md](docs/LANGUAGES.md) | Language support details and roadmap |
 
 ---
 
