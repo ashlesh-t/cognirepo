@@ -13,6 +13,8 @@ MANIFEST
 venv/
 env/
 
+.cognirepo
+.cognirepo_test/*
 # ── Environment / secrets ─────────────────────────────────────────────────────
 .env
 .envrc
