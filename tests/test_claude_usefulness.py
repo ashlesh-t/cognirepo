@@ -202,7 +202,7 @@ class TestMemoryRecall:
         vec = model.encode(text).astype("float32")
         db.add(vec, text, 1.0)
 
-        results = db.search(model.encode("usefulness memory round-trip").astype("float32"), k=3)
+        results = db.search(model.encode("usefulness memory round-trip").astype("float32"), top_k=3)
         texts = [r.get("text", "") for r in results]
         assert any("usefulness" in t for t in texts), f"Memory not recalled: {texts}"
 
