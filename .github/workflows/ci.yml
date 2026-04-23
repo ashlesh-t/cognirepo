@@ -30,17 +30,33 @@ jobs:
       - name: Cache HuggingFace model
         uses: actions/cache@v4
         with:
-          path: ~/.cache/huggingface/hub
-          key: hf-all-MiniLM-L6-v2-${{ runner.os }}
+          # Cache the entire huggingface directory — hub/ and any sentence_transformers
+          # symlink trees all live under here, so they stay consistent across runs.
+          path: ~/.cache/huggingface
+          key: hf-all-MiniLM-L6-v2-${{ runner.os }}-${{ matrix.python-version }}
 
       - name: Install package + dev extras
         run: pip install -e ".[dev,languages,security]"
         timeout-minutes: 15
 
+      - name: Pre-warm embedding model
+        # Download all-MiniLM-L6-v2 into ~/.cache/huggingface before any test
+        # touches it. Runs once; subsequent CI runs hit the cache above.
+        # Must run BEFORE bootstrap (which also loads the model via index-repo).
+        timeout-minutes: 5
+        run: |
+          python - <<'PYEOF'
+          from sentence_transformers import SentenceTransformer
+          m = SentenceTransformer("all-MiniLM-L6-v2")
+          _ = m.encode("warmup")
+          print("Embedding model ready.")
+          PYEOF
+
       - name: Bootstrap .cognirepo index
-        # Tests in test_claude_usefulness.py look up symbols in the real project index.
-        # We create config.json first so the CLI skips the interactive init prompt,
-        # then run index-repo to populate the AST + FAISS + graph stores.
+        # Tests in test_claude_usefulness.py / test_benchmark_metrics.py look up
+        # symbols in the real project index. We create config.json first so the
+        # CLI skips the interactive init prompt, then run index-repo to populate
+        # the AST + FAISS + graph stores.
         timeout-minutes: 3
         run: |
           mkdir -p .cognirepo
@@ -58,6 +74,8 @@ jobs:
               json.dump(cfg, f)
           PYEOF
           cognirepo index-repo . --no-watch
+        env:
+          HF_HUB_OFFLINE: "1"
 
       - name: Run tests
         timeout-minutes: 12
@@ -73,8 +91,8 @@ jobs:
             -x
         env:
           COGNIREPO_DIR: .cognirepo
-          SENTENCE_TRANSFORMERS_HOME: ~/.cache/sentence_transformers
-          HF_HOME: ~/.cache/huggingface
+          # Block any HuggingFace downloads during tests — model must be pre-warmed above.
+          HF_HUB_OFFLINE: "1"
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
