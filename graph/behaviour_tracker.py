@@ -282,7 +282,7 @@ class BehaviourTracker:
                 "count": 0,
                 "files": [],
                 "last_seen": None,
-                "signature": hashlib.md5(error_type.encode()).hexdigest()[:8],
+                "signature": hashlib.md5(error_type.encode(), usedforsecurity=False).hexdigest()[:8],  # nosec B324
                 "occurrences": [],
                 "prevention_hint": _error_prevention_hint(error_type),
             }

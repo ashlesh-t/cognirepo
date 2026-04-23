@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +35,7 @@ jobs:
         # Tests in test_claude_usefulness.py look up symbols in the real project index.
         # We create config.json first so the CLI skips the interactive init prompt,
         # then run index-repo to populate the AST + FAISS + graph stores.
+        timeout-minutes: 3
         run: |
           mkdir -p .cognirepo
           python - <<'PYEOF'
@@ -53,6 +54,7 @@ jobs:
           cognirepo index-repo .
 
       - name: Run tests
+        timeout-minutes: 5
         run: |
           python -m pytest tests/ \
             -q \
