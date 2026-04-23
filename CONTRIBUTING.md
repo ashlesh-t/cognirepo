@@ -76,6 +76,14 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ---
 
+## Environment Variables
+
+| Variable | Purpose |
+|---|---|
+| `COGNIREPO_JWT_SECRET` | Signs JWT tokens for MCP auth. Set a long random string. Never commit it. |
+
+---
+
 ## License
 
 By contributing, you agree your contributions are licensed under **MIT**. See [LICENSE](LICENSE).
