@@ -27,6 +27,12 @@ jobs:
       - name: Install system deps
         run: sudo apt-get install -y libgomp1
 
+      - name: Cache HuggingFace model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-all-MiniLM-L6-v2-${{ runner.os }}
+
       - name: Install package + dev extras
         run: pip install -e ".[dev,languages]"
         timeout-minutes: 15
@@ -51,7 +57,7 @@ jobs:
           with open(".cognirepo/config.json", "w") as f:
               json.dump(cfg, f)
           PYEOF
-          cognirepo index-repo .
+          cognirepo index-repo . --no-watch
 
       - name: Run tests
         timeout-minutes: 5
