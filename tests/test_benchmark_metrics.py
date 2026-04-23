@@ -94,8 +94,8 @@ class TestTokenReductionMetric:
 
     def test_context_pack_returns_nonzero_for_indexed_query(self):
         """A query matching indexed symbols must return >0 tokens."""
-        if not _index_has_data():
-            pytest.skip("AST index empty — run cognirepo index-repo .")
+        if not _faiss_has_data():
+            pytest.skip("FAISS index empty — run cognirepo index-repo . (without --no-embed)")
 
         from tools.context_pack import context_pack
         result = context_pack("context_pack implementation", max_tokens=2000)
