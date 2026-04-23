@@ -10,7 +10,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [0.2.0] — 2026-04-23
+## [0.2.1] — 2026-04-23
 
 ### Added
 - **`.env` seeded on `cognirepo init`** (`cli/init_project.py`) — `.env.example` is now shipped as package data and automatically copied to `.env` on first init, so users discover circuit-breaker and API-key variables without reading docs.
