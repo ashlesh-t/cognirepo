@@ -1,6 +1,6 @@
 [project]
 name = "cognirepo"
-version = "0.2.0"
+version = "0.2.1"
 description = "Local cognitive infrastructure layer for AI agents"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
