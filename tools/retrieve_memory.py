@@ -158,8 +158,8 @@ def _structure_results(results: list) -> dict:
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         _results = retrieve_memory(sys.argv[1])
-        for r in _results:
-            score = r.get("final_score", r.get("importance", "?"))
-            print(f"[{score}] {r.get('text', '')}")
+        for _r in _results:
+            _score = _r.get("final_score", _r.get("importance", "?"))
+            print(f"[{_score}] {_r.get('text', '')}")
     else:
         print("Usage: python tools/retrieve_memory.py <query>")

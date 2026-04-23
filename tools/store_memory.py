@@ -56,7 +56,7 @@ def store_memory(text: str, source: str = "") -> dict:
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        result = store_memory(sys.argv[1])
-        print(result)
+        _result = store_memory(sys.argv[1])
+        print(_result)
     else:
         print("Usage: python tools/store_memory.py <text>")

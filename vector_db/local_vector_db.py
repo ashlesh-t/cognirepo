@@ -194,12 +194,12 @@ class LocalVectorDB(VectorStorageAdapter):
             pass  # queue is best-effort
         return True
 
-    def search(self, vector, k=5, source: str | None = None):
-        """
-        Searches for the k most similar vectors to the given query vector.
+    def search(self, vector, top_k=5, source: str | None = None):
+        """Searches for the top_k most similar vectors to the given query vector.
         source — optional filter: "memory" | "symbol". None means no filter.
         Deprecated entries are never returned.
         """
+        k = top_k
         vector = np.array([vector]).astype("float32")
 
         # fetch more candidates when filtering so we still return up to k
@@ -224,13 +224,14 @@ class LocalVectorDB(VectorStorageAdapter):
 
         return results
 
-    def search_with_scores(self, vector, k=5, source: str | None = None):
+    def search_with_scores(self, vector, top_k=5, source: str | None = None):
         """
         Like search() but each result also includes 'l2_distance' and 'faiss_row'.
         Used by HybridRetriever to compute vector_score = max(0, 1 - dist/2).
         source — optional filter: "memory" | "symbol". None means no filter.
         Deprecated entries are never returned.
         """
+        k = top_k
         vector = np.array([vector]).astype("float32")
 
         fetch_k = min(k * 3 if source else k, self.index.ntotal) if self.index.ntotal > 0 else 0

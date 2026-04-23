@@ -1,3 +1,4 @@
+# pylint: disable=redefined-outer-name
 # SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: MIT
 #
@@ -5,7 +6,6 @@
 # Licensed under MIT. See LICENSE file in repository root.
 
 import os
-import json
 import pytest
 from unittest.mock import MagicMock, patch
 from indexer.summarizer import SummarizationEngine
@@ -17,7 +17,7 @@ def mock_route():
         mock.return_value = MagicMock(text="This is a test summary.")
         yield mock
 
-def test_summarize_file_logic(isolated_cognirepo, mock_route):
+def test_summarize_file_logic(isolated_cognirepo, mock_route):  # pylint: disable=unused-argument
     engine = SummarizationEngine()
     
     # Mock ASTIndexer to return some dummy data
@@ -35,7 +35,7 @@ def test_summarize_file_logic(isolated_cognirepo, mock_route):
         assert summary == "This is a test summary."
         assert mock_route.called
 
-def test_run_full_summarization(isolated_cognirepo, mock_route, tmp_path):
+def test_run_full_summarization(isolated_cognirepo, mock_route, tmp_path):  # pylint: disable=unused-argument
     engine = SummarizationEngine(project_root=str(tmp_path))
     
     # Mock ASTIndexer

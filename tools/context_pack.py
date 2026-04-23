@@ -357,9 +357,8 @@ def _file_mode_context(file_path: str, max_tokens: int, window_lines: int, repo_
 
 
 if __name__ == "__main__":
-    import json
     import sys
 
     q = " ".join(sys.argv[1:]) or "authentication logic"
-    result = context_pack(q)
-    print(json.dumps(result, indent=2))
+    _result = context_pack(q)
+    print(json.dumps(_result, indent=2))

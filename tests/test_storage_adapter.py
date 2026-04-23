@@ -17,7 +17,6 @@ Covers:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -113,8 +112,8 @@ class TestLocalVectorDB:
         adapter.add(vec, "memory entry", importance=0.5, source="memory")
         adapter.add(vec, "symbol entry", importance=0.5, source="symbol")
 
-        memory_results = adapter.search(vec, k=5, source="memory")
-        symbol_results = adapter.search(vec, k=5, source="symbol")
+        memory_results = adapter.search(vec, top_k=5, source="memory")
+        symbol_results = adapter.search(vec, top_k=5, source="symbol")
 
         assert all(r["source"] == "memory" for r in memory_results)
         assert all(r["source"] == "symbol" for r in symbol_results)
@@ -133,7 +132,7 @@ class TestLocalVectorDB:
 # ── ChromaDBAdapter ───────────────────────────────────────────────────────────
 
 class TestChromaDBAdapter:
-    def test_raises_import_error_when_chromadb_missing(self, monkeypatch):
+    def test_raises_import_error_when_chromadb_missing(self, monkeypatch):  # pylint: disable=unused-argument
         """When chromadb is not installed, instantiating the adapter must raise."""
         import sys
         with patch.dict(sys.modules, {"chromadb": None}):

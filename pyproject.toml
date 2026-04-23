@@ -90,6 +90,7 @@ dev = [
     "httpx>=0.28",
     "prometheus-client>=0.20",
     "build>=1.0",
+    "bcrypt>=4.0",
 ]
 
 [project.scripts]

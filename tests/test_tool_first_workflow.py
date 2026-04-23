@@ -44,7 +44,6 @@ class TestClaudeMDToolFirst:
     def test_claude_md_lists_never_rules(self):
         """CLAUDE.md must list NEVER rules (no raw reads, no assumptions, no skip)."""
         content = (REPO_ROOT / ".claude" / "CLAUDE.md").read_text()
-        never_keywords = ["NEVER", "read_file", "assume", "skip"]
         assert "NEVER" in content, "CLAUDE.md must have 'NEVER' section"
 
     def test_claude_md_context_pack_before_file_read(self):
