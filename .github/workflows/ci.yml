@@ -60,11 +60,12 @@ jobs:
           cognirepo index-repo . --no-watch
 
       - name: Run tests
-        timeout-minutes: 5
+        timeout-minutes: 12
         run: |
           python -m pytest tests/ \
             -q \
             --tb=short \
+            --timeout=60 \
             --cov=. \
             --cov-report=xml \
             --cov-report=term-missing \
@@ -72,6 +73,8 @@ jobs:
             -x
         env:
           COGNIREPO_DIR: .cognirepo
+          SENTENCE_TRANSFORMERS_HOME: ~/.cache/sentence_transformers
+          HF_HOME: ~/.cache/huggingface
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
