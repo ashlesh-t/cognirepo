@@ -181,17 +181,18 @@ def context_pack(
         # ── confidence gate ────────────────────────────────────────────────
         # If no code hit clears the threshold, return structured failure.
         # This prevents README noise from being returned for code queries.
-        best_score = max((c.get("vector_score", c.get("final_score", 0.0)) for c in code_hits), default=0.0)
+        best_score = max((c.get("final_score", 0.0) for c in code_hits), default=0.0)
         doc_intent = _is_doc_query(query)
 
         if code_hits and best_score < _MIN_CODE_CONFIDENCE and not doc_intent:
             # No confident code hit — check if any semantic hit is better
             best_semantic = max(
-                (c.get("vector_score", c.get("final_score", 0.0)) for c in other_hits),
+                (c.get("final_score", 0.0) for c in other_hits),
                 default=0.0,
             )
             if best_semantic < _MIN_CODE_CONFIDENCE:
                 result = {
+                    "query": query,
                     "status": "no_confident_match",
                     "best_score": round(max(best_score, best_semantic), 4),
                     "suggestion": (
