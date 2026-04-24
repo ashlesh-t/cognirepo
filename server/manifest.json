@@ -17,6 +17,11 @@
             "type": "string",
             "description": "Origin label (file, url, \u2026)",
             "default": ""
+          },
+          "repo_path": {
+            "type": "string",
+            "description": "Absolute path to target repository (optional, defaults to server's project dir)",
+            "default": null
           }
         },
         "required": [
@@ -43,6 +48,11 @@
             "type": "boolean",
             "description": "Search across all repos in the organization",
             "default": false
+          },
+          "repo_path": {
+            "type": "string",
+            "description": "Absolute path to target repository (optional)",
+            "default": null
           }
         },
         "required": [
@@ -129,6 +139,11 @@
             "type": "boolean",
             "description": "Search across sibling repos in the organization",
             "default": false
+          },
+          "repo_path": {
+            "type": "string",
+            "description": "Absolute path to target repository (optional)",
+            "default": null
           }
         },
         "required": [
@@ -145,6 +160,11 @@
           "function_name": {
             "type": "string",
             "description": "Name of the function to look up callers for"
+          },
+          "repo_path": {
+            "type": "string",
+            "description": "Absolute path to target repository (optional)",
+            "default": null
           }
         },
         "required": [
@@ -166,6 +186,11 @@
             "type": "integer",
             "description": "BFS radius",
             "default": 2
+          },
+          "repo_path": {
+            "type": "string",
+            "description": "Absolute path to target repository (optional)",
+            "default": null
           }
         },
         "required": [
@@ -220,6 +245,11 @@
           "language": {
             "type": "string",
             "description": "Optional language filter: python, typescript, go, etc.",
+            "default": null
+          },
+          "repo_path": {
+            "type": "string",
+            "description": "Absolute path to target repository (optional)",
             "default": null
           }
         },
@@ -321,6 +351,11 @@
             "type": "integer",
             "description": "Lines of code context above/below each hit",
             "default": 15
+          },
+          "repo_path": {
+            "type": "string",
+            "description": "Absolute path to target repository (optional, defaults to server's project dir)",
+            "default": null
           }
         },
         "required": [

@@ -45,5 +45,5 @@ def get_storage_adapter() -> "VectorStorageAdapter":
         from vector_db.chroma_adapter import ChromaDBAdapter  # pylint: disable=import-outside-toplevel
         return ChromaDBAdapter()
 
-    from vector_db.faiss_adapter import FAISSAdapter  # pylint: disable=import-outside-toplevel
-    return FAISSAdapter()
+    from vector_db.local_vector_db import LocalVectorDB  # pylint: disable=import-outside-toplevel
+    return LocalVectorDB()

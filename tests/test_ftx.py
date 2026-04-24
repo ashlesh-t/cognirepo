@@ -21,6 +21,8 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from cli.init_project import init_project
+
 REPO_ROOT = Path(__file__).parent.parent
 
 
@@ -41,9 +43,10 @@ class TestIdempotentInit:
                     with patch("cli.init_project._init_empty_stores"):
                         with patch("cli.init_project._write_config"):
                             with patch("cli.init_project._write_gitignore"):
-                                with patch("builtins.input", return_value="n"):
-                                    from cli.init_project import init_project
-                                    init_project(no_index=True, interactive=False)
+                                with patch("cli.init_project._seed_dotenv"):
+                                    with patch("cli.init_project._seed_learnings_from_docs"):
+                                        with patch("builtins.input", return_value="n"):
+                                            init_project(no_index=True, interactive=False)
 
             out = capsys.readouterr().out
             assert "Already initialized" in out or "updating" in out.lower(), (
@@ -71,9 +74,10 @@ class TestIdempotentInit:
                     with patch("cli.init_project._init_empty_stores"):
                         with patch("cli.init_project._write_config"):
                             with patch("cli.init_project._write_gitignore"):
-                                with patch("builtins.input", return_value="n"):
-                                    from cli.init_project import init_project
-                                    init_project(no_index=True, interactive=False)
+                                with patch("cli.init_project._seed_dotenv"):
+                                    with patch("cli.init_project._seed_learnings_from_docs"):
+                                        with patch("builtins.input", return_value="n"):
+                                            init_project(no_index=True, interactive=False)
         finally:
             os.chdir(orig_cwd)
 
@@ -89,25 +93,25 @@ class TestNonInteractiveFlag:
             with patch("cli.init_project._init_empty_stores"):
                 with patch("cli.init_project._write_config"):
                     with patch("cli.init_project._write_gitignore"):
-                        with patch("cli.init_project.get_path") as mock_path:
-                            mock_config = MagicMock()
-                            mock_config.exists.return_value = False
-                            mock_config.parent.mkdir = MagicMock()
-                            mock_path.return_value = mock_config
-                            with patch("builtins.open", MagicMock()):
-                                with patch("json.load", return_value={}):
-                                    with patch("cli.wizard.run_wizard") as mock_wizard:
-                                        from cli.init_project import init_project
-                                        init_project(
-                                            non_interactive=True,
-                                            no_index=True,
-                                        )
-                                        mock_wizard.assert_not_called()
+                        with patch("cli.init_project._seed_dotenv"):
+                            with patch("cli.init_project._seed_learnings_from_docs"):
+                                with patch("cli.init_project.get_path") as mock_path:
+                                    mock_config = MagicMock()
+                                    mock_config.exists.return_value = False
+                                    mock_config.parent.mkdir = MagicMock()
+                                    mock_path.return_value = mock_config
+                                    with patch("cli.init_project.open", create=True):
+                                        with patch("json.load", return_value={}):
+                                            with patch("cli.wizard.run_wizard") as mock_wizard:
+                                                init_project(
+                                                    non_interactive=True,
+                                                    no_index=True,
+                                                )
+                                                mock_wizard.assert_not_called()
 
     def test_non_interactive_flag_accepted_by_init_project(self):
         """init_project must accept non_interactive=True and not raise."""
         import inspect
-        from cli.init_project import init_project
         sig = inspect.signature(init_project)
         # non_interactive must be in the signature and default to False
         assert "non_interactive" in sig.parameters
@@ -156,43 +160,3 @@ class TestReadySummary:
         assert "token" in out.lower() or "reduction" in out.lower()
 
 
-class TestInitParserNonInteractive:
-    def test_main_parser_accepts_non_interactive(self):
-        """The argparse parser must accept --non-interactive flag for init."""
-        import argparse
-        parser = argparse.ArgumentParser(prog="cognirepo", add_help=False)
-        sub = parser.add_subparsers(dest="command")
-        p_init = sub.add_parser("init")
-        p_init.add_argument("--no-index", action="store_true", default=False)
-        p_init.add_argument("--non-interactive", action="store_true", default=False)
-        p_init.add_argument("--password", default="changeme")
-        p_init.add_argument("--port", type=int, default=8000)
-        p_init.add_argument("--daemon", "-d", action="store_true", default=False)
-
-        args = parser.parse_args(["init", "--non-interactive", "--no-index"])
-        assert hasattr(args, "non_interactive")
-        assert args.non_interactive is True
-
-    def test_main_parser_non_interactive_defaults_false(self):
-        """--non-interactive defaults to False."""
-        import argparse
-        parser = argparse.ArgumentParser(prog="cognirepo", add_help=False)
-        sub = parser.add_subparsers(dest="command")
-        p_init = sub.add_parser("init")
-        p_init.add_argument("--no-index", action="store_true", default=False)
-        p_init.add_argument("--non-interactive", action="store_true", default=False)
-        p_init.add_argument("--password", default="changeme")
-        p_init.add_argument("--port", type=int, default=8000)
-        p_init.add_argument("--daemon", "-d", action="store_true", default=False)
-
-        args = parser.parse_args(["init"])
-        assert args.non_interactive is False
-
-    def test_init_project_accepts_non_interactive_param(self):
-        """init_project() must accept a non_interactive parameter."""
-        import inspect
-        from cli.init_project import init_project
-        sig = inspect.signature(init_project)
-        assert "non_interactive" in sig.parameters, (
-            "init_project must accept non_interactive parameter"
-        )

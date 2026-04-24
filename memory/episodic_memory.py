@@ -14,14 +14,58 @@ The BM25 corpus is cached in-process and invalidated on every write.
 import json
 import os
 import re
+import threading
 from datetime import datetime
 
 from config.paths import get_path
+
+# ── episodic memory size cap ──────────────────────────────────────────────────
+_MAX_EVENTS_DEFAULT = 10_000
+_ARCHIVE_FRACTION = 0.20  # rotate oldest 20% when cap is hit
+
+
+def _get_max_events() -> int:
+    """Read episodic_max_events from config.json (falls back to default)."""
+    try:
+        cfg = get_path("config.json")
+        if os.path.exists(cfg):
+            with open(cfg, encoding="utf-8") as f:
+                return int(json.load(f).get("episodic_max_events", _MAX_EVENTS_DEFAULT))
+    except (OSError, json.JSONDecodeError, ValueError):
+        pass
+    return _MAX_EVENTS_DEFAULT
+
+
+def _archive_path() -> str:
+    return _file_path().replace("episodic.json", "episodic_archive.json")
+
+
+def _rotate_if_needed(data: list) -> list:
+    """If data exceeds the cap, archive oldest entries and return trimmed list."""
+    max_events = _get_max_events()
+    if len(data) < max_events:
+        return data
+    archive_count = max(1, int(len(data) * _ARCHIVE_FRACTION))
+    to_archive = data[:archive_count]
+    trimmed = data[archive_count:]
+    try:
+        apath = _archive_path()
+        existing: list = []
+        if os.path.exists(apath):
+            with open(apath, "rb") as f:
+                existing = json.loads(f.read())
+        with open(apath, "wb") as f:
+            f.write(json.dumps(existing + to_archive, indent=2).encode())
+    except OSError:
+        pass  # archive write failure is non-fatal; rotation still proceeds
+    return trimmed
+
 
 # ── BM25 module-level cache ───────────────────────────────────────────────────
 # (event_id, tokenized_text) pairs built on first search; cleared on _save()
 _BM25_CORPUS: list[tuple[str, list[str]]] | None = None
 _BM25_INDEX: object | None = None  # BM25Okapi instance, or None when corpus empty
+_BM25_LOCK = threading.Lock()
 
 
 def _tokenize(text: str) -> list[str]:
@@ -67,37 +111,41 @@ def _save(data: list) -> None:
     with open(path, "wb") as f:
         f.write(content)
     # Invalidate BM25 cache so the next search reflects the updated corpus
-    _BM25_CORPUS = None
-    _BM25_INDEX = None
+    with _BM25_LOCK:
+        _BM25_CORPUS = None
+        _BM25_INDEX = None
 
 
 def _get_bm25(data: list):
     """Return (BM25Okapi instance, event_id_list), building from cache if available."""
     global _BM25_CORPUS, _BM25_INDEX  # pylint: disable=global-statement
-    if _BM25_INDEX is not None and _BM25_CORPUS is not None:
-        return _BM25_INDEX, [eid for eid, _ in _BM25_CORPUS]
+    with _BM25_LOCK:
+        if _BM25_INDEX is not None and _BM25_CORPUS is not None:
+            return _BM25_INDEX, [eid for eid, _ in _BM25_CORPUS]
 
-    from rank_bm25 import BM25Plus  # pylint: disable=import-outside-toplevel
-    corpus: list[list[str]] = []
-    event_ids: list[str] = []
-    for entry in data:
-        text = entry.get("event", "") + " " + json.dumps(entry.get("metadata", {}))
-        corpus.append(_tokenize(text))
-        event_ids.append(entry["id"])
+        from rank_bm25 import BM25Plus  # pylint: disable=import-outside-toplevel
+        corpus: list[list[str]] = []
+        event_ids: list[str] = []
+        for entry in data:
+            text = entry.get("event", "") + " " + json.dumps(entry.get("metadata", {}))
+            corpus.append(_tokenize(text))
+            event_ids.append(entry["id"])
 
-    if not corpus:
-        return None, []
+        if not corpus:
+            return None, []
 
-    _BM25_INDEX = BM25Plus(corpus)
-    _BM25_CORPUS = list(zip(event_ids, corpus))
-    return _BM25_INDEX, event_ids
+        _BM25_INDEX = BM25Plus(corpus)
+        _BM25_CORPUS = list(zip(event_ids, corpus))
+        return _BM25_INDEX, event_ids
 
 
 def log_event(event: str, metadata: dict = None) -> None:
     """
     Append an event (with optional metadata) to the episodic memory store.
+    Rotates oldest entries to an archive file when episodic_max_events is exceeded.
     """
     data = _load()
+    data = _rotate_if_needed(data)
     entry = {
         "id": f"e_{len(data)}",
         "event": event,

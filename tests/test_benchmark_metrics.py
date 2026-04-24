@@ -57,6 +57,9 @@ def _faiss_has_data() -> bool:
 class TestTokenReductionMetric:
     def test_context_pack_reduces_tokens_by_at_least_50pct(self):
         """context_pack must use ≤50% of the tokens that reading raw files would cost."""
+        if not _index_has_data():
+            pytest.skip("AST index empty — run cognirepo index-repo .")
+
         from tools.context_pack import context_pack
         from pathlib import Path
         from tools.benchmark import _read_files_for_query, _count_tokens
@@ -77,6 +80,9 @@ class TestTokenReductionMetric:
 
     def test_context_pack_stays_within_budget(self):
         """token_count must never exceed max_tokens."""
+        if not _index_has_data():
+            pytest.skip("AST index empty — run cognirepo index-repo .")
+
         from tools.context_pack import context_pack
 
         for budget in [500, 1000, 2000]:
@@ -88,8 +94,8 @@ class TestTokenReductionMetric:
 
     def test_context_pack_returns_nonzero_for_indexed_query(self):
         """A query matching indexed symbols must return >0 tokens."""
-        if not _index_has_data():
-            pytest.skip("AST index empty — run cognirepo index-repo .")
+        if not _faiss_has_data():
+            pytest.skip("FAISS index empty — run cognirepo index-repo . (without --no-embed)")
 
         from tools.context_pack import context_pack
         result = context_pack("context_pack implementation", max_tokens=2000)

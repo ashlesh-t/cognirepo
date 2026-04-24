@@ -47,6 +47,26 @@ def _write_gitignore() -> None:
         f.write(GITIGNORE_CONTENT)
 
 
+def _seed_dotenv() -> None:
+    """Copy .env.example → .env on first init so users discover all env vars."""
+    dotenv_dest = Path(".env")
+    if dotenv_dest.exists():
+        return
+    # Source 1: repo root (dev install)
+    here = Path(__file__).parent.parent
+    example = here / ".env.example"
+    # Source 2: installed package data
+    if not example.exists():
+        import importlib.resources as _ir  # pylint: disable=import-outside-toplevel
+        try:
+            example = Path(str(_ir.files("cognirepo").joinpath(".env.example")))
+        except Exception:  # pylint: disable=broad-except
+            example = Path("")
+    if example.exists() and example.is_file():
+        shutil.copy(example, dotenv_dest)
+        print(".env created from .env.example — review it to tune circuit breaker limits or add API keys.")
+
+
 def _scaffold_dirs() -> None:
     os.makedirs(get_path("memory"), exist_ok=True)
     os.makedirs(get_path("docs"), exist_ok=True)
@@ -497,10 +517,15 @@ def _setup_vscode_mcp(project_name: str, project_path: str) -> None:
             tasks_cfg = {}
     tasks_cfg.setdefault("version", "2.0.0")
     existing_tasks = [t for t in tasks_cfg.get("tasks", []) if t.get("label") != "CogniRepo: Refresh Context"]
+    from config.paths import get_project_hash  # pylint: disable=import-outside-toplevel
+    _cwd = os.path.abspath(os.getcwd())
+    _pname = project_name or os.path.basename(_cwd)
+    _storage_subdir = f"{_pname}_{get_project_hash(_cwd)}"
+    _last_ctx_path = f"~/.cognirepo/storage/{_storage_subdir}/last_context.json"
     existing_tasks.append({
         "label": "CogniRepo: Refresh Context",
         "type": "shell",
-        "command": f"cognirepo prime > ~/.cognirepo/{project_name or '${workspaceFolderBasename}'}/last_context.json",
+        "command": f"cognirepo prime > {_last_ctx_path}",
         "runOptions": {"runOn": "folderOpen"},
         "presentation": {"reveal": "silent"},
     })
@@ -628,8 +653,10 @@ def _seed_learnings_from_docs(repo_root: str) -> int:
     from memory.learning_store import ProjectLearningStore  # pylint: disable=import-outside-toplevel
     store = ProjectLearningStore()
     md_candidates = [
-        "README.md", "ARCHITECTURE.md", "CONTRIBUTING.md",
-        "DESIGN.md", "OVERVIEW.md", "docs",
+        "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md",
+        "docs/architecture/SPECIFICATION.md", "docs/ARCHITECTURE.md",
+        "docs/USAGE.md", "docs/FEATURES.md", "docs/DEVELOPER_GUIDE.md",
+        "docs",
     ]
     files: list[Path] = []
     for name in md_candidates:
@@ -637,8 +664,8 @@ def _seed_learnings_from_docs(repo_root: str) -> int:
         if p.is_file():
             files.append(p)
         elif p.is_dir():
-            files.extend(sorted(p.rglob("*.md"))[:5])
-    files = files[:10]  # hard cap
+            files.extend(sorted(p.rglob("*.md"))[:10])
+    files = files[:20]  # higher cap to include moved docs
 
     stored = 0
     for md_file in files:
@@ -743,13 +770,20 @@ def init_project(
         autosave_context=autosave_context,
     )
     _write_gitignore()
+    _seed_dotenv()
 
     # ── link to org ───────────────────────────────────────────────────────────
     if org:
-        from config.orgs import create_org, link_repo_to_org  # pylint: disable=import-outside-toplevel
+        from config.orgs import (  # pylint: disable=import-outside-toplevel
+            create_org, link_repo_to_org, create_project, link_repo_to_project,
+        )
         create_org(org)  # Ensure it exists
         link_repo_to_org(os.getcwd(), org)
         print(f"Linked repository to local organization: {org}")
+        if project:
+            create_project(org, project)
+            link_repo_to_project(os.getcwd(), org, project)
+            print(f"Linked repository to project: {org}/{project}")
 
     # ── set up MCP configs ────────────────────────────────────────────────────
     if mcp_targets:
@@ -812,41 +846,42 @@ def init_project(
 
     kg.save()
 
-    # seed documentation into semantic store (README, CHANGELOG, docs/)
-    try:
-        from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
-        _doc_summary = DocIngester(cwd).ingest()
-        if _doc_summary.get("chunks", 0) > 0:
-            print(f"  Seeded {_doc_summary['chunks']} doc chunks from "
-                  f"{_doc_summary['files']} file(s).")
-    except Exception:  # pylint: disable=broad-except
-        pass  # doc ingestion is best-effort
-
-    # seed behaviour from git history
+    # seed behaviour weights from git history (fast — no embedding, just git log)
     try:
         from cli.seed import seed_from_git_log  # pylint: disable=import-outside-toplevel
-        seed_from_git_log(repo_root=cwd, indexer=indexer)
+        _seed_result = seed_from_git_log(repo_root=cwd, indexer=indexer)
+        _n_seeded = _seed_result.get("seeded", 0) if isinstance(_seed_result, dict) else 0
+        if _n_seeded > 0:
+            print(f"  Seeded {_n_seeded} symbols from last 100 commits.")
     except Exception:  # pylint: disable=broad-except
         pass  # seeding is best-effort
 
-    # seed semantic store from docs / git log (cold-start fix)
-    try:
-        from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
-        doc_summary = DocIngester(cwd).ingest()
-        if doc_summary.get("chunks", 0) > 0:
-            print(
-                f"  Seeded {doc_summary['chunks']} doc chunk(s) from "
-                f"{doc_summary['files']} file(s) into semantic store."
-            )
-    except Exception:  # pylint: disable=broad-except
-        pass  # doc ingestion is best-effort
+    # ── auto-summarize: generate architectural summaries if not present ───────
+    _summaries_path = get_path("index/summaries.json")
+    _should_summarize = not os.path.exists(_summaries_path)
 
-    # seed LearningStore from docs so retrieve_learnings() works on day 1
-    try:
-        _n_learnings = _seed_learnings_from_docs(cwd)
-        if _n_learnings > 0:
-            print(f"  Seeded {_n_learnings} learning(s) from documentation.")
-    except Exception:  # pylint: disable=broad-except
-        pass  # best-effort
+    if _should_summarize and sys.stdin.isatty() and not non_interactive:
+        try:
+            _ans = input(
+                "\nGenerate architectural summaries for this repo? "
+                "(y/n) [y]: "
+            ).strip().lower()
+            _should_summarize = _ans not in ("n", "no")
+        except (EOFError, KeyboardInterrupt):
+            _should_summarize = True  # default yes
+
+    if _should_summarize:
+        print("\nGenerating architectural summaries …")
+        try:
+            from indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
+            _engine = SummarizationEngine()
+            _sum_result = _engine.run_full_summarization()
+            print("  Summaries saved to .cognirepo/index/summaries.json")
+            if _sum_result.get("repo"):
+                _preview = _sum_result["repo"][:200].replace("\n", " ")
+                print(f"  Preview: {_preview}…")
+        except Exception as _sum_exc:  # pylint: disable=broad-except
+            print(f"  Summarization skipped ({_sum_exc}).")
+            print("  Run 'cognirepo summarize' once an LLM API key is configured.")
 
     return summary, kg, indexer

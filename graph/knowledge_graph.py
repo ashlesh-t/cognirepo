@@ -80,6 +80,7 @@ class NodeType:  # pylint: disable=too-few-public-methods
     SESSION = "SESSION"
     USER_ACTION = "USER_ACTION"
     MEMORY = "MEMORY"          # cross-agent memory nodes (synced from Claude/Gemini/etc.)
+    ERROR = "ERROR"            # error pattern nodes for tracking recurring mistakes
 
 
 class EdgeType:  # pylint: disable=too-few-public-methods
@@ -90,6 +91,9 @@ class EdgeType:  # pylint: disable=too-few-public-methods
     CALLS = "CALLS"            # callee → caller (reverse; enables BFS to find callers without predecessors())
     QUERIED_WITH = "QUERIED_WITH"
     CO_OCCURS = "CO_OCCURS"
+    IMPORTS = "IMPORTS"        # file A imports module/file B
+    INHERITS = "INHERITS"      # class A inherits from class B
+    SIMILAR_TO = "SIMILAR_TO"  # semantically similar symbols (embedding distance < threshold)
 
 
 class KnowledgeGraph:
@@ -132,6 +136,9 @@ class KnowledgeGraph:
         from multiple MCP server processes (e.g. Claude + Gemini) from
         corrupting the pickle.
         """
+        from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+        breaker = get_breaker()
+        breaker.check()
         os.makedirs(os.path.dirname(_graph_file()), exist_ok=True)
         from security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
@@ -142,6 +149,7 @@ class KnowledgeGraph:
         with store_lock():
             with open(_graph_file(), "wb") as f:
                 f.write(raw)
+        breaker.record_success()
 
     # ── mutation ──────────────────────────────────────────────────────────────
 

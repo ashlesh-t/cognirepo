@@ -13,6 +13,8 @@ MANIFEST
 venv/
 env/
 
+.cognirepo
+.cognirepo_test/*
 # ── Environment / secrets ─────────────────────────────────────────────────────
 .env
 .envrc
@@ -50,6 +52,9 @@ tmp.*/
 # ── Misc ──────────────────────────────────────────────────────────────────────
 *.log
 *.pid
+*.xlsx
+*.xls
+test_suite.md
 .claude/*
 .gemini/*
 .cognirepo/*

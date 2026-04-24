@@ -13,7 +13,7 @@ All retrieval goes through retrieval/hybrid.py.
 """
 import sys
 
-from retrieval.hybrid import hybrid_retrieve
+from retrieval.hybrid import hybrid_retrieve, MAX_QUERY_LEN
 from server.metrics import MEMORY_OPS_TOTAL
 
 
@@ -51,6 +51,7 @@ def retrieve_memory(
     """
     Search for memories using hybrid retrieval.
 
+
     When structured=True, returns a structured dict:
     {
         "code_hits": [{"symbol", "file", "line", "score"}, ...],
@@ -68,6 +69,11 @@ def retrieve_memory(
     Degrades gracefully: if the graph/index are empty (cold start),
     returns pure vector results with graph_score=0, behaviour_score=0.
     """
+    if len(query) > MAX_QUERY_LEN:
+        raise ValueError(
+            f"Query too long ({len(query):,} chars > {MAX_QUERY_LEN:,}). "
+            "Truncate or set COGNIREPO_MAX_QUERY_LEN env var."
+        )
     try:
         results = hybrid_retrieve(query, top_k, min_score=min_score)
         results = _dedup(results)
@@ -152,8 +158,8 @@ def _structure_results(results: list) -> dict:
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         _results = retrieve_memory(sys.argv[1])
-        for r in _results:
-            score = r.get("final_score", r.get("importance", "?"))
-            print(f"[{score}] {r.get('text', '')}")
+        for _r in _results:
+            _score = _r.get("final_score", _r.get("importance", "?"))
+            print(f"[{_score}] {_r.get('text', '')}")
     else:
         print("Usage: python tools/retrieve_memory.py <query>")

@@ -108,6 +108,9 @@ def _run_doctor(
     # ── stub language registry ────────────────────────────────────────────────
     fake_lang_mod = types.ModuleType("indexer.language_registry")
     fake_lang_mod.supported_extensions = lambda: {".py", ".js", ".ts"}
+    fake_lang_mod._GRAMMAR_MAP = {".py": "tree-sitter-python"}
+    fake_lang_mod._get_language = lambda ext: None
+    fake_lang_mod.clear_cache = lambda: None
     monkeypatch.setitem(sys.modules, "indexer.language_registry", fake_lang_mod)
 
     # ── stub circuit breaker ──────────────────────────────────────────────────
@@ -210,9 +213,9 @@ class TestDoctorAllHealthy:
 
 
 class TestDoctorNoApiKeys:
-    def test_exit_1_no_api_keys(self, capsys, monkeypatch):
+    def test_exit_0_no_api_keys(self, capsys, monkeypatch):
         code = _run_doctor(capsys, monkeypatch, api_keys=False)
-        assert code == 1
+        assert code == 0
 
     def test_all_four_key_names_in_output(self, capsys, monkeypatch):
         _run_doctor(capsys, monkeypatch, api_keys=False)
@@ -222,10 +225,10 @@ class TestDoctorNoApiKeys:
         assert "OPENAI_API_KEY" in out
         assert "GROK_API_KEY" in out
 
-    def test_cross_mark_on_api_key_check(self, capsys, monkeypatch):
+    def test_warning_mark_on_api_key_check(self, capsys, monkeypatch):
         _run_doctor(capsys, monkeypatch, api_keys=False)
         out = capsys.readouterr().out
-        assert "✗" in out
+        assert "⚠" in out
 
 
 class TestDoctorFaissFailure:
