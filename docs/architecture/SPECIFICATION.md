@@ -246,7 +246,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. In brief:
 ## Diagrams
 
 Rendered architecture diagrams are in `docs/architecture/diagrams/`. These are placeholders
-for v0.1.0 — they will be replaced with proper diagrams before v0.2.0.
+for v0.1.0 — they will be replaced with proper diagrams before v0.3.0.
 
 | File | Description |
 |------|-------------|

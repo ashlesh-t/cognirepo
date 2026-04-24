@@ -197,7 +197,7 @@ export COGNIREPO_CB_RSS_LIMIT_MB=3000   # trip at 3 GB RSS
 ### `cognirepo migrate-config`
 
 Rename deprecated tier names in `.cognirepo/config.json` to their current equivalents.
-Run this once after upgrading from CogniRepo < 0.2.0; the command auto-detects any
+Run this once after upgrading from CogniRepo < 0.3.0; the command auto-detects any
 stale tier keys and rewrites them to `STANDARD`, `COMPLEX`, or `EXPERT`.
 
 ```bash

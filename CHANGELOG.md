@@ -10,22 +10,27 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [0.2.1] — 2026-04-23
+## [0.3.0] — 2026-04-24
 
 ### Added
 - **`.env` seeded on `cognirepo init`** (`cli/init_project.py`) — `.env.example` is now shipped as package data and automatically copied to `.env` on first init, so users discover circuit-breaker and API-key variables without reading docs.
 - **`.env.example` in package data** (`pyproject.toml`) — included via `[tool.setuptools.package-data]` so the template is present in pip-installed wheels.
+- **Cross-repository discovery and retrieval** — Allows an agent to query findings, symbols, and context from other repos in the same local organization.
+- **Project-scoped shared memory** — Hierarchical organization/project structure with shared FAISS stores.
+- **Local hierarchical summarization** — Zero-API tree-based summaries of files, directories, and the entire repository.
 
 ### Fixed
+- **Confidence gate in `context_pack`** (`tools/context_pack.py`) — Now uses `final_score` instead of `vector_score`. This allows high-quality AST and Graph matches to pass even when the FAISS index is empty (e.g. in CI or newly indexed repos).
+- **Infinite loop in project init tests** (`tests/test_ftx.py`) — Narrowed the scope of `builtins.open` mock and improved helper isolation to prevent recursive init calls and timeouts.
+- **`IsADirectoryError` during init** (`cli/init_project.py`) — Added `is_file()` safety check when seeding `.env` from template.
+- **Dependency declarations** (`pyproject.toml`) — Moved `fastapi`, `uvicorn`, and `httpx` to core dependencies. Ensures post-release verification tests pass and metrics server is functional out-of-the-box.
 - **Tree-sitter `_walk_ts` — decorators and tags** (`indexer/ast_indexer.py`) — `_walk_ts` now extracts decorator names for both FUNCTION and CLASS nodes via `_ts_decorators()`. Previously all decorator information was silently dropped when tree-sitter ran (the default path), meaning `@property`, `@classmethod`, `@app.route`, etc. were invisible to FAISS embed text, the reverse index, and the graph.
 - **Tree-sitter `_walk_ts` — base classes and INHERITS edges** — `_ts_bases()` added; CLASS nodes now populate `bases`. Consequently `EdgeType.INHERITS` edges are correctly written to the knowledge graph for the first time when tree-sitter-python is installed. Previously zero INHERITS edges existed in the default configuration.
 - **Tree-sitter `_walk_ts` — CLASS docstring always empty** — `_ts_docstring()` is now called for CLASS nodes; the hardcoded `"docstring": ""` is removed.
 - **CONSTANT / VARIABLE / TYPED_FIELD / LAMBDA absent from default index** (`indexer/ast_indexer.py`) — `_parse_file` now runs stdlib-ast after tree-sitter for Python files and merges the results: tree-sitter supplies FUNCTION/CLASS (richer call graph), stdlib-ast supplies CONSTANT/VARIABLE/TYPED_FIELD/LAMBDA (which tree-sitter `_walk_ts` never emitted). Module-level constants, type aliases, and dataclass fields are now indexed.
 - **Lambda dedup bug** (`indexer/ast_indexer.py`) — deduplication now uses a priority map (`LAMBDA > CONSTANT/VARIABLE`) so lambda-assignment symbols are no longer silently dropped by the first-seen `(name, start_line)` key.
-- **Dead `elif isinstance(target, ast.Name): pass` branch** (`indexer/ast_indexer.py`) — unreachable branch removed.
 - **Bare relative imports skipped** (`indexer/ast_indexer.py`) — `_extract_imports_py` now handles `from . import X` (where `node.module is None`) by emitting one IMPORTS entry per name. Previously these were silently dropped.
 - **Stale graph nodes on re-index** (`indexer/ast_indexer.py`) — `index_file()` now calls `graph.remove_file_nodes(rel_path)` before re-parsing, so deleted or renamed symbols no longer accumulate as orphan nodes with stale edges.
-- **All symbol types now embedded to FAISS** (`indexer/ast_indexer.py`) — the body-snippet enrichment block previously gated on `sym["type"] in ("FUNCTION", "CLASS")`. CONSTANT, VARIABLE, TYPED_FIELD, and LAMBDA symbols now also receive body-snippet context in their FAISS embed text.
 - **`file_summary` entries invisible to code retrieval** (`retrieval/hybrid.py`) — `_ast_faiss_retrieve` no longer skips entries with `source == "file_summary"`. File-level summary vectors now participate in hybrid retrieval, enabling "what does X.py do?" queries to return direct hits.
 - **`lookup_symbol(include_org=True)` cross-repo `ASTIndexer()` TypeError** (`server/mcp_server.py`) — `ASTIndexer()` requires a `KnowledgeGraph` argument; the cross-repo path was calling it with no args, causing a `TypeError` on any org-scoped lookup. Fixed by passing a fresh `KnowledgeGraph()` instance.
 - **Arrow functions and `const foo = () => ...` missed** (`indexer/ast_indexer.py`) — added `arrow_function` and `function_signature` to `_TS_FUNCTION_TYPES`; added a `lexical_declaration` / `variable_declarator` branch in `_walk_ts` to capture JS/TS arrow-function assignments by variable name.
@@ -33,6 +38,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ### Changed
 - **`cognirepo ask` removed from active CLI** (`cli/main.py`) — command now prints a clear "not yet available" message directing users to the MCP tools. The multi-model orchestrator is not functional in this release; shipping a silent no-op would mislead users. Will be re-enabled in a future release once the orchestrator is complete.
 - **`.env.example` API key comment updated** — removed `NOT-FUNCTIONAL-YET` annotation; comment now accurately states keys are reserved for the future `cognirepo ask` command.
+- **Summarizer engine architecture** — Fully transitioned to local-only summarization using AST index, removing previous LLM routing logic.
 
 ## [Unreleased — prev sprint notes, to be sorted into next release]
 

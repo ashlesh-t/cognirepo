@@ -538,11 +538,11 @@ cognirepo watch                 # manage background file-watcher daemon
 
 ## Future Plans
 
-Priorities drawn from the v0.2.0 benchmark findings and community feedback.
+Priorities drawn from the v0.3.0 benchmark findings and community feedback.
 
 ### Near-term (v0.3.0)
 - **Go call-graph indexing** — tree-sitter-go grammar is loaded but call extraction is incomplete; Moby/Kubernetes tests (MO-3-5, K8-*) could not be completed without it. Adding Go-aware `who_calls` and IMPORTS edges is the single highest-impact unblocked item.
-- **`cognirepo ask`** — multi-model orchestrator (QUICK/STANDARD/COMPLEX/EXPERT tiers). Stubbed in v0.2.0; orchestrator logic is implemented in `orchestrator/` but not wired to a working API key flow.
+- **`cognirepo ask`** — multi-model orchestrator (QUICK/STANDARD/COMPLEX/EXPERT tiers). Initial implementation stubbed in v0.2.0; orchestrator logic is implemented in `orchestrator/` and being wired to a working API key flow in v0.3.0.
 - **Incremental re-index on save** — file-watcher daemon exists (`cognirepo watch`) but re-index on write is not yet debounced correctly; large repos see spurious full re-indexes.
 - **CLAUDE.md mandatory-call relaxation** — benchmark feedback (Moby tests) flagged that forcing `context_pack` before every file read adds latency under memory pressure. Will add a `--fast` mode that skips the tool-first gate for files under 50 lines.
 
