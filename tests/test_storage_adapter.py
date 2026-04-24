@@ -73,7 +73,7 @@ class TestLocalVectorDB:
         vec = np.array([0.1, 0.2, 0.3, 0.4], dtype="float32")
         adapter.add(vec, "hello world", importance=0.9, source="memory")
 
-        results = adapter.search(vec, k=1)
+        results = adapter.search(vec, top_k=1)
         assert len(results) == 1
         assert results[0]["text"] == "hello world"
 
@@ -84,7 +84,7 @@ class TestLocalVectorDB:
         vec = np.array([0.1, 0.2, 0.3, 0.4], dtype="float32")
         adapter.add(vec, "test entry", importance=0.5, source="memory")
 
-        results = adapter.search_with_scores(vec, k=1)
+        results = adapter.search_with_scores(vec, top_k=1)
         assert len(results) == 1
         assert "l2_distance" in results[0]
         assert "faiss_row" in results[0]

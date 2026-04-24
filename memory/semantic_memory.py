@@ -59,7 +59,7 @@ class SemanticMemory:
         Search for memories similar to the query.
         """
         vector = self.model.encode(query)
-        return self.db.search(vector, k=top_k)
+        return self.db.search(vector, top_k=top_k)
 
     def deprecate(self, text: str) -> int:
         """
