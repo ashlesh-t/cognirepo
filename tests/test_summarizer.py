@@ -7,17 +7,11 @@
 
 import os
 import pytest
+import json
 from unittest.mock import MagicMock, patch
 from indexer.summarizer import SummarizationEngine
 
-@pytest.fixture
-def mock_route():
-    with patch("indexer.summarizer.route") as mock:
-        # Return a mock response that has a .text attribute
-        mock.return_value = MagicMock(text="This is a test summary.")
-        yield mock
-
-def test_summarize_file_logic(isolated_cognirepo, mock_route):  # pylint: disable=unused-argument
+def test_summarize_file_logic(isolated_cognirepo):  # pylint: disable=unused-argument
     engine = SummarizationEngine()
     
     # Mock ASTIndexer to return some dummy data
@@ -26,16 +20,23 @@ def test_summarize_file_logic(isolated_cognirepo, mock_route):  # pylint: disabl
         mock_indexer.index_data = {
             "files": {
                 "test.py": {
-                    "symbols": [{"name": "func1"}]
+                    "symbols": [
+                        {"name": "TestClass", "type": "CLASS", "docstring": "This is a test class."},
+                        {"name": "test_func", "type": "FUNCTION", "docstring": "This is a test function."}
+                    ],
+                    "language": "python"
                 }
             }
         }
+        mock_indexer.load = MagicMock()
         
         summary = engine.summarize_file("test.py")
-        assert summary == "This is a test summary."
-        assert mock_route.called
+        assert summary["path"] == "test.py"
+        assert "TestClass" in summary["classes"]
+        assert "test_func" in summary["functions"]
+        assert "test class" in summary["purpose"].lower()
 
-def test_run_full_summarization(isolated_cognirepo, mock_route, tmp_path):  # pylint: disable=unused-argument
+def test_run_full_summarization(isolated_cognirepo, tmp_path):  # pylint: disable=unused-argument
     engine = SummarizationEngine(project_root=str(tmp_path))
     
     # Mock ASTIndexer
@@ -43,20 +44,38 @@ def test_run_full_summarization(isolated_cognirepo, mock_route, tmp_path):  # py
         mock_indexer = mock_indexer_cls.return_value
         mock_indexer.index_data = {
             "files": {
-                "src/main.py": {"symbols": []},
-                "src/utils.py": {"symbols": []}
+                "src/main.py": {
+                    "symbols": [{"name": "main", "type": "FUNCTION", "docstring": "Main entry point."}],
+                    "language": "python"
+                },
+                "src/utils.py": {
+                    "symbols": [{"name": "helper", "type": "FUNCTION", "docstring": "Helper function."}],
+                    "language": "python"
+                }
             }
         }
+        mock_indexer.load = MagicMock()
+        mock_indexer.save = MagicMock()
+        mock_indexer.faiss_meta = []
+        mock_indexer._ensure_faiss = MagicMock()
         
-        # We need to make sure directories are created
-        os.makedirs(tmp_path / ".cognirepo" / "index", exist_ok=True)
-        
-        result = engine.run_full_summarization()
-        
-        assert "repo" in result
-        assert "directories" in result
-        assert "files" in result
-        assert "src/main.py" in result["files"]
-        
-        save_path = tmp_path / ".cognirepo" / "index" / "summaries.json"
-        assert os.path.exists(save_path)
+        # Mock embeddings to avoid real model load
+        with patch("memory.embeddings.get_model") as mock_get_model:
+            mock_model = mock_get_model.return_value
+            mock_model.encode.return_value = MagicMock(astype=lambda x: MagicMock())
+            
+            # We need to make sure directories are created
+            os.makedirs(tmp_path / ".cognirepo" / "index", exist_ok=True)
+            
+            result = engine.run_full_summarization()
+            
+            assert "repo" in result
+            assert "directories" in result
+            assert "files" in result
+            assert "src/main.py" in result["files"]
+            
+            save_path = tmp_path / ".cognirepo" / "index" / "summaries.json"
+            assert os.path.exists(save_path)
+            with open(save_path, "r") as f:
+                saved_data = json.load(f)
+                assert "repo" in saved_data

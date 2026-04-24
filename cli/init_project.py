@@ -62,7 +62,7 @@ def _seed_dotenv() -> None:
             example = Path(str(_ir.files("cognirepo").joinpath(".env.example")))
         except Exception:  # pylint: disable=broad-except
             example = Path("")
-    if example.exists():
+    if example.exists() and example.is_file():
         shutil.copy(example, dotenv_dest)
         print(".env created from .env.example — review it to tune circuit breaker limits or add API keys.")
 
