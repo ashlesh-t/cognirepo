@@ -18,8 +18,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from config.lock import store_lock
 from config.orgs import get_shared_memory_path
-from memory.embeddings import get_model
+from memory.embeddings import encode_with_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +48,7 @@ class ProjectMemory:
     def store(self, text: str, source_repo: str, importance: float = 0.7) -> None:
         """Embed text and store in shared project index."""
         try:
-            model = get_model()
-            vec = model.encode(text)
+            vec = encode_with_timeout(text)
             self._db.add(vec, text, importance=importance, source=source_repo)
             logger.debug("ProjectMemory[%s/%s] stored from %s", self._org, self._project, source_repo)
         except Exception as exc:  # pylint: disable=broad-except
@@ -57,8 +57,7 @@ class ProjectMemory:
     def search(self, query: str, top_k: int = 5) -> list[dict]:
         """Search shared project memories for query."""
         try:
-            model = get_model()
-            vec = model.encode(query)
+            vec = encode_with_timeout(query)
             return self._db.search(vec, k=top_k)
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning("ProjectMemory.search() failed: %s", exc)
@@ -97,11 +96,12 @@ class _ProjectLocalVectorDB:
         import numpy as np  # pylint: disable=import-outside-toplevel
 
         vec = np.array([vector]).astype("float32")
-        self.index.add(vec)
-        self.metadata.append({"text": text, "importance": importance, "source": source})
-        faiss.write_index(self.index, self._idx_file)
-        with open(self._meta_file, "w", encoding="utf-8") as f:
-            json.dump(self.metadata, f, indent=2)
+        with store_lock():
+            self.index.add(vec)
+            self.metadata.append({"text": text, "importance": importance, "source": source})
+            faiss.write_index(self.index, self._idx_file)
+            with open(self._meta_file, "w", encoding="utf-8") as f:
+                json.dump(self.metadata, f, indent=2)
 
     def search(self, vector, k: int = 5, source: str | None = None) -> list[dict]:
         import numpy as np  # pylint: disable=import-outside-toplevel

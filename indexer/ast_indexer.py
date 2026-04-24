@@ -79,15 +79,17 @@ _SKIP_DIRS: frozenset[str] = frozenset({
     # Java / Kotlin / Gradle
     ".gradle", "gradle", "out", "classes", "generated", "generated-sources", "gen",
     ".idea",
-    # Go
-    "vendor",
+    # Go / Kubernetes
+    "vendor", "third_party", "_output", "_artifacts", "staging",
+    # Bazel
+    "bazel-bin", "bazel-out", "bazel-testlogs", "bazel-genfiles",
     # General build
     "dist", "build", "target", "bin",
     # CogniRepo internal
     ".cognirepo",
     # Misc generated / temp
     "tmp", "temp", "logs", ".terraform", ".serverless", "__mocks__",
-    "coverage",
+    "coverage", "zz_generated",
 })
 
 # Maximum file size to index (bytes). Files larger than this are skipped.
@@ -156,7 +158,9 @@ _TS_FUNCTION_TYPES = frozenset({
     "method_declaration",         # Java, C#
     "method_definition",          # JS/TS class methods
     "function_expression",        # JS assigned function
+    "arrow_function",             # JS/TS arrow functions
     "method_signature",           # TS interface methods
+    "function_signature",         # TS ambient/overload signatures
 })
 
 # tree-sitter node types that represent named classes / types
@@ -421,10 +425,61 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
         _ts_collect_calls(child, source, out, depth + 1)
 
 
-def _walk_ts(node, source: bytes, ext: str, out: list) -> None:
+def _ts_decorators(parent_node, source: bytes) -> list[str]:
+    """Extract decorator names from a decorated_definition parent node.
+
+    In tree-sitter, decorators are siblings of the function/class under a
+    `decorated_definition` wrapper, not children of the function node itself.
+    Pass the `decorated_definition` node (or any node that may have decorator children).
+    """
+    decs: list[str] = []
+    for child in parent_node.children:
+        if child.type == "decorator":
+            for sub in child.children:
+                if sub.type != "@":
+                    decs.append(_ts_text(sub, source).split("(")[0].strip())
+                    break
+    return decs
+
+
+def _ts_bases(node, source: bytes) -> list[str]:
+    """Extract base class names from a class tree-sitter node."""
+    bases: list[str] = []
+    # Python: argument_list child of class_definition
+    arg_list = node.child_by_field_name("superclasses") or node.child_by_field_name("bases")
+    if arg_list is None:
+        # fallback: find argument_list or base_list child
+        for child in node.children:
+            if child.type in ("argument_list", "base_list", "type_list"):
+                arg_list = child
+                break
+    if arg_list:
+        for child in arg_list.children:
+            if child.type in ("identifier", "type_identifier", "attribute"):
+                name = _ts_text(child, source)
+                if name not in ("object", "ABC", "Enum", "IntEnum", ",", "(", ")"):
+                    bases.append(name)
+    return bases
+
+
+def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] | None" = None) -> None:
     """Walk a tree-sitter tree and append symbol dicts to *out*."""
+    # `decorated_definition` wraps a decorator list + the actual function/class.
+    # Collect decorators here and pass them down to the inner definition node.
+    if node.type == "decorated_definition":
+        decs = _ts_decorators(node, source)
+        for child in node.children:
+            if child.type not in ("decorator",):
+                _walk_ts(child, source, ext, out, _parent_decs=decs)
+        return
+
     if node.type in _TS_FUNCTION_TYPES:
         name_node = node.child_by_field_name("name")
+        # arrow functions assigned to a variable: capture parent's name via caller
+        if name_node is None and node.type == "arrow_function":
+            for child in node.children:
+                _walk_ts(child, source, ext, out)
+            return
         if name_node:
             calls: list[str] = []
             _ts_collect_calls(node, source, calls)
@@ -434,7 +489,10 @@ def _walk_ts(node, source: bytes, ext: str, out: list) -> None:
                 "start_line": node.start_point[0] + 1,
                 "end_line": node.end_point[0] + 1,
                 "docstring": _ts_docstring(node, source, ext),
+                "decorators": _parent_decs or [],
+                "tags": [],
                 "calls": list(dict.fromkeys(calls)),
+                "bases": [],
                 "faiss_id": -1,
             })
     elif node.type in _TS_CLASS_TYPES:
@@ -445,10 +503,35 @@ def _walk_ts(node, source: bytes, ext: str, out: list) -> None:
                 "type": "CLASS",
                 "start_line": node.start_point[0] + 1,
                 "end_line": node.end_point[0] + 1,
-                "docstring": "",
+                "docstring": _ts_docstring(node, source, ext),
+                "decorators": _parent_decs or [],
+                "tags": [],
                 "calls": [],
+                "bases": _ts_bases(node, source),
                 "faiss_id": -1,
             })
+    # Variable assignment with arrow function: const foo = (x) => ...
+    elif node.type in ("lexical_declaration", "variable_declaration"):
+        for child in node.children:
+            if child.type in ("variable_declarator",):
+                vname = child.child_by_field_name("name")
+                vval = child.child_by_field_name("value")
+                if vname and vval and vval.type in ("arrow_function", "function_expression"):
+                    calls: list[str] = []
+                    _ts_collect_calls(vval, source, calls)
+                    out.append({
+                        "name": _ts_text(vname, source),
+                        "type": "FUNCTION",
+                        "start_line": node.start_point[0] + 1,
+                        "end_line": node.end_point[0] + 1,
+                        "docstring": "",
+                        "decorators": [],
+                        "tags": ["arrow"],
+                        "calls": list(dict.fromkeys(calls)),
+                        "bases": [],
+                        "faiss_id": -1,
+                    })
+                    return  # don't recurse further — already captured
     for child in node.children:
         _walk_ts(child, source, ext, out)
 
@@ -459,6 +542,73 @@ def _extract_symbols_ts(tree, source: bytes, ext: str) -> list[dict]:
     _walk_ts(tree.root_node, source, ext, out)
     out.sort(key=lambda s: s["start_line"])
     return out
+
+
+# ── import extraction (Python) ────────────────────────────────────────────────
+
+def _extract_imports_py(tree: ast.AST) -> list[dict]:
+    """Extract top-level import statements from a Python AST.
+
+    Returns list of dicts: {module, alias, line, relative}.
+    relative=True means it's a relative import (from . import X).
+    """
+    imports: list[dict] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imports.append({
+                    "module": alias.name,
+                    "alias": alias.asname or alias.name.split(".")[-1],
+                    "line": node.lineno,
+                    "relative": False,
+                })
+        elif isinstance(node, ast.ImportFrom):
+            level_dots = "." * (node.level or 0)
+            if node.module:
+                imports.append({
+                    "module": level_dots + node.module,
+                    "alias": node.module.split(".")[-1],
+                    "line": node.lineno,
+                    "relative": (node.level or 0) > 0,
+                })
+            elif node.level:
+                # bare relative: `from . import X, Y` — emit one entry per name
+                for alias in node.names:
+                    imports.append({
+                        "module": level_dots + alias.name,
+                        "alias": alias.asname or alias.name,
+                        "line": node.lineno,
+                        "relative": True,
+                    })
+    return imports
+
+
+def _resolve_import_to_file(
+    module: str,
+    current_file: str,
+    repo_root: str,
+    tracked_files: "set[str] | None" = None,
+) -> "str | None":
+    """Attempt to resolve a Python import module name to a local file path.
+
+    Returns a repo-relative path string, or None if not resolvable locally.
+    """
+    # Strip leading dots from relative imports
+    module_clean = module.lstrip(".")
+    if not module_clean:
+        return None
+
+    parts = module_clean.split(".")
+    candidates = [
+        os.path.join(*parts) + ".py",
+        os.path.join(*parts, "__init__.py"),
+    ]
+    for candidate in candidates:
+        abs_path = os.path.join(repo_root, candidate)
+        if os.path.isfile(abs_path):
+            if tracked_files is None or candidate in tracked_files:
+                return candidate
+    return None
 
 
 # ── stdlib-ast extraction (Python fallback) ───────────────────────────────────
@@ -590,6 +740,13 @@ def _extract_symbols_py(tree: ast.AST, _file_path: str) -> list[dict]:
         elif isinstance(node, ast.ClassDef):
             docstring = ast.get_docstring(node) or ""
             end_line = getattr(node, "end_lineno", node.lineno)
+            # Extract base class names for INHERITS edges
+            bases: list[str] = []
+            for base in node.bases:
+                if isinstance(base, ast.Name):
+                    bases.append(base.id)
+                elif isinstance(base, ast.Attribute):
+                    bases.append(base.attr)
             symbols.append({
                 "name": node.name,
                 "type": "CLASS",
@@ -600,6 +757,7 @@ def _extract_symbols_py(tree: ast.AST, _file_path: str) -> list[dict]:
                 "decorators": _extract_decorators(node),
                 "tags": [],
                 "dynamic_registers": [],
+                "bases": bases,
                 "faiss_id": -1,
             })
 
@@ -634,8 +792,6 @@ def _extract_symbols_py(tree: ast.AST, _file_path: str) -> list[dict]:
                             "dynamic_registers": [],
                             "faiss_id": -1,
                         })
-                    elif isinstance(target, ast.Name):
-                        pass
                     # Lambda assignments: x = lambda ...:
                     if (len(node.targets) == 1 and
                             isinstance(node.targets[0], ast.Name) and
@@ -683,20 +839,196 @@ def _extract_symbols_py(tree: ast.AST, _file_path: str) -> list[dict]:
 
     _collect_assignments(getattr(tree, "body", []))
 
-    # Deduplicate by (name, start_line) — lambda check above may produce duplicates
-    seen: set[tuple] = set()
-    deduped: list[dict] = []
+    # Deduplicate by (name, start_line): prefer LAMBDA > CONSTANT/VARIABLE
+    # (the lambda block runs after the assignment block on the same node,
+    # so the CONSTANT/VARIABLE entry is added first — we must overwrite it).
+    dedup_map: dict[tuple, dict] = {}
+    _TYPE_PRIO = {"LAMBDA": 2, "TYPED_FIELD": 1}
     for sym in symbols:
         key = (sym["name"], sym["start_line"])
-        if key not in seen:
-            seen.add(key)
-            deduped.append(sym)
+        existing = dedup_map.get(key)
+        if existing is None or _TYPE_PRIO.get(sym["type"], 0) > _TYPE_PRIO.get(existing["type"], 0):
+            dedup_map[key] = sym
+    deduped = list(dedup_map.values())
 
     deduped.sort(key=lambda s: s["start_line"])
     return deduped
 
 
 # ── main indexer class ────────────────────────────────────────────────────────
+
+def _find_entry_points(tracked: "set[str]") -> "list[str]":
+    """Return likely entry-point files from the tracked set, ordered by priority.
+
+    Supports Python, Go, Rust, JS/TS, Java, and Ruby conventions.
+    For Go repos (Kubernetes-style): cmd/*/main.go are the canonical entry points.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def _add(f: str) -> None:
+        if f not in seen:
+            seen.add(f)
+            found.append(f)
+
+    # ── priority name matches (any depth) ─────────────────────────────────────
+    _PRIORITY_NAMES = {
+        # Python
+        "__main__.py", "main.py", "app.py", "manage.py",
+        "run.py", "server.py", "cli.py", "start.py", "wsgi.py", "asgi.py",
+        # Go — prefer cmd/*/main.go pattern; also bare main.go
+        "main.go",
+        # Rust
+        "main.rs",
+        # JS / TS
+        "index.js", "index.ts", "index.mjs", "server.js", "server.ts",
+        "app.js", "app.ts", "main.js", "main.ts",
+        # Java
+        "Main.java", "Application.java", "App.java",
+        # Ruby
+        "main.rb", "app.rb", "config.ru",
+    }
+    for f in sorted(tracked):
+        if Path(f).name in _PRIORITY_NAMES:
+            _add(f)
+
+    # ── Go: prefer cmd/*/main.go (Kubernetes / multi-binary pattern) ──────────
+    cmd_mains = sorted(f for f in tracked if _re_tok.search(r"^cmd/[^/]+/main\.go$", f))
+    for f in cmd_mains:
+        _add(f)
+
+    # ── Python fallback: top-level .py files ──────────────────────────────────
+    if not found:
+        for f in sorted(tracked):
+            if "/" not in f and f.endswith(".py"):
+                _add(f)
+
+    # ── JS/TS fallback: package.json main/bin resolution ──────────────────────
+    if not found:
+        for f in sorted(tracked):
+            if Path(f).name == "package.json":
+                try:
+                    import json as _json  # pylint: disable=import-outside-toplevel
+                    data = _json.loads(Path(f).read_text(errors="ignore"))
+                    main_rel = data.get("main") or data.get("bin")
+                    if isinstance(main_rel, str) and main_rel in tracked:
+                        _add(main_rel)
+                except Exception:  # pylint: disable=broad-except
+                    pass
+
+    return found
+
+
+def _expand_from_entry_points(
+    entry_points: "list[str]",
+    tracked: "set[str]",
+    repo_root: str,
+) -> "dict[str, float]":
+    """BFS from entry points following Python imports within the tracked file set.
+
+    Returns a dict mapping rel_path → index_weight:
+      - 1.0  : entry points and files reachable within 1 hop
+      - 0.75 : reachable at hop 2
+      - 0.5  : reachable at hop 3+ (diminishing returns; still core dependency)
+
+    Non-Python files in the tracked set are not BFS-reachable via imports;
+    callers assign them a separate weight (typically 0.5).
+    """
+    import ast as _ast  # local to avoid polluting module namespace
+
+    # Map: dotted-module-path → rel_file_path for all tracked .py files
+    py_files = {f for f in tracked if f.endswith(".py")}
+    module_map: "dict[str, str]" = {}
+    for f in py_files:
+        parts = Path(f).with_suffix("").parts
+        module_map[".".join(parts)] = f
+        if parts and parts[-1] == "__init__":
+            module_map[".".join(parts[:-1])] = f
+
+    def _resolve(module: str, current_file: str) -> "list[str]":
+        candidates = []
+        if module in module_map:
+            candidates.append(module_map[module])
+        for key, val in module_map.items():
+            if key == module or key.startswith(module + "."):
+                if val not in candidates:
+                    candidates.append(val)
+                break
+        return candidates
+
+    def _hop_weight(hop: int) -> float:
+        if hop <= 1:
+            return 1.0
+        if hop == 2:
+            return 0.75
+        return 0.5
+
+    # BFS with hop tracking — queue items are (rel_path, hop_depth)
+    weights: "dict[str, float]" = {}
+    for ep in entry_points:
+        weights[ep] = 1.0
+    queue: "list[tuple[str, int]]" = [(ep, 0) for ep in entry_points]
+
+    while queue:
+        current, hop = queue.pop(0)
+        abs_path = os.path.join(repo_root, current)
+        if not os.path.isfile(abs_path):
+            continue
+        try:
+            source = Path(abs_path).read_bytes()
+            tree = _ast.parse(source.decode("utf-8", errors="ignore"), filename=abs_path)
+        except Exception:  # pylint: disable=broad-except
+            continue
+
+        next_hop = hop + 1
+        next_weight = _hop_weight(next_hop)
+
+        for node in _ast.walk(tree):
+            targets: list[str] = []
+            if isinstance(node, _ast.Import):
+                for alias in node.names:
+                    targets.extend(_resolve(alias.name, current))
+            elif isinstance(node, _ast.ImportFrom):
+                mod = node.module or ""
+                level = node.level or 0
+                if level == 0 and mod:
+                    targets.extend(_resolve(mod, current))
+                elif level > 0:
+                    # relative import: `from . import X` or `from .pkg import Y`
+                    pkg_parts = Path(current).parent.parts
+                    back = max(0, level - 1)
+                    base_parts = pkg_parts[:len(pkg_parts) - back] if back < len(pkg_parts) else ()
+                    if mod:
+                        full = ".".join((*base_parts, mod))
+                        targets.extend(_resolve(full, current))
+                    else:
+                        # bare `from . import X, Y` — resolve each name
+                        for alias in node.names:
+                            full = ".".join((*base_parts, alias.name))
+                            targets.extend(_resolve(full, current))
+
+            for target in targets:
+                existing_w = weights.get(target, -1.0)
+                if next_weight > existing_w:
+                    weights[target] = next_weight
+                    queue.append((target, next_hop))
+
+    return weights
+
+
+def _git_tracked_files(repo_root: str) -> "set[str] | None":
+    try:
+        proc = subprocess.run(
+            ["git", "-C", repo_root, "ls-files", "--recurse-submodules"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    paths = {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+    return paths if paths else None
+
 
 class ASTIndexer:
     """
@@ -750,7 +1082,35 @@ class ASTIndexer:
                 from tree_sitter import Parser  # pylint: disable=import-outside-toplevel
                 parser = Parser(lang)
                 tree = parser.parse(source)
-                return _extract_symbols_ts(tree, source, ext)
+                ts_symbols = _extract_symbols_ts(tree, source, ext)
+                if ext != ".py":
+                    return ts_symbols
+                # For Python: merge tree-sitter (FUNCTION/CLASS) with stdlib-ast
+                # (CONSTANT/VARIABLE/TYPED_FIELD/LAMBDA) — each covers what the
+                # other misses.
+                try:
+                    import warnings as _w  # pylint: disable=import-outside-toplevel
+                    with _w.catch_warnings():
+                        _w.simplefilter("ignore", SyntaxWarning)
+                        tree_py = ast.parse(
+                            source.decode("utf-8", errors="ignore"),
+                            filename=abs_path,
+                        )
+                    py_symbols = _extract_symbols_py(tree_py, abs_path)
+                except SyntaxError:
+                    py_symbols = []
+                # Keep tree-sitter FUNCTION/CLASS (richer call data);
+                # add stdlib-ast symbols that tree-sitter never emits.
+                ts_types = {"FUNCTION", "CLASS"}
+                ts_names_lines: set[tuple] = {
+                    (s["name"], s["start_line"]) for s in ts_symbols
+                }
+                extras = [
+                    s for s in py_symbols
+                    if s["type"] not in ts_types
+                    and (s["name"], s["start_line"]) not in ts_names_lines
+                ]
+                return ts_symbols + extras
             except Exception as exc:  # pylint: disable=broad-except
                 log.debug("tree-sitter parse failed for %s: %s", abs_path, exc)
                 if ext != ".py":
@@ -759,10 +1119,13 @@ class ASTIndexer:
 
         if ext == ".py":
             try:
-                tree_py = ast.parse(
-                    source.decode("utf-8", errors="ignore"),
-                    filename=abs_path,
-                )
+                import warnings as _w  # pylint: disable=import-outside-toplevel
+                with _w.catch_warnings():
+                    _w.simplefilter("ignore", SyntaxWarning)
+                    tree_py = ast.parse(
+                        source.decode("utf-8", errors="ignore"),
+                        filename=abs_path,
+                    )
                 return _extract_symbols_py(tree_py, abs_path)
             except SyntaxError:
                 return []
@@ -770,6 +1133,39 @@ class ASTIndexer:
         return []
 
     # ── public API ────────────────────────────────────────────────────────────
+
+    def _batch_embed_pending(self, batch_size: int = 256) -> None:
+        """Encode all deferred embed texts in one batched model.encode() call.
+
+        Collecting texts across all files and encoding them together is 20-50x
+        faster than one encode() call per symbol because the transformer GPU/CPU
+        kernel amortises overhead across the full batch.
+        """
+        pending = getattr(self, "_pending_embeds", [])
+        if not pending:
+            return
+        texts = [p[0] for p in pending]
+        print(f"  Embedding {len(texts):,} texts in batches of {batch_size}…")
+        try:
+            vecs = self.model.encode(
+                texts,
+                batch_size=batch_size,
+                show_progress_bar=True,
+                convert_to_numpy=True,
+            ).astype("float32")
+        except Exception as exc:  # pylint: disable=broad-except
+            log.warning("Batch encode failed (%s) — skipping FAISS embed", exc)
+            return
+        for vec, (_, meta, sym) in zip(vecs, pending):
+            faiss_id = len(self.faiss_meta)
+            self.faiss_index.add_with_ids(
+                np.array([vec], dtype="float32"),
+                np.array([faiss_id], dtype=np.int64),
+            )
+            self.faiss_meta.append(meta)
+            if sym is not None:
+                sym["faiss_id"] = faiss_id
+        self._pending_embeds.clear()
 
     def index_repo(self, repo_root: str, embed: bool = True) -> dict:
         """
@@ -783,6 +1179,10 @@ class ASTIndexer:
                 Faster for CI or when only symbol lookup is needed.
         """
         self._embed_enabled = embed  # pylint: disable=attribute-defined-outside-init
+        # Batch mode: defer all model.encode() calls; flush once at the end
+        # for a 20-50x speedup on large repos.
+        self._batch_mode = embed  # pylint: disable=attribute-defined-outside-init
+        self._pending_embeds: list = []  # pylint: disable=attribute-defined-outside-init
         self._ensure_faiss()
         repo_root = os.path.abspath(repo_root)
         self.index_data["repo_root"] = repo_root
@@ -790,12 +1190,47 @@ class ASTIndexer:
 
         skip_dirs = _effective_skip_dirs()
 
+        # ── git-first + entry-point file discovery ──────────────────────────────
+        _git_root = os.path.join(repo_root, ".git")
+        _tracked: "set[str] | None" = None
+        # file_weights: rel_path → index weight (1.0 direct, 0.75 hop-2, 0.5 indirect)
+        _file_weights: "dict[str, float]" = {}
+        if os.path.exists(_git_root):
+            _tracked = _git_tracked_files(repo_root)
+            if _tracked is not None:
+                _entries = _find_entry_points(_tracked)
+                if _entries:
+                    _bfs_weights = _expand_from_entry_points(_entries, _tracked, repo_root)
+                    _non_py = {f for f in _tracked if not f.endswith(".py")}
+                    # Non-Python files: git-tracked but not import-reachable → weight 0.5
+                    _file_weights = {**{f: 0.5 for f in _non_py}, **_bfs_weights}
+                    # Git-tracked Python files NOT reached by BFS → weight 0.5
+                    for f in _tracked:
+                        if f not in _file_weights:
+                            _file_weights[f] = 0.5
+                    _tracked = set(_file_weights.keys())
+                    _direct = sum(1 for w in _bfs_weights.values() if w >= 1.0)
+                    print(
+                        f"  Git repo + weighted crawl: {len(_tracked)} file(s) — "
+                        f"{_direct} direct (w=1.0), "
+                        f"{len(_tracked) - _direct} indirect (w≤0.75) "
+                        f"from {len(_entries)} entry point(s) "
+                        f"({', '.join(Path(e).name for e in _entries[:3])}"
+                        f"{'...' if len(_entries) > 3 else ''})"
+                    )
+                else:
+                    _file_weights = {f: 0.5 for f in _tracked}
+                    print(f"  Git repo detected — indexing {len(_tracked)} tracked file(s) (no entry points, all w=0.5).")
+
         # ── large-repo warning (embed pass only) ────────────────────────────────
         if embed:
-            _n_candidates = 0
-            for _dp, _dns, _fns in os.walk(repo_root):
-                _dns[:] = [d for d in _dns if d not in skip_dirs]
-                _n_candidates += sum(1 for f in _fns if is_supported(Path(f)))
+            if _tracked is not None:
+                _n_candidates = sum(1 for f in _tracked if is_supported(Path(f)))
+            else:
+                _n_candidates = 0
+                for _dp, _dns, _fns in os.walk(repo_root):
+                    _dns[:] = [d for d in _dns if d not in skip_dirs]
+                    _n_candidates += sum(1 for f in _fns if is_supported(Path(f)))
             if _n_candidates > _LARGE_REPO_FILE_THRESHOLD:
                 print(
                     f"  ⚠  Large repo detected ({_n_candidates} source files). "
@@ -807,29 +1242,52 @@ class ASTIndexer:
         skipped_exts: set[str] = set()
         total_files = 0
 
-        for dirpath, dirnames, filenames in os.walk(repo_root):
-            dirnames[:] = [d for d in dirnames if d not in skip_dirs]
-            for fname in filenames:
-                ext = Path(fname).suffix
-                if not is_supported(Path(fname)):
-                    # Track extensions we know exist but have no grammar for
-                    if ext and ext not in {
-                        ".md", ".txt", ".json", ".yaml", ".yml", ".toml",
-                        ".cfg", ".ini", ".lock", ".gitignore", ".env",
-                        ".png", ".jpg", ".gif", ".svg", ".ico",
-                        ".whl", ".zip", ".tar", ".gz",
-                    }:
+        _skip_noise = {
+            ".md", ".txt", ".json", ".toml",
+            ".cfg", ".ini", ".lock", ".gitignore", ".env",
+            ".png", ".jpg", ".gif", ".svg", ".ico",
+            ".whl", ".zip", ".tar", ".gz",
+        }
+
+        if _tracked is not None:
+            for rel_path in sorted(_tracked):
+                abs_path = os.path.join(repo_root, rel_path)
+                if not os.path.isfile(abs_path):
+                    continue
+                ext = Path(rel_path).suffix
+                if not is_supported(Path(rel_path)):
+                    if ext and ext not in _skip_noise:
                         skipped_exts.add(ext)
                     continue
-
-                abs_path = os.path.join(dirpath, fname)
-                rel_path = os.path.relpath(abs_path, repo_root)
+                _w = _file_weights.get(rel_path, 0.5)
                 try:
-                    self.index_file(rel_path, abs_path)
+                    self.index_file(rel_path, abs_path, weight=_w)
                     lang_file_counts[lang_label(ext)] += 1
                     total_files += 1
                 except Exception as exc:  # pylint: disable=broad-except
                     log.debug("  [skip] %s: %s", rel_path, exc)
+        else:
+            for dirpath, dirnames, filenames in os.walk(repo_root):
+                dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+                for fname in filenames:
+                    ext = Path(fname).suffix
+                    if not is_supported(Path(fname)):
+                        if ext and ext not in _skip_noise:
+                            skipped_exts.add(ext)
+                        continue
+                    abs_path = os.path.join(dirpath, fname)
+                    rel_path = os.path.relpath(abs_path, repo_root)
+                    try:
+                        self.index_file(rel_path, abs_path, weight=1.0)
+                        lang_file_counts[lang_label(ext)] += 1
+                        total_files += 1
+                    except Exception as exc:  # pylint: disable=broad-except
+                        log.debug("  [skip] %s: %s", rel_path, exc)
+
+        # ── flush deferred batch embeddings ──────────────────────────────────
+        if embed:
+            self._batch_embed_pending()
+        self._batch_mode = False  # pylint: disable=attribute-defined-outside-init
 
         self._build_reverse_index()
         total_symbols = sum(
@@ -863,9 +1321,15 @@ class ASTIndexer:
             "skipped_extensions": sorted(skipped_exts),
         }
 
-    def index_file(self, rel_path: str, abs_path: str | None = None) -> dict:
+    def index_file(self, rel_path: str, abs_path: str | None = None, weight: float = 1.0) -> dict:
         """
         Index one file. Skips if sha256 matches existing entry or file > max_file_bytes.
+
+        weight: crawl weight assigned by index_repo (1.0 = directly reachable from
+                entry points, 0.75 = hop-2, 0.5 = git-tracked but not import-reachable).
+                Stored in each symbol record, FAISS meta, and graph node so retrieval
+                can boost core symbols over peripheral ones.
+
         Returns the file record dict.
         """
         ext = Path(rel_path).suffix
@@ -891,6 +1355,10 @@ class ASTIndexer:
 
         raw_symbols = self._parse_file(abs_path, ext)
 
+        # remove stale graph nodes so deleted/renamed symbols don't linger
+        if existing:
+            self.graph.remove_file_nodes(rel_path)
+
         # remove old FAISS entries for this file
         old_ids = [
             s["faiss_id"] for s in existing.get("symbols", [])
@@ -915,89 +1383,87 @@ class ASTIndexer:
                 pass
 
         for sym in raw_symbols:
+            sym["weight"] = weight  # crawl weight for retrieval scoring
+            sym["faiss_id"] = -1   # filled by _batch_embed_pending() or inline below
+
             if embed_enabled:
                 # Enriched embed text: type + name + decorators + docstring +
                 # first 3 body lines (signature context) + top callees
                 dec_str = " ".join(sym.get("decorators", []))
                 calls_str = ", ".join(sym.get("calls", [])[:3])
-                # Extract first 3 lines after the definition line for signature/body context
                 body_snippet = ""
-                if _src_lines and sym["type"] in ("FUNCTION", "CLASS"):
+                if _src_lines:
                     start = sym.get("start_line", 1)
                     end = min(start + 3, sym.get("end_line", start + 3))
-                    snippet_lines = _src_lines[start - 1 : end]  # 0-indexed
+                    snippet_lines = _src_lines[start - 1 : end]
                     body_snippet = " ".join(l.strip() for l in snippet_lines if l.strip())[:200]
                 embed_text = " ".join(filter(None, [
-                    sym["type"],
-                    sym["name"],
-                    dec_str,
-                    sym.get("docstring", ""),
-                    body_snippet,
+                    sym["type"], sym["name"], dec_str,
+                    sym.get("docstring", ""), body_snippet,
                     f"calls: {calls_str}" if calls_str else "",
                 ]))
-                vec = self.model.encode(embed_text).astype("float32")
-                faiss_id = len(self.faiss_meta)
-                self.faiss_index.add_with_ids(
-                    np.array([vec], dtype="float32"),
-                    np.array([faiss_id], dtype=np.int64),
-                )
-                self.faiss_meta.append({
-                    "name": sym["name"],
-                    "type": sym["type"],
-                    "file": rel_path,
-                    "start_line": sym["start_line"],
+                meta = {
+                    "name": sym["name"], "type": sym["type"],
+                    "file": rel_path, "start_line": sym["start_line"],
                     "docstring": sym.get("docstring", ""),
                     "decorators": sym.get("decorators", []),
-                    "source": "symbol",
-                })
-                sym["faiss_id"] = faiss_id
-            else:
-                sym["faiss_id"] = -1  # not embedded
+                    "source": "symbol", "weight": weight,
+                }
+                if getattr(self, "_batch_mode", False):
+                    # Defer encoding — accumulate for batch encode in index_repo
+                    self._pending_embeds.append((embed_text, meta, sym))  # type: ignore[attr-defined]
+                else:
+                    vec = self.model.encode(embed_text).astype("float32")
+                    faiss_id = len(self.faiss_meta)
+                    self.faiss_index.add_with_ids(
+                        np.array([vec], dtype="float32"),
+                        np.array([faiss_id], dtype=np.int64),
+                    )
+                    self.faiss_meta.append(meta)
+                    sym["faiss_id"] = faiss_id
 
-            # knowledge graph
+            # knowledge graph — weight attribute lets graph-scoring prefer core files
             file_node = make_node_id("FILE", rel_path)
             sym_node = node_id_from_symbol_record(sym, rel_path)
-            self.graph.add_node(file_node, NodeType.FILE)
-            self.graph.add_node(sym_node, sym["type"], file=rel_path, line=sym["start_line"])
+            self.graph.add_node(file_node, NodeType.FILE, weight=weight)
+            self.graph.add_node(sym_node, sym["type"], file=rel_path, line=sym["start_line"], weight=weight)
             self.graph.add_edge(sym_node, file_node, EdgeType.DEFINED_IN)
 
         # ── file-level summary embedding ──────────────────────────────────────
-        # Enables "what does background_tasks.py do?" queries to land in FAISS
-        # even when no individual symbol name matches the query.
         if embed_enabled and raw_symbols:
             fn_names = [s["name"] for s in raw_symbols if s["type"] == "FUNCTION"][:8]
             cls_names = [s["name"] for s in raw_symbols if s["type"] == "CLASS"][:4]
-            # Use docstring from first module-level function/class if available
             _first_doc = next(
                 (s.get("docstring", "") for s in raw_symbols
                  if s.get("docstring") and s["type"] in ("FUNCTION", "CLASS")),
                 "",
             )
             file_embed_text = " ".join(filter(None, [
-                "FILE",
-                os.path.basename(rel_path),
+                "FILE", os.path.basename(rel_path),
                 os.path.splitext(os.path.basename(rel_path))[0].replace("_", " "),
                 _first_doc[:120] if _first_doc else "",
                 f"functions: {', '.join(fn_names)}" if fn_names else "",
                 f"classes: {', '.join(cls_names)}" if cls_names else "",
             ]))
-            try:
-                _fvec = self.model.encode(file_embed_text).astype("float32")
-                _fid = len(self.faiss_meta)
-                self.faiss_index.add_with_ids(
-                    np.array([_fvec], dtype="float32"),
-                    np.array([_fid], dtype=np.int64),
-                )
-                self.faiss_meta.append({
-                    "name": os.path.basename(rel_path),
-                    "type": "FILE",
-                    "file": rel_path,
-                    "start_line": 1,
-                    "docstring": _first_doc[:120],
-                    "source": "file_summary",
-                })
-            except Exception:  # pylint: disable=broad-except
-                pass  # file summary embedding is best-effort
+            file_meta = {
+                "name": os.path.basename(rel_path), "type": "FILE",
+                "file": rel_path, "start_line": 1,
+                "docstring": _first_doc[:120],
+                "source": "file_summary", "weight": weight,
+            }
+            if getattr(self, "_batch_mode", False):
+                self._pending_embeds.append((file_embed_text, file_meta, None))  # type: ignore[attr-defined]
+            else:
+                try:
+                    _fvec = self.model.encode(file_embed_text).astype("float32")
+                    _fid = len(self.faiss_meta)
+                    self.faiss_index.add_with_ids(
+                        np.array([_fvec], dtype="float32"),
+                        np.array([_fid], dtype=np.int64),
+                    )
+                    self.faiss_meta.append(file_meta)
+                except Exception:  # pylint: disable=broad-except
+                    pass
 
         # call-graph edges — bidirectional, with semantic purpose labels
         for sym in raw_symbols:
@@ -1010,10 +1476,43 @@ class ASTIndexer:
                 self.graph.add_edge(caller_node, callee_node, EdgeType.CALLED_BY, purpose=purpose)
                 self.graph.add_edge(callee_node, caller_node, EdgeType.CALLS)
 
+        # inheritance edges — CLASS → base class
+        for sym in raw_symbols:
+            if sym["type"] == "CLASS":
+                sym_node = node_id_from_symbol_record(sym, rel_path)
+                for base_name in sym.get("bases", []):
+                    if base_name in ("object", "ABC", "Enum", "IntEnum"):
+                        continue  # skip stdlib noise
+                    base_node = f"symbol::{base_name}"
+                    self.graph.add_node(base_node, NodeType.CONCEPT)
+                    self.graph.add_edge(sym_node, base_node, EdgeType.INHERITS)
+
+        # import edges — current file → imported local file
+        if ext == ".py":
+            try:
+                _src_bytes = Path(abs_path).read_bytes()
+                _tree_for_imports = ast.parse(
+                    _src_bytes.decode("utf-8", errors="ignore"), filename=abs_path
+                )
+                _imports = _extract_imports_py(_tree_for_imports)
+                _repo_root = self.index_data.get("repo_root") or os.getcwd()
+                file_node = make_node_id("FILE", rel_path)
+                for imp in _imports:
+                    _target = _resolve_import_to_file(
+                        imp["module"], rel_path, _repo_root
+                    )
+                    if _target:
+                        target_node = make_node_id("FILE", _target)
+                        self.graph.add_node(target_node, NodeType.FILE)
+                        self.graph.add_edge(file_node, target_node, EdgeType.IMPORTS)
+            except (SyntaxError, OSError):
+                pass  # best-effort
+
         file_record = {
             "indexed_at": _now(),
             "sha256": sha,
             "language": lang_label(ext),
+            "weight": weight,
             "symbols": raw_symbols,
         }
         self.index_data["files"][rel_path] = file_record

@@ -82,6 +82,8 @@ class TestTokenReduction:
         raw_tokens = len(hybrid_file.read_text(encoding="utf-8")) // 4
 
         result = context_pack("HybridRetriever scoring formula", max_tokens=2000)
+        if "token_count" not in result:
+            pytest.fail(f"context_pack failed to find confident match: {result}")
         packed_tokens = result["token_count"]
 
         # context_pack should use at least 30% fewer tokens than raw file
@@ -202,7 +204,7 @@ class TestMemoryRecall:
         vec = model.encode(text).astype("float32")
         db.add(vec, text, 1.0)
 
-        results = db.search(model.encode("usefulness memory round-trip").astype("float32"), k=3)
+        results = db.search(model.encode("usefulness memory round-trip").astype("float32"), top_k=3)
         texts = [r.get("text", "") for r in results]
         assert any("usefulness" in t for t in texts), f"Memory not recalled: {texts}"
 

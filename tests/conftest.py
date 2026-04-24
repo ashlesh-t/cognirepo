@@ -21,7 +21,33 @@ import json
 import os
 
 import bcrypt
+import psutil
 import pytest
+
+_MEMORY_LIMIT_GB = 5.0
+_MEMORY_WARN_GB = 4.5
+_proc = psutil.Process(os.getpid())
+
+
+@pytest.fixture(autouse=True)
+def memory_circuit_breaker():
+    """Abort test session if process RSS exceeds 5 GB to prevent OOM crashes."""
+    rss_gb = _proc.memory_info().rss / 1024 ** 3
+    if rss_gb >= _MEMORY_LIMIT_GB:
+        pytest.exit(
+            f"Memory circuit breaker: {rss_gb:.2f} GB >= {_MEMORY_LIMIT_GB} GB limit. "
+            "Aborting to prevent OOM.",
+            returncode=3,
+        )
+    elif rss_gb >= _MEMORY_WARN_GB:
+        import warnings
+        warnings.warn(
+            f"Memory usage {rss_gb:.2f} GB is approaching the {_MEMORY_LIMIT_GB} GB limit.",
+            ResourceWarning,
+            stacklevel=2,
+        )
+    yield
+
 
 # Secrets generated at import time — never stored as literals in source.
 _TEST_PASSWORD = "changeme-test"

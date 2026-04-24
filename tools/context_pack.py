@@ -26,7 +26,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter
+from retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter, MAX_QUERY_LEN
 
 try:
     import tiktoken as _tiktoken
@@ -65,12 +65,13 @@ _DOC_INTENT_PATTERN = re.compile(
 )
 
 
-def _read_window(file_path: str, center_line: int, window_lines: int) -> str:
+
+def _read_window(file_path: str, center_line: int, window_lines: int, repo_root: str | None = None) -> str:
     """
     Read ±window_lines around center_line from file_path.
     Returns the extracted text, or empty string if the file is unreadable.
     """
-    repo_root = os.environ.get("COGNIREPO_ROOT", os.getcwd())
+    repo_root = repo_root or os.environ.get("COGNIREPO_ROOT", os.getcwd())
     abs_path = (
         file_path if os.path.isabs(file_path)
         else os.path.join(repo_root, file_path)
@@ -123,6 +124,7 @@ def context_pack(
     include_symbols: bool = True,
     window_lines: int = 15,
     file: str = "",
+    repo_root: str | None = None,
 ) -> dict:
     """
     Pack the most relevant code/episodic context into a token-bounded block.
@@ -154,7 +156,13 @@ def context_pack(
     """
     # ── file-mode: return all indexed context for a specific file ────────────
     if file:
-        return _file_mode_context(file, max_tokens, window_lines)
+        return _file_mode_context(file, max_tokens, window_lines, repo_root=repo_root)
+
+    if len(query) > MAX_QUERY_LEN:
+        raise ValueError(
+            f"Query too long ({len(query):,} chars > {MAX_QUERY_LEN:,}). "
+            "Truncate or set COGNIREPO_MAX_QUERY_LEN env var."
+        )
 
     sections: list[dict] = []
     token_budget = max_tokens
@@ -173,17 +181,18 @@ def context_pack(
         # ── confidence gate ────────────────────────────────────────────────
         # If no code hit clears the threshold, return structured failure.
         # This prevents README noise from being returned for code queries.
-        best_score = max((c.get("vector_score", c.get("final_score", 0.0)) for c in code_hits), default=0.0)
+        best_score = max((c.get("final_score", 0.0) for c in code_hits), default=0.0)
         doc_intent = _is_doc_query(query)
 
         if code_hits and best_score < _MIN_CODE_CONFIDENCE and not doc_intent:
             # No confident code hit — check if any semantic hit is better
             best_semantic = max(
-                (c.get("vector_score", c.get("final_score", 0.0)) for c in other_hits),
+                (c.get("final_score", 0.0) for c in other_hits),
                 default=0.0,
             )
             if best_semantic < _MIN_CODE_CONFIDENCE:
                 result = {
+                    "query": query,
                     "status": "no_confident_match",
                     "best_score": round(max(best_score, best_semantic), 4),
                     "suggestion": (
@@ -217,7 +226,7 @@ def context_pack(
                     if ":" in location_part:
                         fpath, lineno_str = location_part.rsplit(":", 1)
                         lineno = int(lineno_str)
-                        window_text = _read_window(fpath, lineno, window_lines)
+                        window_text = _read_window(fpath, lineno, window_lines, repo_root)
                         file_ref = f"{fpath}:{lineno}"
                 except (ValueError, IndexError):
                     pass
@@ -298,7 +307,7 @@ def context_pack(
     return result
 
 
-def _file_mode_context(file_path: str, max_tokens: int, window_lines: int) -> dict:
+def _file_mode_context(file_path: str, max_tokens: int, window_lines: int, repo_root: str | None = None) -> dict:
     """Return all indexed context for a specific file (Cursor-style file mode)."""
     from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
     from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
@@ -312,14 +321,14 @@ def _file_mode_context(file_path: str, max_tokens: int, window_lines: int) -> di
         # Normalize path
         rel_path = file_path
         if os.path.isabs(file_path):
-            repo_root = os.environ.get("COGNIREPO_ROOT", os.getcwd())
-            rel_path = os.path.relpath(file_path, repo_root)
+            _root = repo_root or os.environ.get("COGNIREPO_ROOT", os.getcwd())
+            rel_path = os.path.relpath(file_path, _root)
 
         file_data = indexer.index_data.get("files", {}).get(rel_path, {})
         symbols = file_data.get("symbols", [])
 
         for sym in symbols:
-            content = _read_window(rel_path, sym["start_line"], window_lines)
+            content = _read_window(rel_path, sym["start_line"], window_lines, repo_root)
             if not content:
                 continue
             tok = _count_tokens(content)
@@ -349,9 +358,8 @@ def _file_mode_context(file_path: str, max_tokens: int, window_lines: int) -> di
 
 
 if __name__ == "__main__":
-    import json
     import sys
 
     q = " ".join(sys.argv[1:]) or "authentication logic"
-    result = context_pack(q)
-    print(json.dumps(result, indent=2))
+    _result = context_pack(q)
+    print(json.dumps(_result, indent=2))

@@ -30,6 +30,9 @@
 | `EdgeType.CALLED_BY` | `"CALLED_BY"` | FUNCTION → FUNCTION | A function is called by another function | `who_calls("hybrid_retrieve")` |
 | `EdgeType.QUERIED_WITH` | `"QUERIED_WITH"` | CONCEPT → QUERY | A concept was mentioned in a query | `subgraph("circuit_breaker", depth=2)` |
 | `EdgeType.CO_OCCURS` | `"CO_OCCURS"` | FILE ↔ FILE | Two files are frequently edited together (behaviour tracker) | `subgraph("memory/semantic_memory.py")` |
+| `EdgeType.IMPORTS` | `"IMPORTS"` | FILE → FILE | File A imports module or file B | `subgraph("retrieval/hybrid.py")` |
+| `EdgeType.INHERITS` | `"INHERITS"` | CLASS → CLASS | Class A inherits from class B | `subgraph("BaseRetriever")` |
+| `EdgeType.SIMILAR_TO` | `"SIMILAR_TO"` | any ↔ any | Semantically similar symbols (embedding distance below threshold) | `subgraph("hybrid_retrieve", depth=2)` |
 
 ### Direction notes
 

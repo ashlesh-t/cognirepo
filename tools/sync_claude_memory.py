@@ -160,15 +160,14 @@ def _chunk_source_file(content: str, file_path: str) -> list[str]:
     Split source file into semantic chunks (~800 chars each).
     Splits on class/function definition boundaries first, then by paragraph.
     """
-    import re as _re  # pylint: disable=import-outside-toplevel
     ext = os.path.splitext(file_path)[1].lower()
 
     if ext in (".py", ".js", ".ts", ".java", ".go", ".rs", ".rb"):
         # Split on top-level def/class/func boundaries
-        parts = _re.split(r"(?m)^(?=(?:def |class |func |function |public |private |protected ))", content)
+        parts = re.split(r"(?m)^(?=(?:def |class |func |function |public |private |protected ))", content)
     elif ext in (".md", ".rst", ".txt"):
         # Split on headings / blank lines
-        parts = _re.split(r"(?m)^(?=#{1,3} |\n{2,})", content)
+        parts = re.split(r"(?m)^(?=#{1,3} |\n{2,})", content)
     else:
         # Fixed-size chunks (~800 chars)
         parts = [content[i:i+800] for i in range(0, len(content), 800)]

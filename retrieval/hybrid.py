@@ -25,6 +25,7 @@ Default: {"vector": 0.5, "graph": 0.3, "behaviour": 0.2}
 import json
 import math
 import os
+import threading
 import time
 
 import numpy as np
@@ -34,7 +35,7 @@ from graph.behaviour_tracker import BehaviourTracker
 from graph.graph_utils import extract_entities_from_text, make_node_id
 from graph.knowledge_graph import KnowledgeGraph
 from indexer.ast_indexer import ASTIndexer
-from memory.embeddings import get_model
+from memory.embeddings import encode_with_timeout
 from memory.episodic_memory import get_history
 from vector_db.local_vector_db import LocalVectorDB
 
@@ -68,7 +69,6 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
 
     def __init__(self) -> None:
         self.weights = _load_weights()
-        self.model = get_model()
         self.db = LocalVectorDB()
         self.graph = KnowledgeGraph()
         self.behaviour = BehaviourTracker(self.graph)
@@ -85,26 +85,39 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
           text, importance, source, final_score,
           vector_score, graph_score, behaviour_score
         """
-        query_vector = self.model.encode(query).astype("float32")
+        if len(query) > MAX_QUERY_LEN:
+            raise ValueError(
+                f"Query too long ({len(query):,} chars). "
+                f"Maximum: {MAX_QUERY_LEN:,}. "
+                "Truncate or set COGNIREPO_MAX_QUERY_LEN to override."
+            )
+        query_vector = encode_with_timeout(query).astype("float32")
 
-        # 1. wider vector net before re-ranking
+        # 1. wider vector net before re-ranking (semantic memory FAISS)
         vector_candidates = self._vector_retrieve(query_vector, top_k * 3)
 
-        # 2. AST reverse-index expansion
+        # 2. AST reverse-index exact lookup (entity names extracted from query)
         entities = extract_entities_from_text(query)
-        ast_candidates = self._ast_retrieve(entities)
+        ast_exact_candidates = self._ast_retrieve(entities)
 
-        # 3. merge + dedup
-        all_candidates = self._merge_candidates(vector_candidates, ast_candidates)
+        # 3. AST FAISS semantic search — works on fresh repos with no stored memories.
+        #    This is the primary code-search path when the semantic memory is cold.
+        ast_faiss_candidates = self._ast_faiss_retrieve(query_vector, top_k * 2)
+
+        # 4. merge + dedup (AST exact overrides FAISS when same symbol; vector_score
+        #    from FAISS is promoted to exact candidates that had score=0.0)
+        all_candidates = self._merge_candidates(
+            vector_candidates, ast_exact_candidates, ast_faiss_candidates
+        )
 
         if not all_candidates:
             return []
 
-        # 4. score
+        # 5. score
         all_counts = self.behaviour.get_all_scores()
         scored = self._score_candidates(all_candidates, entities, all_counts)
 
-        # 5. sort + truncate
+        # 6. sort + truncate
         scored.sort(key=lambda x: x["final_score"], reverse=True)
         return scored[:top_k]
 
@@ -158,18 +171,93 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
                     })
         return results
 
+    def _ast_faiss_retrieve(self, query_vector: np.ndarray, k: int) -> list[dict]:
+        """
+        Semantic FAISS search over AST-indexed code symbols.
+
+        Unlike _ast_retrieve() which does exact entity-name lookup, this queries
+        the AST FAISS index directly — works on fresh repos where no memories have
+        been stored yet and extract_entities_from_text() returns nothing.
+
+        Results use source="ast" and the same text format as _ast_retrieve so they
+        flow correctly through context_pack's window-extraction and confidence gate.
+        """
+        if self.indexer.faiss_index is None or self.indexer.faiss_index.ntotal == 0:
+            return []
+
+        fetch_k = min(k * 2, self.indexer.faiss_index.ntotal)
+        distances, ids = self.indexer.faiss_index.search(
+            np.array([query_vector], dtype="float32"), fetch_k
+        )
+
+        results: list[dict] = []
+        seen: set[str] = set()
+        for dist, fid in zip(distances[0], ids[0]):
+            if fid < 0 or fid >= len(self.indexer.faiss_meta):
+                continue
+            meta = self.indexer.faiss_meta[fid]
+            # include file_summary entries — they answer "what does X.py do?" queries
+
+            file_path = meta.get("file", "")
+            name = meta.get("name", "")
+            line = meta.get("start_line", -1)
+            sym_type = meta.get("type", "SYMBOL")
+            doc = meta.get("docstring", "")
+
+            key = f"{file_path}::{name}"
+            if key in seen:
+                continue
+            seen.add(key)
+
+            text = f"{sym_type} {name} in {file_path}:{line}" + (f" — {doc}" if doc else "")
+            raw_score = max(0.0, 1.0 - float(dist) / 2.0)
+            # Weight from crawl: 1.0=direct, 0.75=hop-2, 0.5=indirect
+            crawl_weight = float(meta.get("weight", 1.0))
+            score = raw_score * crawl_weight
+
+            results.append({
+                "text": text,
+                "importance": 0.6,
+                "source": "ast",
+                "vector_score": score,
+                "_id": key,
+                "_symbol": make_node_id(sym_type, name, file_path),
+                "_crawl_weight": crawl_weight,
+            })
+            if len(results) >= k:
+                break
+
+        return results
+
     def _merge_candidates(
         self,
         vector_candidates: list[dict],
-        ast_candidates: list[dict],
+        ast_exact: list[dict],
+        ast_faiss: list[dict] | None = None,
     ) -> list[dict]:
-        """Deduplicate by _id; AST candidates that match vector ones inherit vector_score."""
+        """
+        Deduplicate by _id across all three candidate lists.
+
+        Priority: vector_candidates > ast_exact > ast_faiss.
+        When the same symbol appears in multiple lists, the highest vector_score wins
+        so FAISS scores promote exact-match candidates that had vector_score=0.0.
+        """
         merged: dict[str, dict] = {}
         for c in vector_candidates:
             merged[c["_id"]] = c
-        for c in ast_candidates:
-            if c["_id"] not in merged:
+        for c in ast_exact:
+            existing = merged.get(c["_id"])
+            if existing is None:
                 merged[c["_id"]] = c
+            elif c.get("vector_score", 0.0) > existing.get("vector_score", 0.0):
+                merged[c["_id"]] = {**existing, "vector_score": c["vector_score"]}
+        for c in (ast_faiss or []):
+            existing = merged.get(c["_id"])
+            if existing is None:
+                merged[c["_id"]] = c
+            elif c.get("vector_score", 0.0) > existing.get("vector_score", 0.0):
+                # Promote the vector_score but keep other fields from the earlier entry
+                merged[c["_id"]] = {**existing, "vector_score": c["vector_score"]}
         return list(merged.values())
 
     def _score_candidates(
@@ -281,12 +369,14 @@ _HYBRID_CACHE: dict[tuple, tuple] = {}
 _HYBRID_CACHE_TTL = 300  # 5 minutes
 _CACHE_HITS = 0
 _CACHE_MISSES = 0
+_CACHE_LOCK = threading.Lock()
 
 
 # Default 0.0 = no filtering. final_score on cold repos = 0.5*vector (graph+behaviour=0),
 # so a 0.35 final_score gate requires vector_score>=0.70 which is unreachable on cold index.
 # Let context_pack's _MIN_CODE_CONFIDENCE=0.25 gate handle quality at the pack layer.
 _DEFAULT_MIN_SCORE: float = float(os.environ.get("COGNIREPO_MIN_RETRIEVAL_SCORE", "0.0"))
+MAX_QUERY_LEN: int = int(os.environ.get("COGNIREPO_MAX_QUERY_LEN", "50000"))
 
 
 def hybrid_retrieve(query: str, top_k: int = 5, min_score: float | None = None) -> list[dict]:
@@ -303,15 +393,23 @@ def hybrid_retrieve(query: str, top_k: int = 5, min_score: float | None = None) 
     global _CACHE_HITS, _CACHE_MISSES  # pylint: disable=global-statement
     cache_key = (query, top_k)
     now = time.monotonic()
-    cached = _HYBRID_CACHE.get(cache_key)
-    if cached is not None:
-        result, ts = cached
-        if now - ts < _HYBRID_CACHE_TTL:
-            _CACHE_HITS += 1
-            return _apply_min_score(result, min_score)
-    _CACHE_MISSES += 1
+
+    with _CACHE_LOCK:
+        cached = _HYBRID_CACHE.get(cache_key)
+        if cached is not None:
+            result, ts = cached
+            if now - ts < _HYBRID_CACHE_TTL:
+                _CACHE_HITS += 1
+                return _apply_min_score(result, min_score)
+        _CACHE_MISSES += 1
+
+    # Heavy compute outside the lock — two concurrent misses both compute,
+    # which is safe (idempotent) and avoids blocking during expensive retrieval.
     result = HybridRetriever().retrieve(query, top_k)
-    _HYBRID_CACHE[cache_key] = (result, now)
+
+    with _CACHE_LOCK:
+        _HYBRID_CACHE[cache_key] = (result, now)
+
     return _apply_min_score(result, min_score)
 
 
@@ -333,15 +431,54 @@ def _apply_min_score(result: list[dict], min_score: float | None) -> list[dict]:
 
 def invalidate_hybrid_cache() -> None:
     """Evict all cached results. Call this on any file-change event."""
-    _HYBRID_CACHE.clear()
+    with _CACHE_LOCK:
+        _HYBRID_CACHE.clear()
 
 
 def cache_stats() -> dict:
     """Return cache hit/miss counts for cognirepo doctor."""
-    return {"hits": _CACHE_HITS, "misses": _CACHE_MISSES}
+    with _CACHE_LOCK:
+        return {"hits": _CACHE_HITS, "misses": _CACHE_MISSES}
 
 
 # ── episodic BM25 filter ──────────────────────────────────────────────────────
+
+# Mtime-keyed cache: rebuild only when episodic.json changes on disk.
+_BM25_CACHE: dict = {"mtime": -1.0, "bm25": None, "events": None}
+_BM25_LOCK = threading.Lock()
+
+
+def _get_cached_bm25() -> tuple:
+    """Return (bm25, events, id_to_event) rebuilding only when episodic file changes."""
+    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    ep_file = get_path("episodic/episodic.json")
+    try:
+        mtime = os.path.getmtime(ep_file)
+    except FileNotFoundError:
+        mtime = 0.0
+
+    with _BM25_LOCK:
+        if _BM25_CACHE["mtime"] == mtime and _BM25_CACHE["bm25"] is not None:
+            return _BM25_CACHE["bm25"], _BM25_CACHE["events"]
+
+        events = get_history(limit=10_000)
+        docs = [
+            _Document(
+                id=ev.get("id", str(i)),
+                text=ev.get("event", "") + " " + " ".join(
+                    str(v) for v in ev.get("metadata", {}).values()
+                ),
+            )
+            for i, ev in enumerate(events)
+        ]
+        bm25 = _BM25()
+        if docs:
+            bm25.index(docs)
+        _BM25_CACHE["mtime"] = mtime
+        _BM25_CACHE["bm25"] = bm25
+        _BM25_CACHE["events"] = events
+        return bm25, events
+
 
 def episodic_bm25_filter(
     query: str,
@@ -358,7 +495,7 @@ def episodic_bm25_filter(
     time_range — optional (iso_start, iso_end) to restrict events by timestamp
     top_k      — max events to return
     """
-    events = get_history(limit=10_000)
+    bm25, events = _get_cached_bm25()
 
     if time_range:
         start_str, end_str = time_range
@@ -370,20 +507,6 @@ def episodic_bm25_filter(
     if not events:
         return []
 
-    # Build a BM25 corpus from the event log
-    # Document text = event string + serialised metadata for richer matching
-    docs = [
-        _Document(
-            id=ev.get("id", str(i)),
-            text=ev.get("event", "") + " " + " ".join(
-                str(v) for v in ev.get("metadata", {}).values()
-            ),
-        )
-        for i, ev in enumerate(events)
-    ]
-
-    bm25 = _BM25()
-    bm25.index(docs)
     ranked = bm25.search(query, top_k=top_k)
 
     if not ranked:

@@ -1,4 +1,36 @@
-# CogniRepo Security Guide
+# Security Policy
+
+## Reporting a Vulnerability
+
+**Do not open a public GitHub issue for security vulnerabilities.**
+
+Report security issues privately via **GitHub Security Advisories**:
+
+1. Go to the repository on GitHub
+2. Click the **Security** tab
+3. Click **Advisories** → **Report a vulnerability**
+4. Fill in the form and submit
+
+**Response target:** 72 hours for acknowledgement.
+
+Please include in your report:
+- Affected version(s)
+- Step-by-step reproduction instructions
+- CWE identifier if known (e.g. CWE-89 for SQL injection)
+- Impact assessment
+
+We will coordinate disclosure and credit you in the advisory unless you prefer to remain anonymous.
+
+---
+
+## Supported Versions
+
+Only the **latest release** receives security patches. Older versions are unsupported.
+
+| Version | Supported |
+|---------|-----------|
+| 0.1.x   | ✓ Current |
+| < 0.1.0 | ✗         |
 
 ---
 
@@ -16,6 +48,14 @@ CogniRepo never sends data to external servers.
 | API tokens | OS keychain | JWT signing secret |
 | Encryption key | OS keychain | AES-256 key (never written to disk) |
 
+### What leaves the machine
+
+Query text and the assembled context bundle are sent to whichever model API you
+configure (Anthropic, Google, xAI, OpenAI). **Nothing else.**
+
+CogniRepo has no telemetry, no analytics, and no callbacks to any CogniRepo server.
+There is no CogniRepo home server. Your data stays on your machine.
+
 ---
 
 ## Encryption at Rest
@@ -29,7 +69,7 @@ When `storage.encrypt: true` in `config.json`:
 
 **To enable:**
 ```bash
-pip install cognirepo[security]  # installs cryptography + keyring
+pip install 'cognirepo[security]'  # installs cryptography + keyring
 # Set in .cognirepo/config.json:
 # "storage": { "encrypt": true }
 ```
@@ -38,20 +78,16 @@ pip install cognirepo[security]  # installs cryptography + keyring
 
 ## Authentication (REST API)
 
+- JWT required on all routes except `GET /health`
+- Default bind: `localhost:8080` — safe for local use
+- **Never expose on `0.0.0.0` without a firewall rule in production**
 
-### Login
+### Login Example
 ```bash
-curl -X POST http://localhost:8000/auth/login \
+curl -X POST http://localhost:8080/auth/login \
   -H "Content-Type: application/json" \
   -d '{"password": "yourpassword"}'
 # Returns: { "access_token": "eyJ...", "token_type": "bearer" }
-```
-
-### Authenticated Request
-```bash
-curl http://localhost:8000/memory/retrieve \
-  -H "Authorization: Bearer eyJ..." \
-  -d '{"query": "cache bug fix"}'
 ```
 
 ### Configuration
@@ -70,15 +106,21 @@ python -c "import secrets; print(secrets.token_hex(32))"
 python -c "import bcrypt; print(bcrypt.hashpw(b'mypassword', bcrypt.gensalt()).decode())"
 ```
 
-Tokens expire after **24 hours**.
-
 ---
 
-## Secret Scanning
+## Security Scanning
 
-CogniRepo CI runs **TruffleHog** with `--only-verified` to detect committed secrets.
+CogniRepo's CI pipeline runs four automated security tools on every push:
 
-The following patterns are watched:
+| Tool | What it checks |
+|------|---------------|
+| **Bandit** | Python SAST — HIGH and CRITICAL severity only |
+| **Snyk** | Dependency vulnerabilities |
+| **Trivy** | Container image and filesystem scanning |
+| **TruffleHog** | Secrets accidentally committed to git history |
+
+### Secret Scanning Patterns
+The following patterns are watched by TruffleHog:
 - API keys (ANTHROPIC, GEMINI, OPENAI, GROK)
 - JWT secrets
 - Redis connection strings containing passwords
@@ -91,33 +133,14 @@ The following patterns are watched:
 
 ---
 
-## GitHub Secrets Required for CI
+## Known Non-Issues
 
-| Secret | Description |
-|--------|-------------|
-| `SNYK_TOKEN` | Snyk vulnerability scanning |
-| `COGNIREPO_JWT_SECRET` | API auth token for integration tests |
-| `COGNIREPO_PASSWORD_HASH` | API password for integration tests |
-
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for setup instructions.
-
----
-
-## Dependency Vulnerabilities
-
-CI runs:
-- **Bandit:** Python static analysis (fails on HIGH severity)
-- **Snyk:** Dependency vulnerability scan (fails on CRITICAL CVEs)
-- **Trivy:** Filesystem scan (fails on CRITICAL/HIGH unpatched CVEs)
-
-To scan locally:
-```bash
-pip install bandit
-bandit -r . --exclude ./.venv --severity-level high
-
-pip install snyk
-snyk test --severity-threshold=critical
-```
+- **Pickle deserialization** (`graph.pkl`): The graph file is loaded with `pickle.load`.
+  This is intentional — the file is local, user-controlled, and protected by the
+  `.cognirepo/.gitignore`. The `# nosec B301` annotation is correct.
+- **Subprocess with list args** (`cognirepo seed`): Uses `subprocess.run` with a list
+  argument (not a shell string), which is not injectable. The `# nosec B603` annotation
+  is correct.
 
 ---
 

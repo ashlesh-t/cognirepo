@@ -17,7 +17,6 @@ Covers:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -74,7 +73,7 @@ class TestLocalVectorDB:
         vec = np.array([0.1, 0.2, 0.3, 0.4], dtype="float32")
         adapter.add(vec, "hello world", importance=0.9, source="memory")
 
-        results = adapter.search(vec, k=1)
+        results = adapter.search(vec, top_k=1)
         assert len(results) == 1
         assert results[0]["text"] == "hello world"
 
@@ -85,7 +84,7 @@ class TestLocalVectorDB:
         vec = np.array([0.1, 0.2, 0.3, 0.4], dtype="float32")
         adapter.add(vec, "test entry", importance=0.5, source="memory")
 
-        results = adapter.search_with_scores(vec, k=1)
+        results = adapter.search_with_scores(vec, top_k=1)
         assert len(results) == 1
         assert "l2_distance" in results[0]
         assert "faiss_row" in results[0]
@@ -113,8 +112,8 @@ class TestLocalVectorDB:
         adapter.add(vec, "memory entry", importance=0.5, source="memory")
         adapter.add(vec, "symbol entry", importance=0.5, source="symbol")
 
-        memory_results = adapter.search(vec, k=5, source="memory")
-        symbol_results = adapter.search(vec, k=5, source="symbol")
+        memory_results = adapter.search(vec, top_k=5, source="memory")
+        symbol_results = adapter.search(vec, top_k=5, source="symbol")
 
         assert all(r["source"] == "memory" for r in memory_results)
         assert all(r["source"] == "symbol" for r in symbol_results)
@@ -133,7 +132,7 @@ class TestLocalVectorDB:
 # ── ChromaDBAdapter ───────────────────────────────────────────────────────────
 
 class TestChromaDBAdapter:
-    def test_raises_import_error_when_chromadb_missing(self, monkeypatch):
+    def test_raises_import_error_when_chromadb_missing(self, monkeypatch):  # pylint: disable=unused-argument
         """When chromadb is not installed, instantiating the adapter must raise."""
         import sys
         with patch.dict(sys.modules, {"chromadb": None}):

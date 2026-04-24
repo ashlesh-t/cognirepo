@@ -61,6 +61,7 @@ class TestFernetHelpers:
 
     def test_encrypt_decrypt_round_trip(self):
         pytest.importorskip("cryptography")
+        pytest.importorskip("keyring")
         from security.encryption import get_or_create_key, encrypt_bytes, decrypt_bytes
 
         with mock.patch("keyring.get_password", return_value=None), \
@@ -75,6 +76,7 @@ class TestFernetHelpers:
     def test_key_persistence_returns_same_key(self):
         """Second call with same project_id returns the same key."""
         pytest.importorskip("cryptography")
+        pytest.importorskip("keyring")
         from security.encryption import get_or_create_key
 
         stored_key = None
@@ -113,6 +115,7 @@ class TestFernetHelpers:
 class TestEpisodicEncryption:
     def test_encrypt_write_not_plaintext(self, isolated_cognirepo):
         pytest.importorskip("cryptography")
+        pytest.importorskip("keyring")
         _enable_encryption(isolated_cognirepo)
 
         key_store: dict = {}
@@ -136,6 +139,7 @@ class TestEpisodicEncryption:
     def test_encrypt_round_trip(self, isolated_cognirepo):
         """Write encrypted → read decrypted = original event."""
         pytest.importorskip("cryptography")
+        pytest.importorskip("keyring")
         _enable_encryption(isolated_cognirepo)
 
         key_store: dict = {}
@@ -174,6 +178,7 @@ class TestEpisodicEncryption:
 class TestGraphEncryption:
     def test_graph_pkl_encrypted(self, isolated_cognirepo):
         pytest.importorskip("cryptography")
+        pytest.importorskip("keyring")
         _enable_encryption(isolated_cognirepo)
 
         key_store: dict = {}

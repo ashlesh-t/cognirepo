@@ -6,7 +6,7 @@
 
 """
 Complexity Classifier — rule-based, multi-signal weighted scorer.
-No ML training required. Decides QUICK / FAST / BALANCED / DEEP tier for every query.
+No ML training required. Decides QUICK / STANDARD / COMPLEX / EXPERT tier for every query.
 
 Signal table (from ARCHITECTURE.md):
 ┌────────────────────────────────────────────────┬────────┬──────────────────────────┐
@@ -18,10 +18,10 @@ Signal table (from ARCHITECTURE.md):
 │ Cross-entity count (fn/file/class mentions)    │  +1.5  │ per entity above 2       │
 │ Context dependency (episodic/graph history ref)│  +3    │ binary                   │
 │ Query token length                             │ +0.5   │ per 10 tok after first 20│
-│ Imperative+abstract combo (implement,build,…) │  +4    │ binary                   │
+│ Imperative+abstract combo (implement,build,…) │  +5    │ binary                   │
 └────────────────────────────────────────────────┴────────┴──────────────────────────┘
 
-Tiers:   0–2 → QUICK (Grok)   3–4 → STANDARD   5–9 → COMPLEX   10+ → EXPERT
+Tiers:   ≤2 → QUICK (local resolver)   ≤4 → STANDARD   ≤9 → COMPLEX   >9 → EXPERT
 
 Hard overrides (bypass score):
   "full context" / "everything related"   → EXPERT
@@ -46,6 +46,14 @@ _REASONING_KW = {
     # depth/quality modifiers
     "detail", "detailed", "improve", "improvements", "thorough",
     "comprehensive", "complex", "advanced", "in-depth", "deep dive",
+    # security / reliability — require multi-file cross-cutting analysis
+    "security", "vulnerability", "vulnerabilities", "audit", "exploit",
+    "attack surface", "injection", "authentication", "authorization",
+    # performance / scalability — need call-graph and hot-path understanding
+    "performance", "bottleneck", "optimize", "optimization", "latency",
+    "throughput", "scalability", "scalable", "reliability", "reliable",
+    # guided walkthrough — explicit request for detailed step-by-step response
+    "step by step", "walk me through", "walk through",
 }
 _LOOKUP_KW = {
     "what is", "what are", "show", "list", "find", "get", "display",
@@ -59,6 +67,10 @@ _CONTEXT_DEP = {
     "last time", "earlier", "previously", "history", "before",
     "session", "remember", "recall", "as discussed", "you said",
     "what i", "my last",
+    # repo-scoped signals — query is about THIS codebase, not generic knowledge
+    "in this repo", "in our repo", "in our codebase", "in my project",
+    "in this codebase", "in this project", "our implementation",
+    "our code", "this codebase", "this repo",
 }
 _FULL_CONTEXT = {"full context", "everything related", "all related", "complete context"}
 _DOCS_QUERY_PATTERN = re.compile(

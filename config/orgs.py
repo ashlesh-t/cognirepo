@@ -29,6 +29,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from config.paths import get_orgs_path
 
@@ -45,7 +46,20 @@ def _load_orgs() -> dict:
         return {}
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+        # Backfill org_id for entries created before this field was added.
+        dirty = False
+        for org_data in data.values():
+            if isinstance(org_data, dict) and "id" not in org_data:
+                org_data["id"] = str(uuid4())
+                dirty = True
+        if dirty:
+            try:
+                with open(path, "w", encoding="utf-8") as wf:
+                    json.dump(data, wf, indent=2)
+            except OSError:
+                pass
+        return data
     except (json.JSONDecodeError, OSError) as exc:
         logger.error("Failed to load orgs.json: %s", exc)
         return {}
@@ -68,7 +82,7 @@ def create_org(name: str) -> bool:
     orgs = _load_orgs()
     if name in orgs:
         return False
-    orgs[name] = {"repos": [], "projects": {}}
+    orgs[name] = {"id": str(uuid4()), "repos": [], "projects": {}}
     _save_orgs(orgs)
     return True
 
@@ -76,6 +90,14 @@ def create_org(name: str) -> bool:
 def list_orgs() -> dict:
     """Return the global orgs registry."""
     return _load_orgs()
+
+
+def get_org_by_id(org_id: str) -> tuple[str, dict] | None:
+    """Return (org_name, org_data) for the given UUID, or None if not found."""
+    for name, data in _load_orgs().items():
+        if data.get("id") == org_id:
+            return (name, data)
+    return None
 
 
 def link_repo_to_org(repo_path: str, org_name: str) -> bool:
@@ -187,9 +209,37 @@ def get_repo_project(repo_path: str) -> tuple[str, str] | None:
 
 
 def get_project_repos(org_name: str, project_name: str) -> list[str]:
-    """Return list of repo paths in a project. Empty list if not found."""
+    """Return list of existing repo paths in a project (filters out missing dirs)."""
+    raw = (
+        _load_orgs()
+        .get(org_name, {})
+        .get("projects", {})
+        .get(project_name, {})
+        .get("repos", [])
+    )
+    return [r for r in raw if os.path.isdir(r)]
+
+
+def purge_stale_repos(org_name: str) -> list[str]:
+    """
+    Remove non-existent repo paths from org-level and project-level lists.
+    Returns the list of paths removed. Saves orgs.json only if anything changed.
+    """
     orgs = _load_orgs()
-    return orgs.get(org_name, {}).get("projects", {}).get(project_name, {}).get("repos", [])
+    if org_name not in orgs:
+        return []
+    removed: list[str] = []
+    org_data = orgs[org_name]
+    live = [r for r in org_data.get("repos", []) if os.path.isdir(r)]
+    removed.extend(r for r in org_data.get("repos", []) if r not in live)
+    org_data["repos"] = live
+    for proj in org_data.get("projects", {}).values():
+        live_p = [r for r in proj.get("repos", []) if os.path.isdir(r)]
+        removed.extend(r for r in proj.get("repos", []) if r not in live_p)
+        proj["repos"] = live_p
+    if removed:
+        _save_orgs(orgs)
+    return removed
 
 
 def get_shared_memory_path(org_name: str, project_name: str) -> Path:

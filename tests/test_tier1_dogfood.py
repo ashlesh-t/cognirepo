@@ -13,6 +13,7 @@ Uses sys.modules mocking so faiss/sentence-transformers/networkx are not require
 from __future__ import annotations
 
 import sys
+import types
 from unittest.mock import MagicMock, patch
 
 

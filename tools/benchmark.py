@@ -383,10 +383,10 @@ if __name__ == "__main__":
     parser.add_argument("--compare", action="store_true", help="Compare with last run")
     args = parser.parse_args()
 
-    metrics = run_benchmark()
+    _results = run_benchmark()
 
     if args.json:
-        print(json.dumps({k: v for k, v in metrics.items() if k != "_details"}, indent=2))
+        print(json.dumps({k: v for k, v in _results.items() if k != "_details"}, indent=2))
     else:
-        prev = load_last_run() if args.compare else None
-        print_report(metrics, compare=prev)
+        _prev = load_last_run() if args.compare else None
+        print_report(_results, compare=_prev)

@@ -44,21 +44,41 @@ Every session starts with tools — not file reads, not assumptions, not skippin
 
 ## MCP Tools Available
 
+### Core retrieval
 | Tool | Description | When to use |
 |------|-------------|-------------|
 | `context_pack(query)` | Token-efficient code context (code-first, no README noise) | FIRST call before any file read |
 | `lookup_symbol(name)` | O(1) symbol lookup — file + line | Before reading code |
 | `who_calls(function_name)` | Trace callers + dynamic dispatch fallback | Impact analysis, refactoring |
 | `retrieve_memory(query, top_k=5)` | Semantic similarity search over stored memories | Before answering — pull past context |
-| `retrieve_learnings(query)` | Structured learnings: decisions, bugs, quirks | Architecture questions |
 | `search_docs(query)` | Full-text search in all `.md` files with snippets | Documentation lookups |
-| `store_memory(text, source="")` | Persist a memory to the FAISS index | After solving bugs, recording decisions |
-| `log_episode(event, metadata={})` | Record a significant event to episodic log | Track important milestones |
 | `subgraph(entity, depth=1)` | Local knowledge graph neighbourhood | Understand relationships |
 | `graph_stats()` | Node/edge count and graph health | Check if graph has data |
 | `episodic_search(query, limit=10)` | Keyword search in event history | Find past decisions |
 
+### User & session intelligence
+| Tool | Description | When to use |
+|------|-------------|-------------|
+| `get_user_profile()` | User's interaction style: depth pref, vocabulary, question types | **Call at session start** to calibrate response style |
+| `get_session_history(limit=10)` | Recent conversation exchanges across sessions | Resuming context from prior sessions |
+
+### Error tracking & prevention
+| Tool | Description | When to use |
+|------|-------------|-------------|
+| `get_error_patterns()` | Recurring errors with prevention hints | Before proposing a fix — check if it has failed before |
+| `record_error(error_type, message, file_path, query_context)` | Log an error for future avoidance | After any error Claude or user encounters |
+
+### Memory & storage
+| Tool | Description | When to use |
+|------|-------------|-------------|
+| `store_memory(text, source="")` | Persist a memory to the FAISS index | After solving bugs, recording decisions |
+| `log_episode(event, metadata={})` | Record a significant event to episodic log | Track important milestones |
+
 ## Recommended Workflow
+
+### On session start
+1. `get_user_profile()` → calibrate response depth and terminology
+2. `get_error_patterns()` → know what has failed before in this repo
 
 ### On Complex Code Questions
 1. `context_pack("{question}")` → packed code + memory context, called **before** any file read
@@ -69,6 +89,11 @@ Every session starts with tools — not file reads, not assumptions, not skippin
 ### After Solving a Bug
 ```
 store_memory("Fixed: {bug summary} — root cause was X, fix was Y", source="debug")
+```
+
+### After Encountering an Error
+```
+record_error("TypeError", "expected str got int in parse_config", "config/parser.py", "{query that led here}")
 ```
 
 ### Navigating Unfamiliar Code
