@@ -8,4 +8,4 @@ try:
     from importlib.metadata import version as _pkg_version
     __version__: str = _pkg_version("cognirepo")
 except Exception:  # package not installed (editable dev install edge case)
-    __version__ = "0.2.1"
+    __version__ = "0.3.0"
