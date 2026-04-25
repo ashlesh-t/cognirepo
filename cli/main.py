@@ -904,6 +904,66 @@ fall back to grep / file read directly.
         f.write(content)
 
 
+def _cmd_ask_local(query: str, verbose: bool = False, top_k: int = 5) -> None:
+    """
+    Answer a natural-language query entirely from the local index — no API key required.
+
+    Uses the QUICK-tier local resolver: symbol lookup, call graph, file listing,
+    graph stats, recent history, and docs FAISS search. If the query needs richer
+    analysis (STANDARD/COMPLEX tier), prints a helpful suggestion to use the MCP
+    tools from Claude Code instead of silently failing.
+    """
+    if not query:
+        print("Usage: cognirepo ask <question>")
+        print("Example: cognirepo ask 'where is context_pack?'")
+        print("         cognirepo ask 'who calls hybrid_retrieve'")
+        print("         cognirepo ask 'list files'")
+        return
+
+    try:
+        from orchestrator.classifier import classify  # pylint: disable=import-outside-toplevel
+        from orchestrator.context_builder import build as build_context  # pylint: disable=import-outside-toplevel
+        from orchestrator.router import try_local_resolve  # pylint: disable=import-outside-toplevel
+    except ImportError:
+        # Fallback when orchestrator is unavailable: use context_pack directly
+        from tools.context_pack import context_pack  # pylint: disable=import-outside-toplevel
+        result = context_pack(query, max_tokens=1000, include_episodic=False)
+        if result.get("status") in ("no_confident_match", "index_empty"):
+            print(f"No local match found. Run `cognirepo index-repo .` first.")
+        else:
+            for s in result.get("sections", []):
+                print(f"[{s.get('source', '')}]\n{s.get('content', '')}\n")
+        return
+
+    clf = classify(query)
+    if verbose:
+        print(f"  tier={clf.tier}  score={clf.score:.1f}  model={clf.model}")
+
+    # Build a minimal context bundle (no episode retrieval — local only)
+    try:
+        bundle = build_context(query, top_k=top_k, episode_limit=0, tier="STANDARD")
+    except Exception:  # pylint: disable=broad-except
+        bundle = None
+
+    answer = try_local_resolve(query, bundle)
+
+    if answer is not None:
+        print(answer)
+        return
+
+    # Local resolver has no confident answer — guide user to MCP tools
+    print(
+        f"This query needs deeper analysis (tier: {clf.tier}) that goes beyond the local index.\n"
+        "\nFor rich answers, use CogniRepo MCP tools from your AI agent:\n"
+        "  • Claude Code / Cursor: the MCP tools answer this automatically\n"
+        "  • context_pack(\"" + query[:60] + "\")  — retrieves relevant code\n"
+        "  • episodic_search(\"" + query[:40] + "\")  — searches past decisions\n"
+        "\nOr install model providers and set an API key:\n"
+        "  pip install 'cognirepo[providers]'\n"
+        "  export ANTHROPIC_API_KEY=sk-..."
+    )
+
+
 def _cmd_prime(as_json: bool = False) -> None:
     """Generate a session brief for agent bootstrap — thin wrapper over prime_session()."""
     from tools.prime_session import prime_session  # pylint: disable=import-outside-toplevel
@@ -2096,8 +2156,13 @@ def main():
     )
 
     # ask — placeholder (not yet implemented)
-    p_ask = sub.add_parser("ask", help="[coming soon] Route a query through the multi-model orchestrator")
+    p_ask = sub.add_parser(
+        "ask",
+        help="Ask your codebase a natural-language question (answered from local index, no API key needed)",
+    )
     p_ask.add_argument("query", nargs="?", help="Natural language query")
+    p_ask.add_argument("--verbose", "-v", action="store_true", help="Show classifier tier and matched source")
+    p_ask.add_argument("--top-k", type=int, default=5, help="Symbols to retrieve for context (default: 5)")
 
     # sessions — list recent conversations
     p_sess = sub.add_parser("sessions", help="List recent conversation sessions")
@@ -2875,10 +2940,10 @@ def main():
         return
 
     if args.command == "ask":
-        print(
-            "cognirepo ask is not yet available in this release.\n"
-            "Use your AI agent (Claude Code, Cursor, etc.) with the MCP tools instead:\n"
-            "  cognirepo init  →  adds MCP server to your editor automatically."
+        _cmd_ask_local(
+            query=args.query or "",
+            verbose=getattr(args, "verbose", False),
+            top_k=getattr(args, "top_k", 5),
         )
         return
 
