@@ -960,6 +960,66 @@ def get_session_history(limit: int = 10, repo_path: str | None = None) -> list:
 
 
 @mcp.tool()
+def get_last_context(repo_path: str | None = None) -> dict:
+    """
+    Return the most recent context snapshot written by context_pack.
+
+    Call this at the START of a session to resume where the previous agent
+    left off. Returns: query, sections, token_count, generated_at, agent,
+    org_graph_summary. Returns {"status": "no_context"} if no snapshot exists.
+
+    Claude: call this automatically at session start when starting work on
+    a known project. It shows what the last agent was looking at, preventing
+    duplicate exploration and token waste.
+
+    Do NOT call on a fresh project that has never run context_pack.
+
+    repo_path: optional absolute path to the target repository.
+    """
+    with _repo_ctx(repo_path):
+        try:
+            from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
+            config_path = _gp("config.json")
+            if not os.path.exists(config_path):
+                return {"status": "no_context", "reason": "repo not initialized"}
+            with open(config_path, encoding="utf-8") as f:
+                cfg = json.load(f)
+            repo_name = cfg.get("project_name", os.path.basename(os.getcwd()))
+            ctx_path = os.path.join(
+                os.path.expanduser("~"), ".cognirepo", repo_name, "last_context.json"
+            )
+            if not os.path.exists(ctx_path):
+                return {"status": "no_context", "reason": "no previous session found"}
+            with open(ctx_path, encoding="utf-8") as f:
+                data = json.load(f)
+            return data
+        except (OSError, json.JSONDecodeError) as exc:
+            return {"status": "error", "reason": str(exc)}
+
+
+@mcp.tool()
+def get_session_brief(repo_path: str | None = None) -> dict:
+    """
+    Generate a session bootstrap brief for agent orientation.
+
+    Returns: architecture summary, entry points (most-called symbols),
+    recent decisions from learning store, hot symbols from behaviour tracker,
+    index health (symbol count, file count, last_indexed).
+
+    Claude: call this at the START of a session on an unfamiliar project,
+    or when resuming after a long break. Gives you the full project map in
+    one call — faster than reading files or running grep.
+
+    Do NOT call this repeatedly; call once at session start only.
+
+    repo_path: optional absolute path to the target repository.
+    """
+    with _repo_ctx(repo_path):
+        from tools.prime_session import prime_session  # pylint: disable=import-outside-toplevel
+        return prime_session()
+
+
+@mcp.tool()
 def get_user_profile(repo_path: str | None = None) -> dict:
     """
     Return the user's interaction style profile for Claude to adapt its responses.

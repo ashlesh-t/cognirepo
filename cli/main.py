@@ -905,92 +905,9 @@ fall back to grep / file read directly.
 
 
 def _cmd_prime(as_json: bool = False) -> None:
-    """
-    I2: Generate a session brief for agent bootstrap.
-    Outputs architecture summary, entry points, recent decisions, hot symbols.
-    """
-    import datetime  # pylint: disable=import-outside-toplevel
-    brief: dict = {
-        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "repo": os.path.basename(os.getcwd()),
-        "architecture": [],
-        "entry_points": [],
-        "recent_decisions": [],
-        "hot_symbols": [],
-        "known_blind_spots": [],
-        "index_health": {},
-    }
-
-    # ── architecture from learning store ─────────────────────────────────────
-    try:
-        from memory.learning_store import get_learning_store  # pylint: disable=import-outside-toplevel
-        store = get_learning_store()
-        arch_learnings = store.retrieve_learnings("architecture overview design", top_k=3)
-        brief["architecture"] = [
-            {"text": lr.get("text", "")[:200], "type": lr.get("type", "")}
-            for lr in arch_learnings
-        ]
-        recent = store.retrieve_learnings("decision bug fix", top_k=3)
-        brief["recent_decisions"] = [
-            {"text": lr.get("text", "")[:200], "type": lr.get("type", "")}
-            for lr in recent
-        ]
-    except Exception as _exc:  # pylint: disable=broad-except
-        print(f"[cognirepo prime] warning: could not load recent decisions: {_exc}", file=sys.stderr)
-
-    # ── entry points from knowledge graph (top symbols by call frequency) ────
-    try:
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-        kg = KnowledgeGraph()
-        # Top nodes by in-degree (most-called symbols)
-        if kg.G.number_of_nodes() > 0:
-            top = sorted(
-                [(n, d) for n, d in kg.G.in_degree() if not n.startswith("concept::")],
-                key=lambda x: x[1],
-                reverse=True,
-            )[:5]
-            brief["entry_points"] = [
-                {"symbol": n.replace("symbol::", ""), "call_count": deg}
-                for n, deg in top
-            ]
-    except Exception as _exc:  # pylint: disable=broad-except
-        print(f"[cognirepo prime] warning: could not load entry points: {_exc}", file=sys.stderr)
-
-    # ── hot symbols from behaviour tracker ────────────────────────────────────
-    try:
-        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
-        bt = BehaviourTracker(KnowledgeGraph())  # type: ignore[arg-type]
-        weights = bt.data.get("symbol_weights", {})
-        # Sort by hit_count
-        hot = sorted(
-            [(k, v.get("hit_count", 0)) for k, v in weights.items()],
-            key=lambda x: x[1],
-            reverse=True,
-        )[:5]
-        brief["hot_symbols"] = [
-            {"symbol": k.split("::")[-1], "path": k, "score": round(v, 2)}
-            for k, v in hot
-        ]
-    except Exception as _exc:  # pylint: disable=broad-except
-        print(f"[cognirepo prime] warning: could not load hot symbols: {_exc}", file=sys.stderr)
-
-    # ── index health ──────────────────────────────────────────────────────────
-    try:
-        with open(get_path("index/ast_index.json"), encoding="utf-8") as f:
-            idx = json.load(f)
-        brief["index_health"] = {
-            "symbols": idx.get("total_symbols", 0),
-            "files": len(idx.get("files", {})),
-            "last_indexed": idx.get("indexed_at", "unknown"),
-        }
-    except (OSError, json.JSONDecodeError):
-        brief["index_health"] = {"symbols": 0, "files": 0, "last_indexed": "not indexed"}
-
-    # ── known blind spots ─────────────────────────────────────────────────────
-    brief["known_blind_spots"] = [
-        "scheduler-registered functions (add_job) require string-literal fallback in who_calls",
-        "decorators-only registration (@app.route) may not appear in AST call graph",
-    ]
+    """Generate a session brief for agent bootstrap — thin wrapper over prime_session()."""
+    from tools.prime_session import prime_session  # pylint: disable=import-outside-toplevel
+    brief = prime_session()
 
     if as_json:
         print(json.dumps(brief, indent=2))
@@ -1027,17 +944,6 @@ def _cmd_prime(as_json: bool = False) -> None:
     for bs in brief["known_blind_spots"]:
         print(f"    ⚠  {bs}")
     print()
-
-    # Also save to last_context.json for inter-agent sharing
-    try:
-        repo_name = os.path.basename(os.getcwd())
-        save_dir = os.path.join(os.path.expanduser("~"), ".cognirepo", repo_name)
-        os.makedirs(save_dir, exist_ok=True)
-        brief["session_brief"] = True
-        with open(os.path.join(save_dir, "last_context.json"), "w", encoding="utf-8") as f:
-            json.dump(brief, f, indent=2)
-    except Exception:  # pylint: disable=broad-except
-        pass
 
 
 def _cmd_doctor_fix() -> int:

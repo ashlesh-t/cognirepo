@@ -115,17 +115,19 @@ def _autosave_context(result: dict) -> None:
         # Cross-agent handoff path: intentionally outside .cognirepo/ so sibling agents can read it
         save_dir = os.path.join(os.path.expanduser("~"), ".cognirepo", repo_name)
         os.makedirs(save_dir, exist_ok=True)
+        org_graph_summary = None
+        try:
+            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            org_graph_summary = get_org_graph().summary()
+        except Exception:  # pylint: disable=broad-except
+            pass
         out = {
             "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "agent": "cognirepo",
             "repo": repo_name,
+            "org_graph_summary": org_graph_summary,
             **result,
         }
-        try:
-            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
-            out["org_graph_summary"] = get_org_graph().summary()
-        except Exception:  # pylint: disable=broad-except
-            pass
         with store_lock():
             with open(os.path.join(save_dir, "last_context.json"), "w", encoding="utf-8") as f:
                 json.dump(out, f, indent=2)
