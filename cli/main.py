@@ -772,6 +772,138 @@ def _cmd_status() -> None:
     print()
 
 
+def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
+    """
+    One-command onboarding: scaffold .cognirepo/, index the repo,
+    and auto-write MCP config for Claude Desktop, Cursor, and/or VS Code.
+    """
+    import shutil as _shutil  # pylint: disable=import-outside-toplevel
+    cwd = os.getcwd()
+    project_name = os.path.basename(cwd)
+
+    # ── Step 1: init ─────────────────────────────────────────────────────────
+    print(f"\n[1/4] Initialising .cognirepo/ for '{project_name}'...")
+    try:
+        init_project(no_index=True, interactive=False)
+        print("  ✓ .cognirepo/ scaffolded")
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"  ✗ init failed: {exc}")
+        return
+
+    # ── Step 2: index ────────────────────────────────────────────────────────
+    if no_index:
+        print("[2/4] Skipping index (--no-index)")
+    else:
+        print("[2/4] Indexing repository (this may take a minute)...")
+        try:
+            from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+            from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+            kg = KnowledgeGraph()
+            indexer = ASTIndexer(graph=kg)
+            summary = indexer.index_repo(cwd)
+            n_sym = summary.get("symbol_count", "?")
+            n_files = summary.get("file_count", "?")
+            print(f"  ✓ Indexed {n_sym} symbols across {n_files} files")
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"  ✗ Indexing failed: {exc}")
+            print("    Run manually: cognirepo index-repo .")
+
+    # ── Step 3: auto-detect MCP targets ──────────────────────────────────────
+    print("[3/4] Configuring MCP integrations...")
+    if targets is None:
+        targets = []
+        # Always offer Claude Code (writes .mcp.json)
+        targets.append("claude")
+        # Cursor: detect .cursor/ directory
+        if os.path.isdir(os.path.join(cwd, ".cursor")):
+            targets.append("cursor")
+        # VS Code: detect .vscode/ directory
+        if os.path.isdir(os.path.join(cwd, ".vscode")):
+            targets.append("vscode")
+        # Claude Desktop: detect global config
+        _claude_desktop = _find_claude_desktop_config()
+        if _claude_desktop and "cursor" not in targets:
+            pass  # claude target already handles Code; desktop is separate
+
+    try:
+        from cli.init_project import setup_mcp  # pylint: disable=import-outside-toplevel
+        setup_mcp(targets, project_name=project_name, project_path=cwd)
+        print(f"  ✓ MCP configured for: {', '.join(targets) or 'none detected'}")
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"  ✗ MCP setup failed: {exc}")
+
+    # ── Step 4: cursor rules file ─────────────────────────────────────────────
+    print("[4/4] Writing IDE rules...")
+    cursor_dir = os.path.join(cwd, ".cursor", "rules")
+    if os.path.isdir(os.path.join(cwd, ".cursor")):
+        try:
+            os.makedirs(cursor_dir, exist_ok=True)
+            _write_cursor_rules(cursor_dir)
+            print("  ✓ .cursor/rules/cognirepo.mdc written")
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"  ✗ Cursor rules failed: {exc}")
+    else:
+        print("  — .cursor/ not found, skipping Cursor rules")
+
+    print(f"\nCogniRepo ready. Open Claude Code or Cursor in '{cwd}'.")
+    print("Run `cognirepo prime` to get a session bootstrap brief.\n")
+
+
+def _find_claude_desktop_config() -> str | None:
+    """Return path to Claude Desktop config if it exists, else None."""
+    candidates = [
+        os.path.expanduser("~/.config/claude/claude_desktop_config.json"),
+        os.path.expanduser("~/Library/Application Support/Claude/claude_desktop_config.json"),
+        os.path.expandvars(r"%APPDATA%\Claude\claude_desktop_config.json"),
+    ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def _write_cursor_rules(rules_dir: str) -> None:
+    """Write .cursor/rules/cognirepo.mdc with tool routing rules."""
+    content = """\
+---
+description: CogniRepo tool routing rules — use before native file exploration
+globs: ["**/*.py", "**/*.ts", "**/*.js", "**/*.go", "**/*.rs", "**/*.java"]
+alwaysApply: true
+---
+
+# CogniRepo Tool Routing
+
+CogniRepo MCP tools are available. Use them before native file exploration.
+
+## Session start (always call these first):
+1. `get_session_brief` — project architecture, hot symbols, index health
+2. `get_last_context` — resume where previous agent left off
+
+## Tool routing
+
+| Task | Call first |
+|------|-----------|
+| Find where a function lives | `lookup_symbol` |
+| Understand code or query | `context_pack` |
+| Find callers of a function | `who_calls` |
+| Past decisions or bugs | `episodic_search` |
+| Architecture overview | `architecture_overview` |
+| Cross-repo search | `cross_repo_search` |
+
+## Rules
+
+**NEVER** read files >100 lines without calling `context_pack` first.
+**NEVER** assume where a symbol lives — call `lookup_symbol` first.
+**NEVER** use file search/grep for semantic queries — use `semantic_search_code`.
+
+If `context_pack` returns `status: "no_confident_match"` or `status: "index_empty"`:
+fall back to grep / file read directly.
+"""
+    out = os.path.join(rules_dir, "cognirepo.mdc")
+    with open(out, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
 def _cmd_prime(as_json: bool = False) -> None:
     """
     I2: Generate a session brief for agent bootstrap.
@@ -2197,6 +2329,20 @@ def main():
     p_proj_unlink.add_argument("project", help="Project name")
     p_proj_unlink.add_argument("path", nargs="?", default=".", help="Repo path (default: current)")
 
+    # setup — one-command onboarding (init + index + MCP config)
+    p_setup = sub.add_parser(
+        "setup",
+        help="One-command onboarding: init, index, and configure MCP for Claude/Cursor/VS Code",
+    )
+    p_setup.add_argument(
+        "--no-index", action="store_true", default=False,
+        help="Skip indexing (scaffold .cognirepo/ only)",
+    )
+    p_setup.add_argument(
+        "--targets", nargs="*", default=None,
+        help="MCP targets to configure: claude cursor vscode (auto-detected if omitted)",
+    )
+
     # setup-env — interactive API key wizard
     p_setup_env = sub.add_parser(
         "setup-env",
@@ -2315,7 +2461,7 @@ def main():
             sys.exit(0)
 
     # ── init guard: require .cognirepo/config.json for all storage commands ──
-    _INIT_EXEMPT = {"init", "doctor", "migrate-config", "setup-env", "metrics",
+    _INIT_EXEMPT = {"init", "setup", "doctor", "migrate-config", "setup-env", "metrics",
                     "list", "delete", None}
     if args.command not in _INIT_EXEMPT:
         import pathlib  # pylint: disable=import-outside-toplevel
@@ -2343,6 +2489,13 @@ def main():
                 sys.exit(1)
 
     # ── non-routable commands ──────────────────────────────────────────────
+    if args.command == "setup":
+        _cmd_setup(
+            no_index=getattr(args, "no_index", False),
+            targets=getattr(args, "targets", None),
+        )
+        sys.exit(0)
+
     if args.command == "setup-env":
         from cli.env_wizard import EnvWizard  # pylint: disable=import-outside-toplevel
         wizard = EnvWizard(

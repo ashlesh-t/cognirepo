@@ -23,7 +23,9 @@ dependencies = [
     # core
     "faiss-cpu==1.13.2",
     "numpy==2.4.3",
-    "sentence-transformers==5.3.0",
+    # CPU-only sentence-transformers — avoids the ~2 GB GPU PyTorch download.
+    # Use [gpu] extra to get full GPU support.
+    "sentence-transformers[cpu]==5.3.0",
     # MCP server
     "mcp[cli]==1.26.0",
     # REST API + Server
@@ -36,11 +38,6 @@ dependencies = [
     "tree-sitter>=0.23",
     # shared
     "pydantic==2.12.5",
-    # model providers
-    "anthropic>=0.50",
-    "google-generativeai>=0.8",
-    "google-genai>=0.3",
-    "openai>=1.0",
     # env loading
     "python-dotenv>=1.0",
     # BM25 keyword retrieval (episodic search)
@@ -86,10 +83,18 @@ cli = [
     "tomli-w>=1.0",
     "pyfiglet>=1.0",
 ]
-cpu = [
-    # Lightweight install: replaces sentence-transformers with its CPU-only variant.
-    # Use when you want to avoid the ~2 GB GPU PyTorch download.
-    "sentence-transformers[cpu]==5.3.0",
+providers = [
+    # Model routing for `cognirepo ask`. Not required for MCP index server.
+    # Install: pip install 'cognirepo[providers]'
+    "anthropic>=0.50",
+    "google-generativeai>=0.8",
+    "google-genai>=0.3",
+    "openai>=1.0",
+]
+gpu = [
+    # Full GPU PyTorch support. Use instead of the default cpu install.
+    "sentence-transformers==5.3.0",
+    "torch>=2.0",
 ]
 dev = [
     "pytest>=8.0",
@@ -101,6 +106,11 @@ dev = [
     "prometheus-client>=0.20",
     "build>=1.0",
     "bcrypt>=4.0",
+    # Include providers so tests can import router/adapters without install hint
+    "anthropic>=0.50",
+    "google-generativeai>=0.8",
+    "google-genai>=0.3",
+    "openai>=1.0",
 ]
 
 [project.scripts]

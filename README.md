@@ -110,32 +110,32 @@ graph/behaviour_tracker.py                  DEFINED_IN, CO_OCCURS,
 ### Install
 
 ```bash
-pip install cognirepo
-
-# For multi-language indexing (JS, TS, Java, Go, Rust, C++):
-pip install cognirepo[languages]
+# Recommended — CPU-only, no GPU required (~400 MB vs ~2 GB):
+pip install 'cognirepo[cpu,languages]'
 
 # For encryption at rest:
-pip install cognirepo[security]
+pip install 'cognirepo[cpu,languages,security]'
+
+# With model routing (cognirepo ask — needs an API key):
+pip install 'cognirepo[cpu,languages,providers]'
+
+# Full development install:
+pip install -e '.[dev,security,languages]'
 ```
 
-> **Note:** `sentence-transformers` pulls PyTorch as a transitive dependency (~2 GB).
-> For CPU-only machines or minimal installs: `pip install cognirepo[cpu]`
+> **Note:** `[cpu]` is now the default — `sentence-transformers[cpu]` ships with PyTorch CPU wheels only.
+> Use `pip install 'cognirepo[gpu]'` if you need GPU acceleration.
 
 ### Run
 
 ```bash
-# Interactive wizard — asks about encryption, languages, Claude/Gemini/Cursor MCP, org:
-cognirepo init
-# → automatically indexes the repo after setup
-# → prompts to generate architectural summaries (requires LLM API key)
+# One-command onboarding (init + index + auto-configure MCP for Claude/Cursor/VS Code):
+cognirepo setup
 
-# Non-interactive (CI / scripting):
-cognirepo init --no-index
-
-# INDEX FIRST — MCP tools return nothing until this runs:
-cognirepo index-repo .                  # index your codebase (required before MCP tools work)
-cognirepo index-repo . --daemon         # index and run watcher in background
+# Or step by step:
+cognirepo init --no-index     # scaffold .cognirepo/
+cognirepo index-repo .        # index your codebase (required before MCP tools work)
+cognirepo index-repo . --daemon  # index and run watcher in background
 
 # Check everything is working:
 cognirepo status                        # shows symbol count, graph nodes, signal warmth
