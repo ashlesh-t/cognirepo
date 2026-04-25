@@ -9,7 +9,6 @@ certifi==2026.2.25
 cffi==2.0.0
 charset-normalizer==3.4.6
 click==8.3.1
--e git+ssh://git@github.com/ashlesh-t/cognirepo.git@7a7305f1c845be0dab0a9a537db3bf8cc5656b0b#egg=cognirepo
 coverage==7.13.5
 cryptography==46.0.6
 cuda-bindings==13.2.0
