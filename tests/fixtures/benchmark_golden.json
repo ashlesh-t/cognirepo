@@ -1,0 +1,102 @@
+[
+  {
+    "query": "context_pack token budget enforcement",
+    "expected_symbol": "context_pack",
+    "expected_file_pattern": "tools/context_pack.py"
+  },
+  {
+    "query": "hybrid retrieve score formula vector graph behaviour",
+    "expected_symbol": "hybrid_retrieve",
+    "expected_file_pattern": "retrieval/hybrid.py"
+  },
+  {
+    "query": "store memory semantic FAISS embedding",
+    "expected_symbol": "store_memory",
+    "expected_file_pattern": "tools/store_memory.py"
+  },
+  {
+    "query": "episodic memory log event timestamp",
+    "expected_symbol": "log_event",
+    "expected_file_pattern": "memory/episodic_memory.py"
+  },
+  {
+    "query": "lookup symbol AST index file line",
+    "expected_symbol": "lookup_symbol",
+    "expected_file_pattern": "indexer/ast_indexer.py"
+  },
+  {
+    "query": "BM25 keyword filter episodic time range",
+    "expected_symbol": "episodic_bm25_filter",
+    "expected_file_pattern": "retrieval/hybrid.py"
+  },
+  {
+    "query": "circuit breaker RSS memory OOM protection",
+    "expected_symbol": "CircuitBreaker",
+    "expected_file_pattern": "memory/circuit_breaker.py"
+  },
+  {
+    "query": "knowledge graph NetworkX node edge",
+    "expected_symbol": "KnowledgeGraph",
+    "expected_file_pattern": "graph/knowledge_graph.py"
+  },
+  {
+    "query": "complexity classifier QUICK STANDARD COMPLEX EXPERT tier",
+    "expected_symbol": "classify_complexity",
+    "expected_file_pattern": "orchestrator/classifier.py"
+  },
+  {
+    "query": "who calls function caller graph traversal",
+    "expected_symbol": "who_calls",
+    "expected_file_pattern": "tools/who_calls.py"
+  },
+  {
+    "query": "retrieve memory top k similarity search",
+    "expected_symbol": "retrieve_memory",
+    "expected_file_pattern": "tools/retrieve_memory.py"
+  },
+  {
+    "query": "architecture overview summarize hierarchical",
+    "expected_symbol": "architecture_overview",
+    "expected_file_pattern": "tools/architecture_overview.py"
+  },
+  {
+    "query": "file watcher inotify watchdog daemon",
+    "expected_symbol": "FileWatcher",
+    "expected_file_pattern": "indexer/file_watcher.py"
+  },
+  {
+    "query": "explain change git commit diff memory",
+    "expected_symbol": "explain_change",
+    "expected_file_pattern": "tools/explain_change.py"
+  },
+  {
+    "query": "subgraph entity depth neighbourhood graph",
+    "expected_symbol": "subgraph",
+    "expected_file_pattern": "tools/subgraph.py"
+  },
+  {
+    "query": "cross repo org search linked repositories",
+    "expected_symbol": "org_search",
+    "expected_file_pattern": "tools/org_search.py"
+  },
+  {
+    "query": "local vector database FAISS IndexFlatL2 add search",
+    "expected_symbol": "LocalVectorDB",
+    "expected_file_pattern": "vector_db/local_vector_db.py"
+  },
+  {
+    "query": "behaviour tracker access pattern frequency",
+    "expected_symbol": "BehaviourTracker",
+    "expected_file_pattern": "graph/behaviour_tracker.py"
+  },
+  {
+    "query": "prime session architecture hot symbols index health",
+    "expected_symbol": "prime_session",
+    "expected_file_pattern": "tools/prime_session.py"
+  },
+  {
+    "query": "get last context handoff cross agent snapshot",
+    "expected_symbol": "get_last_context",
+    "expected_file_pattern": "server/mcp_server.py"
+  }
+]

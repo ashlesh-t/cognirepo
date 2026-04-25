@@ -256,6 +256,101 @@ def measure_memory_recall(test_memories: list[str]) -> dict:
     }
 
 
+def measure_precision_at_k(golden: list[dict] | None = None, k: int = 3) -> dict:
+    """
+    precision@k = fraction of queries where expected_file_pattern appears in top-k sections.
+    Loads golden set from tests/fixtures/benchmark_golden.json if not provided.
+    """
+    from tools.context_pack import context_pack
+
+    if golden is None:
+        golden_path = REPO_ROOT / "tests" / "fixtures" / "benchmark_golden.json"
+        if not golden_path.exists():
+            return {"precision_at_1": 0.0, "precision_at_3": 0.0, "queries_tested": 0,
+                    "error": "golden file not found"}
+        import json as _json
+        golden = _json.loads(golden_path.read_text(encoding="utf-8"))
+
+    hits_at_1 = 0
+    hits_at_3 = 0
+    tested = 0
+
+    for entry in golden:
+        query = entry.get("query", "")
+        pattern = entry.get("expected_file_pattern", "")
+        if not query or not pattern:
+            continue
+        try:
+            result = context_pack(query, max_tokens=2000)
+        except Exception:  # pylint: disable=broad-except
+            continue
+        sections = result.get("sections", [])
+        if not sections:
+            continue
+        tested += 1
+        sources_k1 = [s.get("file", s.get("source", "")) for s in sections[:1]]
+        sources_k3 = [s.get("file", s.get("source", "")) for s in sections[:k]]
+        if any(pattern in src for src in sources_k1):
+            hits_at_1 += 1
+        if any(pattern in src for src in sources_k3):
+            hits_at_3 += 1
+
+    return {
+        "precision_at_1": round(hits_at_1 / tested, 3) if tested else 0.0,
+        "precision_at_3": round(hits_at_3 / tested, 3) if tested else 0.0,
+        "queries_tested": tested,
+    }
+
+
+def measure_latency(golden: list[dict] | None = None, repeats: int = 3) -> dict:
+    """
+    Run each golden query `repeats` times, record wall-clock time.
+    Returns p50, p95, p99 in ms.
+    """
+    from tools.context_pack import context_pack
+    import statistics
+
+    if golden is None:
+        golden_path = REPO_ROOT / "tests" / "fixtures" / "benchmark_golden.json"
+        if not golden_path.exists():
+            return {"latency_p50_ms": 0.0, "latency_p95_ms": 0.0, "latency_p99_ms": 0.0,
+                    "error": "golden file not found"}
+        import json as _json
+        golden = _json.loads(golden_path.read_text(encoding="utf-8"))
+
+    timings_ms: list[float] = []
+    for entry in golden:
+        query = entry.get("query", "")
+        if not query:
+            continue
+        for _ in range(repeats):
+            t0 = time.perf_counter()
+            try:
+                context_pack(query, max_tokens=2000)
+            except Exception:  # pylint: disable=broad-except
+                pass
+            timings_ms.append((time.perf_counter() - t0) * 1000)
+
+    if not timings_ms:
+        return {"latency_p50_ms": 0.0, "latency_p95_ms": 0.0, "latency_p99_ms": 0.0,
+                "latency_samples": 0}
+
+    timings_ms.sort()
+    n = len(timings_ms)
+
+    def _percentile(pct: float) -> float:
+        idx = int(pct / 100 * n)
+        idx = max(0, min(idx, n - 1))
+        return round(timings_ms[idx], 1)
+
+    return {
+        "latency_p50_ms": _percentile(50),
+        "latency_p95_ms": _percentile(95),
+        "latency_p99_ms": _percentile(99),
+        "latency_samples": n,
+    }
+
+
 def measure_context_relevance(queries: list[str]) -> dict:
     """
     For each query, check what fraction of context_pack sections
@@ -312,21 +407,34 @@ def run_benchmark() -> dict:
     """Run all benchmarks and return a consolidated metrics dict."""
     print("Running CogniRepo benchmark...", flush=True)
 
-    print("  [1/5] Token reduction...", flush=True)
+    print("  [1/7] Token reduction...", flush=True)
     token_metrics = measure_token_reduction(_BENCHMARK_QUERIES)
 
-    print("  [2/5] Symbol lookup latency...", flush=True)
+    print("  [2/7] Symbol lookup latency...", flush=True)
     lookup_metrics = measure_symbol_lookup(_BENCHMARK_SYMBOLS)
     grep_metrics = measure_grep_equivalent(_BENCHMARK_SYMBOLS[:2])  # grep is slow; test 2
 
-    print("  [3/5] Cache speedup...", flush=True)
+    print("  [3/7] Cache speedup...", flush=True)
     cache_metrics = measure_cache_speedup(_BENCHMARK_QUERIES[:3])
 
-    print("  [4/5] Memory recall...", flush=True)
+    print("  [4/7] Memory recall...", flush=True)
     recall_metrics = measure_memory_recall(_benchmark_memories())
 
-    print("  [5/5] Context relevance...", flush=True)
+    print("  [5/7] Context relevance...", flush=True)
     relevance_metrics = measure_context_relevance(_BENCHMARK_QUERIES)
+
+    print("  [6/7] Precision@k (golden set)...", flush=True)
+    precision_metrics = measure_precision_at_k()
+
+    print("  [7/7] Latency histogram...", flush=True)
+    # Use first 5 golden queries × 3 repeats — enough for p50/p95 without being slow
+    golden_path = REPO_ROOT / "tests" / "fixtures" / "benchmark_golden.json"
+    if golden_path.exists():
+        import json as _json
+        golden_subset = _json.loads(golden_path.read_text(encoding="utf-8"))[:5]
+    else:
+        golden_subset = None
+    latency_metrics = measure_latency(golden=golden_subset, repeats=3)
 
     # Composite speedup: grep vs lookup
     lookup_ms = lookup_metrics["symbol_lookup_ms"]
@@ -344,6 +452,12 @@ def run_benchmark() -> dict:
         "memory_recall_at_1": recall_metrics["memory_recall_at_1"],
         "memory_recall_at_3": recall_metrics["memory_recall_at_3"],
         "context_relevance_pct": relevance_metrics["context_relevance_pct"],
+        "precision_at_1": precision_metrics["precision_at_1"],
+        "precision_at_3": precision_metrics["precision_at_3"],
+        "precision_queries_tested": precision_metrics["queries_tested"],
+        "latency_p50_ms": latency_metrics["latency_p50_ms"],
+        "latency_p95_ms": latency_metrics["latency_p95_ms"],
+        "latency_p99_ms": latency_metrics["latency_p99_ms"],
         "_details": token_metrics.get("details", []),
     }
 
@@ -413,6 +527,18 @@ def print_report(metrics: dict, compare: dict | None = None) -> None:
          prev.get("context_relevance_pct"))
     _row("Symbol hit rate",                   f"{metrics['symbol_hit_rate']:.0%}", "",
          prev.get("symbol_hit_rate"))
+    if "precision_at_1" in metrics:
+        _row("Precision@1 (golden set)",          f"{metrics['precision_at_1']:.0%}", "",
+             prev.get("precision_at_1"))
+        _row("Precision@3 (golden set)",          f"{metrics['precision_at_3']:.0%}", "",
+             prev.get("precision_at_3"))
+    if "latency_p50_ms" in metrics:
+        _row("Latency p50",                       f"{metrics['latency_p50_ms']:.0f}", " ms",
+             prev.get("latency_p50_ms"), higher_is_better=False)
+        _row("Latency p95",                       f"{metrics['latency_p95_ms']:.0f}", " ms",
+             prev.get("latency_p95_ms"), higher_is_better=False)
+        _row("Latency p99",                       f"{metrics['latency_p99_ms']:.0f}", " ms",
+             prev.get("latency_p99_ms"), higher_is_better=False)
 
     print("─" * 62)
     print(f"  Timestamp: {metrics['timestamp']}")

@@ -1,0 +1,12 @@
+[
+  {"query": "Flask application factory create_app", "expected_symbol": "Flask", "expected_file_pattern": "flask/"},
+  {"query": "Blueprint register routes prefix url", "expected_symbol": "Blueprint", "expected_file_pattern": "flask/"},
+  {"query": "before_request after_request hook handler", "expected_symbol": "before_request", "expected_file_pattern": "flask/"},
+  {"query": "current_app application context g object", "expected_symbol": "current_app", "expected_file_pattern": "flask/"},
+  {"query": "route decorator endpoint view function", "expected_symbol": "route", "expected_file_pattern": "flask/"},
+  {"query": "request object form data JSON body", "expected_symbol": "request", "expected_file_pattern": "flask/"},
+  {"query": "session cookie secure secret key", "expected_symbol": "session", "expected_file_pattern": "flask/"},
+  {"query": "error handler HTTP status code exception", "expected_symbol": "errorhandler", "expected_file_pattern": "flask/"},
+  {"query": "test client testing application routes", "expected_symbol": "FlaskClient", "expected_file_pattern": "flask/"},
+  {"query": "Jinja2 template render context variable", "expected_symbol": "render_template", "expected_file_pattern": "flask/"}
+]
