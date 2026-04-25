@@ -87,6 +87,46 @@ class TestHybridRetriever:
         assert scores == sorted(scores, reverse=True)
 
 
+class TestConcurrentCacheMiss:
+    def test_concurrent_misses_call_retriever_once(self, monkeypatch):
+        """N concurrent cache misses for same key → HybridRetriever.retrieve called once."""
+        import threading
+        import retrieval.hybrid as rh
+
+        rh.invalidate_hybrid_cache()
+        call_count = {"n": 0}
+        real_retrieve = rh.HybridRetriever.retrieve
+
+        def counting_retrieve(self, query, top_k):
+            call_count["n"] += 1
+            return real_retrieve(self, query, top_k)
+
+        monkeypatch.setattr(rh.HybridRetriever, "retrieve", counting_retrieve)
+        rh.invalidate_hybrid_cache()
+
+        results_bucket = []
+        errors = []
+
+        def _call():
+            try:
+                r = rh.hybrid_retrieve("concurrent test query", top_k=1)
+                results_bucket.append(r)
+            except Exception as exc:  # pylint: disable=broad-except
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_call) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert not errors, f"Thread errors: {errors}"
+        assert len(results_bucket) == 5
+        assert call_count["n"] == 1, (
+            f"Expected 1 HybridRetriever.retrieve call, got {call_count['n']}"
+        )
+
+
 class TestEpisodicBM25:
     def test_episodic_filter(self):
         from memory.episodic_memory import log_event

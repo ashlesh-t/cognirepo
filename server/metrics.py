@@ -40,9 +40,13 @@ if _PROM_OK:
         "cognirepo_circuit_breaker_state",
         "Circuit breaker state (0=closed, 1=open, 2=half-open)",
     )
+    CACHE_HITS = Gauge("cognirepo_cache_hits_total", "Hybrid retrieve cache hits")
+    CACHE_MISSES = Gauge("cognirepo_cache_misses_total", "Hybrid retrieve cache misses")
 else:
     MEMORY_OPS_TOTAL = _NoopCounter()
     CB_STATE = _NoopGauge()
+    CACHE_HITS = _NoopGauge()
+    CACHE_MISSES = _NoopGauge()
 
 
 def metrics_available() -> bool:
