@@ -32,24 +32,15 @@ def store_lock(timeout: float = 15.0):
     Return a FileLock on .cognirepo/cognirepo.lock.
 
     timeout — seconds to wait before raising Timeout (default 15 s).
-    Falls back to a no-op context manager if filelock is not installed,
-    so the rest of the code never needs a try/except around the import.
+    Raises ImportError if filelock is not installed — concurrent write safety
+    requires filelock; run: pip install filelock
     """
     try:
-        from filelock import FileLock, Timeout  # pylint: disable=import-outside-toplevel
+        from filelock import FileLock  # pylint: disable=import-outside-toplevel
         lock_path = get_path(_LOCK_FILENAME)
         return FileLock(lock_path, timeout=timeout)
-    except ImportError:
-        return _NoOpLock()
-
-
-class _NoOpLock:
-    """Fallback when filelock is not installed — silently skips locking."""
-    def __enter__(self):
-        return self
-    def __exit__(self, *_):
-        pass
-    def acquire(self, *_, **__):
-        pass
-    def release(self, *_, **__):
-        pass
+    except ImportError as exc:
+        raise ImportError(
+            "filelock is required for concurrent write safety. "
+            "Run: pip install filelock"
+        ) from exc

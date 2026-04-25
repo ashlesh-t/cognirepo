@@ -441,6 +441,14 @@ def cache_stats() -> dict:
         return {"hits": _CACHE_HITS, "misses": _CACHE_MISSES}
 
 
+def is_faiss_cold() -> bool:
+    """Return True when the semantic FAISS index has no vectors (never indexed)."""
+    try:
+        return LocalVectorDB().index.ntotal == 0
+    except Exception:  # pylint: disable=broad-except
+        return False
+
+
 # ── episodic BM25 filter ──────────────────────────────────────────────────────
 
 # Mtime-keyed cache: rebuild only when episodic.json changes on disk.
@@ -499,10 +507,28 @@ def episodic_bm25_filter(
 
     if time_range:
         start_str, end_str = time_range
-        events = [
+        filtered_events = [
             ev for ev in events
             if start_str <= ev.get("time", "") <= end_str
         ]
+        # Rebuild BM25 from the filtered subset so scores reflect only in-range events.
+        # Using the full-corpus BM25 here would return doc_ids outside the window.
+        if len(filtered_events) != len(events):
+            events = filtered_events
+            docs = [
+                _Document(
+                    id=ev.get("id", str(i)),
+                    text=ev.get("event", "") + " " + " ".join(
+                        str(v) for v in ev.get("metadata", {}).values()
+                    ),
+                )
+                for i, ev in enumerate(events)
+            ]
+            bm25 = _BM25()
+            if docs:
+                bm25.index(docs)
+        else:
+            events = filtered_events
 
     if not events:
         return []
