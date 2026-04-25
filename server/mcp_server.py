@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import threading
+import time
 from mcp.server.fastmcp import FastMCP
 
 from config.logging import setup_logging, new_trace_id
@@ -764,16 +765,31 @@ def graph_stats(repo_path: str | None = None) -> dict:
         ]
         top_concepts = sorted(concept_nodes, key=g.G.degree, reverse=True)[:5]
         last_indexed = None
+        index_age_minutes = None
+        index_stale = None
         from config.paths import get_path  # pylint: disable=import-outside-toplevel
         ast_index_path = get_path("index/ast_index.json")
         if os.path.exists(ast_index_path):
             with open(ast_index_path, encoding="utf-8") as f:
                 last_indexed = json.load(f).get("indexed_at")
+            try:
+                import datetime as _dt  # pylint: disable=import-outside-toplevel
+                mtime = os.path.getmtime(ast_index_path)
+                age_s = time.time() - mtime
+                index_age_minutes = int(age_s // 60)
+                # Stale if >60 min old; check for running watcher via PID file
+                _pid_file = get_path("watcher.pid")
+                watcher_running = os.path.exists(_pid_file)
+                index_stale = index_age_minutes > 60 and not watcher_running
+            except Exception:  # pylint: disable=broad-except
+                pass
     return {
         "node_count": stats["nodes"],
         "edge_count": stats["edges"],
         "top_concepts": top_concepts,
         "last_indexed": last_indexed,
+        "index_age_minutes": index_age_minutes,
+        "index_stale": index_stale,
     }
 
 

@@ -74,6 +74,9 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
         self.behaviour = BehaviourTracker(self.graph)
         self.indexer = ASTIndexer(graph=self.graph)
         self.indexer.load()
+        # Cache undirected view once — to_undirected() is O(V+E) and was
+        # previously called once per candidate per query (up to 20× per retrieve).
+        self._undirected = self.graph.G.to_undirected()
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -305,8 +308,7 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
         if not cand_node:
             cand_node = f"concept::{candidate.get('text', '')[:40].lower()}"
 
-        # Build undirected view once per call (cheap — same underlying graph)
-        g_undirected = self.graph.G.to_undirected()
+        g_undirected = self._undirected
 
         min_hops = None
         for entity in query_entities:
@@ -371,6 +373,11 @@ _CACHE_HITS = 0
 _CACHE_MISSES = 0
 _CACHE_LOCK = threading.Lock()
 
+# In-flight dedup: N concurrent misses for the same key → 1 ASTIndexer.load()
+# The first miss computes the result; subsequent misses wait on the Event.
+_IN_FLIGHT: dict[tuple, threading.Event] = {}
+_IN_FLIGHT_LOCK = threading.Lock()
+
 
 # Default 0.0 = no filtering. final_score on cold repos = 0.5*vector (graph+behaviour=0),
 # so a 0.35 final_score gate requires vector_score>=0.70 which is unreachable on cold index.
@@ -400,15 +407,51 @@ def hybrid_retrieve(query: str, top_k: int = 5, min_score: float | None = None) 
             result, ts = cached
             if now - ts < _HYBRID_CACHE_TTL:
                 _CACHE_HITS += 1
+                try:
+                    from server.metrics import CACHE_HITS as _CH  # pylint: disable=import-outside-toplevel
+                    _CH.set(_CACHE_HITS)
+                except Exception:  # pylint: disable=broad-except
+                    pass
                 return _apply_min_score(result, min_score)
         _CACHE_MISSES += 1
+        try:
+            from server.metrics import CACHE_MISSES as _CM  # pylint: disable=import-outside-toplevel
+            _CM.set(_CACHE_MISSES)
+        except Exception:  # pylint: disable=broad-except
+            pass
 
-    # Heavy compute outside the lock — two concurrent misses both compute,
-    # which is safe (idempotent) and avoids blocking during expensive retrieval.
-    result = HybridRetriever().retrieve(query, top_k)
+    # In-flight dedup: if another thread is already computing this key, wait for it
+    # rather than running N redundant ASTIndexer.load() calls in parallel.
+    with _IN_FLIGHT_LOCK:
+        existing_event = _IN_FLIGHT.get(cache_key)
+        if existing_event is not None:
+            waiter = existing_event
+        else:
+            waiter = None
+            done_event = threading.Event()
+            _IN_FLIGHT[cache_key] = done_event
 
-    with _CACHE_LOCK:
-        _HYBRID_CACHE[cache_key] = (result, now)
+    if waiter is not None:
+        waiter.wait(timeout=30)
+        # Re-check cache — the computing thread has stored the result by now
+        with _CACHE_LOCK:
+            cached = _HYBRID_CACHE.get(cache_key)
+            if cached is not None:
+                result, _ = cached
+                return _apply_min_score(result, min_score)
+        # Fallback: compute ourselves if result still missing (e.g. timeout)
+        return _apply_min_score(HybridRetriever().retrieve(query, top_k), min_score)
+
+    # We are the designated computing thread for this key.
+    try:
+        result = HybridRetriever().retrieve(query, top_k)
+        now = time.monotonic()
+        with _CACHE_LOCK:
+            _HYBRID_CACHE[cache_key] = (result, now)
+    finally:
+        with _IN_FLIGHT_LOCK:
+            _IN_FLIGHT.pop(cache_key, None)
+        done_event.set()  # wake all waiters
 
     return _apply_min_score(result, min_score)
 
@@ -433,6 +476,7 @@ def invalidate_hybrid_cache() -> None:
     """Evict all cached results. Call this on any file-change event."""
     with _CACHE_LOCK:
         _HYBRID_CACHE.clear()
+    # Do not clear _IN_FLIGHT — in-progress computations should complete normally.
 
 
 def cache_stats() -> dict:
