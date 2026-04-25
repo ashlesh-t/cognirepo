@@ -314,3 +314,81 @@ class TestContextRelevance:
             f"Context relevance {relevance:.0%} < 5%\n"
             f"  sections={len(sections)}, relevant={relevant}, keywords={keywords}"
         )
+
+
+# ── precision@k ───────────────────────────────────────────────────────────────
+
+class TestPrecisionAtK:
+    def test_golden_file_exists(self):
+        """Golden test set must exist and have at least 20 entries."""
+        import json
+        from pathlib import Path
+        golden_path = Path(REPO_ROOT) / "tests" / "fixtures" / "benchmark_golden.json"
+        assert golden_path.exists(), "tests/fixtures/benchmark_golden.json missing"
+        data = json.loads(golden_path.read_text())
+        assert len(data) >= 20, f"Golden set has {len(data)} entries — need at least 20"
+
+    def test_precision_at_3_on_warmed_index(self):
+        """precision@3 must be ≥ 0.75 on a warmed index of this repo."""
+        try:
+            import sentence_transformers  # noqa: F401
+            import faiss  # noqa: F401
+        except ImportError:
+            pytest.skip("sentence_transformers/faiss not installed")
+        if not _index_has_data():
+            pytest.skip("AST index empty — run cognirepo index-repo .")
+        if not _faiss_has_data():
+            pytest.skip("FAISS index empty — run cognirepo index-repo .")
+
+        from tools.benchmark import measure_precision_at_k
+        result = measure_precision_at_k()
+        tested = result["queries_tested"]
+        if tested < 5:
+            pytest.skip(f"Only {tested} golden queries returned sections — index may be cold")
+
+        p3 = result["precision_at_3"]
+        assert p3 >= 0.75, (
+            f"precision@3 = {p3:.0%} — expected ≥ 75%\n"
+            f"  queries_tested={tested}, precision@1={result['precision_at_1']:.0%}"
+        )
+
+    def test_measure_precision_returns_required_keys(self):
+        """measure_precision_at_k must always return all required keys."""
+        from tools.benchmark import measure_precision_at_k
+        result = measure_precision_at_k(golden=[])  # empty golden — should not crash
+        for key in ("precision_at_1", "precision_at_3", "queries_tested"):
+            assert key in result, f"Missing key '{key}' in measure_precision_at_k result"
+
+
+# ── latency histogram ─────────────────────────────────────────────────────────
+
+class TestLatencyHistogram:
+    def test_measure_latency_returns_required_keys(self):
+        """measure_latency must return p50, p95, p99 keys."""
+        from tools.benchmark import measure_latency
+        result = measure_latency(golden=[], repeats=1)
+        for key in ("latency_p50_ms", "latency_p95_ms", "latency_p99_ms"):
+            assert key in result, f"Missing key '{key}' in measure_latency result"
+
+    def test_p50_under_5000ms_on_warmed_index(self):
+        """Latency p50 must be under 5 seconds (sanity check — not a tight SLA)."""
+        try:
+            import sentence_transformers  # noqa: F401
+            import faiss  # noqa: F401
+        except ImportError:
+            pytest.skip("sentence_transformers/faiss not installed")
+        if not _index_has_data():
+            pytest.skip("AST index empty")
+
+        import json
+        from pathlib import Path
+        from tools.benchmark import measure_latency
+
+        golden_path = Path(REPO_ROOT) / "tests" / "fixtures" / "benchmark_golden.json"
+        if not golden_path.exists():
+            pytest.skip("golden file missing")
+
+        golden_subset = json.loads(golden_path.read_text())[:3]
+        result = measure_latency(golden=golden_subset, repeats=1)
+        p50 = result["latency_p50_ms"]
+        assert p50 < 5000, f"p50 latency {p50:.0f}ms exceeds 5000ms — system may be overloaded"

@@ -1135,6 +1135,7 @@ def _direct_history(limit):
 
 def _direct_index(path, embed: bool = True):
     """Index a repository directly. Exits with code 1 if *path* does not exist."""
+    import resource  # pylint: disable=import-outside-toplevel
     abs_path = os.path.abspath(path)
     if not os.path.isdir(abs_path):
         print(
@@ -1146,9 +1147,49 @@ def _direct_index(path, embed: bool = True):
     from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
     kg = KnowledgeGraph()
     indexer = ASTIndexer(graph=kg)
+
+    rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    t0 = time.time()
     summary = indexer.index_repo(abs_path, embed=embed)
+    elapsed = time.time() - t0
+    rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
     kg.save()
-    return {"status": "indexed", "path": abs_path, **summary}, kg, indexer
+
+    # ru_maxrss is in KB on Linux, bytes on macOS
+    import platform  # pylint: disable=import-outside-toplevel
+    _rss_scale = 1024 if platform.system() == "Darwin" else 1
+    peak_rss_mb = (rss_after - rss_before) / _rss_scale / 1024
+    peak_rss_mb = max(0, round(peak_rss_mb, 1))
+
+    n_symbols = len(summary.get("symbols", summary.get("reverse_index", {})))
+    n_files = summary.get("files_indexed", summary.get("files", 0))
+    print(
+        f"Index complete: {n_symbols:,} symbols across {n_files:,} files "
+        f"in {elapsed:.1f}s (peak RSS delta: {peak_rss_mb} MB)"
+    )
+
+    # Persist timing to benchmark history for trend tracking
+    try:
+        from tools.benchmark import _save_to_history as _bsave  # pylint: disable=import-outside-toplevel
+        from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+        _bsave({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "index_build_s": round(elapsed, 2),
+            "index_peak_rss_mb": peak_rss_mb,
+            "index_symbols": n_symbols,
+            "index_files": n_files,
+        })
+    except Exception:  # pylint: disable=broad-except
+        pass  # non-fatal
+
+    return {
+        "status": "indexed",
+        "path": abs_path,
+        "index_build_s": round(elapsed, 2),
+        "index_peak_rss_mb": peak_rss_mb,
+        **summary,
+    }, kg, indexer
 
 
 def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:

@@ -13,8 +13,10 @@ Complete documentation for every command, MCP tool, and configuration option.
 5. [Docker](#docker)
 6. [Memory Pruning & Circuit Breaker](#memory-pruning--circuit-breaker)
 7. [Configuration Reference](#configuration-reference)
-8. [Cursor / Copilot Integration](#cursor--copilot-integration)
-9. [Adding API Keys](#adding-api-keys)
+8. [Cursor Integration](#cursor-integration)
+9. [VS Code MCP Setup](#vs-code-mcp-setup)
+10. [GitHub Copilot Integration](#github-copilot-integration)
+11. [Adding API Keys](#adding-api-keys)
 
 ---
 
@@ -233,3 +235,124 @@ cognirepo serve
 ```
 
 The `/metrics` endpoint follows the Prometheus text exposition format.
+
+---
+
+## Cursor Integration
+
+Cursor reads tool routing rules from `.cursor/rules/*.mdc`. CogniRepo ships a rules file that
+makes Cursor use CogniRepo tools before native file exploration.
+
+### Setup
+
+1. Start the MCP server (add to Cursor MCP settings):
+
+```json
+{
+  "cognirepo": {
+    "command": "cognirepo",
+    "args": ["serve", "--project-dir", "/abs/path/to/project"],
+    "type": "stdio"
+  }
+}
+```
+
+2. The `.cursor/rules/cognirepo.mdc` file is already in the repo. Cursor picks it up automatically.
+
+### Session start sequence (Cursor)
+
+Cursor agent calls these at session start:
+
+1. `get_session_brief` — architecture summary, hot symbols, index health
+2. `get_last_context` — resume where previous agent left off
+
+### `cognirepo setup` auto-configures Cursor
+
+If `.cursor/` exists in the project root, `cognirepo setup` writes `.cursor/rules/cognirepo.mdc`
+automatically.
+
+---
+
+## VS Code MCP Setup
+
+VS Code supports MCP servers via `.vscode/mcp.json`.
+
+### Quick setup
+
+Copy the example config:
+
+```bash
+cp .vscode/mcp.json.example .vscode/mcp.json
+```
+
+Or create `.vscode/mcp.json` manually:
+
+```json
+{
+  "servers": {
+    "cognirepo": {
+      "type": "stdio",
+      "command": "cognirepo",
+      "args": ["serve", "--project-dir", "${workspaceFolder}"]
+    }
+  }
+}
+```
+
+`${workspaceFolder}` resolves to the open workspace root automatically.
+
+### Requirements
+
+- VS Code with MCP extension support (GitHub Copilot Chat or compatible extension)
+- CogniRepo installed: `pip install 'cognirepo[cpu,languages]'`
+- Repo indexed: `cognirepo index-repo .`
+
+### `cognirepo setup` auto-configures VS Code
+
+`cognirepo setup` detects VS Code and prints the MCP config path. Copy or symlink
+`.vscode/mcp.json.example` → `.vscode/mcp.json` to activate.
+
+---
+
+## GitHub Copilot Integration
+
+GitHub Copilot Chat in VS Code supports MCP tools when configured via `.vscode/mcp.json`.
+
+### Setup
+
+1. Install [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) and
+   [GitHub Copilot Chat](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat)
+2. Configure `.vscode/mcp.json` (see [VS Code MCP Setup](#vs-code-mcp-setup) above)
+3. Run `cognirepo index-repo .` so the index is populated
+4. Open Copilot Chat — CogniRepo tools appear as available context sources
+
+### Usage
+
+In Copilot Chat, CogniRepo tools activate automatically when Copilot needs code context.
+You can also invoke them explicitly:
+
+```
+@cognirepo context_pack("authentication flow")
+@cognirepo lookup_symbol("hybrid_retrieve")
+```
+
+### Adding API Keys
+
+Set keys as environment variables before running `cognirepo serve`:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...      # Claude (required for COMPLEX/EXPERT tier)
+export GEMINI_API_KEY=AIza...            # Gemini (required for STANDARD tier)
+export OPENAI_API_KEY=sk-...             # OpenAI (optional alternative)
+```
+
+Or add to `.env` (never commit this file):
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=AIza...
+```
+
+MCP tools and `cognirepo ask` work without any API keys — local QUICK-tier resolution only.
+API keys are only needed if you use `cognirepo ask` with STANDARD/COMPLEX/EXPERT tier routing
+via the `[providers]` extra.
