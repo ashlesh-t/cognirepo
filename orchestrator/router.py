@@ -7,9 +7,11 @@
 """
 Model Router — the top-level orchestration entry point.
 
-NOTE: This module requires the [providers] optional extra.
-MCP index server tools do NOT use this module — only `cognirepo ask` does.
-Install: pip install 'cognirepo[providers]'
+NOTE: `cognirepo ask` uses this module only for the classifier and
+try_local_resolve() — both are zero-API. The model dispatch path (STANDARD+
+tier) requires the [providers] extra and an API key. MCP tools never touch
+this module.
+Install providers: pip install 'cognirepo[providers]'
 
 route(query) pipeline
 ─────────────────────
