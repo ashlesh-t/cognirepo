@@ -89,7 +89,7 @@ embeddings                                   FILE, FUNCTION, CLASS,
                                              CALLS, CALLED_BY,
 graph/behaviour_tracker.py                  DEFINED_IN, CO_OCCURS,
   per-symbol hit counts                     IMPORTS, INHERITS,
-  user behavior profile                     SIMILAR_TO, RELATES_TO,
+  user behavior profile                     RELATES_TO,
   error pattern tracking                    QUERIED_WITH
   session history
               │
@@ -118,6 +118,9 @@ pip install cognirepo[languages]
 # For encryption at rest:
 pip install cognirepo[security]
 ```
+
+> **Note:** `sentence-transformers` pulls PyTorch as a transitive dependency (~2 GB).
+> For CPU-only machines or minimal installs: `pip install cognirepo[cpu]`
 
 ### Run
 
@@ -276,7 +279,6 @@ The knowledge graph is significantly richer than a simple call graph.
 | `CO_OCCURS` | file ↔ file | Files edited together (behavioural co-edit signal) |
 | `RELATES_TO` | concept → symbol | Semantic concept linkage |
 | `QUERIED_WITH` | query → symbol | Retrieval tracking for scoring |
-| `SIMILAR_TO` | symbol ↔ symbol | Semantically similar symbols |
 
 `IMPORTS` and `INHERITS` edges are built automatically during `index-repo` from Python AST.
 Use `subgraph("MyClass", depth=2)` or `dependency_graph("mymodule")` to query them.
@@ -555,7 +557,7 @@ Priorities drawn from the v0.3.0 benchmark findings and community feedback.
 ### Longer-term
 - **`cognirepo ask` streaming REPL** — full interactive session with tier routing, session persistence, and sub-agent delegation.
 - **Ruby, PHP, C#, Swift grammar support** — tree-sitter grammars exist; need `_TS_FUNCTION_TYPES`/`_TS_CLASS_TYPES` mappings and call-extraction rules per language.
-- **Similarity edges in knowledge graph** — `EdgeType.SIMILAR_TO` is declared but never populated. Embedding-distance clustering would connect semantically related symbols across files.
+- **Similarity edges in knowledge graph** — embedding-distance clustering to connect semantically related symbols across files (not yet implemented).
 - **VS Code / JetBrains extension** — surface `lookup_symbol`, `context_pack`, and `who_calls` directly in the editor sidebar without requiring an MCP-capable host.
 
 ---

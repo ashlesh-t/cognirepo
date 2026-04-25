@@ -205,6 +205,34 @@ def _graph_is_empty() -> bool:
     return _get_graph().G.number_of_nodes() == 0
 
 
+def _annotate_with_symbol(repo_list: list[dict], symbol: str) -> list[dict]:
+    """For each repo entry, add symbol_locations if the symbol exists there."""
+    from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+    for entry in repo_list:
+        repo_path = entry.get("repo", "")
+        if not repo_path or not os.path.isdir(repo_path):
+            continue
+        cognirepo_dir = get_cognirepo_dir_for_repo(repo_path)
+        if not os.path.isdir(cognirepo_dir):
+            continue
+        token = _CTX_DIR.set(cognirepo_dir)
+        try:
+            from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+            from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+            idx = ASTIndexer(KnowledgeGraph())
+            idx.load()
+            locs = idx.lookup_symbol(symbol)
+            if locs:
+                entry["symbol_locations"] = [
+                    {"file": l["file"], "line": l["line"]} for l in locs
+                ]
+        except Exception:  # pylint: disable=broad-except
+            pass
+        finally:
+            _CTX_DIR.reset(token)
+    return repo_list
+
+
 def _traced(tool_name: str, fn, *args, **kwargs):
     """
     Run a tool function with:
@@ -290,7 +318,7 @@ def retrieve_memory(query: str, top_k: int = 5, include_org: bool = False, repo_
             router = CrossRepoRouter()
             org_results = router.query_org_memories(query, top_k=top_k)
             results.extend(org_results)
-            results.sort(key=lambda x: x.get("score", 1.0))
+            results.sort(key=lambda x: x.get("final_score", x.get("score", 0.0)), reverse=True)
             results = results[:top_k]
 
     return results
@@ -310,7 +338,8 @@ def org_search(query: str, top_k: int = 5) -> list:
 @mcp.tool()
 def org_wide_search(query: str, top_k: int = 5) -> list:
     """
-    Search memories across ALL repositories in the organization (broad scope).
+    Search memories across ALL repositories in the organization (every project included).
+    Wider than org_search which only covers top-level org repos.
     Prefer cross_repo_search(scope="project") when you only need project-scoped results.
 
     Claude: use this when the user explicitly asks about org-wide patterns,
@@ -318,7 +347,7 @@ def org_wide_search(query: str, top_k: int = 5) -> list:
     """
     from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
     router = CrossRepoRouter()
-    return router.query_org_memories(query, top_k=top_k)
+    return router.query_all_org_repos(query, top_k=top_k)
 
 
 @mcp.tool()
@@ -365,17 +394,89 @@ def list_org_context() -> dict:
 
 
 @mcp.tool()
-def org_dependencies() -> dict:
+def org_dependencies(depth: int = 2) -> dict:
     """
-    Returns a list of all repositories in the same organization.
-    Future: will return inter-repo dependency graph.
+    Return the bidirectional inter-repo dependency graph for the current organization.
+
+    Shows which services this repo depends on (dependencies) and which services
+    depend on this repo (dependents), up to `depth` hops. Edge kinds:
+      IMPORTS    — manifest-declared package dependency (auto-detected)
+      CALLS_API  — HTTP client calls to another service's endpoint
+      SHARES_SCHEMA — shared models/proto repo
+
+    Claude: call this when the user asks about service dependencies,
+    "what depends on X", or when investigating cross-service call chains.
     """
     from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+
     router = CrossRepoRouter()
+    og = get_org_graph()
+    current = os.path.abspath(".")
+
+    deps = og.get_dependencies(current, depth=depth)
+    dependents = og.get_dependents(current, depth=depth)
+
     return {
+        "current_repo": current,
+        "current_repo_name": os.path.basename(current),
         "organization": router.org_name,
-        "repositories": router.get_sibling_repos() + [os.path.abspath(".")]
+        "direct_dependencies": [d for d in deps if d["depth"] == 1],
+        "transitive_dependencies": [d for d in deps if d["depth"] > 1],
+        "direct_dependents": [d for d in dependents if d["depth"] == 1],
+        "transitive_dependents": [d for d in dependents if d["depth"] > 1],
+        "graph": og.to_dict(),
     }
+
+
+@mcp.tool()
+def cross_repo_traverse(
+    symbol: str | None = None,
+    start_repo: str | None = None,
+    direction: str = "both",
+    depth: int = 2,
+) -> dict:
+    """
+    Traverse the org dependency graph from a repo or symbol to find cross-service
+    relationships.
+
+    direction="dependencies" — what does this repo depend on?
+    direction="dependents"   — which services depend on this repo?
+    direction="both"         — return both directions (default)
+
+    If symbol is provided, also reports where that symbol exists in each traversed repo.
+
+    Claude: use this when the user asks "which services use X?",
+    "what does auth-service depend on?", or when tracing a bug across service boundaries.
+    """
+    from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+
+    og = get_org_graph()
+    current = os.path.abspath(start_repo) if start_repo else os.path.abspath(".")
+
+    result: dict = {
+        "start_repo": current,
+        "start_repo_name": os.path.basename(current),
+        "direction": direction,
+        "depth": depth,
+    }
+
+    if direction in ("dependencies", "both"):
+        deps = og.get_dependencies(current, depth=depth)
+        if symbol:
+            deps = _annotate_with_symbol(deps, symbol)
+        result["dependencies"] = deps
+
+    if direction in ("dependents", "both"):
+        dependents = og.get_dependents(current, depth=depth)
+        if symbol:
+            dependents = _annotate_with_symbol(dependents, symbol)
+        result["dependents"] = dependents
+
+    if symbol:
+        result["symbol"] = symbol
+
+    return result
 
 
 @mcp.tool()
@@ -507,8 +608,9 @@ def _who_calls_dynamic_fallback(function_name: str, repo_root: str | None = None
                     "code_snippet": code.strip()[:120],
                     "found_via": "dynamic_dispatch_fallback",
                 })
-    except Exception:  # pylint: disable=broad-except
-        pass
+    except Exception as _exc:  # pylint: disable=broad-except
+        import logging as _logging  # pylint: disable=import-outside-toplevel
+        _logging.getLogger(__name__).warning("who_calls grep fallback failed: %s", _exc)
     return results
 
 
@@ -566,7 +668,46 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
             fallback = _who_calls_dynamic_fallback(function_name, repo_root)
             if fallback:
                 result = fallback
+
+        # Cross-repo: check dependent services for callers of this function
+        cross_repo_callers: list[dict] = []
+        try:
+            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+            og = get_org_graph()
+            current = os.path.abspath(repo_root or ".")
+            dependents = og.get_dependents(current, depth=1)
+            for dep in dependents:
+                dep_repo = dep["repo"]
+                cog_dir = get_cognirepo_dir_for_repo(dep_repo)
+                if not os.path.isdir(cog_dir):
+                    continue
+                token = _CTX_DIR.set(cog_dir)
+                try:
+                    from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+                    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+                    sib_idx = ASTIndexer(KnowledgeGraph())
+                    sib_idx.load()
+                    for loc in sib_idx.lookup_symbol(function_name):
+                        cross_repo_callers.append({
+                            "caller": function_name,
+                            "repo": dep_repo,
+                            "repo_name": os.path.basename(dep_repo),
+                            "file": loc["file"],
+                            "line": loc["line"],
+                            "source": "cross_repo",
+                        })
+                except Exception:  # pylint: disable=broad-except
+                    pass
+                finally:
+                    _CTX_DIR.reset(token)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
         _auto_store_hook("who_calls", result)
+
+    if cross_repo_callers:
+        return {"local_callers": result, "cross_repo_callers": cross_repo_callers}
     return result
 
 

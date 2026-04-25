@@ -26,7 +26,7 @@ class CrossRepoRouter:
         self._project_org, self._project_name = _proj if _proj else (None, None)
 
     def get_sibling_repos(self) -> list[str]:
-        """Return absolute paths to all other repos in the same organization."""
+        """Return absolute paths to all other repos in the same organization (top-level only)."""
         if not self.org_name:
             return []
         purge_stale_repos(self.org_name)
@@ -34,6 +34,59 @@ class CrossRepoRouter:
         org_data = orgs.get(self.org_name, {})
         repos = org_data.get("repos", [])
         return [r for r in repos if os.path.abspath(r) != self.repo_path]
+
+    def get_all_org_repos(self) -> list[str]:
+        """Return absolute paths to ALL repos across every project in the org."""
+        if not self.org_name:
+            return []
+        purge_stale_repos(self.org_name)
+        orgs = list_orgs()
+        org_data = orgs.get(self.org_name, {})
+        seen: set[str] = set()
+        result: list[str] = []
+        for repo in org_data.get("repos", []):
+            abs_repo = os.path.abspath(repo)
+            if abs_repo != self.repo_path and abs_repo not in seen:
+                seen.add(abs_repo)
+                result.append(abs_repo)
+        for project_data in org_data.get("projects", {}).values():
+            for repo in project_data.get("repos", []):
+                abs_repo = os.path.abspath(repo)
+                if abs_repo != self.repo_path and abs_repo not in seen:
+                    seen.add(abs_repo)
+                    result.append(abs_repo)
+        return result
+
+    def query_all_org_repos(self, query: str, top_k: int = 5) -> list[dict]:
+        """
+        Semantic search across ALL repos in the org (top-level + all projects).
+        Wider than query_org_memories which only covers top-level org repos.
+        """
+        all_repos = self.get_all_org_repos()
+        if not all_repos:
+            return []
+        all_results = []
+        from memory.semantic_memory import SemanticMemory  # pylint: disable=import-outside-toplevel
+        from config.paths import _CTX_DIR  # pylint: disable=import-outside-toplevel
+        for repo in all_repos:
+            cognirepo_dir = get_cognirepo_dir_for_repo(repo)
+            if not os.path.isdir(cognirepo_dir):
+                continue
+            token = _CTX_DIR.set(cognirepo_dir)
+            try:
+                mem = SemanticMemory()
+                results = mem.search(query, top_k=top_k)
+                repo_name = os.path.basename(repo)
+                for r in results:
+                    r["source_repo"] = repo_name
+                    r["repo_path"] = repo
+                all_results.extend(results)
+            except Exception as exc:
+                logger.error("Failed to query repo %s: %s", repo, exc)
+            finally:
+                _CTX_DIR.reset(token)
+        all_results.sort(key=lambda x: x.get("score", 1.0))
+        return all_results[:top_k]
 
     def query_org_memories(self, query: str, top_k: int = 5) -> list[dict]:
         """

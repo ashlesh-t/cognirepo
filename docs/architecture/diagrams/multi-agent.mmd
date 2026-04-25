@@ -1,18 +1,18 @@
 graph LR
     subgraph Primary["Primary Agent (DEEP tier)"]
         PA[router.py<br/>DEEP query]
-        PA -->|delegates fast sub-lookups| GRPC_C[gRPC client<br/>rpc/client.py]
+        PA -->|delegates via HTTP| HTTP_C[HTTP adapter<br/>orchestrator/model_adapters/]
     end
 
     subgraph Secondary["Secondary Agent (FAST tier)"]
-        GRPC_S[gRPC server<br/>rpc/server.py]
+        HTTP_S[Model API<br/>Haiku / Flash]
         SA[router.py<br/>FAST lookup]
-        GRPC_S --> SA
     end
 
-    GRPC_C -->|port 50051| GRPC_S
-    SA -->|result| GRPC_C
-    GRPC_C -->|sub-results| PA
+    HTTP_C -->|REST| HTTP_S
+    HTTP_S --> SA
+    SA -->|result| HTTP_C
+    HTTP_C -->|sub-results| PA
     PA -->|full response| User([User])
 
     note1[/"Multi-agent mode is OFF by default.<br/>Enable: multi_agent: true in config.json"\]

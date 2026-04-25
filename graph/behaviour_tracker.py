@@ -377,6 +377,17 @@ class BehaviourTracker:
 
     # ── score access ──────────────────────────────────────────────────────────
 
+    def get_hot_symbols(self, top_k: int = 10) -> list[dict]:
+        """Return top_k symbols by hit_count, sorted descending."""
+        weights = self.data.get("symbol_weights", {})
+        scored = [
+            {"symbol_id": sid, "name": sid.split("::")[-1], "hit_count": int(v.get("hit_count", 0))}
+            for sid, v in weights.items()
+            if isinstance(v, dict)
+        ]
+        scored.sort(key=lambda x: x["hit_count"], reverse=True)
+        return scored[:top_k]
+
     def get_behaviour_score(self, symbol_id: str) -> float:
         """Raw hit_count for symbol_id; 0.0 if unseen."""
         return float(self.data["symbol_weights"].get(symbol_id, {}).get("hit_count", 0))

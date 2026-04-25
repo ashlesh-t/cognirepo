@@ -58,6 +58,14 @@ Key insight from Claude:
 | Equivalent raw file reads (`hybrid.py` + `embeddings.py` + `context_pack.py`) | **~2 400–3 600** | ~800–1 200 tokens/file × 3 files |
 | **Reduction** | **70–80%** | Tools gave verified answers at ¼ the token cost |
 
+> **Benchmark baseline note:** The automated `cognirepo benchmark` numbers use a *naive baseline*
+> (tokens in all files containing the keyword). The manual numbers above use a *targeted baseline*
+> (tokens in 2–3 files a human or agent would actually read). The targeted reduction is real but
+> smaller: typically **40–60%** vs naive's 70–80%. Run `cognirepo benchmark` to see both numbers:
+> `savings_vs_naive_pct` and `savings_vs_targeted_pct`.
+> The genuine advantage is structural: `lookup_symbol` returns `{file:line}` in <1 ms without
+> grep output parsing — that is not captured in any token-reduction metric.
+
 ---
 
 ## Gemini Cross-Model Retrieval
@@ -108,7 +116,8 @@ Savings compound across sessions because memories persist — second sessions st
 
 | Metric | Value |
 |--------|-------|
-| Token reduction vs raw reads | **98%** |
+| Token reduction vs naive baseline (all keyword-matching files) | **98%** |
+| Token reduction vs targeted baseline (grep + top-2 file reads) | **~40–60%** |
 | Symbol lookup latency | **< 1 ms** |
 | grep equivalent latency | 2 000–8 000 ms |
 | Lookup speedup vs grep | **100 000–4 000 000×** |
