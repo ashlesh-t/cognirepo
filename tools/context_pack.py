@@ -21,12 +21,17 @@ Steps:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Optional
 
-from retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter, MAX_QUERY_LEN
+from config.lock import store_lock
+from retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter, is_faiss_cold, MAX_QUERY_LEN
+from retrieval.query_enhancer import enhance_query
+
+_logger = logging.getLogger(__name__)
 
 try:
     import tiktoken as _tiktoken
@@ -76,8 +81,12 @@ def _read_window(file_path: str, center_line: int, window_lines: int, repo_root:
         file_path if os.path.isabs(file_path)
         else os.path.join(repo_root, file_path)
     )
+    real_abs = os.path.realpath(abs_path)
+    real_root = os.path.realpath(repo_root)
+    if not real_abs.startswith(real_root + os.sep) and real_abs != real_root:
+        return ""
     try:
-        lines = Path(abs_path).read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = Path(real_abs).read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return ""
     start = max(0, center_line - window_lines - 1)
@@ -103,6 +112,7 @@ def _autosave_context(result: dict) -> None:
         if not cfg.get("autosave_context", True):
             return
         repo_name = cfg.get("project_name", os.path.basename(os.getcwd()))
+        # Cross-agent handoff path: intentionally outside .cognirepo/ so sibling agents can read it
         save_dir = os.path.join(os.path.expanduser("~"), ".cognirepo", repo_name)
         os.makedirs(save_dir, exist_ok=True)
         out = {
@@ -111,8 +121,14 @@ def _autosave_context(result: dict) -> None:
             "repo": repo_name,
             **result,
         }
-        with open(os.path.join(save_dir, "last_context.json"), "w", encoding="utf-8") as f:
-            json.dump(out, f, indent=2)
+        try:
+            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            out["org_graph_summary"] = get_org_graph().summary()
+        except Exception:  # pylint: disable=broad-except
+            pass
+        with store_lock():
+            with open(os.path.join(save_dir, "last_context.json"), "w", encoding="utf-8") as f:
+                json.dump(out, f, indent=2)
     except Exception:  # pylint: disable=broad-except
         pass  # autosave is always best-effort
 
@@ -128,6 +144,8 @@ def context_pack(
 ) -> dict:
     """
     Pack the most relevant code/episodic context into a token-bounded block.
+    Call this BEFORE reading any source file to avoid wasting tokens on raw file reads.
+    Query is auto-enhanced using your interaction history before retrieval.
 
     Parameters
     ----------
@@ -167,10 +185,24 @@ def context_pack(
     sections: list[dict] = []
     token_budget = max_tokens
     truncated = False
+    _cold_index = False
+
+    # ── 0. pre-call query enhancement ────────────────────────────────────────
+    _enhanced = None
+    try:
+        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        _bt = BehaviourTracker(KnowledgeGraph())
+        _enhanced = enhance_query(query, _bt)
+        retrieval_query = _enhanced.text
+    except Exception:  # pylint: disable=broad-except
+        retrieval_query = query
 
     # ── 1. hybrid retrieval (semantic + AST) — two-bucket architecture ──────
     if include_symbols:
-        candidates = hybrid_retrieve(query, top_k=20)
+        candidates = hybrid_retrieve(retrieval_query, top_k=20)
+
+        _cold_index = not candidates and is_faiss_cold()
 
         # Two-bucket split: code_index vs doc_index
         # code_hits: AST symbols (source == "ast") — always returned for code queries
@@ -293,16 +325,22 @@ def context_pack(
                     "bucket": "episodic",
                 })
                 token_budget -= tok
-        except Exception:  # pylint: disable=broad-except
-            pass
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.warning("episodic BM25 query failed: %s", exc)
 
     total_tokens = max_tokens - token_budget
-    result = {
+    result: dict = {
         "query": query,
         "token_count": total_tokens,
         "sections": sections,
         "truncated": truncated,
     }
+    if _enhanced and _enhanced.was_enhanced:
+        result["enhanced_query"] = _enhanced.text
+        result["enhancement_method"] = _enhanced.method
+    if include_symbols and _cold_index and not sections:
+        result["status"] = "index_empty"
+        result["suggestion"] = "run `cognirepo index-repo .` first"
     _autosave_context(result)
     return result
 
@@ -344,8 +382,8 @@ def _file_mode_context(file_path: str, max_tokens: int, window_lines: int, repo_
                 "symbol_type": sym["type"],
             })
             token_budget -= tok
-    except Exception:  # pylint: disable=broad-except
-        pass
+    except Exception as exc:  # pylint: disable=broad-except
+        _logger.warning("_file_mode_context failed: %s", exc)
 
     result = {
         "query": f"file:{file_path}",
