@@ -172,7 +172,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | `cognirepo search-docs <query>` | ✅ | Doc search |
 | `cognirepo history` | ✅ | Episodic history |
 | `cognirepo log-episode <event>` | ✅ | Log an event |
-| `cognirepo doctor` | ✅ | Health check (10+ checks including daemon, BM25, gRPC, API keys, language grammars) |
+| `cognirepo doctor` | ✅ | Health check (10+ checks including daemon, BM25, API keys, language grammars) |
 | `cognirepo doctor --verbose` | ✅ | Shows optional component checks |
 | `cognirepo prune` | ✅ | Remove low-importance memories |
 | `cognirepo prune --dry-run` | ✅ | Preview what would be pruned |

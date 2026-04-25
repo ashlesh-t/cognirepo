@@ -803,8 +803,8 @@ def _cmd_prime(as_json: bool = False) -> None:
             {"text": lr.get("text", "")[:200], "type": lr.get("type", "")}
             for lr in recent
         ]
-    except Exception:  # pylint: disable=broad-except
-        pass
+    except Exception as _exc:  # pylint: disable=broad-except
+        print(f"[cognirepo prime] warning: could not load recent decisions: {_exc}", file=sys.stderr)
 
     # ── entry points from knowledge graph (top symbols by call frequency) ────
     try:
@@ -821,8 +821,8 @@ def _cmd_prime(as_json: bool = False) -> None:
                 {"symbol": n.replace("symbol::", ""), "call_count": deg}
                 for n, deg in top
             ]
-    except Exception:  # pylint: disable=broad-except
-        pass
+    except Exception as _exc:  # pylint: disable=broad-except
+        print(f"[cognirepo prime] warning: could not load entry points: {_exc}", file=sys.stderr)
 
     # ── hot symbols from behaviour tracker ────────────────────────────────────
     try:
@@ -839,8 +839,8 @@ def _cmd_prime(as_json: bool = False) -> None:
             {"symbol": k.split("::")[-1], "path": k, "score": round(v, 2)}
             for k, v in hot
         ]
-    except Exception:  # pylint: disable=broad-except
-        pass
+    except Exception as _exc:  # pylint: disable=broad-except
+        print(f"[cognirepo prime] warning: could not load hot symbols: {_exc}", file=sys.stderr)
 
     # ── index health ──────────────────────────────────────────────────────────
     try:
@@ -1463,6 +1463,8 @@ def _print_help() -> None:
     _row("migrate-config",    "Rename deprecated tier names in .cognirepo/config.json")
     _row("setup-env",         "Interactive wizard to set and verify API keys")
     _row("org",               "Manage local repository organizations (cross-repo context)")
+    _row("org link-repos",   "Declare dependency edge between two repos in org graph")
+    _row("org graph",        "Print org-level bidirectional dependency graph")
     _row("list",              "List / inspect / stop running watcher daemons")
     _row("install-hooks",      "Install git post-commit hook for incremental reindex")
     _row("uninstall-hooks",    "Remove cognirepo git hook block from post-commit")
@@ -2158,6 +2160,21 @@ def main():
     p_org_unlink.add_argument("org_name", help="Organization name")
     p_org_unlink.add_argument("path", nargs="?", default=".", help="Repo path (default: current)")
 
+    p_org_link_repos = org_sub.add_parser(
+        "link-repos",
+        help="Declare a dependency edge between two repos in the org graph",
+    )
+    p_org_link_repos.add_argument("repo_a", help="Source repo path (depends on B)")
+    p_org_link_repos.add_argument("repo_b", help="Destination repo path (depended on)")
+    p_org_link_repos.add_argument(
+        "--type", dest="edge_type", default="IMPORTS",
+        choices=["IMPORTS", "CALLS_API", "SHARES_SCHEMA"],
+        help="Edge kind (default: IMPORTS)",
+    )
+
+    p_org_graph = org_sub.add_parser("graph", help="Print the org dependency graph")
+    p_org_graph.add_argument("--json", action="store_true", help="Output as JSON")
+
     # org project subcommands
     p_org_proj = org_sub.add_parser("project", help="Manage projects within an organization")
     proj_sub = p_org_proj.add_subparsers(dest="project_command")
@@ -2646,6 +2663,34 @@ def main():
                 print(f"Unlinked {os.path.abspath(args.path)} from org '{args.org_name}'")
             else:
                 print(f"Failed to unlink. Org '{args.org_name}' or repo path not found.")
+        elif args.org_command == "link-repos":
+            from graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
+            invalidate_org_graph()
+            og = get_org_graph()
+            og.link(args.repo_a, args.repo_b, kind=args.edge_type)
+            og.save()
+            print(
+                f"Linked {os.path.basename(os.path.abspath(args.repo_a))} "
+                f"→ {os.path.basename(os.path.abspath(args.repo_b))} "
+                f"[{args.edge_type}]"
+            )
+        elif args.org_command == "graph":
+            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            og = get_org_graph()
+            if getattr(args, "json", False):
+                print(json.dumps(og.to_dict(), indent=2))
+            else:
+                summary = og.summary()
+                print(f"Org graph: {summary['repo_count']} repos, {summary['edge_count']} edges")
+                repos = og.list_repos()
+                for repo in repos:
+                    deps = og.get_dependencies(repo, depth=1)
+                    repo_name = os.path.basename(repo)
+                    if deps:
+                        dep_names = ", ".join(d["name"] for d in deps)
+                        print(f"  {repo_name}  →  [{dep_names}]")
+                    else:
+                        print(f"  {repo_name}  (no outgoing deps)")
         elif args.org_command == "project":
             if args.project_command == "create":
                 if create_project(args.org, args.project, args.description):

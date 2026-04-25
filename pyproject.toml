@@ -86,6 +86,11 @@ cli = [
     "tomli-w>=1.0",
     "pyfiglet>=1.0",
 ]
+cpu = [
+    # Lightweight install: replaces sentence-transformers with its CPU-only variant.
+    # Use when you want to avoid the ~2 GB GPU PyTorch download.
+    "sentence-transformers[cpu]==5.3.0",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

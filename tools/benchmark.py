@@ -48,8 +48,8 @@ def _count_tokens(text: str) -> int:
 
 def _read_files_for_query(query_keyword: str, repo_root: Path) -> int:
     """
-    Estimate raw token cost: sum of token counts of all .py files whose
-    name or content contains the query keyword.
+    Naive baseline: sum of token counts of ALL .py files containing the keyword.
+    This inflates savings vs. real Claude Code usage (see _targeted_baseline).
     """
     total = 0
     for py_file in repo_root.rglob("*.py"):
@@ -60,6 +60,31 @@ def _read_files_for_query(query_keyword: str, repo_root: Path) -> int:
             text = py_file.read_text(encoding="utf-8", errors="replace")
             if query_keyword.lower() in text.lower():
                 total += _count_tokens(text)
+        except OSError:
+            pass
+    return total
+
+
+def _targeted_baseline(query_keyword: str, repo_root: Path) -> int:
+    """
+    Realistic baseline: grep for exact matches, read top-2 files.
+    Approximates what Claude Code would actually do with targeted grep + read_file.
+    """
+    try:
+        result = subprocess.run(
+            ["grep", "-rl", query_keyword, str(repo_root),
+             "--include=*.py", "--exclude-dir=.git",
+             "--exclude-dir=venv", "--exclude-dir=__pycache__",
+             "--exclude-dir=.cognirepo"],
+            capture_output=True, text=True, timeout=10,
+        )
+        matched_files = [Path(p) for p in result.stdout.strip().splitlines() if p][:2]
+    except (subprocess.TimeoutExpired, OSError):
+        return 0
+    total = 0
+    for py_file in matched_files:
+        try:
+            total += _count_tokens(py_file.read_text(encoding="utf-8", errors="replace"))
         except OSError:
             pass
     return total
@@ -76,24 +101,42 @@ def measure_token_reduction(queries: list[str]) -> dict:
     """
     from tools.context_pack import context_pack
 
-    savings = []
+    savings_naive = []
+    savings_targeted = []
     details = []
     for q in queries:
         keyword = q.split()[0].lower()
-        raw = _read_files_for_query(keyword, REPO_ROOT)
-        if raw == 0:
+        naive_raw = _read_files_for_query(keyword, REPO_ROOT)
+        targeted_raw = _targeted_baseline(keyword, REPO_ROOT)
+        if naive_raw == 0:
             continue
         result = context_pack(q, max_tokens=2000)
         packed = result.get("token_count", 0)
         if packed == 0:
             packed = 1  # context was empty — treat as 1 token for ratio purposes
-        pct = max(0.0, (raw - packed) / raw * 100)
-        savings.append(pct)
-        details.append({"query": q, "raw_tokens": raw, "packed_tokens": packed,
-                        "savings_pct": round(pct, 1)})
+        pct_naive = max(0.0, (naive_raw - packed) / naive_raw * 100)
+        pct_targeted = (
+            max(0.0, (targeted_raw - packed) / targeted_raw * 100)
+            if targeted_raw > 0 else 0.0
+        )
+        savings_naive.append(pct_naive)
+        savings_targeted.append(pct_targeted)
+        details.append({
+            "query": q,
+            "naive_baseline_tokens": naive_raw,
+            "targeted_baseline_tokens": targeted_raw,
+            "packed_tokens": packed,
+            "savings_vs_naive_pct": round(pct_naive, 1),
+            "savings_vs_targeted_pct": round(pct_targeted, 1),
+        })
 
-    avg_savings = round(sum(savings) / len(savings), 1) if savings else 0.0
-    return {"token_reduction_pct": avg_savings, "details": details}
+    avg_naive = round(sum(savings_naive) / len(savings_naive), 1) if savings_naive else 0.0
+    avg_targeted = round(sum(savings_targeted) / len(savings_targeted), 1) if savings_targeted else 0.0
+    return {
+        "token_reduction_pct": avg_naive,
+        "token_reduction_vs_targeted_pct": avg_targeted,
+        "details": details,
+    }
 
 
 def measure_symbol_lookup(symbols: list[str]) -> dict:
