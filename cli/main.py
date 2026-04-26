@@ -674,8 +674,16 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     try:
         from server import mcp_server as _mcp_mod  # pylint: disable=import-outside-toplevel
         _required_tools = [
-            "store_memory", "retrieve_memory", "context_pack",
-            "lookup_symbol", "who_calls", "get_session_brief", "get_last_context",
+            "store_memory", "retrieve_memory", "record_decision",
+            "context_pack", "semantic_search_code", "search_token",
+            "lookup_symbol", "who_calls", "subgraph", "dependency_graph", "graph_stats",
+            "episodic_search", "log_episode",
+            "architecture_overview", "explain_change",
+            "get_session_brief", "get_last_context", "get_session_history",
+            "cross_repo_search", "org_dependencies", "cross_repo_traverse",
+            "org_wide_search", "org_search", "list_org_context", "link_repos",
+            "search_docs",
+            "get_user_profile", "record_error", "get_error_patterns",
         ]
         _registered = getattr(_mcp_mod, "_REGISTERED_TOOLS", None)
         if _registered is not None:
@@ -686,11 +694,23 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
                     f"{', '.join(_missing_tools)}",
                 )
             else:
-                _ok(f"MCP tools — all {len(_required_tools)} required tools registered")
+                _ok(f"MCP tools — all {len(_required_tools)}/29 tools registered")
         else:
             _ok("MCP tools — server module importable (tool list not exposed)")
     except Exception as exc:  # pylint: disable=broad-except
         _warn(f"MCP tools — could not verify schemas ({exc})")
+
+    # ── Check 15: summaries.json exists (prime_session / architecture_overview) ─
+    from config.paths import get_path as _get_path  # pylint: disable=import-outside-toplevel,redefined-outer-name
+    _summaries_file = _get_path("index/summaries.json")
+    if os.path.exists(_summaries_file):
+        _ok(f"summaries.json — found")
+    else:
+        _warn(
+            "summaries.json missing — architecture_overview / prime_session will return empty. "
+            "Run: cognirepo index-repo ."
+        )
+        issues += 1
 
     # ── Check N: AI tool MCP configs (informational, not failures) ───────────
     _tool_checks = [

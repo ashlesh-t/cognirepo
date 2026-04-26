@@ -166,12 +166,40 @@ def get_history(limit: int = 100) -> list:
     return data[-limit:]
 
 
+def _semantic_episode_search(data: list, query: str, limit: int) -> list:
+    """Vector fallback for search_episodes when BM25 returns no results."""
+    try:
+        import numpy as np  # pylint: disable=import-outside-toplevel
+        from memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
+        q_vec = encode_with_timeout(query)
+        q_norm = np.linalg.norm(q_vec)
+        if q_norm == 0:
+            return []
+        scored = []
+        for entry in data:
+            text = entry.get("event", "") or str(entry.get("metadata", ""))
+            if not text:
+                continue
+            try:
+                e_vec = encode_with_timeout(text[:512])
+                e_norm = np.linalg.norm(e_vec)
+                if e_norm == 0:
+                    continue
+                sim = float(np.dot(q_vec, e_vec) / (q_norm * e_norm))
+                if sim > 0.3:
+                    scored.append((sim, entry))
+            except Exception:  # pylint: disable=broad-except
+                continue
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [e for _, e in scored[:limit]]
+    except Exception:  # pylint: disable=broad-except
+        return []
+
+
 def search_episodes(query: str, limit: int = 10) -> list:
     """
-    Search episodic events using BM25Okapi (TF-IDF-weighted) ranking.
-
-    Episodes with the highest BM25 score for the query tokens are returned
-    first.  Episodes with score 0 (no query term present) are excluded.
+    Search episodic events. BM25 (keyword) first; vector-similarity fallback
+    when BM25 returns zero results (handles synonym and paraphrase mismatches).
     """
     data = _load()
     if not data:
@@ -193,7 +221,12 @@ def search_episodes(query: str, limit: int = 10) -> list:
     )
 
     id_to_entry = {e["id"]: e for e in data}
-    return [id_to_entry[eid] for _, eid in ranked[:limit] if eid in id_to_entry]
+    results = [id_to_entry[eid] for _, eid in ranked[:limit] if eid in id_to_entry]
+
+    if not results:
+        results = _semantic_episode_search(data, query, limit)
+
+    return results
 
 
 class EpisodicMemory:  # pylint: disable=missing-function-docstring
