@@ -163,7 +163,7 @@ from Repo B if both are linked to the same local organization.
 
 ## MCP Server
 
-CogniRepo exposes 15 MCP tools over stdio transport:
+CogniRepo exposes 28 MCP tools over stdio transport:
 
 | Tool | Parameters | Returns |
 |---|---|---|
@@ -173,12 +173,19 @@ CogniRepo exposes 15 MCP tools over stdio transport:
 | `org_dependencies`| _(none)_ | List all linked repos in the org |
 | `architecture_overview`| `scope` | High-level architectural summaries |
 | `lookup_symbol` | `name, include_org` | `{file, line, type, repo}` |
-| `context_pack` | `query, max_tokens` | Packed code + memory bundle |
+| `context_pack` | `query, max_tokens` | Packed code + memory bundle (≤ 2000 tokens by default) |
 | `who_calls` | `function_name` | List of caller locations |
-| `search_docs` | `query` | Content snippets from .md files |
-| `log_episode` | `event, metadata` | Record a milestone |
+| `search_docs` | `query, top_k` | Content snippets from .md/.rst files |
+| `log_episode` | `event, metadata` | Record a milestone or event |
+| `record_decision` | `summary, rationale` | Record an architectural decision |
 | `subgraph` | `entity, depth` | Graph neighbourhood |
 | `explain_change` | `target, since` | Cross-reference git + memory |
+
+> **`context_pack` token limit:** Returns at most `max_tokens` tokens (default: 2000).
+> This is intentionally bounded — much smaller than reading the full file.
+> The cross-agent handoff snapshot (`last_context.json`) captures **only** the most recent
+> `context_pack` result — it is NOT a full session transcript.
+> For full session history, use `episodic_search()`.
 
 ---
 
@@ -226,15 +233,17 @@ Safe to run on already-migrated configs.
 
 ## Prometheus Metrics
 
-When `prometheus_client` is installed, CogniRepo exposes a `/metrics` endpoint via the serve API.
+When `prometheus-client` is installed (**dev dependency only**, not included in base install),
+CogniRepo tracks internal counters via `server/metrics.py`. These counters are in-process only.
 
 ```bash
-pip install prometheus_client
+pip install prometheus-client   # dev only
 cognirepo serve
-# metrics available at the /metrics path on the server port
 ```
 
-The `/metrics` endpoint follows the Prometheus text exposition format.
+**Note:** A `/metrics` HTTP endpoint is NOT exposed by `cognirepo serve`. The counters are
+internal and available programmatically via `server.metrics`. To scrape them you must instrument
+the FastMCP server yourself or use a push-gateway pattern.
 
 ---
 
@@ -265,6 +274,9 @@ Cursor agent calls these at session start:
 
 1. `get_session_brief` — architecture summary, hot symbols, index health
 2. `get_last_context` — resume where previous agent left off
+
+> **Handoff limitation:** `get_last_context()` returns the most recent `context_pack` snapshot
+> only — not a full session transcript. Use `episodic_search()` for full session history.
 
 ### `cognirepo setup` auto-configures Cursor
 

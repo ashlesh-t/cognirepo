@@ -213,7 +213,7 @@ docker compose up mcp         # MCP stdio server
 
 ## MCP Tools — complete reference
 
-All 22 tools are available to Claude, Cursor, and any MCP-compatible client.
+All 29 tools are available to Claude, Cursor, and any MCP-compatible client.
 
 ### Core retrieval
 
@@ -247,20 +247,32 @@ All 22 tools are available to Claude, Cursor, and any MCP-compatible client.
 | `get_error_patterns(min_count=1)` | Recurring errors with prevention hints | Before proposing a fix — check if it has failed before |
 | `record_error(error_type, message, file_path, query_context)` | Log an error for future avoidance | After any error Claude or user encounters |
 
+### Session start
+
+| Tool | Description | When to use |
+|------|-------------|-------------|
+| `get_session_brief()` | Architecture + hot symbols + index health | **First call every session** |
+| `get_last_context()` | Most recent context_pack snapshot from prior session | **Second call every session** — resume where previous agent left off |
+
 ### Memory & storage
 
 | Tool | Description | When to use |
 |------|-------------|-------------|
 | `store_memory(text, source="")` | Persist a memory to the FAISS index | After solving bugs, recording decisions |
 | `log_episode(event, metadata={})` | Append event to episodic journal | Track milestones, incidents, deployments |
+| `record_decision(summary, rationale="")` | Record architectural decision to episodic memory | When making non-obvious design choices |
 
 ### Cross-repo (organization)
 
 | Tool | Description | When to use |
 |------|-------------|-------------|
 | `org_search(query)` | Search memories across all org repos | Multi-repo context queries |
+| `org_wide_search(query)` | Search across every project in the org | Broadest cross-repo sweep |
+| `org_dependencies(depth=2)` | Bidirectional inter-repo dependency graph | "What does this service depend on?" |
 | `cross_repo_search(query, scope="project")` | Project-scoped or org-scoped search | Finding shared components |
+| `cross_repo_traverse(symbol, direction="both")` | Traverse org graph from a repo or symbol | Tracing bugs across service boundaries |
 | `list_org_context()` | Org metadata + sibling repos | Understanding repo relationships |
+| `link_repos(src_repo, dst_repo, relationship)` | Record cross-repo dependency | When you discover one repo imports another |
 
 ---
 

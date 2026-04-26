@@ -7,6 +7,7 @@ Goal: cut token overhead and context loss between AI sessions, not add complexit
 ## Key rules
 
 - All storage lives under `.cognirepo/` in the project root, with one exception: cross-agent handoff snapshots are written to `~/.cognirepo/<repo>/last_context.json` so multiple agent processes (Claude, Gemini, Cursor) can share context across sessions. The org-level dependency graph lives at `~/.cognirepo/org_graph.pkl` for the same reason.
+- Org graph model: main repo = hub/parent. Sub-repos/microservices are registered as children via `cognirepo init --parent-repo <path>`. Edges are IMPORTS/CALLS_API/SHARES_SCHEMA/CHILD_OF/DISCOVERED. AI agents add DISCOVERED edges dynamically via `link_repos()`. Children can be interconnected.
 - Model names only in `orchestrator/classifier.py`. No hardcoding elsewhere.
 - `retrieval/hybrid.py` owns all retrieval. Never call FAISS or the graph directly from tools.
 - Tools in `tools/` are the single entry point. Stateless, no cross-tool calls.
@@ -27,6 +28,9 @@ Goal: cut token overhead and context loss between AI sessions, not add complexit
 | Past decisions / bugs | `episodic_search("topic")` |
 | Architecture overview | `architecture_overview()` |
 | Resume previous session | `get_last_context()` |
+| Record architectural decision | `record_decision("summary", "rationale")` |
+| Log an event or milestone | `log_episode("event text")` |
+| Link two repos discovered to be related | `link_repos(src, dst, "discovered")` |
 
 **NEVER** use `Read` or `grep` to explore code before calling `context_pack` first.
 **NEVER** assume where a function lives — call `lookup_symbol` first.
