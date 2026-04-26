@@ -26,7 +26,23 @@ class CrossRepoRouter:
         self._project_org, self._project_name = _proj if _proj else (None, None)
 
     def get_sibling_repos(self) -> list[str]:
-        """Return absolute paths to all other repos in the same organization (top-level only)."""
+        """
+        Return absolute paths to all sibling repos (same parent in org graph).
+        Falls back to orgs.json for backward compatibility if no graph siblings found.
+        """
+        try:
+            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            og = get_org_graph()
+            siblings = og.get_siblings(self.repo_path)
+            if siblings:
+                return [s for s in siblings if os.path.isdir(s)]
+            # Also include repos where self is a child (all siblings of self's parent)
+            children = og.get_children(self.repo_path)
+            if children:
+                return [c for c in children if os.path.isdir(c)]
+        except Exception:  # pylint: disable=broad-except
+            pass
+        # Fallback: orgs.json (backward compat)
         if not self.org_name:
             return []
         purge_stale_repos(self.org_name)

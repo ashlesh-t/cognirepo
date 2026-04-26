@@ -10,6 +10,46 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.0.0] — 2026-04-26
+
+### Added
+
+- **`cognirepo setup`** — one-command onboarding: init + index + writes MCP configs for Claude, Cursor, VS Code
+- **`get_last_context()` MCP tool** — reads `~/.cognirepo/<repo>/last_context.json`; second agent resumes where first left off
+- **`get_session_brief()` MCP tool** — returns architecture summary, hot symbols, entry points, index health; call at session start
+- **`cognirepo ask` (local-only mode)** — zero-API query using QUICK-tier local resolver; no API keys required
+- **Cursor MDC rules** — `.cursor/rules/cognirepo.mdc` with `alwaysApply: true`, session-start sequence, NEVER directives
+- **VS Code MCP config** — `.vscode/mcp.json` + `.vscode/mcp.json.example` for VS Code / GitHub Copilot integration
+- **`docs/USAGE.md`** — Cursor Integration, VS Code MCP Setup, GitHub Copilot Integration sections
+- **precision@k benchmark** — `measure_precision_at_k()` + `measure_latency()` in `tools/benchmark.py`
+- **20-entry golden test set** — `tests/fixtures/benchmark_golden.json` for CogniRepo self-benchmark
+- **External repo golden sets** — `benchmark_golden_{flask,fastapi,celery,ansible}.json`
+- **`docs/METRICS.md`** — External Repo Validation section with measured numbers (flask/fastapi/celery/ansible)
+- **Index build timing** — `cognirepo index-repo` prints symbol count, file count, elapsed time, peak RSS delta
+- **`cognirepo doctor` checks 11–14** — venv pollution, filelock/tiktoken importable, sentence-transformers importable, MCP tool schemas
+- **AST index staleness warning** — doctor warns if index is > 24h old
+- **`_REGISTERED_TOOLS`** — exported set in `server/mcp_server.py` for doctor validation
+
+### Changed
+
+- **Install size ~75% smaller** — `anthropic`, `google-generativeai`, `google-genai`, `openai` moved to `[providers]` optional extra; MCP-only users no longer need model SDKs
+- **CPU embeddings by default** — `sentence-transformers[cpu]` is now the default; `[gpu]` extra for GPU users
+- **`cognirepo doctor` exit codes** — `0`=healthy, `1`=warnings only, `2`=any error (was: exit N = error count)
+- **`_cmd_prime()` extracted** — body moved to `tools/prime_session.py`; CLI and MCP tool share the same implementation
+- **`docs/USAGE.md`** — table of contents updated; install section leads with `pip install 'cognirepo[cpu,languages]'`
+- **README** — headline reframed as "Persistent Institutional Memory"; 5-minute quickstart with `cognirepo setup`; measured external benchmark table added
+- **`pyproject.toml`** — `fail_under` raised from 50 → 70; `Development Status` → `5 - Production/Stable`
+
+### Fixed
+
+- **`org_graph.py` concurrent writes** — added `_org_lock()` using `~/.cognirepo/org_graph.lock`; Fernet encrypt/decrypt on load/save
+- **`config/lock.py`** — removed silent `_NoOpLock` fallback; now raises `ImportError` with actionable install hint
+- **`episodic_bm25_filter` time_range** — BM25 now rebuilt from filtered events when `time_range` is active; was searching wrong event set
+- **`to_undirected()` performance** — cached in `HybridRetriever.__init__`; was O(V+E) × 20 per query
+- **Concurrent cache miss amplification** — `_IN_FLIGHT` dict + `threading.Event` dedup; N concurrent misses → 1 retrieve call
+
+---
+
 ## [0.3.0] — 2026-04-24
 
 ### Added

@@ -47,7 +47,7 @@
   {
     "query": "who calls function caller graph traversal",
     "expected_symbol": "who_calls",
-    "expected_file_pattern": "tools/who_calls.py"
+    "expected_file_pattern": "server/mcp_server.py"
   },
   {
     "query": "retrieve memory top k similarity search",
@@ -57,7 +57,7 @@
   {
     "query": "architecture overview summarize hierarchical",
     "expected_symbol": "architecture_overview",
-    "expected_file_pattern": "tools/architecture_overview.py"
+    "expected_file_pattern": "server/mcp_server.py"
   },
   {
     "query": "file watcher inotify watchdog daemon",
@@ -72,12 +72,12 @@
   {
     "query": "subgraph entity depth neighbourhood graph",
     "expected_symbol": "subgraph",
-    "expected_file_pattern": "tools/subgraph.py"
+    "expected_file_pattern": "server/mcp_server.py"
   },
   {
     "query": "cross repo org search linked repositories",
     "expected_symbol": "org_search",
-    "expected_file_pattern": "tools/org_search.py"
+    "expected_file_pattern": "server/mcp_server.py"
   },
   {
     "query": "local vector database FAISS IndexFlatL2 add search",

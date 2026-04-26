@@ -122,7 +122,21 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
 
         # 6. sort + truncate
         scored.sort(key=lambda x: x["final_score"], reverse=True)
-        return scored[:top_k]
+        top = scored[:top_k]
+
+        # 7. record query for user-behaviour profiling (never breaks retrieval)
+        try:
+            self.behaviour.record_query(
+                query_id=str(abs(hash(query))),
+                query_text=query,
+                retrieved_symbols=[c.get("source", "") for c in top],
+                faiss_rows=None,
+            )
+            self.behaviour.save()
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        return top
 
     # ── private helpers ───────────────────────────────────────────────────────
 

@@ -326,6 +326,31 @@ def retrieve_memory(query: str, top_k: int = 5, include_org: bool = False, repo_
 
 
 @mcp.tool()
+def record_decision(
+    summary: str,
+    rationale: str = "",
+    affected_files: list | None = None,
+    repo_path: str | None = None,
+) -> dict:
+    """
+    Record an architectural decision, bug fix rationale, or 'why we did X'.
+    Stored in episodic memory — retrievable via episodic_search in future sessions.
+    Call when a non-obvious architectural decision is made, a bug root-cause is
+    understood, or the user says to 'remember' something.
+    Do NOT call for routine changes — only decisions where WHY is non-obvious.
+    Returns: {stored: True, searchable_via: 'episodic_search'}
+    """
+    with _repo_ctx(repo_path):
+        log_event({
+            "type": "decision",
+            "summary": summary,
+            "rationale": rationale,
+            "affected_files": affected_files or [],
+        })
+    return {"stored": True, "searchable_via": "episodic_search"}
+
+
+@mcp.tool()
 def org_search(query: str, top_k: int = 5) -> list:
     """
     Search for code symbols and memories across all repositories in the organization.
@@ -358,6 +383,9 @@ def cross_repo_search(query: str, scope: str = "project", top_k: int = 5) -> dic
 
     scope="project" — only repos in same project (recommended, high relevance).
     scope="org"     — all repos in organization (broader, use sparingly).
+
+    Requires repos linked via `cognirepo init` (written to org graph).
+    Returns empty results if no sibling repos are registered.
 
     Claude: call this when:
     - lookup_symbol returned empty and the symbol may live in a sibling repo
@@ -431,6 +459,38 @@ def org_dependencies(depth: int = 2) -> dict:
 
 
 @mcp.tool()
+def link_repos(
+    src_repo: str,
+    dst_repo: str,
+    relationship: str = "imports",
+    note: str = "",
+) -> dict:
+    """
+    Record a dependency relationship between two repos in the org graph.
+    Call this when you discover that one repo imports from or calls another.
+
+    relationship: 'imports', 'calls_api', 'shares_schema', 'discovered'
+    src_repo / dst_repo: absolute filesystem paths to the repos.
+
+    Do NOT call for repos not yet registered via cognirepo init.
+    Returns: {linked: True, edge: {src, dst, kind}}
+    """
+    from graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
+    kind_map = {
+        "imports": "IMPORTS",
+        "calls_api": "CALLS_API",
+        "shares_schema": "SHARES_SCHEMA",
+        "discovered": "DISCOVERED",
+    }
+    kind = kind_map.get(relationship.lower(), "DISCOVERED")
+    og = get_org_graph()
+    og.link_repos(src_repo, dst_repo, kind=kind, note=note)
+    og.save()
+    invalidate_org_graph()
+    return {"linked": True, "edge": {"src": src_repo, "dst": dst_repo, "kind": kind}}
+
+
+@mcp.tool()
 def cross_repo_traverse(
     symbol: str | None = None,
     start_repo: str | None = None,
@@ -446,6 +506,8 @@ def cross_repo_traverse(
     direction="both"         — return both directions (default)
 
     If symbol is provided, also reports where that symbol exists in each traversed repo.
+    Requires repos linked via `cognirepo init` (written to org graph).
+    Returns empty if no sibling repos are registered.
 
     Claude: use this when the user asks "which services use X?",
     "what does auth-service depend on?", or when tracing a bug across service boundaries.
@@ -486,6 +548,8 @@ def lookup_symbol(name: str, include_org: bool = False, repo_path: str | None = 
     Return all locations where a symbol is defined or called,
     with file, line, and type.
     If include_org=True, also searches sibling repositories in the same organization.
+    Do NOT call for broad concepts — only exact or near-exact symbol names.
+    For concept queries use semantic_search_code instead.
 
     repo_path: optional absolute path to the target repository. When omitted,
     defaults to the server's configured project directory.
@@ -624,6 +688,7 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
     If empty, falls back to string-literal grep for dynamic dispatch patterns
     (APScheduler add_job, Django signals, Flask routes, Celery tasks, etc.).
     Dynamic hits are labelled with found_via=dynamic_dispatch_fallback.
+    Do NOT call if you already know the callers. Expensive on large graphs.
 
     repo_path: optional absolute path to the target repository.
     """
@@ -748,6 +813,23 @@ def episodic_search(query: str, limit: int = 10, repo_path: str | None = None) -
 
 
 @mcp.tool()
+def log_episode(
+    event: str,
+    metadata: dict | None = None,
+    repo_path: str | None = None,
+) -> dict:
+    """
+    Log a structured episodic event to the episodic memory store.
+    Use to record what happened: bugs found, code explored, agent actions.
+    Retrievable via episodic_search in future sessions.
+    Do NOT use for architectural decisions — use record_decision instead.
+    """
+    with _repo_ctx(repo_path):
+        log_event({"event": event, **(metadata or {})})
+    return {"logged": True}
+
+
+@mcp.tool()
 def graph_stats(repo_path: str | None = None) -> dict:
     """
     Return a health summary of the current graph state.
@@ -803,6 +885,8 @@ def semantic_search_code(
     """
     Semantic vector search over indexed code symbols only (no episodic memory
     mixed in).  Optionally filter by language: "python", "typescript", "go", etc.
+    Do NOT call for exact string matches — use search_token or grep instead.
+    Use for concepts and natural-language queries about what code does.
 
     repo_path: optional absolute path to the target repository.
     """
@@ -810,6 +894,22 @@ def semantic_search_code(
         result = _traced("semantic_search_code", _semantic_search_code, query=query, top_k=top_k, language=language)
         _auto_store_hook("semantic_search_code", result)
     return result
+
+
+@mcp.tool()
+def search_docs(query: str, top_k: int = 5, repo_path: str | None = None) -> dict:
+    """
+    Search indexed documentation files (*.md, *.rst, *.txt) by semantic similarity.
+    Use for: README explanations, architecture docs, decision logs.
+    Do NOT use for code — use semantic_search_code instead.
+
+    repo_path: optional absolute path to the target repository.
+    """
+    with _repo_ctx(repo_path):
+        result = _traced("search_docs", _search_docs, query=query)
+        if isinstance(result, list):
+            result = result[:top_k]
+    return result if isinstance(result, dict) else {"results": result, "count": len(result)}
 
 
 @mcp.tool()
@@ -890,6 +990,8 @@ def context_pack(
     Budget-pack the most relevant code + episodic context into a token-bounded
     block ready for injection into the next prompt.  Call this BEFORE reading
     any source file to avoid wasting tokens on raw file reads.
+    Returns at most max_tokens (default 2000) tokens — much smaller than raw files.
+    Do NOT call for known short files (< 50 lines) — use Read directly instead.
 
     repo_path: optional absolute path to the target repository. When omitted,
     defaults to the server's configured project directory.
@@ -1404,6 +1506,18 @@ def _write_manifest() -> None:
     manifest_path = os.path.join(os.path.dirname(__file__), "manifest.json")
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(_build_manifest(), f, indent=2)
+
+
+# Set of tool names registered via @mcp.tool() — used by cognirepo doctor for schema validation.
+_REGISTERED_TOOLS: set[str] = {
+    "store_memory", "retrieve_memory", "record_decision", "org_search", "org_dependencies",
+    "architecture_overview", "lookup_symbol", "context_pack", "who_calls",
+    "search_docs", "log_episode", "subgraph", "explain_change",
+    "graph_stats", "get_session_history", "get_last_context", "get_session_brief",
+    "semantic_search_code", "search_token", "dependency_graph", "cross_repo_search",
+    "cross_repo_traverse", "episodic_search", "org_wide_search", "list_org_context",
+    "get_user_profile", "record_error", "get_error_patterns", "link_repos",
+}
 
 
 def run_server(project_dir: str | None = None) -> None:

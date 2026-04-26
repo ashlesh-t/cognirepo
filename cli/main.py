@@ -354,7 +354,8 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     if not as_json:
         print(f"CogniRepo doctor — v{_ver}\n")
 
-    issues = 0
+    issues = 0    # errors \u2192 exit 2
+    warnings = 0  # warnings \u2192 exit 1
     _results: list[dict] = []
 
     def _ok(msg: str) -> None:
@@ -370,6 +371,8 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
                 print(f"       {hint}")
 
     def _warn(msg: str, hint: str = "") -> None:
+        nonlocal warnings
+        warnings += 1
         _results.append({"status": "warn", "message": msg, "hint": hint})
         if not as_json:
             print(f"  \u26a0  {msg}")
@@ -454,6 +457,18 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     else:
         _fail("AST index — not found", "Run: cognirepo index-repo .")
         issues += 1
+
+    # ── Check 4a: AST index staleness ────────────────────────────────────────
+    if os.path.exists(_ast_path):
+        try:
+            _ast_age_h = (time.time() - os.path.getmtime(_ast_path)) / 3600
+            if _ast_age_h > 24:
+                _warn(
+                    f"AST index — last updated {_ast_age_h:.0f}h ago (may be stale)",
+                    "Run: cognirepo index-repo . to refresh",
+                )
+        except OSError:
+            pass
 
     # ── Check 4b: Index integrity manifest ───────────────────────────────────
     try:
@@ -611,6 +626,72 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         _fail(f"BM25 backend — {exc}")
         issues += 1
 
+    # ── Check 11: Venv pollution in index ────────────────────────────────────
+    _ast_path_check = get_path("index/ast_index.json")
+    if os.path.exists(_ast_path_check):
+        try:
+            with open(_ast_path_check, encoding="utf-8") as _af2:
+                _ast_check = json.load(_af2)
+            _polluted = [
+                f for f in _ast_check.get("files", {})
+                if any(s in f for s in ("/venv/", "/.venv/", "/node_modules/", "/site-packages/"))
+            ]
+            if _polluted:
+                _warn(
+                    f"Index pollution — {len(_polluted)} venv/node_modules path(s) in AST index",
+                    "Run: cognirepo index-repo . --force-reindex to rebuild clean",
+                )
+            else:
+                _ok("Index pollution — none (no venv/node_modules paths)")
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+    # ── Check 12: Required packages importable ────────────────────────────────
+    for _pkg_name, _pkg_install in [
+        ("filelock", "pip install filelock"),
+        ("tiktoken", "pip install tiktoken"),
+    ]:
+        try:
+            __import__(_pkg_name)
+            _ok(f"Package — {_pkg_name} importable")
+        except ImportError:
+            _fail(f"Package — {_pkg_name} not installed", _pkg_install)
+            issues += 1
+
+    # ── Check 13: sentence-transformers importable ────────────────────────────
+    try:
+        import sentence_transformers as _st  # pylint: disable=import-outside-toplevel
+        _st_ver = getattr(_st, "__version__", "unknown")
+        _ok(f"sentence-transformers — v{_st_ver} importable")
+    except ImportError:
+        _fail(
+            "sentence-transformers — not installed",
+            "Run: pip install 'cognirepo[cpu]'",
+        )
+        issues += 1
+
+    # ── Check 14: MCP tool schemas valid ─────────────────────────────────────
+    try:
+        from server import mcp_server as _mcp_mod  # pylint: disable=import-outside-toplevel
+        _required_tools = [
+            "store_memory", "retrieve_memory", "context_pack",
+            "lookup_symbol", "who_calls", "get_session_brief", "get_last_context",
+        ]
+        _registered = getattr(_mcp_mod, "_REGISTERED_TOOLS", None)
+        if _registered is not None:
+            _missing_tools = [t for t in _required_tools if t not in _registered]
+            if _missing_tools:
+                _warn(
+                    f"MCP tools — {len(_missing_tools)} expected tool(s) not registered: "
+                    f"{', '.join(_missing_tools)}",
+                )
+            else:
+                _ok(f"MCP tools — all {len(_required_tools)} required tools registered")
+        else:
+            _ok("MCP tools — server module importable (tool list not exposed)")
+    except Exception as exc:  # pylint: disable=broad-except
+        _warn(f"MCP tools — could not verify schemas ({exc})")
+
     # ── Check N: AI tool MCP configs (informational, not failures) ───────────
     _tool_checks = [
         ("Claude Code", ".claude/settings.json", "mcpServers"),
@@ -671,12 +752,22 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
 
     # ── Summary ───────────────────────────────────────────────────────────────
     if as_json:
-        print(json.dumps({"version": _ver, "issues": issues, "checks": _results}, indent=2))
+        print(json.dumps({
+            "version": _ver, "errors": issues, "warnings": warnings, "checks": _results,
+        }, indent=2))
+    elif issues == 0 and warnings == 0:
+        print("\n  All checks passed.")
     elif issues == 0:
-        print("\n  No issues found.")
+        print(f"\n  {warnings} warning(s). No errors.")
     else:
-        print(f"\n  {issues} issue(s) found.")
-    return issues
+        print(f"\n  {issues} error(s), {warnings} warning(s).")
+
+    # Exit code contract: 0=healthy, 1=warnings only, 2=any error
+    if issues > 0:
+        return 2
+    if warnings > 0:
+        return 1
+    return 0
 
 
 def _cmd_status() -> None:
@@ -2035,6 +2126,18 @@ def main():
         default=False,
         help="Use all defaults without prompting (for CI/scripted setup).",
     )
+    p_init.add_argument(
+        "--parent-repo",
+        default=None,
+        metavar="PATH",
+        help="Link this repo as a child of the given parent repo path in the org graph.",
+    )
+    p_init.add_argument(
+        "--no-link",
+        action="store_true",
+        default=False,
+        help="Skip org graph linking (standalone repo, no parent).",
+    )
 
     # serve
     p_serve = sub.add_parser("serve", help="Start the MCP stdio server")
@@ -2562,6 +2665,37 @@ def main():
                     )
                 except Exception:  # pylint: disable=broad-except
                     pass
+
+        # ── org graph: register this repo ────────────────────────────────────────
+        _no_link = getattr(args, "no_link", False)
+        _parent_repo = getattr(args, "parent_repo", None)
+        if not _no_link:
+            try:
+                from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+                _og = get_org_graph()
+                _cwd = str(__import__("pathlib").Path.cwd().resolve())
+
+                if _parent_repo is None and not non_interactive and sys.stdin.isatty():
+                    # Interactive prompt for parent repo linking
+                    print(
+                        "\nIs this repo a sub-service or microservice of another repo?\n"
+                        "Enter the parent repo's absolute path (or press Enter to skip): ",
+                        end="", flush=True,
+                    )
+                    try:
+                        _parent_repo = input().strip() or None
+                    except EOFError:
+                        _parent_repo = None
+
+                if _parent_repo and os.path.isdir(_parent_repo):
+                    _parent_repo = os.path.abspath(_parent_repo)
+                    _og.add_repo(_cwd, parent_path=_parent_repo)
+                    print(f"[cognirepo] Linked as child of: {_parent_repo}")
+                else:
+                    _og.add_repo(_cwd)
+                _og.save()
+            except Exception:  # pylint: disable=broad-except
+                pass
 
         _print_ready_summary(summary)
         # Best-effort: install git hook so future commits trigger incremental reindex

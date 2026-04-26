@@ -45,7 +45,8 @@ def _org_lock():
             "Run: pip install filelock"
         ) from exc
 
-EdgeKind = Literal["IMPORTS", "CALLS_API", "SHARES_SCHEMA"]
+EdgeKind = Literal["IMPORTS", "CALLS_API", "SHARES_SCHEMA", "CHILD_OF", "DISCOVERED"]
+_VALID_EDGE_KINDS: frozenset[str] = frozenset({"IMPORTS", "CALLS_API", "SHARES_SCHEMA", "CHILD_OF", "DISCOVERED"})
 _ORG_GRAPH_FILE = os.path.join(os.path.expanduser("~"), ".cognirepo", "org_graph.pkl")
 
 
@@ -70,6 +71,7 @@ class OrgGraph:
     def _load(self) -> None:
         path = _graph_path()
         if not os.path.exists(path):
+            self._migrate_from_orgs_json()
             return
         try:
             with _org_lock():
@@ -84,6 +86,36 @@ class OrgGraph:
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning("OrgGraph: failed to load %s: %s", path, exc)
             self.G = nx.DiGraph()
+
+    def _migrate_from_orgs_json(self) -> None:
+        """One-time migration: read orgs.json repo lists into the org graph."""
+        try:
+            orgs_path = os.path.join(os.path.expanduser("~"), ".cognirepo", "orgs.json")
+            if not os.path.exists(orgs_path):
+                return
+            import json  # pylint: disable=import-outside-toplevel
+            with open(orgs_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            migrated = 0
+            for org_data in data.values():
+                if not isinstance(org_data, dict):
+                    continue
+                for repo in org_data.get("repos", []):
+                    if os.path.isdir(repo):
+                        self.add_repo(repo)
+                        migrated += 1
+                for proj in org_data.get("projects", {}).values():
+                    repos = proj.get("repos", [])
+                    for i, repo in enumerate(repos):
+                        if os.path.isdir(repo):
+                            parent = repos[0] if i > 0 else None
+                            self.add_repo(repo, parent_path=parent)
+                            migrated += 1
+            if migrated:
+                logger.info("OrgGraph: migrated %d repos from orgs.json", migrated)
+                self.save()
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.debug("OrgGraph: orgs.json migration skipped: %s", exc)
 
     def save(self) -> None:
         path = _graph_path()
@@ -103,9 +135,30 @@ class OrgGraph:
 
     # ── node management ───────────────────────────────────────────────────────
 
-    def add_repo(self, path: str, metadata: dict | None = None) -> None:
+    def add_repo(
+        self,
+        path: str,
+        parent_path: str | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        """
+        Register a repo node. If parent_path is given, adds a CHILD_OF edge
+        so get_children(parent_path) returns this repo.
+        """
         abs_path = os.path.abspath(path)
-        self.G.add_node(abs_path, **(metadata or {}), node_type="REPO")
+        node_attrs = {"node_type": "REPO", "name": os.path.basename(abs_path)}
+        if parent_path:
+            node_attrs["parent"] = os.path.abspath(parent_path)
+        if metadata:
+            node_attrs.update(metadata)
+        self.G.add_node(abs_path, **node_attrs)
+        if parent_path:
+            abs_parent = os.path.abspath(parent_path)
+            # Ensure parent node exists
+            if not self.G.has_node(abs_parent):
+                self.G.add_node(abs_parent, node_type="REPO", name=os.path.basename(abs_parent))
+            self.G.add_edge(abs_path, abs_parent, kind="CHILD_OF", direction="forward", auto=False)
+            self.G.add_edge(abs_parent, abs_path, kind="CHILD_OF", direction="reverse", auto=False)
 
     def remove_repo(self, path: str) -> None:
         abs_path = os.path.abspath(path)
@@ -191,6 +244,77 @@ class OrgGraph:
                 })
                 queue.append((neighbor, dist + 1))
         return results
+
+    def link_repos(
+        self,
+        src: str,
+        dst: str,
+        kind: str = "IMPORTS",
+        note: str = "",
+        bidirectional: bool = True,
+        auto: bool = False,
+    ) -> None:
+        """
+        Record an inter-repo dependency edge. kind must be one of:
+        IMPORTS, CALLS_API, SHARES_SCHEMA, DISCOVERED.
+        Prefer this over link() for agent-driven edge creation.
+        """
+        edge_kind = kind if kind in _VALID_EDGE_KINDS else "DISCOVERED"
+        self.link(src, dst, kind=edge_kind, bidirectional=bidirectional, auto=auto)  # type: ignore[arg-type]
+        if note:
+            abs_src = os.path.abspath(src)
+            abs_dst = os.path.abspath(dst)
+            if self.G.has_edge(abs_src, abs_dst):
+                self.G[abs_src][abs_dst]["note"] = note
+
+    def get_children(self, repo_path: str) -> list[str]:
+        """Return direct children (repos linked with CHILD_OF, forward direction)."""
+        abs_path = os.path.abspath(repo_path)
+        if not self.G.has_node(abs_path):
+            return []
+        return [
+            n for n in self.G.successors(abs_path)
+            if self.G[abs_path][n].get("kind") == "CHILD_OF"
+            and self.G[abs_path][n].get("direction") == "reverse"
+        ]
+
+    def get_siblings(self, repo_path: str) -> list[str]:
+        """Return repos that share the same parent as repo_path."""
+        abs_path = os.path.abspath(repo_path)
+        node_data = self.G.nodes.get(abs_path, {})
+        parent = node_data.get("parent")
+        if not parent:
+            return []
+        return [c for c in self.get_children(parent) if c != abs_path]
+
+    def root_repos(self) -> list[str]:
+        """Return repos with no parent (org roots)."""
+        return [
+            n for n, d in self.G.nodes(data=True)
+            if d.get("node_type") == "REPO" and not d.get("parent")
+        ]
+
+    def infer_import_edges(self, repo_path: str, ast_index: dict) -> int:
+        """
+        Scan ast_index for import statements. If an imported package name matches
+        a known sibling repo name, add an IMPORTS edge. Returns count of edges added.
+        """
+        abs_path = os.path.abspath(repo_path)
+        known_repos = {os.path.basename(r): r for r in self.list_repos() if r != abs_path}
+        if not known_repos:
+            return 0
+        added = 0
+        for _file, file_data in ast_index.get("files", {}).items():
+            for sym in file_data.get("symbols", []):
+                if sym.get("type") not in ("IMPORT", "FROM_IMPORT"):
+                    continue
+                imported = sym.get("name", "").split(".")[0].replace("-", "_")
+                if imported in known_repos:
+                    target = known_repos[imported]
+                    if not self.G.has_edge(abs_path, target):
+                        self.link(abs_path, target, kind="IMPORTS", bidirectional=False, auto=True)
+                        added += 1
+        return added
 
     def shortest_path(self, src: str, dst: str) -> list[str]:
         abs_src = os.path.abspath(src)
