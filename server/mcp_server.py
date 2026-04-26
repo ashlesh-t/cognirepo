@@ -524,17 +524,23 @@ def cross_repo_traverse(
         "depth": depth,
     }
 
+    _MAX_REPOS = 100
+
     if direction in ("dependencies", "both"):
         deps = og.get_dependencies(current, depth=depth)
         if symbol:
             deps = _annotate_with_symbol(deps, symbol)
-        result["dependencies"] = deps
+        result["dependencies"] = deps[:_MAX_REPOS]
+        if len(deps) > _MAX_REPOS:
+            result["dependencies_truncated"] = True
 
     if direction in ("dependents", "both"):
         dependents = og.get_dependents(current, depth=depth)
         if symbol:
             dependents = _annotate_with_symbol(dependents, symbol)
-        result["dependents"] = dependents
+        result["dependents"] = dependents[:_MAX_REPOS]
+        if len(dependents) > _MAX_REPOS:
+            result["dependents_truncated"] = True
 
     if symbol:
         result["symbol"] = symbol
@@ -772,9 +778,19 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
 
         _auto_store_hook("who_calls", result)
 
+    _MAX_CALLERS = 50
     if cross_repo_callers:
-        return {"local_callers": result, "cross_repo_callers": cross_repo_callers}
-    return result
+        return {
+            "local_callers": result[:_MAX_CALLERS],
+            "cross_repo_callers": cross_repo_callers[:_MAX_CALLERS],
+            "truncated": len(result) > _MAX_CALLERS or len(cross_repo_callers) > _MAX_CALLERS,
+        }
+    truncated = len(result) > _MAX_CALLERS
+    return result[:_MAX_CALLERS] if not truncated else {
+        "callers": result[:_MAX_CALLERS],
+        "truncated": True,
+        "total_found": len(result),
+    }
 
 
 @mcp.tool()
@@ -792,10 +808,22 @@ def subgraph(entity: str, depth: int = 2, repo_path: str | None = None) -> dict:
         else:
             if g.G.number_of_nodes() == 0:
                 return _EMPTY_GRAPH_WARNING
+        _MAX_NODES, _MAX_EDGES = 200, 500
         candidates = [entity, f"symbol::{entity}", f"concept::{entity.lower()}"]
         for candidate in candidates:
             if g.node_exists(candidate):
                 result = g.subgraph_around(candidate, radius=depth)
+                nodes = result.get("nodes", [])
+                edges = result.get("edges", [])
+                truncated = len(nodes) > _MAX_NODES or len(edges) > _MAX_EDGES
+                if truncated:
+                    result = {
+                        "nodes": nodes[:_MAX_NODES],
+                        "edges": edges[:_MAX_EDGES],
+                        "truncated": True,
+                        "total_nodes": len(nodes),
+                        "total_edges": len(edges),
+                    }
                 _auto_store_hook("subgraph", result)
                 return result
     return {"nodes": [], "edges": []}

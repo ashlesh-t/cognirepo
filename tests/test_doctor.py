@@ -157,8 +157,16 @@ def _run_doctor(
     # ── stub server.mcp_server (new check 14) ─────────────────────────────────
     fake_mcp_server_mod = types.ModuleType("server.mcp_server")
     fake_mcp_server_mod._REGISTERED_TOOLS = {
-        "store_memory", "retrieve_memory", "context_pack",
-        "lookup_symbol", "who_calls", "get_session_brief", "get_last_context",
+        "store_memory", "retrieve_memory", "record_decision",
+        "context_pack", "semantic_search_code", "search_token",
+        "lookup_symbol", "who_calls", "subgraph", "dependency_graph", "graph_stats",
+        "episodic_search", "log_episode",
+        "architecture_overview", "explain_change",
+        "get_session_brief", "get_last_context", "get_session_history",
+        "cross_repo_search", "org_dependencies", "cross_repo_traverse",
+        "org_wide_search", "org_search", "list_org_context", "link_repos",
+        "search_docs",
+        "get_user_profile", "record_error", "get_error_patterns",
     }
     monkeypatch.setitem(sys.modules, "server", types.ModuleType("server"))
     monkeypatch.setitem(sys.modules, "server.mcp_server", fake_mcp_server_mod)
@@ -180,7 +188,7 @@ def _run_doctor(
             # Match files checked by doctor
             if "config.json" in ps or "semantic.index" in ps or \
                "graph.pkl" in ps or "ast_index.json" in ps or \
-               "episodic.json" in ps:
+               "episodic.json" in ps or "summaries.json" in ps:
                 return True
             # Fake at least one MCP config so the AI-tools check passes
             if ".claude/settings.json" in ps or "settings.json" in ps:
