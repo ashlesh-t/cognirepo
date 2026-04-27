@@ -107,4 +107,16 @@ def prime_session() -> dict:
     except (OSError, json.JSONDecodeError):
         brief["index_health"] = {"symbols": 0, "files": 0, "last_indexed": "not indexed"}
 
+    # Cold-start guidance — tell agents what to run when data is missing
+    if not brief["architecture"]:
+        if brief["index_health"].get("symbols", 0) == 0:
+            brief["setup_required"] = (
+                "Index not built. Run: cognirepo index-repo . "
+                "(then cognirepo summarize for architecture overview)"
+            )
+        else:
+            brief["setup_required"] = (
+                "Architecture summaries missing. Run: cognirepo summarize"
+            )
+
     return brief

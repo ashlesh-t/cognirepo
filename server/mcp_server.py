@@ -353,7 +353,11 @@ def record_decision(
 @mcp.tool()
 def org_search(query: str, top_k: int = 5) -> list:
     """
-    Search for code symbols and memories across all repositories in the organization.
+    FALLBACK ONLY — use org_wide_search first.
+    Text-match search across org repos when org_wide_search returns nothing.
+    Do NOT call as primary cross-repo search — org_wide_search has broader coverage.
+
+    Use when: org_wide_search returned 0 results, or the index is sparse.
     Returns a list of results annotated with source repository.
     """
     from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
@@ -1187,6 +1191,45 @@ def get_user_profile(repo_path: str | None = None) -> dict:
 
 
 @mcp.tool()
+def record_user_preference(
+    preference_key: str,
+    preference_value: str,
+    context: str = "",
+    repo_path: str | None = None,
+) -> dict:
+    """
+    Store an explicit user preference or query-rewrite correction.
+
+    **Standard preferences** (preference_key = any label):
+    Store as: record_user_preference("response_format", "code-first, then explanation")
+    Surfaced via get_user_profile()['explicit_preferences'].
+
+    **Query-rewrite corrections** (preference_key = "query_rewrite"):
+    Use when you asked for X but user says they actually meant Y.
+    Store the wrong phrasing as preference_value, intent in context:
+      record_user_preference("query_rewrite", "deploy model", context="user means: update the ML model weights in production, not software deploy")
+    Stored in query_rewrites list; agents apply these before retrieval so future
+    similar queries hit the right code even when phrasing is off.
+
+    Claude: call this when:
+    - User corrects your interpretation ("no, I meant X not Y")
+    - User expresses a repeated preference ("always show code first")
+    - User clarifies what a query actually means in this codebase
+
+    Do NOT call for one-off answers — only for durable preferences that should
+    persist across sessions.
+    """
+    with _repo_ctx(repo_path) as (_root, g, _idx):
+        if g is None:
+            g = _get_graph()
+        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        bt = BehaviourTracker(g)
+        if preference_key == "query_rewrite":
+            return bt.record_query_rewrite(preference_value, context or preference_value)
+        return bt.record_user_preference(preference_key, preference_value)
+
+
+@mcp.tool()
 def get_error_patterns(min_count: int = 1, repo_path: str | None = None) -> list:
     """
     Return recurring error patterns with prevention hints to avoid repeating mistakes.
@@ -1244,33 +1287,6 @@ def record_error(
             "Track root cause and add a guard at the call site.",
         )
     return {"recorded": True, "error_type": error_type, "prevention_hint": hint}
-
-
-@mcp.tool()
-def record_user_preference(
-    key: str,
-    value: str,
-    repo_path: str | None = None,
-) -> dict:
-    """
-    Store an explicit user preference so all future sessions adapt accordingly.
-
-    key: preference name (e.g. "response_style", "verbosity", "test_framework", "language")
-    value: the value (e.g. "concise", "high", "pytest", "TypeScript")
-
-    Call immediately when user says "I prefer...", "always use...", "never do...".
-    Stored permanently in behaviour.json. Surfaced by get_user_profile() under
-    explicit_preferences — agents read this at session start via get_user_profile().
-
-    Do NOT call for implicit signals (those are tracked automatically via query recording).
-    Returns: {key, value, recorded: True}
-    """
-    with _repo_ctx(repo_path) as (_root, g, _idx):
-        if g is None:
-            g = _get_graph()
-        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
-        bt = BehaviourTracker(g)
-        return bt.record_user_preference(key=key, value=value)
 
 
 def _build_manifest() -> dict:

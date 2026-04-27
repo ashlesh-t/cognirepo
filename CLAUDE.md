@@ -42,6 +42,8 @@ milestones, `record_error()` for any errors hit. This updates the profile for ne
 | Record architectural decision | `record_decision("summary", "rationale")` |
 | Log an event or milestone | `log_episode("event text")` |
 | Link two repos discovered to be related | `link_repos(src, dst, "discovered")` |
+| User corrects your interpretation | `record_user_preference("query_rewrite", "wrong phrasing", context="what they actually meant")` |
+| Store user's style/format preference | `record_user_preference("key", "value")` |
 | User's interaction style | `get_user_profile()` — then apply framing_hints |
 | Avoid repeating past errors | `get_error_patterns()` — check before proposing a fix |
 | Record an error that occurred | `record_error("ErrorType", "message")` |
