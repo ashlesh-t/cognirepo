@@ -346,3 +346,194 @@ Returns org/project membership and sibling repos for the current repository.
 Search memories across ALL repositories in the organization. Prefer `cross_repo_search(scope="project")` for project-scoped queries.
 
 `org_search` is a backward-compat alias — prefer `org_wide_search` in new integrations.
+
+---
+
+## record_decision
+
+**Signature:** `record_decision(summary: str, rationale: str = "", affected_files: list = [], repo_path: str = None) → dict`
+
+**When:** Call when a non-obvious architectural or implementation decision is made — when the WHY is not evident from the code. Do NOT call for routine changes.
+
+**Input:**
+```json
+{"summary": "switched from REST to gRPC for auth service", "rationale": "latency target <5ms", "affected_files": ["auth/server.py"]}
+```
+**Output:**
+```json
+{"stored": true, "searchable_via": "episodic_search"}
+```
+
+---
+
+## link_repos
+
+**Signature:** `link_repos(src_repo: str, dst_repo: str, relationship: str = "imports", note: str = "", service_type: str = "", port: int = 0, api_base_url: str = "") → dict`
+
+**When:** Call when you discover one repo imports from or calls another. relationship: `imports` | `calls_api` | `shares_schema` | `discovered` | `child_of`.
+
+**Input:**
+```json
+{"src_repo": "/projects/api", "dst_repo": "/projects/auth", "relationship": "calls_api", "service_type": "rest_api", "port": 8001}
+```
+**Output:**
+```json
+{"linked": true, "edge": {"src": "/projects/api", "dst": "/projects/auth", "kind": "CALLS_API"}}
+```
+
+---
+
+## org_dependencies
+
+**Signature:** `org_dependencies(depth: int = 2) → dict`
+
+**When:** Call to get a visual map of all registered repos and their dependency edges. Use before `cross_repo_traverse` to understand the graph shape.
+
+**Input:**
+```json
+{"depth": 2}
+```
+**Output:**
+```json
+{"repos": [...], "edges": [...], "depth": 2}
+```
+
+---
+
+## cross_repo_traverse
+
+**Signature:** `cross_repo_traverse(symbol: str = None, start_repo: str = None, direction: str = "both", depth: int = 2) → dict`
+
+**When:** Tracing a symbol, bug, or API change across service boundaries. direction: `dependencies` | `dependents` | `both`.
+
+**Input:**
+```json
+{"symbol": "authenticate", "start_repo": "/projects/api", "direction": "dependents"}
+```
+**Output:**
+```json
+{"start_repo": "...", "dependencies": [...], "dependents": [...]}
+```
+
+---
+
+## search_token
+
+**Signature:** `search_token(token: str, repo_path: str = None) → list`
+
+**When:** Exact token/string search across all indexed file names, symbol names, and docstrings. Unlike `lookup_symbol` (AST-defined symbols only), `search_token` matches any occurrence of the string.
+
+**Input:**
+```json
+{"token": "MAX_RETRIES"}
+```
+**Output:**
+```json
+[{"file": "config.py", "line": 12, "match": "MAX_RETRIES = 3"}]
+```
+
+---
+
+## get_session_brief
+
+**Signature:** `get_session_brief(repo_path: str = None) → dict`
+
+**When:** ALWAYS call at session start (step 1). Returns architecture summary, hot symbols, index health, and recent decisions.
+
+**Output:**
+```json
+{"architecture": "...", "hot_symbols": [...], "index_health": {...}, "recent_decisions": [...]}
+```
+
+---
+
+## get_last_context
+
+**Signature:** `get_last_context(repo_path: str = None) → dict`
+
+**When:** ALWAYS call at session start (step 2). Returns what the last agent (Claude/Gemini/Cursor) was looking at. Enables cross-agent handoff.
+
+**Output:**
+```json
+{"query": "last context_pack query", "sections": [...], "token_count": 1842}
+```
+
+---
+
+## get_session_history
+
+**Signature:** `get_session_history(limit: int = 20, repo_path: str = None) → list`
+
+**When:** Call to see recent session events in chronological order. Useful for understanding what happened in the last few sessions.
+
+**Output:**
+```json
+[{"session_id": "...", "timestamp": "...", "event": "..."}]
+```
+
+---
+
+## get_user_profile
+
+**Signature:** `get_user_profile(repo_path: str = None) → dict`
+
+**When:** ALWAYS call at session start (step 3). Apply `framing_hints` to ALL responses. Shows depth preference, domain vocabulary, code-focus %, and explicit stored preferences.
+
+**Output:**
+```json
+{
+  "depth_preference": "concise",
+  "framing_hints": "prefers concise responses; focuses on code/symbols",
+  "top_terminology": ["context_pack", "graph", "episodic"],
+  "explicit_preferences": {"response_style": "concise"},
+  "total_queries_tracked": 47
+}
+```
+
+---
+
+## get_error_patterns
+
+**Signature:** `get_error_patterns(min_count: int = 1, repo_path: str = None) → list`
+
+**When:** ALWAYS call at session start (step 4) and before proposing a fix. Returns recurring errors with prevention hints so Claude avoids repeating past mistakes.
+
+**Output:**
+```json
+[{"error_type": "ImportError", "count": 3, "prevention_hint": "verify package installed", "last_seen": "..."}]
+```
+
+---
+
+## record_error
+
+**Signature:** `record_error(error_type: str, message: str = "", file_path: str = "", query_context: str = "", repo_path: str = None) → dict`
+
+**When:** Call whenever Claude or the user hits an error. Builds the error pattern database that `get_error_patterns` reads.
+
+**Input:**
+```json
+{"error_type": "TypeError", "message": "expected str got int", "file_path": "api/routes.py"}
+```
+**Output:**
+```json
+{"recorded": true, "error_type": "TypeError", "prevention_hint": "Wrong type — validate inputs at function boundary."}
+```
+
+---
+
+## record_user_preference
+
+**Signature:** `record_user_preference(key: str, value: str, repo_path: str = None) → dict`
+
+**When:** Call IMMEDIATELY when user says "I prefer...", "always use...", "never do...", or states any explicit preference. Stored permanently; surfaced by `get_user_profile()` under `explicit_preferences`.
+
+**Input:**
+```json
+{"key": "response_style", "value": "concise"}
+```
+**Output:**
+```json
+{"key": "response_style", "value": "concise", "recorded": true}
+```
+

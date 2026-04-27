@@ -44,6 +44,29 @@ across sessions, across tools, across time.
 
 ---
 
+## When to use CogniRepo
+
+**Most effective on codebases ≥ 15K LOC.** On small repos (< 10K LOC), native file reads
+are fast enough that the MCP tool schema overhead (~3,558 tokens for 29 tools) takes more
+than you save. Break-even is roughly 4 tool calls on a medium-sized repo.
+
+**CogniRepo vs. claude-context / similar tools:**
+
+| Feature | CogniRepo | claude-context / similar |
+|---------|-----------|--------------------------|
+| Pure code retrieval | ✓ (FAISS + graph + AST) | ✓ Often faster on first use |
+| Episodic memory (what happened last sprint) | ✓ Persistent BM25 + vector | ✗ |
+| Cross-agent handoff (Claude → Gemini → Cursor) | ✓ `last_context.json` shared | ✗ |
+| User behaviour profile (adapts depth/style) | ✓ `get_user_profile()` | ✗ |
+| Error pattern avoidance (learns from past fails) | ✓ `record_error()` | ✗ |
+| Architectural decision records | ✓ `record_decision()` | ✗ |
+| Multi-repo org graph (microservices) | ✓ `CHILD_OF` / `CALLS_API` edges | ✗ |
+
+**Conclusion:** prefer CogniRepo when you value institutional memory across sessions.
+Use simpler tools when you just need one-shot code retrieval on a small codebase.
+
+---
+
 ## Why it helps — measured numbers
 
 Benchmarked across 6 real open-source repos (FastAPI, Flask, Celery, Ansible, Moby/Docker, Kubernetes) using 30 structured prompts tested against Claude, Gemini, and Cursor/Codex.

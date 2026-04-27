@@ -28,7 +28,7 @@ def get_model():
     global MODEL  # pylint: disable=global-statement
 
     if MODEL is None:
-        logger.debug("Loading embedding model once...")
+        logger.info("Loading embedding model (first use — ~2-5s)...")
         # Lazy import — keeps sentence_transformers/PyTorch out of server startup path
         from sentence_transformers import SentenceTransformer  # pylint: disable=import-outside-toplevel
         os.environ.setdefault("HF_HUB_OFFLINE", "1")

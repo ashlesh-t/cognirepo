@@ -684,6 +684,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             "org_wide_search", "org_search", "list_org_context", "link_repos",
             "search_docs",
             "get_user_profile", "record_error", "get_error_patterns",
+            "record_user_preference",
         ]
         _registered = getattr(_mcp_mod, "_REGISTERED_TOOLS", None)
         if _registered is not None:
@@ -694,7 +695,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
                     f"{', '.join(_missing_tools)}",
                 )
             else:
-                _ok(f"MCP tools — all {len(_required_tools)}/29 tools registered")
+                _ok(f"MCP tools — all {len(_required_tools)}/30 tools registered")
         else:
             _ok("MCP tools — server module importable (tool list not exposed)")
     except Exception as exc:  # pylint: disable=broad-except
@@ -901,20 +902,18 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
         print(f"  ✗ init failed: {exc}")
         return
 
-    # ── Step 2: index ────────────────────────────────────────────────────────
+    # ── Step 2: index (full pipeline: symbols → summaries → docs → inter-repo) ─
     if no_index:
         print("[2/4] Skipping index (--no-index)")
     else:
-        print("[2/4] Indexing repository (this may take a minute)...")
+        print("[2/4] Indexing repository (symbols → summaries → docs → inter-repo)...")
         try:
-            from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-            from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-            kg = KnowledgeGraph()
-            indexer = ASTIndexer(graph=kg)
-            summary = indexer.index_repo(cwd)
-            n_sym = summary.get("symbol_count", "?")
-            n_files = summary.get("file_count", "?")
-            print(f"  ✓ Indexed {n_sym} symbols across {n_files} files")
+            _idx_summary, _kg, _idx = _direct_index(cwd, embed=True)
+            _ns = _idx_summary.get("index_symbols", _idx_summary.get("symbol_count", "?"))
+            _nf = _idx_summary.get("index_files", _idx_summary.get("file_count", "?"))
+            print(f"  ✓ {_ns} symbols across {_nf} files — full pipeline complete")
+        except SystemExit:
+            pass
         except Exception as exc:  # pylint: disable=broad-except
             print(f"  ✗ Indexing failed: {exc}")
             print("    Run manually: cognirepo index-repo .")
@@ -985,10 +984,14 @@ alwaysApply: true
 # CogniRepo Tool Routing
 
 CogniRepo MCP tools are available. Use them before native file exploration.
+Most effective on codebases ≥ 15K LOC.
 
-## Session start (always call these first):
+## Session start (call in this order every session)
+
 1. `get_session_brief` — project architecture, hot symbols, index health
-2. `get_last_context` — resume where previous agent left off
+2. `get_last_context` — resume where previous agent left off (cross-agent handoff)
+3. `get_user_profile` — user's interaction style; apply `framing_hints` to ALL responses
+4. `get_error_patterns` — past recurring errors; do not repeat them
 
 ## Tool routing
 
@@ -999,16 +1002,28 @@ CogniRepo MCP tools are available. Use them before native file exploration.
 | Find callers of a function | `who_calls` |
 | Past decisions or bugs | `episodic_search` |
 | Architecture overview | `architecture_overview` |
+| Exact string/token search | `search_token` |
 | Cross-repo search | `cross_repo_search` |
+| Log a decision (WHY non-obvious) | `record_decision` |
+| User states a preference | `record_user_preference` |
 
-## Rules
+## Behaviour
+
+Call `record_user_preference` IMMEDIATELY when user says "I prefer...", "always use...", or "never do...".
+Call `record_decision` when a non-trivial architectural or implementation choice is made.
+Apply `framing_hints` from `get_user_profile()` to every response.
+When user's request conflicts with their past pattern, ask ONE clarifying question first.
+
+## Fallback rules
+
+If `context_pack` returns `status: "no_confident_match"` or `status: "index_empty"`:
+fall back to grep / file read directly.
+
+## NEVER
 
 **NEVER** read files >100 lines without calling `context_pack` first.
 **NEVER** assume where a symbol lives — call `lookup_symbol` first.
 **NEVER** use file search/grep for semantic queries — use `semantic_search_code`.
-
-If `context_pack` returns `status: "no_confident_match"` or `status: "index_empty"`:
-fall back to grep / file read directly.
 """
     out = os.path.join(rules_dir, "cognirepo.mdc")
     with open(out, "w", encoding="utf-8") as f:
@@ -1266,6 +1281,49 @@ def _direct_index(path, embed: bool = True):
     rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
     kg.save()
+
+    # ── Stage 2: file-summary vectors (summarizer → FAISS) ───────────────────
+    if embed:
+        try:
+            from indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
+            _engine = SummarizationEngine()
+            _sum_result = _engine.run_full_summarization()
+            _n_sum = len(_sum_result.get("files", {}))
+            if _n_sum > 0:
+                print(f"  Summaries embedded: {_n_sum} file-level vectors added")
+        except Exception:  # pylint: disable=broad-except
+            pass  # best-effort — never block indexing
+
+    # ── Stage 3: documentation chunks → semantic store ───────────────────────
+    try:
+        from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
+        _ing_result = DocIngester(abs_path).ingest()
+        _n_chunks = _ing_result.get("chunks", 0)
+        if _n_chunks > 0:
+            print(f"  Doc ingestion: {_n_chunks} chunks from {_ing_result.get('files', 0)} file(s)")
+    except Exception:  # pylint: disable=broad-except
+        pass  # best-effort
+
+    # ── Stage 4: seed LearningStore from README/docs sections ────────────────
+    try:
+        from cli.init_project import _seed_learnings_from_docs  # pylint: disable=import-outside-toplevel
+        _n_learned = _seed_learnings_from_docs(abs_path)
+        if _n_learned > 0:
+            print(f"  Learnings seeded: {_n_learned} doc sections stored")
+    except Exception:  # pylint: disable=broad-except
+        pass  # best-effort
+
+    # ── Stage 5: inter-repo dependency edges (only if org is configured) ─────
+    try:
+        from config.orgs import get_repo_org  # pylint: disable=import-outside-toplevel
+        _org_name = get_repo_org(abs_path)
+        if _org_name:
+            from indexer.inter_repo_indexer import build_org_graph_for_org  # pylint: disable=import-outside-toplevel
+            _n_edges = build_org_graph_for_org(_org_name)
+            if _n_edges > 0:
+                print(f"  Inter-repo: {_n_edges} dependency edge(s) added to OrgGraph")
+    except Exception:  # pylint: disable=broad-except
+        pass  # best-effort
 
     # ru_maxrss is in KB on Linux, bytes on macOS
     import platform  # pylint: disable=import-outside-toplevel
@@ -2158,6 +2216,25 @@ def main():
         default=False,
         help="Skip org graph linking (standalone repo, no parent).",
     )
+    p_init.add_argument(
+        "--service-type",
+        default=None,
+        metavar="TYPE",
+        help="Microservice type: rest_api | grpc | worker | frontend | library | other.",
+    )
+    p_init.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        metavar="PORT",
+        help="Port this service listens on (stored in org graph metadata).",
+    )
+    p_init.add_argument(
+        "--api-base-url",
+        default=None,
+        metavar="URL",
+        help="Base URL or path prefix for this service's API (e.g. /api/v1).",
+    )
 
     # serve
     p_serve = sub.add_parser("serve", help="Start the MCP stdio server")
@@ -2707,12 +2784,25 @@ def main():
                     except EOFError:
                         _parent_repo = None
 
+                # Build microservice metadata from CLI flags
+                _svc_meta: dict = {}
+                _svc_type = getattr(args, "service_type", None)
+                _svc_port = getattr(args, "port", None)
+                _svc_url = getattr(args, "api_base_url", None)
+                if _svc_type:
+                    _svc_meta["service_type"] = _svc_type
+                if _svc_port:
+                    _svc_meta["port"] = _svc_port
+                if _svc_url:
+                    _svc_meta["api_base_url"] = _svc_url
+
                 if _parent_repo and os.path.isdir(_parent_repo):
                     _parent_repo = os.path.abspath(_parent_repo)
-                    _og.add_repo(_cwd, parent_path=_parent_repo)
-                    print(f"[cognirepo] Linked as child of: {_parent_repo}")
+                    _og.add_repo(_cwd, parent_path=_parent_repo, metadata=_svc_meta or None)
+                    _svc_label = f" [{_svc_type}]" if _svc_type else ""
+                    print(f"[cognirepo] Linked{_svc_label} as child of: {_parent_repo}")
                 else:
-                    _og.add_repo(_cwd)
+                    _og.add_repo(_cwd, metadata=_svc_meta or None)
                 _og.save()
             except Exception:  # pylint: disable=broad-except
                 pass

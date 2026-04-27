@@ -81,6 +81,7 @@ class BehaviourTracker:
             "file_edit_cooccurrence": {},
             "error_patterns": {},
             "session_registry": {},
+            "user_preferences": {},
             "interaction_style": {
                 # Ring buffer of recent query texts (capped at 50)
                 "query_patterns": [],
@@ -347,7 +348,23 @@ class BehaviourTracker:
             "framing_hints": framing_hints,
             "sample_queries": sample_queries,
             "total_queries_tracked": len(self.data.get("query_history", {})),
+            "explicit_preferences": self.get_preferences(),
         }
+
+    def record_user_preference(self, key: str, value: str) -> dict:
+        """Store an explicit user preference (key/value pair) with timestamp.
+
+        Persisted immediately. Surfaced by get_user_profile()['explicit_preferences'].
+        """
+        prefs = self.data.setdefault("user_preferences", {})
+        prefs[key] = {"value": value, "updated_at": _now()}
+        self.save()
+        return {"key": key, "value": value, "recorded": True}
+
+    def get_preferences(self) -> dict:
+        """Return {key: value} for all stored user preferences (latest values only)."""
+        raw = self.data.get("user_preferences", {})
+        return {k: v["value"] for k, v in raw.items() if isinstance(v, dict)}
 
     # ── error patterns ────────────────────────────────────────────────────────
 
