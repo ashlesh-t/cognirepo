@@ -339,6 +339,14 @@ class TestPrecisionAtK:
             pytest.skip("AST index empty — run cognirepo index-repo .")
         if not _faiss_has_data():
             pytest.skip("FAISS index empty — run cognirepo index-repo .")
+        # Precision is only meaningful when the AST FAISS has code embeddings.
+        # CI uses --no-embed, leaving AST FAISS empty while LocalVectorDB has doc chunks.
+        from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        _ast = ASTIndexer(graph=KnowledgeGraph())
+        _ast.load()
+        if _ast.faiss_index is None or _ast.faiss_index.ntotal < 50:
+            pytest.skip("AST FAISS has no code embeddings — run cognirepo index-repo . (without --no-embed)")
 
         from tools.benchmark import measure_precision_at_k
         result = measure_precision_at_k()
