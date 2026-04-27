@@ -167,6 +167,7 @@ def _run_doctor(
         "org_wide_search", "org_search", "list_org_context", "link_repos",
         "search_docs",
         "get_user_profile", "record_error", "get_error_patterns",
+        "record_user_preference",
     }
     monkeypatch.setitem(sys.modules, "server", types.ModuleType("server"))
     monkeypatch.setitem(sys.modules, "server.mcp_server", fake_mcp_server_mod)

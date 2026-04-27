@@ -464,13 +464,19 @@ def link_repos(
     dst_repo: str,
     relationship: str = "imports",
     note: str = "",
+    service_type: str = "",
+    port: int = 0,
+    api_base_url: str = "",
 ) -> dict:
     """
     Record a dependency relationship between two repos in the org graph.
     Call this when you discover that one repo imports from or calls another.
 
-    relationship: 'imports', 'calls_api', 'shares_schema', 'discovered'
+    relationship: 'imports' | 'calls_api' | 'shares_schema' | 'discovered' | 'child_of'
     src_repo / dst_repo: absolute filesystem paths to the repos.
+    service_type: optional — 'rest_api', 'grpc', 'worker', 'frontend', 'library'
+    port: optional — port number the destination service listens on
+    api_base_url: optional — base URL/path prefix for the destination's API
 
     Do NOT call for repos not yet registered via cognirepo init.
     Returns: {linked: True, edge: {src, dst, kind}}
@@ -481,9 +487,20 @@ def link_repos(
         "calls_api": "CALLS_API",
         "shares_schema": "SHARES_SCHEMA",
         "discovered": "DISCOVERED",
+        "child_of": "CHILD_OF",
     }
     kind = kind_map.get(relationship.lower(), "DISCOVERED")
     og = get_org_graph()
+    # Store microservice metadata on the destination node
+    svc_meta: dict = {}
+    if service_type:
+        svc_meta["service_type"] = service_type
+    if port:
+        svc_meta["port"] = port
+    if api_base_url:
+        svc_meta["api_base_url"] = api_base_url
+    if svc_meta and dst_repo in og.G.nodes:
+        og.G.nodes[dst_repo].update(svc_meta)
     og.link_repos(src_repo, dst_repo, kind=kind, note=note)
     og.save()
     invalidate_org_graph()
@@ -1229,6 +1246,33 @@ def record_error(
     return {"recorded": True, "error_type": error_type, "prevention_hint": hint}
 
 
+@mcp.tool()
+def record_user_preference(
+    key: str,
+    value: str,
+    repo_path: str | None = None,
+) -> dict:
+    """
+    Store an explicit user preference so all future sessions adapt accordingly.
+
+    key: preference name (e.g. "response_style", "verbosity", "test_framework", "language")
+    value: the value (e.g. "concise", "high", "pytest", "TypeScript")
+
+    Call immediately when user says "I prefer...", "always use...", "never do...".
+    Stored permanently in behaviour.json. Surfaced by get_user_profile() under
+    explicit_preferences — agents read this at session start via get_user_profile().
+
+    Do NOT call for implicit signals (those are tracked automatically via query recording).
+    Returns: {key, value, recorded: True}
+    """
+    with _repo_ctx(repo_path) as (_root, g, _idx):
+        if g is None:
+            g = _get_graph()
+        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        bt = BehaviourTracker(g)
+        return bt.record_user_preference(key=key, value=value)
+
+
 def _build_manifest() -> dict:
     """Return the tool-schema manifest so non-MCP clients can read it."""
     return {
@@ -1545,6 +1589,7 @@ _REGISTERED_TOOLS: set[str] = {
     "semantic_search_code", "search_token", "dependency_graph", "cross_repo_search",
     "cross_repo_traverse", "episodic_search", "org_wide_search", "list_org_context",
     "get_user_profile", "record_error", "get_error_patterns", "link_repos",
+    "record_user_preference",
 }
 
 
@@ -1595,6 +1640,17 @@ def run_server(project_dir: str | None = None) -> None:
         pass  # watcher is best-effort — never block server startup
 
     _write_manifest()
+
+    # Pre-warm embedding model in background — reduces first-query latency from ~6s to ~0s
+    import threading as _threading  # pylint: disable=import-outside-toplevel
+    def _prewarm():
+        try:
+            from memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
+            encode_with_timeout("warmup", timeout=60)
+        except Exception:  # pylint: disable=broad-except
+            pass
+    _threading.Thread(target=_prewarm, daemon=True, name="cognirepo-prewarm").start()
+
     mcp.run(transport="stdio")
 
 
