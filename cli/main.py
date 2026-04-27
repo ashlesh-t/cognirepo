@@ -1379,7 +1379,7 @@ def _direct_index(path, embed: bool = True):
     peak_rss_mb = (rss_after - rss_before) / _rss_scale / 1024
     peak_rss_mb = max(0, round(peak_rss_mb, 1))
 
-    n_symbols = len(summary.get("symbols", summary.get("reverse_index", {})))
+    n_symbols = summary.get("symbols", 0)
     n_files = summary.get("files_indexed", summary.get("files", 0))
     print(
         f"Index complete: {n_symbols:,} symbols across {n_files:,} files "
