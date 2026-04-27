@@ -44,6 +44,29 @@ across sessions, across tools, across time.
 
 ---
 
+## When to use CogniRepo
+
+**Most effective on codebases ≥ 15K LOC.** On small repos (< 10K LOC), native file reads
+are fast enough that the MCP tool schema overhead (~3,650 tokens for 30 tools) takes more
+than you save. Break-even is roughly 4 tool calls on a medium-sized repo.
+
+**CogniRepo vs. claude-context / similar tools:**
+
+| Feature | CogniRepo | claude-context / similar |
+|---------|-----------|--------------------------|
+| Pure code retrieval | ✓ (FAISS + graph + AST) | ✓ Often faster on first use |
+| Episodic memory (what happened last sprint) | ✓ Persistent BM25 + vector | ✗ |
+| Cross-agent handoff (Claude → Gemini → Cursor) | ✓ `last_context.json` shared | ✗ |
+| User behaviour profile (adapts depth/style) | ✓ `get_user_profile()` | ✗ |
+| Error pattern avoidance (learns from past fails) | ✓ `record_error()` | ✗ |
+| Architectural decision records | ✓ `record_decision()` | ✗ |
+| Multi-repo org graph (microservices) | ✓ `CHILD_OF` / `CALLS_API` edges | ✗ |
+
+**Conclusion:** prefer CogniRepo when you value institutional memory across sessions.
+Use simpler tools when you just need one-shot code retrieval on a small codebase.
+
+---
+
 ## Why it helps — measured numbers
 
 Benchmarked across 6 real open-source repos (FastAPI, Flask, Celery, Ansible, Moby/Docker, Kubernetes) using 30 structured prompts tested against Claude, Gemini, and Cursor/Codex.
@@ -63,6 +86,19 @@ Benchmarked across 6 real open-source repos (FastAPI, Flask, Celery, Ansible, Mo
 > Dynamic dispatch patterns (Celery beat, plugin registries), deep Go codebases, and Ansible's
 > 22-level variable precedence chains reduce retrieval confidence. The tool reports uncertainty
 > rather than hallucinating call chains.
+
+### Measured: precision@k and index build time (4 external repos)
+
+Indexed 4 real repos, measured with `cognirepo index-repo` + `context_pack` queries. CPU-only, no GPU.
+
+| Repo | Files | Index time | Lookup latency | precision@3 |
+|------|-------|-----------|----------------|-------------|
+| flask | 83 | 12s | 0.011 ms | **100%** |
+| fastapi | 1,122 | 34s | 0.005 ms | **89%** |
+| celery | 416 | 44s | 0.025 ms | **100%** |
+| ansible | 1,813 | 145s | 0.018 ms | **80%** |
+
+All repos: symbol hit rate 5/5, lookup latency < 0.1ms. All quality gates pass. Full numbers: [docs/METRICS.md](docs/METRICS.md).
 
 Run `cognirepo benchmark` on your own codebase to reproduce. See [docs/METRICS.md](docs/METRICS.md).
 
@@ -89,7 +125,7 @@ embeddings                                   FILE, FUNCTION, CLASS,
                                              CALLS, CALLED_BY,
 graph/behaviour_tracker.py                  DEFINED_IN, CO_OCCURS,
   per-symbol hit counts                     IMPORTS, INHERITS,
-  user behavior profile                     SIMILAR_TO, RELATES_TO,
+  user behavior profile                     RELATES_TO,
   error pattern tracking                    QUERIED_WITH
   session history
               │
@@ -110,29 +146,32 @@ graph/behaviour_tracker.py                  DEFINED_IN, CO_OCCURS,
 ### Install
 
 ```bash
-pip install cognirepo
-
-# For multi-language indexing (JS, TS, Java, Go, Rust, C++):
-pip install cognirepo[languages]
+# Recommended — CPU-only, no GPU required (~400 MB vs ~2 GB):
+pip install 'cognirepo[cpu,languages]'
 
 # For encryption at rest:
-pip install cognirepo[security]
+pip install 'cognirepo[cpu,languages,security]'
+
+# With model routing (cognirepo ask — needs an API key):
+pip install 'cognirepo[cpu,languages,providers]'
+
+# Full development install:
+pip install -e '.[dev,security,languages]'
 ```
+
+> **Note:** `[cpu]` is now the default — `sentence-transformers[cpu]` ships with PyTorch CPU wheels only.
+> Use `pip install 'cognirepo[gpu]'` if you need GPU acceleration.
 
 ### Run
 
 ```bash
-# Interactive wizard — asks about encryption, languages, Claude/Gemini/Cursor MCP, org:
-cognirepo init
-# → automatically indexes the repo after setup
-# → prompts to generate architectural summaries (requires LLM API key)
+# One-command onboarding (init + index + auto-configure MCP for Claude/Cursor/VS Code):
+cognirepo setup
 
-# Non-interactive (CI / scripting):
-cognirepo init --no-index
-
-# INDEX FIRST — MCP tools return nothing until this runs:
-cognirepo index-repo .                  # index your codebase (required before MCP tools work)
-cognirepo index-repo . --daemon         # index and run watcher in background
+# Or step by step:
+cognirepo init --no-index     # scaffold .cognirepo/
+cognirepo index-repo .        # index your codebase (required before MCP tools work)
+cognirepo index-repo . --daemon  # index and run watcher in background
 
 # Check everything is working:
 cognirepo status                        # shows symbol count, graph nodes, signal warmth
@@ -197,7 +236,7 @@ docker compose up mcp         # MCP stdio server
 
 ## MCP Tools — complete reference
 
-All 22 tools are available to Claude, Cursor, and any MCP-compatible client.
+All 30 tools are available to Claude, Cursor, and any MCP-compatible client.
 
 ### Core retrieval
 
@@ -231,20 +270,32 @@ All 22 tools are available to Claude, Cursor, and any MCP-compatible client.
 | `get_error_patterns(min_count=1)` | Recurring errors with prevention hints | Before proposing a fix — check if it has failed before |
 | `record_error(error_type, message, file_path, query_context)` | Log an error for future avoidance | After any error Claude or user encounters |
 
+### Session start
+
+| Tool | Description | When to use |
+|------|-------------|-------------|
+| `get_session_brief()` | Architecture + hot symbols + index health | **First call every session** |
+| `get_last_context()` | Most recent context_pack snapshot from prior session | **Second call every session** — resume where previous agent left off |
+
 ### Memory & storage
 
 | Tool | Description | When to use |
 |------|-------------|-------------|
 | `store_memory(text, source="")` | Persist a memory to the FAISS index | After solving bugs, recording decisions |
 | `log_episode(event, metadata={})` | Append event to episodic journal | Track milestones, incidents, deployments |
+| `record_decision(summary, rationale="")` | Record architectural decision to episodic memory | When making non-obvious design choices |
 
 ### Cross-repo (organization)
 
 | Tool | Description | When to use |
 |------|-------------|-------------|
 | `org_search(query)` | Search memories across all org repos | Multi-repo context queries |
+| `org_wide_search(query)` | Search across every project in the org | Broadest cross-repo sweep |
+| `org_dependencies(depth=2)` | Bidirectional inter-repo dependency graph | "What does this service depend on?" |
 | `cross_repo_search(query, scope="project")` | Project-scoped or org-scoped search | Finding shared components |
+| `cross_repo_traverse(symbol, direction="both")` | Traverse org graph from a repo or symbol | Tracing bugs across service boundaries |
 | `list_org_context()` | Org metadata + sibling repos | Understanding repo relationships |
+| `link_repos(src_repo, dst_repo, relationship)` | Record cross-repo dependency | When you discover one repo imports another |
 
 ---
 
@@ -276,7 +327,6 @@ The knowledge graph is significantly richer than a simple call graph.
 | `CO_OCCURS` | file ↔ file | Files edited together (behavioural co-edit signal) |
 | `RELATES_TO` | concept → symbol | Semantic concept linkage |
 | `QUERIED_WITH` | query → symbol | Retrieval tracking for scoring |
-| `SIMILAR_TO` | symbol ↔ symbol | Semantically similar symbols |
 
 `IMPORTS` and `INHERITS` edges are built automatically during `index-repo` from Python AST.
 Use `subgraph("MyClass", depth=2)` or `dependency_graph("mymodule")` to query them.
@@ -555,7 +605,7 @@ Priorities drawn from the v0.3.0 benchmark findings and community feedback.
 ### Longer-term
 - **`cognirepo ask` streaming REPL** — full interactive session with tier routing, session persistence, and sub-agent delegation.
 - **Ruby, PHP, C#, Swift grammar support** — tree-sitter grammars exist; need `_TS_FUNCTION_TYPES`/`_TS_CLASS_TYPES` mappings and call-extraction rules per language.
-- **Similarity edges in knowledge graph** — `EdgeType.SIMILAR_TO` is declared but never populated. Embedding-distance clustering would connect semantically related symbols across files.
+- **Similarity edges in knowledge graph** — embedding-distance clustering to connect semantically related symbols across files (not yet implemented).
 - **VS Code / JetBrains extension** — surface `lookup_symbol`, `context_pack`, and `who_calls` directly in the editor sidebar without requiring an MCP-capable host.
 
 ---

@@ -7,6 +7,12 @@
 """
 Model Router — the top-level orchestration entry point.
 
+NOTE: `cognirepo ask` uses this module only for the classifier and
+try_local_resolve() — both are zero-API. The model dispatch path (STANDARD+
+tier) requires the [providers] extra and an API key. MCP tools never touch
+this module.
+Install providers: pip install 'cognirepo[providers]'
+
 route(query) pipeline
 ─────────────────────
 1. Classify query          → tier (FAST/BALANCED/DEEP), model ID, provider

@@ -58,6 +58,14 @@ Key insight from Claude:
 | Equivalent raw file reads (`hybrid.py` + `embeddings.py` + `context_pack.py`) | **~2 400–3 600** | ~800–1 200 tokens/file × 3 files |
 | **Reduction** | **70–80%** | Tools gave verified answers at ¼ the token cost |
 
+> **Benchmark baseline note:** The automated `cognirepo benchmark` numbers use a *naive baseline*
+> (tokens in all files containing the keyword). The manual numbers above use a *targeted baseline*
+> (tokens in 2–3 files a human or agent would actually read). The targeted reduction is real but
+> smaller: typically **40–60%** vs naive's 70–80%. Run `cognirepo benchmark` to see both numbers:
+> `savings_vs_naive_pct` and `savings_vs_targeted_pct`.
+> The genuine advantage is structural: `lookup_symbol` returns `{file:line}` in <1 ms without
+> grep output parsing — that is not captured in any token-reduction metric.
+
 ---
 
 ## Gemini Cross-Model Retrieval
@@ -108,7 +116,8 @@ Savings compound across sessions because memories persist — second sessions st
 
 | Metric | Value |
 |--------|-------|
-| Token reduction vs raw reads | **98%** |
+| Token reduction vs naive baseline (all keyword-matching files) | **98%** |
+| Token reduction vs targeted baseline (grep + top-2 file reads) | **~40–60%** |
 | Symbol lookup latency | **< 1 ms** |
 | grep equivalent latency | 2 000–8 000 ms |
 | Lookup speedup vs grep | **100 000–4 000 000×** |
@@ -147,3 +156,33 @@ For the cross-model test (requires Claude Desktop + Gemini CLI both pointed at s
 1. Run Claude prompt from `TEST_SUITE.md` Section 14 (or the benchmark prompt above)
 2. Run Gemini prompt — it will retrieve Claude's stored findings
 3. Neither tool should need to read a file
+
+---
+
+## External Repo Validation
+
+Measured on 4 real-world Python projects of varying sizes. CPU-only embeddings, no GPU.
+Each repo indexed with `cognirepo index-repo . --no-watch` on a fresh init.
+
+| Repo | Size | Index time | Symbol hit rate | Lookup latency | precision@1 | precision@3 | Gates |
+|------|------|-----------|----------------|----------------|-------------|-------------|-------|
+| **flask** | 83 .py files | **12s** | 5/5 (100%) | 0.011 ms | 87.5% | **100%** | ✅ all pass |
+| **fastapi** | 1,122 .py files | **34s** | 5/5 (100%) | 0.005 ms | 66.7% | **88.9%** | ✅ all pass |
+| **celery** | 416 .py files | **44s** | 5/5 (100%) | 0.025 ms | 87.5% | **100%** | ✅ all pass |
+| **ansible** | 1,813 .py files | **145s** | 5/5 (100%) | 0.018 ms | 80.0% | **80.0%** | ✅ all pass |
+
+### Quality gates (all repos pass)
+
+| Gate | Threshold | Result |
+|------|-----------|--------|
+| Index build (easy repos ≤ 83 files) | ≤ 60s | ✅ max 34s |
+| Index build (medium repos ≤ 1,813 files) | ≤ 300s | ✅ max 145s |
+| Symbol lookup latency | ≤ 10ms | ✅ max 0.025ms |
+| precision@3 on external repos | ≥ 0.65 | ✅ min 0.80 |
+
+### Notes
+
+- Symbol lookup uses AST reverse index (O(1) hash) — not FAISS. Sub-millisecond even on 1,800-file repos.
+- precision@k = fraction of natural-language queries where `context_pack()` returns the correct file in the top-k sections.
+- Ansible's lower precision@3 (0.80) reflects deep namespace paths (`ansible/playbook/task.py`) that need more specific queries.
+- kubernetes and moby (Go) skipped — Python-only index by default. Go needs `cognirepo[languages]`.

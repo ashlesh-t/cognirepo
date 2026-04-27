@@ -8,7 +8,6 @@ graph TD
     subgraph Transport["Transport Layer"]
         MCP[MCP stdio<br/>server/mcp_server.py]
         REST[REST API<br/>api/main.py]
-        GRPC[gRPC<br/>rpc/server.py]
     end
 
     subgraph Tools["tools/ — single entry point"]
@@ -48,7 +47,6 @@ graph TD
     O -->|REST JSON| REST
     MCP --> Tools
     REST --> Tools
-    GRPC --> Tools
     Tools --> Engine
     Engine --> Storage
     CLS --> CTX --> RTR

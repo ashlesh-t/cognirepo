@@ -87,6 +87,46 @@ class TestHybridRetriever:
         assert scores == sorted(scores, reverse=True)
 
 
+class TestConcurrentCacheMiss:
+    def test_concurrent_misses_call_retriever_once(self, monkeypatch):
+        """N concurrent cache misses for same key → HybridRetriever.retrieve called once."""
+        import threading
+        import retrieval.hybrid as rh
+
+        rh.invalidate_hybrid_cache()
+        call_count = {"n": 0}
+        real_retrieve = rh.HybridRetriever.retrieve
+
+        def counting_retrieve(self, query, top_k):
+            call_count["n"] += 1
+            return real_retrieve(self, query, top_k)
+
+        monkeypatch.setattr(rh.HybridRetriever, "retrieve", counting_retrieve)
+        rh.invalidate_hybrid_cache()
+
+        results_bucket = []
+        errors = []
+
+        def _call():
+            try:
+                r = rh.hybrid_retrieve("concurrent test query", top_k=1)
+                results_bucket.append(r)
+            except Exception as exc:  # pylint: disable=broad-except
+                errors.append(exc)
+
+        threads = [threading.Thread(target=_call) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert not errors, f"Thread errors: {errors}"
+        assert len(results_bucket) == 5
+        assert call_count["n"] == 1, (
+            f"Expected 1 HybridRetriever.retrieve call, got {call_count['n']}"
+        )
+
+
 class TestEpisodicBM25:
     def test_episodic_filter(self):
         from memory.episodic_memory import log_event
@@ -101,3 +141,30 @@ class TestEpisodicBM25:
         if results:
             combined = " ".join(r.get("event", "") for r in results).lower()
             assert "jwt" in combined or "auth" in combined
+
+    def test_time_range_excludes_out_of_range_events(self, monkeypatch):
+        """time_range filter must only return events within the window."""
+        import retrieval.hybrid as rh
+        # Seed three events at different timestamps
+        events = [
+            {"id": "e0", "event": "authentication token bug", "metadata": {}, "time": "2026-01-01T10:00:00Z"},
+            {"id": "e1", "event": "authentication token bug refactor", "metadata": {}, "time": "2026-02-01T10:00:00Z"},
+            {"id": "e2", "event": "authentication token cache miss", "metadata": {}, "time": "2026-03-01T10:00:00Z"},
+        ]
+        from _bm25 import BM25 as _BM25, Document as _Document
+        docs = [_Document(id=e["id"], text=e["event"]) for e in events]
+        bm25_full = _BM25()
+        bm25_full.index(docs)
+
+        monkeypatch.setattr(rh, "_get_cached_bm25", lambda: (bm25_full, events))
+
+        # Only e1 falls within this range
+        results = rh.episodic_bm25_filter(
+            "authentication",
+            time_range=("2026-01-15T00:00:00Z", "2026-02-28T00:00:00Z"),
+            top_k=10,
+        )
+        returned_ids = {r.get("id") for r in results}
+        assert "e0" not in returned_ids, "e0 is outside time_range and must be excluded"
+        assert "e2" not in returned_ids, "e2 is outside time_range and must be excluded"
+        assert "e1" in returned_ids, "e1 is within time_range and must be returned"
