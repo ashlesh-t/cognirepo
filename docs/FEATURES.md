@@ -312,7 +312,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 |----------|--------|---------|
 | `README.md` | ✅ | Root |
 | `ARCHITECTURE.md` | ✅ | Root + `docs/ARCHITECTURE.md` |
-| `docs/MCP_TOOLS.md` | ✅ | All 12 tools with signatures and examples |
+| `docs/MCP_TOOLS.md` | ✅ | All 30 MCP tools with signatures and examples |
 | `docs/CLI_REFERENCE.md` | ✅ | All commands with flags |
 | `docs/CONFIGURATION.md` | ✅ | config.json fields, env vars, storage layout |
 | `docs/CONTRIBUTING.md` | ✅ | Dev setup, add-tool and add-language walkthroughs |

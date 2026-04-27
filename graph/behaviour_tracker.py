@@ -82,6 +82,7 @@ class BehaviourTracker:
             "error_patterns": {},
             "session_registry": {},
             "user_preferences": {},
+            "query_rewrites": [],  # [{original, intent, context, stored_at, hit_count}]
             "interaction_style": {
                 # Ring buffer of recent query texts (capped at 50)
                 "query_patterns": [],
@@ -349,6 +350,7 @@ class BehaviourTracker:
             "sample_queries": sample_queries,
             "total_queries_tracked": len(self.data.get("query_history", {})),
             "explicit_preferences": self.get_preferences(),
+            "query_rewrites": self.get_query_rewrites(),
         }
 
     def record_user_preference(self, key: str, value: str) -> dict:
@@ -365,6 +367,39 @@ class BehaviourTracker:
         """Return {key: value} for all stored user preferences (latest values only)."""
         raw = self.data.get("user_preferences", {})
         return {k: v["value"] for k, v in raw.items() if isinstance(v, dict)}
+
+    def record_query_rewrite(self, original: str, intent: str, context: str = "") -> dict:
+        """
+        Store a query-rewrite correction: when user said X but meant Y.
+        Future get_user_profile() surfaces these so agents apply them before retrieval.
+        hit_count is incremented each time a matching query is seen.
+        """
+        rewrites: list = self.data.setdefault("query_rewrites", [])
+        # Check if same original already stored — update rather than duplicate
+        for rw in rewrites:
+            if rw.get("original", "").lower() == original.lower():
+                rw["intent"] = intent
+                rw["context"] = context
+                rw["updated_at"] = _now()
+                self.save()
+                return {"stored": True, "updated_existing": True, "original": original, "intent": intent}
+        rewrites.append({
+            "original": original,
+            "intent": intent,
+            "context": context,
+            "stored_at": _now(),
+            "hit_count": 0,
+        })
+        # Cap at 100 rewrites; drop oldest
+        if len(rewrites) > 100:
+            rewrites.pop(0)
+        self.save()
+        return {"stored": True, "updated_existing": False, "original": original, "intent": intent}
+
+    def get_query_rewrites(self) -> list[dict]:
+        """Return stored query-rewrite corrections sorted by hit_count desc."""
+        rewrites = self.data.get("query_rewrites", [])
+        return sorted(rewrites, key=lambda r: r.get("hit_count", 0), reverse=True)
 
     # ── error patterns ────────────────────────────────────────────────────────
 
