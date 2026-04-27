@@ -955,8 +955,56 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     else:
         print("  — .cursor/ not found, skipping Cursor rules")
 
+    # ── Step 5: Claude Code hooks (UserPromptSubmit + PostToolUse) ───────────
+    print("[5/5] Wiring Claude Code behaviour hooks...")
+    _claude_dir = os.path.join(cwd, ".claude")
+    if os.path.isdir(_claude_dir):
+        try:
+            _write_claude_hooks(_claude_dir, cwd)
+            print("  ✓ .claude/settings.json — UserPromptSubmit + PostToolUse hooks written")
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"  ✗ Claude Code hooks failed: {exc}")
+    else:
+        print("  — .claude/ not found, skipping Claude Code hooks")
+
     print(f"\nCogniRepo ready. Open Claude Code or Cursor in '{cwd}'.")
     print("Run `cognirepo prime` to get a session bootstrap brief.\n")
+
+
+def _write_claude_hooks(claude_dir: str, project_dir: str) -> None:
+    """Write UserPromptSubmit + PostToolUse hooks into .claude/settings.json.
+
+    Idempotent — existing hooks are preserved; cognirepo entries are added or
+    updated in-place without touching other entries.
+    """
+    settings_path = os.path.join(claude_dir, "settings.json")
+    cfg: dict = {}
+    if os.path.isfile(settings_path):
+        with open(settings_path, encoding="utf-8") as _f:
+            try:
+                cfg = json.load(_f)
+            except json.JSONDecodeError:
+                cfg = {}
+
+    python_exe = sys.executable  # use the same Python that's running cognirepo
+    hooks_cfg = cfg.setdefault("hooks", {})
+
+    # UserPromptSubmit — behaviour profile tracking
+    _uph = hooks_cfg.setdefault("UserPromptSubmit", [])
+    _bh_cmd = f"{python_exe} {os.path.join(project_dir, 'tools', 'behaviour_hook.py')} {project_dir}"
+    _uph_entry = {"hooks": [{"type": "command", "command": _bh_cmd}]}
+    if not any(_bh_cmd in str(e) for e in _uph):
+        _uph.append(_uph_entry)
+
+    # PostToolUse(Write) — sync Claude memory files into semantic store
+    _ptuh = hooks_cfg.setdefault("PostToolUse", [])
+    _sm_cmd = f"{python_exe} {os.path.join(project_dir, 'tools', 'sync_claude_memory.py')}"
+    _ptuh_entry = {"matcher": "Write", "hooks": [{"type": "command", "command": _sm_cmd}]}
+    if not any(_sm_cmd in str(e) for e in _ptuh):
+        _ptuh.append(_ptuh_entry)
+
+    with open(settings_path, "w", encoding="utf-8") as _f:
+        json.dump(cfg, _f, indent=2)
 
 
 def _find_claude_desktop_config() -> str | None:
