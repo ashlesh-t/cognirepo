@@ -368,3 +368,46 @@ GEMINI_API_KEY=AIza...
 MCP tools and `cognirepo ask` work without any API keys — local QUICK-tier resolution only.
 API keys are only needed if you use `cognirepo ask` with STANDARD/COMPLEX/EXPERT tier routing
 via the `[providers]` extra.
+
+---
+
+## Claude Code Behaviour Hooks
+
+CogniRepo ships two Claude Code hooks that activate automatically when you run
+`cognirepo setup` inside a project with a `.claude/` directory.
+
+| Hook | Trigger | What it does |
+|------|---------|--------------|
+| `tools/behaviour_hook.py` | Every user prompt | Records the query into the behaviour tracker; emits a compact framing hint so Claude adapts its response style |
+| `tools/sync_claude_memory.py` | Every `Write` tool call | Syncs newly written Claude memory files (`.claude/projects/.../memory/*.md`) into the semantic FAISS store |
+
+`cognirepo setup` writes both hooks into `.claude/settings.json` using the current Python
+executable path so they survive virtualenv changes.
+
+### Manual wiring (if setup was run before this feature)
+
+```bash
+cognirepo setup   # re-run — idempotent, only adds missing entries
+```
+
+Or add manually to `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "python /path/to/project/tools/behaviour_hook.py /path/to/project"}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "Write", "hooks": [{"type": "command", "command": "python /path/to/project/tools/sync_claude_memory.py"}]}
+    ]
+  }
+}
+```
+
+### Effect
+
+After 2+ queries, `get_user_profile()` returns a `framing_hints` string. The `UserPromptSubmit`
+hook prints this as a system-reminder before each Claude response — no MCP call required.
+`sync_claude_memory.py` ensures any notes you save via Claude Code's memory system are
+immediately searchable via `retrieve_memory()`.
