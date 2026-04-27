@@ -23,9 +23,9 @@ dependencies = [
     # core
     "faiss-cpu==1.13.2",
     "numpy==2.4.3",
-    # CPU-only sentence-transformers — avoids the ~2 GB GPU PyTorch download.
-    # Use [gpu] extra to get full GPU support.
-    "sentence-transformers[cpu]==5.3.0",
+    # sentence-transformers without GPU deps — v5.3.0 has no [cpu] extra.
+    # Use [gpu] optional-dep group to get full GPU support.
+    "sentence-transformers==5.3.0",
     # MCP server
     "mcp[cli]==1.26.0",
     # REST API + Server
