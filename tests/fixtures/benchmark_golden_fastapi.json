@@ -1,0 +1,12 @@
+[
+  {"query": "Depends dependency injection FastAPI", "expected_symbol": "Depends", "expected_file_pattern": "fastapi/"},
+  {"query": "APIRouter include router prefix tags", "expected_symbol": "APIRouter", "expected_file_pattern": "fastapi/"},
+  {"query": "HTTPException status code detail raise", "expected_symbol": "HTTPException", "expected_file_pattern": "fastapi/"},
+  {"query": "BackgroundTasks add task background", "expected_symbol": "BackgroundTasks", "expected_file_pattern": "fastapi/"},
+  {"query": "Request body JSON validation pydantic", "expected_symbol": "Request", "expected_file_pattern": "fastapi/"},
+  {"query": "Response model return type annotation", "expected_symbol": "Response", "expected_file_pattern": "fastapi/"},
+  {"query": "middleware CORS header authentication", "expected_symbol": "CORSMiddleware", "expected_file_pattern": "fastapi/"},
+  {"query": "OpenAPI schema generate docs endpoint", "expected_symbol": "FastAPI", "expected_file_pattern": "fastapi/"},
+  {"query": "TestClient test application route", "expected_symbol": "TestClient", "expected_file_pattern": "fastapi/"},
+  {"query": "startup shutdown lifespan event handler", "expected_symbol": "FastAPI", "expected_file_pattern": "fastapi/"}
+]

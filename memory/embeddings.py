@@ -12,20 +12,11 @@ import concurrent.futures
 import logging
 import os
 
-from sentence_transformers import SentenceTransformer
-
 logger = logging.getLogger(__name__)
 
 # Shared executor for encode() calls — bounded to 2 workers to avoid thread exhaustion
 _ENCODE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 _EMBED_TIMEOUT_SEC = float(os.environ.get("COGNIREPO_EMBED_TIMEOUT_SEC", "30"))
-
-# Silence harmless "UNEXPECTED" weight loading reports from transformers
-try:
-    import transformers.utils.logging as tf_logging
-    tf_logging.set_verbosity_error()
-except ImportError:
-    pass
 
 MODEL = None
 
@@ -37,9 +28,16 @@ def get_model():
     global MODEL  # pylint: disable=global-statement
 
     if MODEL is None:
-        logger.debug("Loading embedding model once...")
-        import os  # pylint: disable=import-outside-toplevel
+        logger.info("Loading embedding model (first use — ~2-5s)...")
+        # Lazy import — keeps sentence_transformers/PyTorch out of server startup path
+        from sentence_transformers import SentenceTransformer  # pylint: disable=import-outside-toplevel
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        # Silence harmless weight-loading reports after import
+        try:
+            import transformers.utils.logging as tf_logging  # pylint: disable=import-outside-toplevel
+            tf_logging.set_verbosity_error()
+        except ImportError:
+            pass
         MODEL = SentenceTransformer("all-MiniLM-L6-v2")
 
     return MODEL

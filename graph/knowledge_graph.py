@@ -93,7 +93,6 @@ class EdgeType:  # pylint: disable=too-few-public-methods
     CO_OCCURS = "CO_OCCURS"
     IMPORTS = "IMPORTS"        # file A imports module/file B
     INHERITS = "INHERITS"      # class A inherits from class B
-    SIMILAR_TO = "SIMILAR_TO"  # semantically similar symbols (embedding distance < threshold)
 
 
 class KnowledgeGraph:

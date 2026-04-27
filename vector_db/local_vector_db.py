@@ -62,9 +62,14 @@ class LocalVectorDB(VectorStorageAdapter):
         else:
             self.index = faiss.IndexFlatL2(dim)
 
-        if os.path.exists(_meta_file()):
+        meta_path = _meta_file()
+        if os.path.exists(meta_path):
             self.metadata = self._load_meta()
         else:
+            # Initialize eagerly — atomic write prevents concurrent-first-write race
+            os.makedirs(os.path.dirname(meta_path), exist_ok=True)
+            with open(meta_path, "wb") as f:
+                f.write(b"[]")
             self.metadata = []
 
     # ── metadata persistence (with optional encryption) ───────────────────────
@@ -93,8 +98,15 @@ class LocalVectorDB(VectorStorageAdapter):
         except (json.JSONDecodeError, UnicodeDecodeError):
             import logging  # pylint: disable=import-outside-toplevel
             logging.getLogger(__name__).warning(
-                "semantic_metadata.json is not valid JSON. Starting with empty metadata."
+                "semantic_metadata.json is not valid JSON. Backing up and starting fresh."
             )
+            corrupt = _meta_file() + ".corrupt"
+            try:
+                os.rename(_meta_file(), corrupt)
+            except OSError:
+                pass
+            with open(_meta_file(), "wb") as f:
+                f.write(b"[]")
             return []
 
     def _save_meta(self) -> None:

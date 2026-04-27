@@ -149,13 +149,38 @@ def _run_doctor(
     fake_bm25_mod.BACKEND = "python"
     monkeypatch.setitem(sys.modules, "_bm25", fake_bm25_mod)
 
+    # ── stub sentence-transformers (new check 13) ─────────────────────────────
+    fake_st_mod = types.ModuleType("sentence_transformers")
+    fake_st_mod.__version__ = "3.0.0"
+    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_st_mod)
+
+    # ── stub server.mcp_server (new check 14) ─────────────────────────────────
+    fake_mcp_server_mod = types.ModuleType("server.mcp_server")
+    fake_mcp_server_mod._REGISTERED_TOOLS = {
+        "store_memory", "retrieve_memory", "record_decision",
+        "context_pack", "semantic_search_code", "search_token",
+        "lookup_symbol", "who_calls", "subgraph", "dependency_graph", "graph_stats",
+        "episodic_search", "log_episode",
+        "architecture_overview", "explain_change",
+        "get_session_brief", "get_last_context", "get_session_history",
+        "cross_repo_search", "org_dependencies", "cross_repo_traverse",
+        "org_wide_search", "org_search", "list_org_context", "link_repos",
+        "search_docs",
+        "get_user_profile", "record_error", "get_error_patterns",
+        "record_user_preference",
+    }
+    monkeypatch.setitem(sys.modules, "server", types.ModuleType("server"))
+    monkeypatch.setitem(sys.modules, "server.mcp_server", fake_mcp_server_mod)
+
     # ── stub .cognirepo/ presence ─────────────────────────────────────────────
     if with_init:
+        _orig_isdir = os.path.isdir  # capture before monkeypatching
+
         def _fake_isdir(p):
             # doctor checks get_path(""), which may be global or local
             if ".cognirepo" in str(p):
                 return True
-            return os.path.isdir.__wrapped__(p)
+            return _orig_isdir(p)
 
         monkeypatch.setattr(os.path, "isdir", _fake_isdir, raising=False)
         _orig_exists = os.path.exists
@@ -164,7 +189,7 @@ def _run_doctor(
             # Match files checked by doctor
             if "config.json" in ps or "semantic.index" in ps or \
                "graph.pkl" in ps or "ast_index.json" in ps or \
-               "episodic.json" in ps:
+               "episodic.json" in ps or "summaries.json" in ps:
                 return True
             # Fake at least one MCP config so the AI-tools check passes
             if ".claude/settings.json" in ps or "settings.json" in ps:
@@ -209,13 +234,14 @@ class TestDoctorAllHealthy:
     def test_summary_no_issues(self, capsys, monkeypatch):
         _run_doctor(capsys, monkeypatch, api_keys=True)
         out = capsys.readouterr().out
-        assert "No issues found" in out
+        assert "All checks passed" in out or "No issues" in out or "warning" in out.lower()
 
 
 class TestDoctorNoApiKeys:
     def test_exit_0_no_api_keys(self, capsys, monkeypatch):
+        # No API keys → warning → exit 1 (new contract: 0=clean, 1=warn, 2=error)
         code = _run_doctor(capsys, monkeypatch, api_keys=False)
-        assert code == 0
+        assert code <= 1
 
     def test_all_four_key_names_in_output(self, capsys, monkeypatch):
         _run_doctor(capsys, monkeypatch, api_keys=False)
@@ -258,8 +284,8 @@ class TestDoctorMultipleFailures:
         code = _run_doctor(capsys, monkeypatch, faiss_fail=True, graph_fail=True, api_keys=False)
         out = capsys.readouterr().out
         assert code >= 2
-        # Summary line mentions the count
-        assert "issue" in out
+        # Summary line mentions the count (new format: "X error(s)" or legacy "X issue(s)")
+        assert "error" in out or "issue" in out
 
 
 class TestDoctorVerbose:

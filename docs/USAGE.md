@@ -13,8 +13,10 @@ Complete documentation for every command, MCP tool, and configuration option.
 5. [Docker](#docker)
 6. [Memory Pruning & Circuit Breaker](#memory-pruning--circuit-breaker)
 7. [Configuration Reference](#configuration-reference)
-8. [Cursor / Copilot Integration](#cursor--copilot-integration)
-9. [Adding API Keys](#adding-api-keys)
+8. [Cursor Integration](#cursor-integration)
+9. [VS Code MCP Setup](#vs-code-mcp-setup)
+10. [GitHub Copilot Integration](#github-copilot-integration)
+11. [Adding API Keys](#adding-api-keys)
 
 ---
 
@@ -161,7 +163,7 @@ from Repo B if both are linked to the same local organization.
 
 ## MCP Server
 
-CogniRepo exposes 15 MCP tools over stdio transport:
+CogniRepo exposes 30 MCP tools over stdio transport:
 
 | Tool | Parameters | Returns |
 |---|---|---|
@@ -171,12 +173,19 @@ CogniRepo exposes 15 MCP tools over stdio transport:
 | `org_dependencies`| _(none)_ | List all linked repos in the org |
 | `architecture_overview`| `scope` | High-level architectural summaries |
 | `lookup_symbol` | `name, include_org` | `{file, line, type, repo}` |
-| `context_pack` | `query, max_tokens` | Packed code + memory bundle |
+| `context_pack` | `query, max_tokens` | Packed code + memory bundle (≤ 2000 tokens by default) |
 | `who_calls` | `function_name` | List of caller locations |
-| `search_docs` | `query` | Content snippets from .md files |
-| `log_episode` | `event, metadata` | Record a milestone |
+| `search_docs` | `query, top_k` | Content snippets from .md/.rst files |
+| `log_episode` | `event, metadata` | Record a milestone or event |
+| `record_decision` | `summary, rationale` | Record an architectural decision |
 | `subgraph` | `entity, depth` | Graph neighbourhood |
 | `explain_change` | `target, since` | Cross-reference git + memory |
+
+> **`context_pack` token limit:** Returns at most `max_tokens` tokens (default: 2000).
+> This is intentionally bounded — much smaller than reading the full file.
+> The cross-agent handoff snapshot (`last_context.json`) captures **only** the most recent
+> `context_pack` result — it is NOT a full session transcript.
+> For full session history, use `episodic_search()`.
 
 ---
 
@@ -224,12 +233,181 @@ Safe to run on already-migrated configs.
 
 ## Prometheus Metrics
 
-When `prometheus_client` is installed, CogniRepo exposes a `/metrics` endpoint via the serve API.
+When `prometheus-client` is installed (**dev dependency only**, not included in base install),
+CogniRepo tracks internal counters via `server/metrics.py`. These counters are in-process only.
 
 ```bash
-pip install prometheus_client
+pip install prometheus-client   # dev only
 cognirepo serve
-# metrics available at the /metrics path on the server port
 ```
 
-The `/metrics` endpoint follows the Prometheus text exposition format.
+**Note:** A `/metrics` HTTP endpoint is NOT exposed by `cognirepo serve`. The counters are
+internal and available programmatically via `server.metrics`. To scrape them you must instrument
+the FastMCP server yourself or use a push-gateway pattern.
+
+---
+
+## Cursor Integration
+
+Cursor reads tool routing rules from `.cursor/rules/*.mdc`. CogniRepo ships a rules file that
+makes Cursor use CogniRepo tools before native file exploration.
+
+### Setup
+
+1. Start the MCP server (add to Cursor MCP settings):
+
+```json
+{
+  "cognirepo": {
+    "command": "cognirepo",
+    "args": ["serve", "--project-dir", "/abs/path/to/project"],
+    "type": "stdio"
+  }
+}
+```
+
+2. The `.cursor/rules/cognirepo.mdc` file is already in the repo. Cursor picks it up automatically.
+
+### Session start sequence (Cursor)
+
+Cursor agent calls these at session start:
+
+1. `get_session_brief` — architecture summary, hot symbols, index health
+2. `get_last_context` — resume where previous agent left off
+
+> **Handoff limitation:** `get_last_context()` returns the most recent `context_pack` snapshot
+> only — not a full session transcript. Use `episodic_search()` for full session history.
+
+### `cognirepo setup` auto-configures Cursor
+
+If `.cursor/` exists in the project root, `cognirepo setup` writes `.cursor/rules/cognirepo.mdc`
+automatically.
+
+---
+
+## VS Code MCP Setup
+
+VS Code supports MCP servers via `.vscode/mcp.json`.
+
+### Quick setup
+
+Copy the example config:
+
+```bash
+cp .vscode/mcp.json.example .vscode/mcp.json
+```
+
+Or create `.vscode/mcp.json` manually:
+
+```json
+{
+  "servers": {
+    "cognirepo": {
+      "type": "stdio",
+      "command": "cognirepo",
+      "args": ["serve", "--project-dir", "${workspaceFolder}"]
+    }
+  }
+}
+```
+
+`${workspaceFolder}` resolves to the open workspace root automatically.
+
+### Requirements
+
+- VS Code with MCP extension support (GitHub Copilot Chat or compatible extension)
+- CogniRepo installed: `pip install 'cognirepo[cpu,languages]'`
+- Repo indexed: `cognirepo index-repo .`
+
+### `cognirepo setup` auto-configures VS Code
+
+`cognirepo setup` detects VS Code and prints the MCP config path. Copy or symlink
+`.vscode/mcp.json.example` → `.vscode/mcp.json` to activate.
+
+---
+
+## GitHub Copilot Integration
+
+GitHub Copilot Chat in VS Code supports MCP tools when configured via `.vscode/mcp.json`.
+
+### Setup
+
+1. Install [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) and
+   [GitHub Copilot Chat](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat)
+2. Configure `.vscode/mcp.json` (see [VS Code MCP Setup](#vs-code-mcp-setup) above)
+3. Run `cognirepo index-repo .` so the index is populated
+4. Open Copilot Chat — CogniRepo tools appear as available context sources
+
+### Usage
+
+In Copilot Chat, CogniRepo tools activate automatically when Copilot needs code context.
+You can also invoke them explicitly:
+
+```
+@cognirepo context_pack("authentication flow")
+@cognirepo lookup_symbol("hybrid_retrieve")
+```
+
+### Adding API Keys
+
+Set keys as environment variables before running `cognirepo serve`:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...      # Claude (required for COMPLEX/EXPERT tier)
+export GEMINI_API_KEY=AIza...            # Gemini (required for STANDARD tier)
+export OPENAI_API_KEY=sk-...             # OpenAI (optional alternative)
+```
+
+Or add to `.env` (never commit this file):
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=AIza...
+```
+
+MCP tools and `cognirepo ask` work without any API keys — local QUICK-tier resolution only.
+API keys are only needed if you use `cognirepo ask` with STANDARD/COMPLEX/EXPERT tier routing
+via the `[providers]` extra.
+
+---
+
+## Claude Code Behaviour Hooks
+
+CogniRepo ships two Claude Code hooks that activate automatically when you run
+`cognirepo setup` inside a project with a `.claude/` directory.
+
+| Hook | Trigger | What it does |
+|------|---------|--------------|
+| `tools/behaviour_hook.py` | Every user prompt | Records the query into the behaviour tracker; emits a compact framing hint so Claude adapts its response style |
+| `tools/sync_claude_memory.py` | Every `Write` tool call | Syncs newly written Claude memory files (`.claude/projects/.../memory/*.md`) into the semantic FAISS store |
+
+`cognirepo setup` writes both hooks into `.claude/settings.json` using the current Python
+executable path so they survive virtualenv changes.
+
+### Manual wiring (if setup was run before this feature)
+
+```bash
+cognirepo setup   # re-run — idempotent, only adds missing entries
+```
+
+Or add manually to `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "python /path/to/project/tools/behaviour_hook.py /path/to/project"}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "Write", "hooks": [{"type": "command", "command": "python /path/to/project/tools/sync_claude_memory.py"}]}
+    ]
+  }
+}
+```
+
+### Effect
+
+After 2+ queries, `get_user_profile()` returns a `framing_hints` string. The `UserPromptSubmit`
+hook prints this as a system-reminder before each Claude response — no MCP call required.
+`sync_claude_memory.py` ensures any notes you save via Claude Code's memory system are
+immediately searchable via `retrieve_memory()`.

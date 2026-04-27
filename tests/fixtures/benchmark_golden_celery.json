@@ -1,0 +1,12 @@
+[
+  {"query": "Celery app configuration broker backend", "expected_symbol": "Celery", "expected_file_pattern": "celery/"},
+  {"query": "Task apply async delay result", "expected_symbol": "Task", "expected_file_pattern": "celery/"},
+  {"query": "chain group chord canvas primitives", "expected_symbol": "chain", "expected_file_pattern": "celery/"},
+  {"query": "worker beat scheduler periodic task", "expected_symbol": "beat", "expected_file_pattern": "celery/"},
+  {"query": "retry exception countdown max retries", "expected_symbol": "retry", "expected_file_pattern": "celery/"},
+  {"query": "shared_task decorator bind request", "expected_symbol": "shared_task", "expected_file_pattern": "celery/"},
+  {"query": "canvas signature partial apply", "expected_symbol": "Signature", "expected_file_pattern": "celery/"},
+  {"query": "result backend store get state", "expected_symbol": "AsyncResult", "expected_file_pattern": "celery/"},
+  {"query": "signal task_prerun task_postrun task_success", "expected_symbol": "task_prerun", "expected_file_pattern": "celery/"},
+  {"query": "kombu AMQP broker connection exchange queue", "expected_symbol": "Connection", "expected_file_pattern": "celery/"}
+]

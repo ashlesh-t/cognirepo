@@ -1,0 +1,12 @@
+[
+  {"query": "AnsibleModule params argument spec", "expected_symbol": "AnsibleModule", "expected_file_pattern": "ansible/"},
+  {"query": "TaskExecutor execute task result", "expected_symbol": "TaskExecutor", "expected_file_pattern": "ansible/"},
+  {"query": "PlaybookExecutor run playbook hosts", "expected_symbol": "PlaybookExecutor", "expected_file_pattern": "ansible/"},
+  {"query": "VariableManager get vars host group", "expected_symbol": "VariableManager", "expected_file_pattern": "ansible/"},
+  {"query": "DataLoader load file YAML JSON", "expected_symbol": "DataLoader", "expected_file_pattern": "ansible/"},
+  {"query": "inventory host group pattern", "expected_symbol": "InventoryManager", "expected_file_pattern": "ansible/"},
+  {"query": "callback plugin send result event", "expected_symbol": "CallbackBase", "expected_file_pattern": "ansible/"},
+  {"query": "connection plugin SSH transport execute", "expected_symbol": "ConnectionBase", "expected_file_pattern": "ansible/"},
+  {"query": "become privilege escalation sudo", "expected_symbol": "BecomeBase", "expected_file_pattern": "ansible/"},
+  {"query": "template Jinja2 render variables filter", "expected_symbol": "Templar", "expected_file_pattern": "ansible/"}
+]

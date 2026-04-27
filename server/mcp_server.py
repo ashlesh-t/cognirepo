@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import threading
+import time
 from mcp.server.fastmcp import FastMCP
 
 from config.logging import setup_logging, new_trace_id
@@ -205,6 +206,34 @@ def _graph_is_empty() -> bool:
     return _get_graph().G.number_of_nodes() == 0
 
 
+def _annotate_with_symbol(repo_list: list[dict], symbol: str) -> list[dict]:
+    """For each repo entry, add symbol_locations if the symbol exists there."""
+    from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+    for entry in repo_list:
+        repo_path = entry.get("repo", "")
+        if not repo_path or not os.path.isdir(repo_path):
+            continue
+        cognirepo_dir = get_cognirepo_dir_for_repo(repo_path)
+        if not os.path.isdir(cognirepo_dir):
+            continue
+        token = _CTX_DIR.set(cognirepo_dir)
+        try:
+            from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+            from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+            idx = ASTIndexer(KnowledgeGraph())
+            idx.load()
+            locs = idx.lookup_symbol(symbol)
+            if locs:
+                entry["symbol_locations"] = [
+                    {"file": l["file"], "line": l["line"]} for l in locs
+                ]
+        except Exception:  # pylint: disable=broad-except
+            pass
+        finally:
+            _CTX_DIR.reset(token)
+    return repo_list
+
+
 def _traced(tool_name: str, fn, *args, **kwargs):
     """
     Run a tool function with:
@@ -290,16 +319,45 @@ def retrieve_memory(query: str, top_k: int = 5, include_org: bool = False, repo_
             router = CrossRepoRouter()
             org_results = router.query_org_memories(query, top_k=top_k)
             results.extend(org_results)
-            results.sort(key=lambda x: x.get("score", 1.0))
+            results.sort(key=lambda x: x.get("final_score", x.get("score", 0.0)), reverse=True)
             results = results[:top_k]
 
     return results
 
 
 @mcp.tool()
+def record_decision(
+    summary: str,
+    rationale: str = "",
+    affected_files: list | None = None,
+    repo_path: str | None = None,
+) -> dict:
+    """
+    Record an architectural decision, bug fix rationale, or 'why we did X'.
+    Stored in episodic memory — retrievable via episodic_search in future sessions.
+    Call when a non-obvious architectural decision is made, a bug root-cause is
+    understood, or the user says to 'remember' something.
+    Do NOT call for routine changes — only decisions where WHY is non-obvious.
+    Returns: {stored: True, searchable_via: 'episodic_search'}
+    """
+    with _repo_ctx(repo_path):
+        log_event({
+            "type": "decision",
+            "summary": summary,
+            "rationale": rationale,
+            "affected_files": affected_files or [],
+        })
+    return {"stored": True, "searchable_via": "episodic_search"}
+
+
+@mcp.tool()
 def org_search(query: str, top_k: int = 5) -> list:
     """
-    Search for code symbols and memories across all repositories in the organization.
+    FALLBACK ONLY — use org_wide_search first.
+    Text-match search across org repos when org_wide_search returns nothing.
+    Do NOT call as primary cross-repo search — org_wide_search has broader coverage.
+
+    Use when: org_wide_search returned 0 results, or the index is sparse.
     Returns a list of results annotated with source repository.
     """
     from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
@@ -310,7 +368,8 @@ def org_search(query: str, top_k: int = 5) -> list:
 @mcp.tool()
 def org_wide_search(query: str, top_k: int = 5) -> list:
     """
-    Search memories across ALL repositories in the organization (broad scope).
+    Search memories across ALL repositories in the organization (every project included).
+    Wider than org_search which only covers top-level org repos.
     Prefer cross_repo_search(scope="project") when you only need project-scoped results.
 
     Claude: use this when the user explicitly asks about org-wide patterns,
@@ -318,7 +377,7 @@ def org_wide_search(query: str, top_k: int = 5) -> list:
     """
     from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
     router = CrossRepoRouter()
-    return router.query_org_memories(query, top_k=top_k)
+    return router.query_all_org_repos(query, top_k=top_k)
 
 
 @mcp.tool()
@@ -328,6 +387,9 @@ def cross_repo_search(query: str, scope: str = "project", top_k: int = 5) -> dic
 
     scope="project" — only repos in same project (recommended, high relevance).
     scope="org"     — all repos in organization (broader, use sparingly).
+
+    Requires repos linked via `cognirepo init` (written to org graph).
+    Returns empty results if no sibling repos are registered.
 
     Claude: call this when:
     - lookup_symbol returned empty and the symbol may live in a sibling repo
@@ -365,17 +427,146 @@ def list_org_context() -> dict:
 
 
 @mcp.tool()
-def org_dependencies() -> dict:
+def org_dependencies(depth: int = 2) -> dict:
     """
-    Returns a list of all repositories in the same organization.
-    Future: will return inter-repo dependency graph.
+    Return the bidirectional inter-repo dependency graph for the current organization.
+
+    Shows which services this repo depends on (dependencies) and which services
+    depend on this repo (dependents), up to `depth` hops. Edge kinds:
+      IMPORTS    — manifest-declared package dependency (auto-detected)
+      CALLS_API  — HTTP client calls to another service's endpoint
+      SHARES_SCHEMA — shared models/proto repo
+
+    Claude: call this when the user asks about service dependencies,
+    "what depends on X", or when investigating cross-service call chains.
     """
     from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+
     router = CrossRepoRouter()
+    og = get_org_graph()
+    current = os.path.abspath(".")
+
+    deps = og.get_dependencies(current, depth=depth)
+    dependents = og.get_dependents(current, depth=depth)
+
     return {
+        "current_repo": current,
+        "current_repo_name": os.path.basename(current),
         "organization": router.org_name,
-        "repositories": router.get_sibling_repos() + [os.path.abspath(".")]
+        "direct_dependencies": [d for d in deps if d["depth"] == 1],
+        "transitive_dependencies": [d for d in deps if d["depth"] > 1],
+        "direct_dependents": [d for d in dependents if d["depth"] == 1],
+        "transitive_dependents": [d for d in dependents if d["depth"] > 1],
+        "graph": og.to_dict(),
     }
+
+
+@mcp.tool()
+def link_repos(
+    src_repo: str,
+    dst_repo: str,
+    relationship: str = "imports",
+    note: str = "",
+    service_type: str = "",
+    port: int = 0,
+    api_base_url: str = "",
+) -> dict:
+    """
+    Record a dependency relationship between two repos in the org graph.
+    Call this when you discover that one repo imports from or calls another.
+
+    relationship: 'imports' | 'calls_api' | 'shares_schema' | 'discovered' | 'child_of'
+    src_repo / dst_repo: absolute filesystem paths to the repos.
+    service_type: optional — 'rest_api', 'grpc', 'worker', 'frontend', 'library'
+    port: optional — port number the destination service listens on
+    api_base_url: optional — base URL/path prefix for the destination's API
+
+    Do NOT call for repos not yet registered via cognirepo init.
+    Returns: {linked: True, edge: {src, dst, kind}}
+    """
+    from graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
+    kind_map = {
+        "imports": "IMPORTS",
+        "calls_api": "CALLS_API",
+        "shares_schema": "SHARES_SCHEMA",
+        "discovered": "DISCOVERED",
+        "child_of": "CHILD_OF",
+    }
+    kind = kind_map.get(relationship.lower(), "DISCOVERED")
+    og = get_org_graph()
+    # Store microservice metadata on the destination node
+    svc_meta: dict = {}
+    if service_type:
+        svc_meta["service_type"] = service_type
+    if port:
+        svc_meta["port"] = port
+    if api_base_url:
+        svc_meta["api_base_url"] = api_base_url
+    if svc_meta and dst_repo in og.G.nodes:
+        og.G.nodes[dst_repo].update(svc_meta)
+    og.link_repos(src_repo, dst_repo, kind=kind, note=note)
+    og.save()
+    invalidate_org_graph()
+    return {"linked": True, "edge": {"src": src_repo, "dst": dst_repo, "kind": kind}}
+
+
+@mcp.tool()
+def cross_repo_traverse(
+    symbol: str | None = None,
+    start_repo: str | None = None,
+    direction: str = "both",
+    depth: int = 2,
+) -> dict:
+    """
+    Traverse the org dependency graph from a repo or symbol to find cross-service
+    relationships.
+
+    direction="dependencies" — what does this repo depend on?
+    direction="dependents"   — which services depend on this repo?
+    direction="both"         — return both directions (default)
+
+    If symbol is provided, also reports where that symbol exists in each traversed repo.
+    Requires repos linked via `cognirepo init` (written to org graph).
+    Returns empty if no sibling repos are registered.
+
+    Claude: use this when the user asks "which services use X?",
+    "what does auth-service depend on?", or when tracing a bug across service boundaries.
+    """
+    from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+
+    og = get_org_graph()
+    current = os.path.abspath(start_repo) if start_repo else os.path.abspath(".")
+
+    result: dict = {
+        "start_repo": current,
+        "start_repo_name": os.path.basename(current),
+        "direction": direction,
+        "depth": depth,
+    }
+
+    _MAX_REPOS = 100
+
+    if direction in ("dependencies", "both"):
+        deps = og.get_dependencies(current, depth=depth)
+        if symbol:
+            deps = _annotate_with_symbol(deps, symbol)
+        result["dependencies"] = deps[:_MAX_REPOS]
+        if len(deps) > _MAX_REPOS:
+            result["dependencies_truncated"] = True
+
+    if direction in ("dependents", "both"):
+        dependents = og.get_dependents(current, depth=depth)
+        if symbol:
+            dependents = _annotate_with_symbol(dependents, symbol)
+        result["dependents"] = dependents[:_MAX_REPOS]
+        if len(dependents) > _MAX_REPOS:
+            result["dependents_truncated"] = True
+
+    if symbol:
+        result["symbol"] = symbol
+
+    return result
 
 
 @mcp.tool()
@@ -384,6 +575,8 @@ def lookup_symbol(name: str, include_org: bool = False, repo_path: str | None = 
     Return all locations where a symbol is defined or called,
     with file, line, and type.
     If include_org=True, also searches sibling repositories in the same organization.
+    Do NOT call for broad concepts — only exact or near-exact symbol names.
+    For concept queries use semantic_search_code instead.
 
     repo_path: optional absolute path to the target repository. When omitted,
     defaults to the server's configured project directory.
@@ -507,8 +700,9 @@ def _who_calls_dynamic_fallback(function_name: str, repo_root: str | None = None
                     "code_snippet": code.strip()[:120],
                     "found_via": "dynamic_dispatch_fallback",
                 })
-    except Exception:  # pylint: disable=broad-except
-        pass
+    except Exception as _exc:  # pylint: disable=broad-except
+        import logging as _logging  # pylint: disable=import-outside-toplevel
+        _logging.getLogger(__name__).warning("who_calls grep fallback failed: %s", _exc)
     return results
 
 
@@ -521,6 +715,7 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
     If empty, falls back to string-literal grep for dynamic dispatch patterns
     (APScheduler add_job, Django signals, Flask routes, Celery tasks, etc.).
     Dynamic hits are labelled with found_via=dynamic_dispatch_fallback.
+    Do NOT call if you already know the callers. Expensive on large graphs.
 
     repo_path: optional absolute path to the target repository.
     """
@@ -566,8 +761,57 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
             fallback = _who_calls_dynamic_fallback(function_name, repo_root)
             if fallback:
                 result = fallback
+
+        # Cross-repo: check dependent services for callers of this function
+        cross_repo_callers: list[dict] = []
+        try:
+            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+            og = get_org_graph()
+            current = os.path.abspath(repo_root or ".")
+            dependents = og.get_dependents(current, depth=1)
+            for dep in dependents:
+                dep_repo = dep["repo"]
+                cog_dir = get_cognirepo_dir_for_repo(dep_repo)
+                if not os.path.isdir(cog_dir):
+                    continue
+                token = _CTX_DIR.set(cog_dir)
+                try:
+                    from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+                    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+                    sib_idx = ASTIndexer(KnowledgeGraph())
+                    sib_idx.load()
+                    for loc in sib_idx.lookup_symbol(function_name):
+                        cross_repo_callers.append({
+                            "caller": function_name,
+                            "repo": dep_repo,
+                            "repo_name": os.path.basename(dep_repo),
+                            "file": loc["file"],
+                            "line": loc["line"],
+                            "source": "cross_repo",
+                        })
+                except Exception:  # pylint: disable=broad-except
+                    pass
+                finally:
+                    _CTX_DIR.reset(token)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
         _auto_store_hook("who_calls", result)
-    return result
+
+    _MAX_CALLERS = 50
+    if cross_repo_callers:
+        return {
+            "local_callers": result[:_MAX_CALLERS],
+            "cross_repo_callers": cross_repo_callers[:_MAX_CALLERS],
+            "truncated": len(result) > _MAX_CALLERS or len(cross_repo_callers) > _MAX_CALLERS,
+        }
+    truncated = len(result) > _MAX_CALLERS
+    return result[:_MAX_CALLERS] if not truncated else {
+        "callers": result[:_MAX_CALLERS],
+        "truncated": True,
+        "total_found": len(result),
+    }
 
 
 @mcp.tool()
@@ -585,10 +829,22 @@ def subgraph(entity: str, depth: int = 2, repo_path: str | None = None) -> dict:
         else:
             if g.G.number_of_nodes() == 0:
                 return _EMPTY_GRAPH_WARNING
+        _MAX_NODES, _MAX_EDGES = 200, 500
         candidates = [entity, f"symbol::{entity}", f"concept::{entity.lower()}"]
         for candidate in candidates:
             if g.node_exists(candidate):
                 result = g.subgraph_around(candidate, radius=depth)
+                nodes = result.get("nodes", [])
+                edges = result.get("edges", [])
+                truncated = len(nodes) > _MAX_NODES or len(edges) > _MAX_EDGES
+                if truncated:
+                    result = {
+                        "nodes": nodes[:_MAX_NODES],
+                        "edges": edges[:_MAX_EDGES],
+                        "truncated": True,
+                        "total_nodes": len(nodes),
+                        "total_edges": len(edges),
+                    }
                 _auto_store_hook("subgraph", result)
                 return result
     return {"nodes": [], "edges": []}
@@ -603,6 +859,23 @@ def episodic_search(query: str, limit: int = 10, repo_path: str | None = None) -
     """
     with _repo_ctx(repo_path):
         return search_episodes(query, limit)
+
+
+@mcp.tool()
+def log_episode(
+    event: str,
+    metadata: dict | None = None,
+    repo_path: str | None = None,
+) -> dict:
+    """
+    Log a structured episodic event to the episodic memory store.
+    Use to record what happened: bugs found, code explored, agent actions.
+    Retrievable via episodic_search in future sessions.
+    Do NOT use for architectural decisions — use record_decision instead.
+    """
+    with _repo_ctx(repo_path):
+        log_event({"event": event, **(metadata or {})})
+    return {"logged": True}
 
 
 @mcp.tool()
@@ -623,16 +896,31 @@ def graph_stats(repo_path: str | None = None) -> dict:
         ]
         top_concepts = sorted(concept_nodes, key=g.G.degree, reverse=True)[:5]
         last_indexed = None
+        index_age_minutes = None
+        index_stale = None
         from config.paths import get_path  # pylint: disable=import-outside-toplevel
         ast_index_path = get_path("index/ast_index.json")
         if os.path.exists(ast_index_path):
             with open(ast_index_path, encoding="utf-8") as f:
                 last_indexed = json.load(f).get("indexed_at")
+            try:
+                import datetime as _dt  # pylint: disable=import-outside-toplevel
+                mtime = os.path.getmtime(ast_index_path)
+                age_s = time.time() - mtime
+                index_age_minutes = int(age_s // 60)
+                # Stale if >60 min old; check for running watcher via PID file
+                _pid_file = get_path("watcher.pid")
+                watcher_running = os.path.exists(_pid_file)
+                index_stale = index_age_minutes > 60 and not watcher_running
+            except Exception:  # pylint: disable=broad-except
+                pass
     return {
         "node_count": stats["nodes"],
         "edge_count": stats["edges"],
         "top_concepts": top_concepts,
         "last_indexed": last_indexed,
+        "index_age_minutes": index_age_minutes,
+        "index_stale": index_stale,
     }
 
 
@@ -646,6 +934,8 @@ def semantic_search_code(
     """
     Semantic vector search over indexed code symbols only (no episodic memory
     mixed in).  Optionally filter by language: "python", "typescript", "go", etc.
+    Do NOT call for exact string matches — use search_token or grep instead.
+    Use for concepts and natural-language queries about what code does.
 
     repo_path: optional absolute path to the target repository.
     """
@@ -653,6 +943,22 @@ def semantic_search_code(
         result = _traced("semantic_search_code", _semantic_search_code, query=query, top_k=top_k, language=language)
         _auto_store_hook("semantic_search_code", result)
     return result
+
+
+@mcp.tool()
+def search_docs(query: str, top_k: int = 5, repo_path: str | None = None) -> dict:
+    """
+    Search indexed documentation files (*.md, *.rst, *.txt) by semantic similarity.
+    Use for: README explanations, architecture docs, decision logs.
+    Do NOT use for code — use semantic_search_code instead.
+
+    repo_path: optional absolute path to the target repository.
+    """
+    with _repo_ctx(repo_path):
+        result = _traced("search_docs", _search_docs, query=query)
+        if isinstance(result, list):
+            result = result[:top_k]
+    return result if isinstance(result, dict) else {"results": result, "count": len(result)}
 
 
 @mcp.tool()
@@ -733,6 +1039,8 @@ def context_pack(
     Budget-pack the most relevant code + episodic context into a token-bounded
     block ready for injection into the next prompt.  Call this BEFORE reading
     any source file to avoid wasting tokens on raw file reads.
+    Returns at most max_tokens (default 2000) tokens — much smaller than raw files.
+    Do NOT call for known short files (< 50 lines) — use Read directly instead.
 
     repo_path: optional absolute path to the target repository. When omitted,
     defaults to the server's configured project directory.
@@ -803,6 +1111,66 @@ def get_session_history(limit: int = 10, repo_path: str | None = None) -> list:
 
 
 @mcp.tool()
+def get_last_context(repo_path: str | None = None) -> dict:
+    """
+    Return the most recent context snapshot written by context_pack.
+
+    Call this at the START of a session to resume where the previous agent
+    left off. Returns: query, sections, token_count, generated_at, agent,
+    org_graph_summary. Returns {"status": "no_context"} if no snapshot exists.
+
+    Claude: call this automatically at session start when starting work on
+    a known project. It shows what the last agent was looking at, preventing
+    duplicate exploration and token waste.
+
+    Do NOT call on a fresh project that has never run context_pack.
+
+    repo_path: optional absolute path to the target repository.
+    """
+    with _repo_ctx(repo_path):
+        try:
+            from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
+            config_path = _gp("config.json")
+            if not os.path.exists(config_path):
+                return {"status": "no_context", "reason": "repo not initialized"}
+            with open(config_path, encoding="utf-8") as f:
+                cfg = json.load(f)
+            repo_name = cfg.get("project_name", os.path.basename(os.getcwd()))
+            ctx_path = os.path.join(
+                os.path.expanduser("~"), ".cognirepo", repo_name, "last_context.json"
+            )
+            if not os.path.exists(ctx_path):
+                return {"status": "no_context", "reason": "no previous session found"}
+            with open(ctx_path, encoding="utf-8") as f:
+                data = json.load(f)
+            return data
+        except (OSError, json.JSONDecodeError) as exc:
+            return {"status": "error", "reason": str(exc)}
+
+
+@mcp.tool()
+def get_session_brief(repo_path: str | None = None) -> dict:
+    """
+    Generate a session bootstrap brief for agent orientation.
+
+    Returns: architecture summary, entry points (most-called symbols),
+    recent decisions from learning store, hot symbols from behaviour tracker,
+    index health (symbol count, file count, last_indexed).
+
+    Claude: call this at the START of a session on an unfamiliar project,
+    or when resuming after a long break. Gives you the full project map in
+    one call — faster than reading files or running grep.
+
+    Do NOT call this repeatedly; call once at session start only.
+
+    repo_path: optional absolute path to the target repository.
+    """
+    with _repo_ctx(repo_path):
+        from tools.prime_session import prime_session  # pylint: disable=import-outside-toplevel
+        return prime_session()
+
+
+@mcp.tool()
 def get_user_profile(repo_path: str | None = None) -> dict:
     """
     Return the user's interaction style profile for Claude to adapt its responses.
@@ -820,6 +1188,45 @@ def get_user_profile(repo_path: str | None = None) -> dict:
         from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g)
     return bt.get_user_profile()
+
+
+@mcp.tool()
+def record_user_preference(
+    preference_key: str,
+    preference_value: str,
+    context: str = "",
+    repo_path: str | None = None,
+) -> dict:
+    """
+    Store an explicit user preference or query-rewrite correction.
+
+    **Standard preferences** (preference_key = any label):
+    Store as: record_user_preference("response_format", "code-first, then explanation")
+    Surfaced via get_user_profile()['explicit_preferences'].
+
+    **Query-rewrite corrections** (preference_key = "query_rewrite"):
+    Use when you asked for X but user says they actually meant Y.
+    Store the wrong phrasing as preference_value, intent in context:
+      record_user_preference("query_rewrite", "deploy model", context="user means: update the ML model weights in production, not software deploy")
+    Stored in query_rewrites list; agents apply these before retrieval so future
+    similar queries hit the right code even when phrasing is off.
+
+    Claude: call this when:
+    - User corrects your interpretation ("no, I meant X not Y")
+    - User expresses a repeated preference ("always show code first")
+    - User clarifies what a query actually means in this codebase
+
+    Do NOT call for one-off answers — only for durable preferences that should
+    persist across sessions.
+    """
+    with _repo_ctx(repo_path) as (_root, g, _idx):
+        if g is None:
+            g = _get_graph()
+        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        bt = BehaviourTracker(g)
+        if preference_key == "query_rewrite":
+            return bt.record_query_rewrite(preference_value, context or preference_value)
+        return bt.record_user_preference(preference_key, preference_value)
 
 
 @mcp.tool()
@@ -1189,6 +1596,19 @@ def _write_manifest() -> None:
         json.dump(_build_manifest(), f, indent=2)
 
 
+# Set of tool names registered via @mcp.tool() — used by cognirepo doctor for schema validation.
+_REGISTERED_TOOLS: set[str] = {
+    "store_memory", "retrieve_memory", "record_decision", "org_search", "org_dependencies",
+    "architecture_overview", "lookup_symbol", "context_pack", "who_calls",
+    "search_docs", "log_episode", "subgraph", "explain_change",
+    "graph_stats", "get_session_history", "get_last_context", "get_session_brief",
+    "semantic_search_code", "search_token", "dependency_graph", "cross_repo_search",
+    "cross_repo_traverse", "episodic_search", "org_wide_search", "list_org_context",
+    "get_user_profile", "record_error", "get_error_patterns", "link_repos",
+    "record_user_preference",
+}
+
+
 def run_server(project_dir: str | None = None) -> None:
     """
     Entry point called by the CLI — writes manifest then starts stdio MCP server.
@@ -1236,6 +1656,17 @@ def run_server(project_dir: str | None = None) -> None:
         pass  # watcher is best-effort — never block server startup
 
     _write_manifest()
+
+    # Pre-warm embedding model in background — reduces first-query latency from ~6s to ~0s
+    import threading as _threading  # pylint: disable=import-outside-toplevel
+    def _prewarm():
+        try:
+            from memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
+            encode_with_timeout("warmup", timeout=60)
+        except Exception:  # pylint: disable=broad-except
+            pass
+    _threading.Thread(target=_prewarm, daemon=True, name="cognirepo-prewarm").start()
+
     mcp.run(transport="stdio")
 
 
