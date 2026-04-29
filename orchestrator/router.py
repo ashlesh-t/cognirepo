@@ -35,7 +35,7 @@ import traceback
 from dataclasses import dataclass
 from typing import Generator
 
-from orchestrator.classifier import ClassifierResult, classify
+from orchestrator.classifier import ClassifierResult, classify, DEFAULT_MODELS_BY_PROVIDER
 from orchestrator.context_builder import ContextBundle, build as build_context
 from orchestrator.model_adapters.anthropic_adapter import ModelResponse
 from orchestrator.model_adapters.errors import ModelCallError
@@ -247,12 +247,10 @@ def route(
 #: Priority order for provider fallback (most capable first)
 _PROVIDER_PRIORITY = ["anthropic", "gemini", "grok", "openai"]
 
-#: Default model IDs used when falling back to a provider not in the classifier result
+#: Default model IDs per provider — sourced from orchestrator/classifier.py (single source of truth)
 _PROVIDER_DEFAULT_MODELS: dict[str, str] = {
-    "anthropic": "claude-haiku-4-5",   # cheapest model for STANDARD promotion
-    "gemini": "gemini-2.0-flash",
-    "grok": "grok-beta",
-    "openai": "gpt-4o-mini",
+    **DEFAULT_MODELS_BY_PROVIDER,
+    "grok": "grok-beta",  # grok not in base classifier; extend here
 }
 
 

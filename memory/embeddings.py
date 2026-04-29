@@ -6,6 +6,9 @@
 
 """
 Utility to load and retrieve the embedding model.
+
+Uses fastembed (ONNX runtime) — no PyTorch/CUDA required.
+Model: sentence-transformers/all-MiniLM-L6-v2, dim=384.
 """
 # pylint: disable=import-error
 import concurrent.futures
@@ -22,23 +25,13 @@ MODEL = None
 
 
 def get_model():
-    """
-    Returns the SentenceTransformer model, loading it if necessary.
-    """
     global MODEL  # pylint: disable=global-statement
 
     if MODEL is None:
         logger.info("Loading embedding model (first use — ~2-5s)...")
-        # Lazy import — keeps sentence_transformers/PyTorch out of server startup path
-        from sentence_transformers import SentenceTransformer  # pylint: disable=import-outside-toplevel
-        os.environ.setdefault("HF_HUB_OFFLINE", "1")
-        # Silence harmless weight-loading reports after import
-        try:
-            import transformers.utils.logging as tf_logging  # pylint: disable=import-outside-toplevel
-            tf_logging.set_verbosity_error()
-        except ImportError:
-            pass
-        MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        # Lazy import — keeps fastembed/ONNX out of server startup path
+        from fastembed import TextEmbedding  # pylint: disable=import-outside-toplevel
+        MODEL = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
 
     return MODEL
 
@@ -54,7 +47,8 @@ def encode_with_timeout(text: str, timeout: float | None = None):
     breaker.check()
     t = timeout if timeout is not None else _EMBED_TIMEOUT_SEC
     model = get_model()
-    future = _ENCODE_EXECUTOR.submit(model.encode, text)
+    # fastembed.embed() returns a generator; consume first (and only) result
+    future = _ENCODE_EXECUTOR.submit(lambda: next(iter(model.embed([text]))))
     try:
         result = future.result(timeout=t)
         breaker.record_success()
@@ -72,8 +66,8 @@ def evict_model() -> None:
     """
     Release the in-memory embedding model to free RAM.
 
-    Called by IdleManager after the idle TTL expires.  The next call to
-    get_model() will reload the model from disk (~2 s warm-up).
+    Called by IdleManager after idle TTL expires. Next call to
+    get_model() reloads from disk (~2 s warm-up).
     """
     global MODEL  # pylint: disable=global-statement
     if MODEL is not None:

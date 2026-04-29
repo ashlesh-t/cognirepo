@@ -39,7 +39,7 @@ def test_hard_dependencies_importable():
     hard_deps = {
         "faiss-cpu": "faiss",
         "numpy": "numpy",
-        "sentence-transformers": "sentence_transformers",
+        "fastembed": "fastembed",
         "mcp": "mcp",
         "fastapi": "fastapi",
         "pydantic": "pydantic",

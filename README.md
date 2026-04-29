@@ -146,21 +146,22 @@ graph/behaviour_tracker.py                  DEFINED_IN, CO_OCCURS,
 ### Install
 
 ```bash
-# Recommended — CPU-only, no GPU required (~400 MB vs ~2 GB):
-pip install 'cognirepo[cpu,languages]'
+# Recommended — ONNX/fastembed, no GPU/CUDA required (~50 MB install):
+pip install 'cognirepo[languages]'
 
 # For encryption at rest:
-pip install 'cognirepo[cpu,languages,security]'
+pip install 'cognirepo[languages,security]'
 
 # With model routing (cognirepo ask — needs an API key):
-pip install 'cognirepo[cpu,languages,providers]'
+pip install 'cognirepo[languages,providers]'
 
 # Full development install:
 pip install -e '.[dev,security,languages]'
 ```
 
-> **Note:** `[cpu]` is now the default — `sentence-transformers[cpu]` ships with PyTorch CPU wheels only.
-> Use `pip install 'cognirepo[gpu]'` if you need GPU acceleration.
+> **Note:** CPU-only embeddings are the default (fastembed/ONNX, no PyTorch/CUDA required).
+> Use `pip install 'cognirepo[gpu]'` and install torch separately for GPU acceleration:
+> `pip install torch --index-url https://download.pytorch.org/whl/cu121`
 
 ### Run
 

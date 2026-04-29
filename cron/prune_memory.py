@@ -116,11 +116,12 @@ def _rebuild_faiss(kept: list[dict[str, Any]], dry_run: bool) -> int:
         return len(kept)
     try:
         import faiss  # pylint: disable=import-outside-toplevel
+        import numpy as np  # pylint: disable=import-outside-toplevel
         from memory.embeddings import get_model  # pylint: disable=import-outside-toplevel
 
         model = get_model()
         texts = [e.get("text", "") for e in kept]
-        vectors = model.encode(texts, normalize_embeddings=True).astype("float32")
+        vectors = np.array(list(model.embed(texts))).astype("float32")
         dim = vectors.shape[1]
         index = faiss.IndexFlatL2(dim)
         index.add(vectors)  # pylint: disable=no-value-for-parameter
@@ -227,6 +228,10 @@ def prune(
             archive_path = _archive_entries(pruned)
             print(f"[prune] archived {len(pruned)} entries → {archive_path}")
         faiss_count = _rebuild_faiss(kept, dry_run=False)
+        if faiss_count < 0:
+            print("[prune] FAISS rebuild failed — index may be corrupt", file=sys.stderr)
+            return {"status": "error", "message": "FAISS rebuild failed",
+                    "total": total, "kept": len(kept), "pruned": len(pruned)}
     else:
         faiss_count = len(kept)
 

@@ -122,10 +122,11 @@ def build_docs_index(dest: Path, doc_roots: Optional[list[Path]] = None) -> int:
         return 0
 
     # Embed
+    import numpy as np  # pylint: disable=import-outside-toplevel
     model = get_model()
     texts = [c["text"] for c in all_chunks]
     t0 = time.perf_counter()
-    vectors = model.encode(texts, normalize_embeddings=True).astype("float32")
+    vectors = np.array(list(model.embed(texts))).astype("float32")
     logger.info("docs_index: embedded %d chunks in %.1fs", len(texts), time.perf_counter() - t0)
 
     # FAISS
@@ -186,8 +187,9 @@ class DocsIndex:
         Each result: {file, section, score, text}
         """
         from memory.embeddings import get_model  # pylint: disable=import-outside-toplevel
+        import numpy as np  # pylint: disable=import-outside-toplevel
         model = get_model()
-        vec = model.encode(query, normalize_embeddings=True).astype("float32").reshape(1, -1)
+        vec = next(iter(model.embed([query]))).astype("float32").reshape(1, -1)
         k = min(top_k, self._index.ntotal)
         if k == 0:
             return []

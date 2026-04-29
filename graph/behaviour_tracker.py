@@ -104,19 +104,38 @@ class BehaviourTracker:
     # ── persistence ───────────────────────────────────────────────────────────
 
     def _load(self) -> None:
-        if os.path.exists(_behaviour_file()):
+        path = _behaviour_file()
+        if not os.path.exists(path):
+            return
+        try:
+            raw = open(path, "rb").read()
             try:
-                with open(_behaviour_file(), encoding="utf-8") as f:
-                    self.data = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                pass  # start fresh
+                from security.storage import get_storage_config  # pylint: disable=import-outside-toplevel
+                encrypt, project_id = get_storage_config()
+                if encrypt:
+                    from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
+                    raw = decrypt_bytes(raw, get_or_create_key(project_id))
+            except Exception:  # pylint: disable=broad-except
+                pass  # encryption not configured — treat as plaintext
+            self.data = json.loads(raw)
+        except (json.JSONDecodeError, OSError, ValueError):
+            pass  # start fresh
 
     def save(self) -> None:
-        """Persist the behaviour data to behaviour.json."""
+        """Persist behaviour data; encrypts if encryption is configured."""
         os.makedirs(os.path.dirname(_behaviour_file()), exist_ok=True)
         self.data["updated_at"] = _now()
-        with open(_behaviour_file(), "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=2)
+        raw = json.dumps(self.data, indent=2).encode()
+        try:
+            from security.storage import get_storage_config  # pylint: disable=import-outside-toplevel
+            encrypt, project_id = get_storage_config()
+            if encrypt:
+                from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+                raw = encrypt_bytes(raw, get_or_create_key(project_id))
+        except Exception:  # pylint: disable=broad-except
+            pass  # best-effort encryption
+        with open(_behaviour_file(), "wb") as f:
+            f.write(raw)
 
     # ── query tracking ────────────────────────────────────────────────────────
 
@@ -189,6 +208,10 @@ class BehaviourTracker:
             if self.graph.node_exists(sym):
                 self.graph.add_edge(q_node, sym, EdgeType.QUERIED_WITH)
 
+        # auto-summarize interaction style every N queries
+        if len(patterns) % self._STYLE_SUMMARIZE_EVERY == 0 and patterns:
+            self.summarize_interaction_style()
+
     def record_feedback(
         self,
         query_id: str,
@@ -217,7 +240,8 @@ class BehaviourTracker:
                     sw[sym] = {"hit_count": 0, "last_hit": None, "relevance_feedback": 0.0}
                 sw[sym]["hit_count"] += 1
                 sw[sym]["last_hit"] = _now()
-                new_score = min(1.0, sw[sym]["relevance_feedback"] + 0.1)
+                old_score = sw[sym]["relevance_feedback"]
+                new_score = min(1.0, old_score * 0.95 + 0.1)
                 sw[sym]["relevance_feedback"] = new_score
                 # propagate score back into vector store
                 if self._db_adapter is not None and idx < len(faiss_rows):

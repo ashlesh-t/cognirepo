@@ -95,7 +95,7 @@ class DocIngester:
         stored = 0
         for chunk in chunks:
             try:
-                vec = model.encode(chunk["text"]).astype("float32")
+                vec = next(iter(model.embed([chunk["text"]]))).astype("float32")
                 db.add(vec, chunk["text"], importance=0.6, source="init_doc")
                 stored += 1
             except Exception as exc:  # pylint: disable=broad-except
