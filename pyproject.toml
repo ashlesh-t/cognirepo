@@ -1,6 +1,6 @@
 [project]
 name = "cognirepo"
-version = "1.0.0"
+version = "1.1.0"
 description = "Local cognitive infrastructure layer for AI agents"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -23,9 +23,9 @@ dependencies = [
     # core
     "faiss-cpu==1.13.2",
     "numpy==2.4.3",
-    # CPU-only sentence-transformers — avoids the ~2 GB GPU PyTorch download.
-    # Use [gpu] extra to get full GPU support.
-    "sentence-transformers[cpu]==5.3.0",
+    # ONNX-based embeddings — no PyTorch/CUDA. ~50 MB install vs ~2 GB.
+    # Same model (all-MiniLM-L6-v2, dim=384) as before.
+    "fastembed>=0.3.6",
     # MCP server
     "mcp[cli]==1.26.0",
     # REST API + Server
@@ -54,7 +54,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/ashlesh-t/cognirepo"
 "Bug Tracker" = "https://github.com/ashlesh-t/cognirepo/issues"
-Documentation = "https://github.com/ashlesh-t/cognirepo/blob/main/ARCHITECTURE.md"
+Documentation = "https://github.com/ashlesh-t/cognirepo/blob/main/docs/ARCHITECTURE.md"
 Changelog = "https://github.com/ashlesh-t/cognirepo/blob/main/CHANGELOG.md"
 Discord = "https://discord.com/channels/1488386981917360289/1488387271190380636"
 
@@ -92,7 +92,9 @@ providers = [
     "openai>=1.0",
 ]
 gpu = [
-    # Full GPU PyTorch support. Use instead of the default cpu install.
+    # GPU-accelerated embeddings via sentence-transformers + PyTorch CUDA.
+    # Install: pip install 'cognirepo[gpu]'
+    # Then: pip install torch --index-url https://download.pytorch.org/whl/cu121
     "sentence-transformers==5.3.0",
     "torch>=2.0",
 ]

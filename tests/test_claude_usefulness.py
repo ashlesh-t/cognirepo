@@ -201,10 +201,10 @@ class TestMemoryRecall:
         model = get_model()
         db = LocalVectorDB()
         text = "pytest usefulness test: memory round-trip"
-        vec = model.encode(text).astype("float32")
+        vec = next(iter(model.embed([text]))).astype("float32")
         db.add(vec, text, 1.0)
 
-        results = db.search(model.encode("usefulness memory round-trip").astype("float32"), top_k=3)
+        results = db.search(next(iter(model.embed(["usefulness memory round-trip"]))).astype("float32"), top_k=3)
         texts = [r.get("text", "") for r in results]
         assert any("usefulness" in t for t in texts), f"Memory not recalled: {texts}"
 

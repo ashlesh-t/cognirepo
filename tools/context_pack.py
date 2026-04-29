@@ -228,6 +228,9 @@ def context_pack(
                 result = {
                     "query": query,
                     "status": "no_confident_match",
+                    "token_count": 0,
+                    "sections": [],
+                    "truncated": False,
                     "best_score": round(max(best_score, best_semantic), 4),
                     "suggestion": (
                         "run `cognirepo index-repo .` or use a more specific symbol name. "
@@ -333,6 +336,7 @@ def context_pack(
     total_tokens = max_tokens - token_budget
     result: dict = {
         "query": query,
+        "status": "ok",
         "token_count": total_tokens,
         "sections": sections,
         "truncated": truncated,

@@ -150,7 +150,7 @@ def run_wizard() -> dict:
       org               str | None  organization name
       project           str | None  project within org
     """
-    STEPS = 5
+    STEPS = 7
 
     print()
     print("  ╔══════════════════════════════════════════════════════╗")
@@ -202,8 +202,21 @@ def run_wizard() -> dict:
         except (subprocess.CalledProcessError, FileNotFoundError):
             _warn("Install failed — run: pip install chromadb")
 
-    # ── 3. Language support ───────────────────────────────────────────────────
-    _section(3, STEPS, "Extended language support",
+    # ── 3. Behaviour tracking opt-in ─────────────────────────────────────────
+    _section(3, STEPS, "Behaviour profiling",
+             "Tracks query patterns to personalise AI agent responses over time.")
+    cfg["behaviour_tracking"] = _ask_yn(
+        "Enable user behaviour profiling? (opt-in)",
+        default=False,
+    )
+    if cfg["behaviour_tracking"]:
+        print(f"  {_c(_DIM, '  Stored in .cognirepo/graph/behaviour.json')}")
+        if cfg.get("encrypt"):
+            print(f"  {_c(_DIM, '  Will be encrypted (encryption is on).')}")
+        print(f"  {_c(_DIM, '  Disable anytime: set behaviour_tracking=false in .cognirepo/config.json')}")
+
+    # ── 4. Language support ───────────────────────────────────────────────────
+    _section(4, STEPS, "Extended language support",  # noqa: E501
              "Adds tree-sitter parsers for JS/TS, Java, Go, Rust, C/C++.")
     cfg["install_languages"] = _ask_yn(
         "Install extended language parsers?", default=False
@@ -215,8 +228,8 @@ def run_wizard() -> dict:
         else:
             _warn("Install failed — run: pip install cognirepo[languages]")
 
-    # ── 4. AI tool MCP integration ────────────────────────────────────────────
-    _section(4, STEPS, "AI tool MCP integration",
+    # ── 5. AI tool MCP integration ────────────────────────────────────────────
+    _section(5, STEPS, "AI tool MCP integration",
              "Wire CogniRepo memory + code search into Claude / Gemini / Cursor / VS Code.")
     mcp_idx = _ask_choice(
         "Set up MCP server for:",
@@ -264,8 +277,20 @@ def run_wizard() -> dict:
             "Register globally (available in all sessions)?", default=True
         )
 
-    # ── 5. Organization + Project ─────────────────────────────────────────────
-    _section(5, STEPS, "Organisation & Project",
+    # ── 6. Cross-agent context handoff ───────────────────────────────────────
+    _section(6, STEPS, "Cross-agent context handoff",
+             "Share last session context between Claude, Gemini, and Cursor automatically.")
+    cfg["autosave_context"] = _ask_yn(
+        "Enable cross-agent context handoff? (saves last query context to ~/.cognirepo/<repo>/)",
+        default=True,
+    )
+    if cfg["autosave_context"]:
+        print(f"  {_c(_DIM, '  Each context_pack call writes a snapshot other agents can read.')}")
+    else:
+        print(f"  {_c(_DIM, '  Sessions stay isolated. Enable later: set autosave_context=true in config.json')}")
+
+    # ── 7. Organization + Project ─────────────────────────────────────────────
+    _section(7, STEPS, "Organisation & Project",
              "Group repos for cross-repo knowledge sharing.")
     from config.orgs import list_orgs, list_projects, create_project  # pylint: disable=import-outside-toplevel
     orgs = list_orgs()
@@ -325,6 +350,8 @@ def run_wizard() -> dict:
     rows = [
         ("Project",       cfg["project_name"]),
         ("Encryption",    "yes" if cfg["encrypt"] else "no"),
+        ("Behaviour",     "enabled" if cfg.get("behaviour_tracking") else "disabled"),
+        ("Context handoff", "yes" if cfg.get("autosave_context", True) else "no"),
         ("Vector backend", cfg["vector_backend"]),
         ("Languages",     "extended" if cfg["install_languages"] else "Python only"),
         ("MCP targets",   ", ".join(cfg["mcp_targets"]) or "none"),

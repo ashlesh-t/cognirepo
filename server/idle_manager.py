@@ -9,7 +9,7 @@ server/idle_manager.py — TTL-based resource eviction for the MCP server.
 
 After `idle_ttl_seconds` of inactivity (no MCP tool calls), registered
 evict callbacks are fired to release heavy in-process resources:
-  - SentenceTransformer embedding model (~400 MB)
+  - fastembed embedding model (~50 MB ONNX)
   - KnowledgeGraph object
   - ASTIndexer object
 

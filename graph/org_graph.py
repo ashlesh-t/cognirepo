@@ -118,16 +118,30 @@ class OrgGraph:
             logger.debug("OrgGraph: orgs.json migration skipped: %s", exc)
 
     def save(self) -> None:
+        import networkx as nx  # pylint: disable=import-outside-toplevel
         path = _graph_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
             from security import get_storage_config  # pylint: disable=import-outside-toplevel
             encrypt, project_id = get_storage_config()
-            raw = pickle.dumps(self.G, protocol=pickle.HIGHEST_PROTOCOL)
-            if encrypt and project_id:
-                from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
-                raw = encrypt_bytes(raw, get_or_create_key(project_id))
             with _org_lock():
+                # Re-read current on-disk state and compose with ours so concurrent
+                # link_repos() calls from different agents are additive, not last-write-wins.
+                if os.path.exists(path):
+                    try:
+                        with open(path, "rb") as f:
+                            raw_disk = f.read()
+                        if encrypt and project_id:
+                            from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
+                            raw_disk = decrypt_bytes(raw_disk, get_or_create_key(project_id))
+                        disk_graph = pickle.loads(raw_disk)  # pylint: disable=consider-using-with
+                        self.G = nx.compose(disk_graph, self.G)
+                    except Exception:  # pylint: disable=broad-except
+                        pass  # disk state unreadable — our in-memory state wins
+                raw = pickle.dumps(self.G, protocol=pickle.HIGHEST_PROTOCOL)
+                if encrypt and project_id:
+                    from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+                    raw = encrypt_bytes(raw, get_or_create_key(project_id))
                 with open(path, "wb") as f:
                     f.write(raw)
         except OSError as exc:
@@ -219,13 +233,14 @@ class OrgGraph:
         return self._bfs(abs_repo, direction="reverse", max_depth=depth)
 
     def _bfs(self, start: str, direction: str, max_depth: int) -> list[dict]:
+        from collections import deque  # pylint: disable=import-outside-toplevel
         if not self.G.has_node(start):
             return []
         visited: set[str] = {start}
-        queue: list[tuple[str, int]] = [(start, 0)]
+        queue: deque[tuple[str, int]] = deque([(start, 0)])
         results: list[dict] = []
         while queue:
-            node, dist = queue.pop(0)
+            node, dist = queue.popleft()
             if dist >= max_depth:
                 continue
             for neighbor in self.G.successors(node):
@@ -275,7 +290,7 @@ class OrgGraph:
         return [
             n for n in self.G.successors(abs_path)
             if self.G[abs_path][n].get("kind") == "CHILD_OF"
-            and self.G[abs_path][n].get("direction") == "reverse"
+            and self.G[abs_path][n].get("direction") == "forward"
         ]
 
     def get_siblings(self, repo_path: str) -> list[str]:

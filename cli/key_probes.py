@@ -17,6 +17,14 @@ import time
 from typing import TypedDict
 
 
+def _anthropic_default_model() -> str:
+    try:
+        from orchestrator.classifier import DEFAULT_MODELS_BY_PROVIDER  # pylint: disable=import-outside-toplevel
+        return DEFAULT_MODELS_BY_PROVIDER.get("anthropic", "claude-haiku-4-5")
+    except ImportError:
+        return "claude-haiku-4-5"
+
+
 class ProbeResult(TypedDict):
     ok: bool
     latency_ms: float
@@ -35,7 +43,7 @@ def probe_anthropic(api_key: str, timeout: float = 10.0) -> ProbeResult:
 
     t0 = time.perf_counter()
     payload = json.dumps({
-        "model": "claude-haiku-4-5",
+        "model": _anthropic_default_model(),
         "max_tokens": 1,
         "messages": [{"role": "user", "content": "ping"}],
     }).encode()

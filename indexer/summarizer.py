@@ -300,7 +300,7 @@ class SummarizationEngine:
                     parts.append(f"functions: {' '.join(fs['functions'][:8])}")
                 embed_text = " ".join(parts)
 
-                vec = model.encode(embed_text).astype("float32")
+                vec = next(iter(model.embed([embed_text]))).astype("float32")
                 faiss_id = len(indexer.faiss_meta)
                 import faiss as _faiss  # pylint: disable=import-outside-toplevel
                 import numpy as _np  # pylint: disable=import-outside-toplevel

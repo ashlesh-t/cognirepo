@@ -1,6 +1,6 @@
 # CogniRepo MCP Tools Reference
 
-Every tool available via the MCP protocol. These are the functions Claude, Gemini, and Cursor can call.
+32 tools available via the MCP protocol. These are the functions Claude, Gemini, and Cursor can call.
 
 ---
 
@@ -535,5 +535,87 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
 **Output:**
 ```json
 {"key": "response_style", "value": "concise", "recorded": true}
+```
+
+---
+
+## get_agent_bootstrap
+
+**Signature:** `get_agent_bootstrap(repo_path: str = None) → dict`
+
+**When:** Call ONCE at session start instead of the 4-call sequence (get_session_brief → get_last_context → get_user_profile → get_error_patterns). Returns ~300 tokens vs ~900 tokens.
+
+**Input:**
+```json
+{}
+```
+**Output:**
+```json
+{
+  "repo": "cognirepo",
+  "architecture": "CogniRepo: FAISS + graph + AST + MCP. Tools in tools/, retrieval via retrieval/hybrid.py...",
+  "hot_symbols": ["hybrid_retrieve:retrieval/hybrid.py:45", "context_pack:tools/context_pack.py:12"],
+  "last_focus": {"files": ["retrieval/hybrid.py"], "query": "how does scoring work", "agent": "claude"},
+  "framing": {"depth": "detailed", "vocabulary": ["retrieval", "faiss", "hybrid"]},
+  "error_patterns": [{"type": "OOM", "count": 2, "prevention_hint": "Check RSS before loading large index"}],
+  "index_health": {"symbols": 1240, "files": 92, "status": "ok"}
+}
+```
+
+---
+
+## supersede_learning
+
+**Signature:** `supersede_learning(old_id: str, new_text: str, learning_type: str = "fact", repo_path: str = None) → dict`
+
+**When:** Call when `store_memory` returns a `conflicts` list with an outdated/incorrect entry. Deprecates the old entry and replaces it with corrected text. Prevents conflicting memories from co-existing.
+
+**Input:**
+```json
+{"old_id": "abc123", "new_text": "fastembed embed() returns a generator, use next(iter(...))", "learning_type": "fact"}
+```
+**Output:**
+```json
+{"found_old": true, "new_id": "def456"}
+```
+
+---
+
+## architecture_overview
+
+**Signature:** `architecture_overview(scope: str = "root", repo_path: str = None) → str`
+
+**When:** Call for a human-readable summary of the repo, a directory, or a specific file. Returns pre-computed summaries from `summaries.json` — fast, no embedding needed. Run `cognirepo summarize` first to populate.
+
+scope: `"root"` for full repo summary, a directory path like `"tools"`, or a file path like `"retrieval/hybrid.py"`.
+
+**Input:**
+```json
+{"scope": "root"}
+```
+**Output:**
+```
+Repository: cognirepo
+  92 source files | 1240 symbols
+  Top packages: tools, retrieval, memory, graph, indexer
+  Key classes: HybridRetriever, ASTIndexer, KnowledgeGraph, BehaviourTracker
+  Key functions: hybrid_retrieve, context_pack, lookup_symbol, store_memory
+```
+
+---
+
+## org_search
+
+**Signature:** `org_search(query: str, top_k: int = 5) → list`
+
+**⚠ DEPRECATED** — use `org_wide_search` instead. Text-match fallback search across org repos. Only call when `org_wide_search` returns empty results.
+
+**Input:**
+```json
+{"query": "authentication flow"}
+```
+**Output:**
+```json
+[{"text": "...", "source_repo": "auth-service", "score": 0.72}]
 ```
 

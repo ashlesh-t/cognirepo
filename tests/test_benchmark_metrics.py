@@ -18,9 +18,17 @@ Skipped automatically if the index is empty.
 """
 from __future__ import annotations
 import pytest
-
+import numpy as np
 import os
 import time
+from unittest.mock import MagicMock, patch
+
+# Patch fastembed at collection time so tests work without fastembed installed.
+# Tests that need a real index skip themselves via _index_has_data() / _faiss_has_data().
+_fake_model = MagicMock()
+_fake_model.embed.side_effect = lambda texts: iter([np.zeros(384, dtype="float32") for _ in texts])
+_get_model_patcher = patch("indexer.ast_indexer.get_model", return_value=_fake_model)
+_get_model_patcher.start()
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -219,12 +227,6 @@ class TestCacheSpeedup:
 class TestMemoryRecall:
     def test_stored_memory_recall_at_3(self):
         """A stored memory must appear in top-3 retrieval results (recall@3 = 100%)."""
-        try:
-            import sentence_transformers  # noqa: F401
-            import faiss  # noqa: F401
-        except ImportError:
-            pytest.skip("sentence_transformers/faiss not installed — recall test skipped")
-
         import uuid
         from tools.store_memory import store_memory
 
@@ -288,11 +290,6 @@ class TestGraphScore:
 class TestContextRelevance:
     def test_context_sections_contain_query_keywords(self):
         """At least 10% of context_pack sections must mention query keywords."""
-        try:
-            import sentence_transformers  # noqa: F401
-            import faiss  # noqa: F401
-        except ImportError:
-            pytest.skip("sentence_transformers/faiss not installed — context relevance test skipped")
         if not _index_has_data():
             pytest.skip("AST index empty")
 
@@ -330,11 +327,6 @@ class TestPrecisionAtK:
 
     def test_precision_at_3_on_warmed_index(self):
         """precision@3 must be ≥ 0.75 on a warmed index of this repo."""
-        try:
-            import sentence_transformers  # noqa: F401
-            import faiss  # noqa: F401
-        except ImportError:
-            pytest.skip("sentence_transformers/faiss not installed")
         if not _index_has_data():
             pytest.skip("AST index empty — run cognirepo index-repo .")
         if not _faiss_has_data():
@@ -372,11 +364,6 @@ class TestLatencyHistogram:
 
     def test_p50_under_5000ms_on_warmed_index(self):
         """Latency p50 must be under 5 seconds (sanity check — not a tight SLA)."""
-        try:
-            import sentence_transformers  # noqa: F401
-            import faiss  # noqa: F401
-        except ImportError:
-            pytest.skip("sentence_transformers/faiss not installed")
         if not _index_has_data():
             pytest.skip("AST index empty")
 

@@ -967,10 +967,11 @@ def _expand_from_entry_points(
     weights: "dict[str, float]" = {}
     for ep in entry_points:
         weights[ep] = 1.0
-    queue: "list[tuple[str, int]]" = [(ep, 0) for ep in entry_points]
+    from collections import deque as _deque  # pylint: disable=import-outside-toplevel
+    queue: "_deque[tuple[str, int]]" = _deque([(ep, 0) for ep in entry_points])
 
     while queue:
-        current, hop = queue.pop(0)
+        current, hop = queue.popleft()
         abs_path = os.path.join(repo_root, current)
         if not os.path.isfile(abs_path):
             continue
@@ -1147,12 +1148,8 @@ class ASTIndexer:
         texts = [p[0] for p in pending]
         print(f"  Embedding {len(texts):,} texts in batches of {batch_size}…")
         try:
-            vecs = self.model.encode(
-                texts,
-                batch_size=batch_size,
-                show_progress_bar=True,
-                convert_to_numpy=True,
-            ).astype("float32")
+            import numpy as _np  # pylint: disable=import-outside-toplevel
+            vecs = _np.array(list(self.model.embed(texts))).astype("float32")
         except Exception as exc:  # pylint: disable=broad-except
             log.warning("Batch encode failed (%s) — skipping FAISS embed", exc)
             return
@@ -1413,7 +1410,7 @@ class ASTIndexer:
                     # Defer encoding — accumulate for batch encode in index_repo
                     self._pending_embeds.append((embed_text, meta, sym))  # type: ignore[attr-defined]
                 else:
-                    vec = self.model.encode(embed_text).astype("float32")
+                    vec = next(iter(self.model.embed([embed_text]))).astype("float32")
                     faiss_id = len(self.faiss_meta)
                     self.faiss_index.add_with_ids(
                         np.array([vec], dtype="float32"),
@@ -1455,7 +1452,7 @@ class ASTIndexer:
                 self._pending_embeds.append((file_embed_text, file_meta, None))  # type: ignore[attr-defined]
             else:
                 try:
-                    _fvec = self.model.encode(file_embed_text).astype("float32")
+                    _fvec = next(iter(self.model.embed([file_embed_text]))).astype("float32")
                     _fid = len(self.faiss_meta)
                     self.faiss_index.add_with_ids(
                         np.array([_fvec], dtype="float32"),

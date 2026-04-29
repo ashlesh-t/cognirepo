@@ -658,15 +658,15 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             _fail(f"Package — {_pkg_name} not installed", _pkg_install)
             issues += 1
 
-    # ── Check 13: sentence-transformers importable ────────────────────────────
+    # ── Check 13: fastembed importable ───────────────────────────────────────
     try:
-        import sentence_transformers as _st  # pylint: disable=import-outside-toplevel
-        _st_ver = getattr(_st, "__version__", "unknown")
-        _ok(f"sentence-transformers — v{_st_ver} importable")
+        import fastembed as _fe  # pylint: disable=import-outside-toplevel
+        _fe_ver = getattr(_fe, "__version__", "unknown")
+        _ok(f"fastembed — v{_fe_ver} importable")
     except ImportError:
         _fail(
-            "sentence-transformers — not installed",
-            "Run: pip install 'cognirepo[cpu]'",
+            "fastembed — not installed",
+            "Run: pip install fastembed",
         )
         issues += 1
 
@@ -684,7 +684,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             "org_wide_search", "org_search", "list_org_context", "link_repos",
             "search_docs",
             "get_user_profile", "record_error", "get_error_patterns",
-            "record_user_preference",
+            "record_user_preference", "supersede_learning", "get_agent_bootstrap",
         ]
         _registered = getattr(_mcp_mod, "_REGISTERED_TOOLS", None)
         if _registered is not None:
@@ -695,7 +695,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
                     f"{', '.join(_missing_tools)}",
                 )
             else:
-                _ok(f"MCP tools — all {len(_required_tools)}/30 tools registered")
+                _ok(f"MCP tools — all {len(_required_tools)}/32 tools registered")
         else:
             _ok("MCP tools — server module importable (tool list not exposed)")
     except Exception as exc:  # pylint: disable=broad-except

@@ -36,10 +36,6 @@ def prime_session() -> dict:
         "entry_points": [],
         "recent_decisions": [],
         "hot_symbols": [],
-        "known_blind_spots": [
-            "scheduler-registered functions (add_job) require string-literal fallback in who_calls",
-            "decorators-only registration (@app.route) may not appear in AST call graph",
-        ],
         "index_health": {},
     }
 
@@ -49,12 +45,12 @@ def prime_session() -> dict:
         store = get_learning_store()
         arch_learnings = store.retrieve_learnings("architecture overview design", top_k=3)
         brief["architecture"] = [
-            {"text": lr.get("text", "")[:200], "type": lr.get("type", "")}
+            {"text": lr.get("text", "")[:600], "type": lr.get("type", "")}
             for lr in arch_learnings
         ]
         recent = store.retrieve_learnings("decision bug fix", top_k=3)
         brief["recent_decisions"] = [
-            {"text": lr.get("text", "")[:200], "type": lr.get("type", "")}
+            {"text": lr.get("text", "")[:600], "type": lr.get("type", "")}
             for lr in recent
         ]
     except Exception:  # pylint: disable=broad-except

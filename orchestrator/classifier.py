@@ -172,6 +172,15 @@ def _load_model_registry() -> dict:
         return default
 
 
+# Single source of truth for default models per provider.
+# router.py and key_probes.py import from here — do NOT hardcode elsewhere.
+DEFAULT_MODELS_BY_PROVIDER: dict[str, str] = {
+    "anthropic": "claude-haiku-4-5",
+    "gemini": "gemini-2.0-flash",
+    "openai": "gpt-4o-mini",
+}
+
+
 def classify(
     query: str,
     context: dict | None = None,

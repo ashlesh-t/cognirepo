@@ -176,8 +176,8 @@ def setup_logging(
     root.addHandler(handler)
 
     # Quieten noisy third-party loggers
-    for noisy in ("httpx", "httpcore", "urllib3", "sentence_transformers",
-                  "faiss", "grpc"):
+    for noisy in ("httpx", "httpcore", "urllib3", "fastembed",
+                  "faiss", "grpc", "onnxruntime"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     _SETUP_DONE = True

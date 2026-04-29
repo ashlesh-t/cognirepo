@@ -86,6 +86,17 @@ def _evict_singletons() -> None:
             logger.info("idle: graph and indexer evicted from memory")
 
 
+def _behaviour_enabled() -> bool:
+    """Return True only if user opted in to behaviour tracking in config.json."""
+    try:
+        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        import json as _json  # pylint: disable=import-outside-toplevel
+        with open(get_path("config.json"), encoding="utf-8") as _f:
+            return bool(_json.load(_f).get("behaviour_tracking", False))
+    except Exception:  # pylint: disable=broad-except
+        return False
+
+
 @contextlib.contextmanager
 def _repo_ctx(repo_path: str | None):
     """
@@ -196,6 +207,34 @@ def _auto_store_hook(tool_name: str, result) -> None:
         pass  # auto-store is always best-effort
 
 
+def _behaviour_record_query(query: str, result) -> None:
+    """Best-effort behaviour tracking for retrieval calls. Never raises."""
+    if not _behaviour_enabled():
+        return
+    try:
+        import uuid as _uuid  # pylint: disable=import-outside-toplevel
+        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        from vector_db.local_vector_db import LocalVectorDB as _LVDB  # pylint: disable=import-outside-toplevel
+        g = _get_graph()
+        bt = BehaviourTracker(g, db_adapter=_LVDB())
+        symbols: list[str] = []
+        if isinstance(result, list):
+            symbols = [r.get("name", "") or r.get("file", "") for r in result if isinstance(r, dict)]
+        elif isinstance(result, dict):
+            for sec in result.get("sections", []):
+                sym = sec.get("symbol") or sec.get("file", "")
+                if sym:
+                    symbols.append(sym)
+        qid = str(_uuid.uuid4())[:8]
+        bt.record_query(qid, query, [s for s in symbols if s])
+        patterns = bt.data.get("interaction_style", {}).get("query_patterns", [])
+        if len(patterns) % BehaviourTracker._STYLE_SUMMARIZE_EVERY == 0 and patterns:
+            bt.summarize_interaction_style()
+        bt.save()
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
 _EMPTY_GRAPH_WARNING = {
     "warning": "Graph is empty. Run 'cognirepo index-repo .' first.",
     "results": [],
@@ -303,6 +342,28 @@ def store_memory(text: str, source: str = "", repo_path: str | None = None) -> d
 
 
 @mcp.tool()
+def supersede_learning(
+    old_id: str,
+    new_text: str,
+    learning_type: str = "fact",
+    repo_path: str | None = None,
+) -> dict:
+    """
+    Deprecate an existing learning (by ID from store_memory conflicts list) and
+    replace it with corrected text.  Use when store_memory returns a conflict
+    that contains incorrect or outdated information.
+
+    Returns: {found_old: bool, new_id: str}
+
+    repo_path: optional absolute path to the target repository.
+    """
+    with _repo_ctx(repo_path):
+        from memory.learning_store import get_learning_store as _gls  # pylint: disable=import-outside-toplevel
+        result = _gls().supersede_learning(old_id, new_text, learning_type)
+    return result
+
+
+@mcp.tool()
 def retrieve_memory(query: str, top_k: int = 5, include_org: bool = False, repo_path: str | None = None) -> list:
     """
     Retrieve the top-k memories most similar to the query.
@@ -341,12 +402,15 @@ def record_decision(
     Returns: {stored: True, searchable_via: 'episodic_search'}
     """
     with _repo_ctx(repo_path):
-        log_event({
-            "type": "decision",
-            "summary": summary,
-            "rationale": rationale,
-            "affected_files": affected_files or [],
-        })
+        log_event(
+            event=f"decision: {summary}",
+            metadata={
+                "type": "decision",
+                "summary": summary,
+                "rationale": rationale,
+                "affected_files": affected_files or [],
+            },
+        )
     return {"stored": True, "searchable_via": "episodic_search"}
 
 
@@ -368,12 +432,14 @@ def org_search(query: str, top_k: int = 5) -> list:
 @mcp.tool()
 def org_wide_search(query: str, top_k: int = 5) -> list:
     """
-    Search memories across ALL repositories in the organization (every project included).
-    Wider than org_search which only covers top-level org repos.
-    Prefer cross_repo_search(scope="project") when you only need project-scoped results.
+    PRIMARY tool for cross-repo queries. Searches memories across ALL registered repos.
+    Use this by default when a query spans multiple services or the answer may live
+    in any repo.  Prefer this over org_search (legacy fallback).
 
-    Claude: use this when the user explicitly asks about org-wide patterns,
-    or when project-scoped search returns no results.
+    Use cross_repo_search when you need explicit scope control (project vs org).
+    Use org_search only as a fallback when this returns empty.
+
+    Claude: use this as the default cross-repo search.
     """
     from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
     router = CrossRepoRouter()
@@ -458,7 +524,6 @@ def org_dependencies(depth: int = 2) -> dict:
         "transitive_dependencies": [d for d in deps if d["depth"] > 1],
         "direct_dependents": [d for d in dependents if d["depth"] == 1],
         "transitive_dependents": [d for d in dependents if d["depth"] > 1],
-        "graph": og.to_dict(),
     }
 
 
@@ -627,6 +692,7 @@ def lookup_symbol(name: str, include_org: bool = False, repo_path: str | None = 
                 finally:
                     _CTX_DIR.reset(sib_token)
 
+    _behaviour_record_query(name, result)
     return result
 
 
@@ -800,18 +866,13 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
         _auto_store_hook("who_calls", result)
 
     _MAX_CALLERS = 50
-    if cross_repo_callers:
-        return {
-            "local_callers": result[:_MAX_CALLERS],
-            "cross_repo_callers": cross_repo_callers[:_MAX_CALLERS],
-            "truncated": len(result) > _MAX_CALLERS or len(cross_repo_callers) > _MAX_CALLERS,
-        }
-    truncated = len(result) > _MAX_CALLERS
-    return result[:_MAX_CALLERS] if not truncated else {
-        "callers": result[:_MAX_CALLERS],
-        "truncated": True,
-        "total_found": len(result),
+    final = {
+        "local_callers": result[:_MAX_CALLERS],
+        "cross_repo_callers": cross_repo_callers[:_MAX_CALLERS],
+        "truncated": len(result) > _MAX_CALLERS or len(cross_repo_callers) > _MAX_CALLERS,
     }
+    _behaviour_record_query(function_name, final)
+    return final
 
 
 @mcp.tool()
@@ -858,7 +919,9 @@ def episodic_search(query: str, limit: int = 10, repo_path: str | None = None) -
     repo_path: optional absolute path to the target repository.
     """
     with _repo_ctx(repo_path):
-        return search_episodes(query, limit)
+        result = search_episodes(query, limit)
+    _behaviour_record_query(query, result)
+    return result
 
 
 @mcp.tool()
@@ -874,7 +937,7 @@ def log_episode(
     Do NOT use for architectural decisions — use record_decision instead.
     """
     with _repo_ctx(repo_path):
-        log_event({"event": event, **(metadata or {})})
+        log_event(event=event, metadata=metadata or None)
     return {"logged": True}
 
 
@@ -942,6 +1005,7 @@ def semantic_search_code(
     with _repo_ctx(repo_path):
         result = _traced("semantic_search_code", _semantic_search_code, query=query, top_k=top_k, language=language)
         _auto_store_hook("semantic_search_code", result)
+    _behaviour_record_query(query, result)
     return result
 
 
@@ -1057,6 +1121,7 @@ def context_pack(
             repo_root=repo_root,
         )
         _auto_store_hook("context_pack", result)
+    _behaviour_record_query(query, result)
     return result
 
 
@@ -1108,6 +1173,109 @@ def get_session_history(limit: int = 10, repo_path: str | None = None) -> list:
             except (OSError, json.JSONDecodeError):
                 continue
     return results
+
+
+@mcp.tool()
+def get_agent_bootstrap(repo_path: str | None = None) -> dict:
+    """
+    Single-call session bootstrap for AI agents.  Replaces the 4-call sequence
+    (get_session_brief → get_last_context → get_user_profile → get_error_patterns)
+    with one ~300-token payload.
+
+    Returns:
+      repo          — project name
+      architecture  — 600-char architecture summary
+      hot_symbols   — ["fn:file:line", ...] top 8 symbols by behaviour weight
+      last_focus    — {files, query, agent} from last agent's context_pack
+      framing       — {depth, vocabulary} from user profile (empty if tracking off)
+      error_patterns — top 3 recurring errors with prevention hints
+      index_health  — {symbols, files, status}
+
+    Claude: call this ONCE at session start instead of the 4 individual calls.
+    Use individual tools only when you need the full detail each provides.
+
+    repo_path: optional absolute path to the target repository.
+    """
+    with _repo_ctx(repo_path):
+        # ── index health ──────────────────────────────────────────────────────
+        try:
+            idx = _get_indexer()
+            files_data = idx.index_data.get("files", {})
+            symbol_count = sum(len(fd.get("symbols", [])) for fd in files_data.values())
+            file_count = len(files_data)
+            index_status = "ok" if file_count > 0 else "empty"
+        except Exception:  # pylint: disable=broad-except
+            symbol_count, file_count, index_status = 0, 0, "unavailable"
+
+        # ── architecture summary ──────────────────────────────────────────────
+        architecture = ""
+        try:
+            from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
+            summary_path = _gp("index/summaries.json")
+            if os.path.exists(summary_path):
+                with open(summary_path, encoding="utf-8") as _f:
+                    architecture = json.load(_f).get("repo", "")[:600]
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        # ── repo name ─────────────────────────────────────────────────────────
+        try:
+            from config.paths import get_path as _gp2  # pylint: disable=import-outside-toplevel
+            cfg_path = _gp2("config.json")
+            with open(cfg_path, encoding="utf-8") as _f:
+                repo_name = json.load(_f).get("project_name", os.path.basename(os.getcwd()))
+        except Exception:  # pylint: disable=broad-except
+            repo_name = os.path.basename(os.getcwd())
+
+        # ── hot symbols from behaviour tracker ────────────────────────────────
+        hot_symbols: list[str] = []
+        framing: dict = {}
+        error_patterns: list = []
+        if _behaviour_enabled():
+            try:
+                from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+                g = _get_graph()
+                bt = BehaviourTracker(g)
+                sw = bt.data.get("symbol_weights", {})
+                top = sorted(sw.items(), key=lambda x: x[1].get("hit_count", 0), reverse=True)[:8]
+                hot_symbols = [sym for sym, _ in top]
+                profile = bt.get_user_profile()
+                style = profile.get("interaction_style", {})
+                framing = {
+                    "depth": style.get("preferred_depth", "unknown"),
+                    "vocabulary": list(style.get("terminology", {}).keys())[:8],
+                }
+                error_patterns = bt.get_error_patterns(min_count=1)[:3]
+            except Exception:  # pylint: disable=broad-except
+                pass
+
+        # ── last context (hot files from last session) ────────────────────────
+        last_focus: dict = {}
+        try:
+            ctx_path = os.path.join(
+                os.path.expanduser("~"), ".cognirepo", repo_name, "last_context.json"
+            )
+            if os.path.exists(ctx_path):
+                with open(ctx_path, encoding="utf-8") as _f:
+                    lc = json.load(_f)
+                secs = lc.get("sections", [])
+                last_focus = {
+                    "files": list(dict.fromkeys(s.get("file", "") for s in secs if s.get("file")))[:5],
+                    "query": lc.get("query", ""),
+                    "agent": lc.get("agent", ""),
+                }
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+    return {
+        "repo": repo_name,
+        "architecture": architecture,
+        "hot_symbols": hot_symbols,
+        "last_focus": last_focus,
+        "framing": framing,
+        "error_patterns": error_patterns,
+        "index_health": {"symbols": symbol_count, "files": file_count, "status": index_status},
+    }
 
 
 @mcp.tool()
@@ -1185,6 +1353,8 @@ def get_user_profile(repo_path: str | None = None) -> dict:
     with _repo_ctx(repo_path) as (_root, g, _idx):
         if g is None:
             g = _get_graph()
+        if not _behaviour_enabled():
+            return {"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
         from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g)
     return bt.get_user_profile()
@@ -1222,6 +1392,8 @@ def record_user_preference(
     with _repo_ctx(repo_path) as (_root, g, _idx):
         if g is None:
             g = _get_graph()
+        if not _behaviour_enabled():
+            return {"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
         from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g)
         if preference_key == "query_rewrite":
@@ -1245,6 +1417,8 @@ def get_error_patterns(min_count: int = 1, repo_path: str | None = None) -> list
     with _repo_ctx(repo_path) as (_root, g, _idx):
         if g is None:
             g = _get_graph()
+        if not _behaviour_enabled():
+            return {"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
         from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g)
     return bt.get_error_patterns(min_count=min_count)
@@ -1272,6 +1446,8 @@ def record_error(
     with _repo_ctx(repo_path) as (_root, g, _idx):
         if g is None:
             g = _get_graph()
+        if not _behaviour_enabled():
+            return {"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
         from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g)
         bt.record_error(
@@ -1605,7 +1781,7 @@ _REGISTERED_TOOLS: set[str] = {
     "semantic_search_code", "search_token", "dependency_graph", "cross_repo_search",
     "cross_repo_traverse", "episodic_search", "org_wide_search", "list_org_context",
     "get_user_profile", "record_error", "get_error_patterns", "link_repos",
-    "record_user_preference",
+    "record_user_preference", "supersede_learning", "get_agent_bootstrap",
 }
 
 

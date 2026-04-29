@@ -10,6 +10,43 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.1.0] — 2026-04-29
+
+### Added
+- **`get_agent_bootstrap()` MCP tool** — single-call session start replacing 4-call sequence; ~300 tokens vs ~900
+- **`supersede_learning()` MCP tool** — deprecate and replace an outdated memory entry in one call
+- **Behaviour tracking opt-in** — wizard now asks during `cognirepo setup`; off by default; `behaviour.json` encrypted when encryption is enabled
+- **Behaviour query recording** — `context_pack`, `lookup_symbol`, `who_calls`, `semantic_search_code`, `episodic_search` now record to behaviour tracker (when opted in)
+- **Auto-summarize interaction style** — triggers every 10 queries automatically
+- **`autosave_context` wizard step** — cross-agent handoff now asked during setup (default: on)
+- **`DEFAULT_MODELS_BY_PROVIDER`** in `orchestrator/classifier.py` — single source for model names
+
+### Fixed
+- **fastembed migration** — removed all `model.encode()` calls across 11 files; replaced with `model.embed()` generator API; no more CUDA/nvidia packages on `pip install cognirepo`
+- **`get_children()` always returning empty** — `direction == "reverse"` → `direction == "forward"` in org_graph
+- **Episodic type bug** — `log_event` was called with dict as first arg; now correctly passes `event=str, metadata=dict`
+- **Org graph race condition** — `save()` re-reads disk state within file lock before writing (last-write-wins → additive merge)
+- **BFS O(n) queue** — `list.pop(0)` → `collections.deque.popleft()` in 3 locations
+- **`context_pack` response shape** — always returns `{query, status, token_count, sections, truncated}`; no more 3 different shapes
+- **`who_calls` response shape** — always returns `{local_callers, cross_repo_callers, truncated}`
+- **`org_dependencies` response bloat** — removed redundant `graph.to_dict()` field (~30% smaller)
+- **`prime_session` text limits** — architecture truncation raised from 200 → 600 chars; removed stale `known_blind_spots`
+
+### Changed
+- **`pip install cognirepo`** — no longer pulls PyTorch/CUDA; fastembed/ONNX only (~50MB vs ~1.5GB)
+- **Doctor** — checks for 32/32 tools (was 30)
+- **`org_wide_search` docstring** — marked as PRIMARY cross-repo tool; `org_search` marked as DEPRECATED fallback
+- **`behaviour.json`** — now encrypted/decrypted using same Fernet key as `graph.pkl` when encryption is on
+- **`BehaviourTracker`** — receives `db_adapter` injection; feedback scores propagate to vector store; temporal decay on relevance scores (`old * 0.95 + 0.1`)
+
+### Docs
+- `docs/MCP_TOOLS.md` — all 32 tools documented
+- `docs/MANUAL_TEST_SUITE.md` — 34-test manual test suite with prompts and result blocks
+- `README.md` — corrected install command (removed `cpu` extra)
+- `CLAUDE.md` — stack updated to fastembed/ONNX, argparse
+
+---
+
 ## [1.0.0] — 2026-04-26
 
 ### Added
@@ -17,7 +54,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **`cognirepo setup`** — one-command onboarding: init + index + writes MCP configs for Claude, Cursor, VS Code
 - **`get_last_context()` MCP tool** — reads `~/.cognirepo/<repo>/last_context.json`; second agent resumes where first left off
 - **`get_session_brief()` MCP tool** — returns architecture summary, hot symbols, entry points, index health; call at session start
-- **`cognirepo ask` (local-only mode)** — zero-API query using QUICK-tier local resolver; no API keys required
+- **`cognirepo ask` (local-only mode)** — ⚠️ planned — not yet available in this release; command prints a "not yet available" message
 - **Cursor MDC rules** — `.cursor/rules/cognirepo.mdc` with `alwaysApply: true`, session-start sequence, NEVER directives
 - **VS Code MCP config** — `.vscode/mcp.json` + `.vscode/mcp.json.example` for VS Code / GitHub Copilot integration
 - **`docs/USAGE.md`** — Cursor Integration, VS Code MCP Setup, GitHub Copilot Integration sections
