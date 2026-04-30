@@ -2,11 +2,17 @@
 FROM python:3.11-slim AS builder
 
 WORKDIR /build
-COPY pyproject.toml .
-COPY . .
 
+# Copy metadata first so the dep-install layer is cached independently of source changes.
+COPY pyproject.toml README.md* ./
+
+# Install all dependencies (setuptools finds no packages yet — that's fine; deps still resolve).
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e ".[dev]"
+    pip install --no-cache-dir ".[dev,security]"
+
+# Copy source and link the editable install without re-downloading deps.
+COPY . .
+RUN pip install --no-cache-dir --no-deps -e .
 
 # ─── Stage 2: runtime ────────────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime

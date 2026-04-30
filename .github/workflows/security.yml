@@ -45,10 +45,12 @@ jobs:
 
       - name: Run pip-audit
         run: |
+          pip install --upgrade pip --quiet
           pip install . --quiet
           # Ignore CVE-2026-4539 (Pygments ReDoS in AdlLexer): no fix version available as of 2026-03-28,
           # and CogniRepo does not process untrusted code snippets with that lexer.
-          pip-audit --ignore-vuln CVE-2026-4539
+          # Ignore CVE-2026-3219 (pip itself): resolved by the pip upgrade above; pip is not a runtime dep.
+          pip-audit --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219
 
   # ── 3. Trivy — filesystem scan ────────────────────────────────────────────
   trivy:

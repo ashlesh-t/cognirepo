@@ -134,7 +134,7 @@ class OrgGraph:
                         if encrypt and project_id:
                             from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
                             raw_disk = decrypt_bytes(raw_disk, get_or_create_key(project_id))
-                        disk_graph = pickle.loads(raw_disk)  # pylint: disable=consider-using-with
+                        disk_graph = pickle.loads(raw_disk)  # nosec B301 — local file we wrote; optionally decrypted above
                         self.G = nx.compose(disk_graph, self.G)
                     except Exception:  # pylint: disable=broad-except
                         pass  # disk state unreadable — our in-memory state wins

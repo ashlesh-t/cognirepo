@@ -48,7 +48,8 @@ dependencies = [
     "tiktoken>=0.7",
     # system metrics + connectivity
     "psutil>=6.0",
-    "requests>=2.32",
+    "requests>=2.33",
+    "python-multipart>=0.0.26",
 ]
 
 [project.urls]
@@ -74,7 +75,7 @@ cpp = [
     "scikit-build-core>=0.9",
 ]
 security = [
-    "cryptography>=42.0",
+    "cryptography>=46.0.7",
     "keyring>=25.0",
 ]
 cli = [
@@ -86,7 +87,7 @@ cli = [
 providers = [
     # Model routing for `cognirepo ask`. Not required for MCP index server.
     # Install: pip install 'cognirepo[providers]'
-    "anthropic>=0.50",
+    "anthropic>=0.87.0",
     "google-generativeai>=0.8",
     "google-genai>=0.3",
     "openai>=1.0",
@@ -99,7 +100,7 @@ gpu = [
     "torch>=2.0",
 ]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.23",
     "pytest-mock>=3.12",
     "pytest-cov>=5.0",
@@ -109,7 +110,7 @@ dev = [
     "build>=1.0",
     "bcrypt>=4.0",
     # Include providers so tests can import router/adapters without install hint
-    "anthropic>=0.50",
+    "anthropic>=0.87.0",
     "google-generativeai>=0.8",
     "google-genai>=0.3",
     "openai>=1.0",
