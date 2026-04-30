@@ -14,7 +14,7 @@ import pytest
 
 # Stub heavy deps — try real import first; only stub if the package is absent.
 _LOCAL_ADAPTER_STUBS: list[str] = []
-for _dep in ("faiss", "sentence_transformers"):
+for _dep in ("faiss", "fastembed"):
     try:
         __import__(_dep)
     except ImportError:

@@ -23,7 +23,7 @@ import pytest
 # but just hasn't been imported yet (which would leave stale stubs in other
 # modules' globals after cleanup).
 _HEAVY_DEPS_STUBBED: list[str] = []
-for _dep in ("faiss", "sentence_transformers"):
+for _dep in ("faiss", "fastembed"):
     try:
         __import__(_dep)
     except ImportError:
