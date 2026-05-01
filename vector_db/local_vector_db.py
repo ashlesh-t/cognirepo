@@ -278,6 +278,10 @@ class LocalVectorDB(VectorStorageAdapter):
             if not self.deprecate_row(row_id):
                 _log.warning("LocalVectorDB.remove(): row %d out of range", row_id)
 
+    def count(self) -> int:
+        """Return total number of vectors in the FAISS index."""
+        return self.index.ntotal
+
     def persist(self) -> None:
         """Flush index + metadata to disk."""
         self.save()

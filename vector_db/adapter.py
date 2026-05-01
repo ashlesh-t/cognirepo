@@ -69,5 +69,9 @@ class VectorStorageAdapter(ABC):
         """
 
     @abstractmethod
+    def count(self) -> int:
+        """Return total number of stored vectors."""
+
+    @abstractmethod
     def persist(self) -> None:
         """Flush any in-memory state to the underlying storage medium."""

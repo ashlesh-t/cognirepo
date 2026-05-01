@@ -68,8 +68,9 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
     """
 
     def __init__(self) -> None:
+        from vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
         self.weights = _load_weights()
-        self.db = LocalVectorDB()
+        self.db = get_vector_adapter()
         self.graph = KnowledgeGraph()
         self.behaviour = BehaviourTracker(self.graph)
         self.indexer = ASTIndexer(graph=self.graph)
@@ -96,7 +97,7 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
             )
         query_vector = encode_with_timeout(query).astype("float32")
 
-        # 1. wider vector net before re-ranking (semantic memory FAISS)
+        # 1. wider vector net before re-ranking (semantic memory backend)
         vector_candidates = self._vector_retrieve(query_vector, top_k * 3)
 
         # 2. AST reverse-index exact lookup (entity names extracted from query)
@@ -141,13 +142,17 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
     # ── private helpers ───────────────────────────────────────────────────────
 
     def _vector_retrieve(self, query_vector: np.ndarray, k: int) -> list[dict]:
-        """Search semantic FAISS index; converts L2 distances to [0,1] scores."""
-        if self.db.index.ntotal == 0:
+        """Search semantic backend; converts distance/score to [0,1] range."""
+        # Use count() to be backend-agnostic
+        if self.db.count() == 0:
             return []
-        actual_k = min(k, self.db.index.ntotal)
+        actual_k = min(k, self.db.count())
         raw = self.db.search_with_scores(query_vector, actual_k)
         results = []
         for r in raw:
+            # LocalVectorDB returns distance, ChromaAdapter returns distance but
+            # both populate 'combined_score' if available or we compute here.
+            # We standardize on distance-to-score logic for the hybrid mix.
             dist = r.get("l2_distance", 2.0)
             results.append({
                 "text": r.get("text", ""),
@@ -499,12 +504,17 @@ def cache_stats() -> dict:
         return {"hits": _CACHE_HITS, "misses": _CACHE_MISSES}
 
 
-def is_faiss_cold() -> bool:
-    """Return True when the semantic FAISS index has no vectors (never indexed)."""
+def is_index_cold() -> bool:
+    """Return True when the configured vector backend has no vectors."""
     try:
-        return LocalVectorDB().index.ntotal == 0
+        from vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
+        return get_vector_adapter().count() == 0
     except Exception:  # pylint: disable=broad-except
         return False
+
+
+# Keep is_faiss_cold as alias for backward compat
+is_faiss_cold = is_index_cold
 
 
 # ── episodic BM25 filter ──────────────────────────────────────────────────────

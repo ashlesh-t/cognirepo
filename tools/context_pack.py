@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Optional
 
 from config.lock import store_lock
-from retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter, is_faiss_cold, MAX_QUERY_LEN
+from retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter, is_index_cold, MAX_QUERY_LEN
 from retrieval.query_enhancer import enhance_query
 
 _logger = logging.getLogger(__name__)
@@ -204,7 +204,7 @@ def context_pack(
     if include_symbols:
         candidates = hybrid_retrieve(retrieval_query, top_k=20)
 
-        _cold_index = not candidates and is_faiss_cold()
+        _cold_index = not candidates and is_index_cold()
 
         # Two-bucket split: code_index vs doc_index
         # code_hits: AST symbols (source == "ast") — always returned for code queries
