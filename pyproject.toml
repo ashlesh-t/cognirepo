@@ -105,6 +105,7 @@ dev = [
     "pytest-mock>=3.12",
     "pytest-cov>=5.0",
     "pytest-timeout>=2.3",
+    "pytest-xdist>=3.5",
     "httpx>=0.28",
     "prometheus-client>=0.20",
     "build>=1.0",
@@ -140,6 +141,10 @@ build-backend = "setuptools.build_meta"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# -n 2: limit to 2 workers to prevent system lag on high-core systems.
+# --dist worksteal: dynamic load balancing so slow tests don't bottleneck a worker.
+# Override per-run: pytest -n0 for single-process debugging or pytest -n auto for max performance.
+addopts = "-n 2 --dist worksteal"
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",

@@ -17,6 +17,7 @@ so tests never need a real OS keychain.
 """
 from __future__ import annotations
 
+import gc
 import json
 import os
 
@@ -47,6 +48,42 @@ def memory_circuit_breaker():
             stacklevel=2,
         )
     yield
+    # Force GC after each test so FAISS/NetworkX C-extension objects
+    # are released promptly rather than pooling until the GC decides to run.
+    gc.collect()
+
+
+@pytest.fixture(autouse=True)
+def _reset_singletons():
+    """
+    Reset module-level singletons that accumulate memory across tests.
+
+    Each test gets isolated tmp_path storage, but Python module globals
+    (FAISS indices, BM25 corpora, hybrid caches, learning store, circuit
+    breaker) persist for the process lifetime. Nulling them here lets
+    CPython and C-extension allocators reclaim memory before the next test.
+    """
+    yield
+    _null_attrs = [
+        # (module_path, attr_name, reset_value)
+        ("memory.embeddings",        "MODEL",       None),
+        ("memory.circuit_breaker",   "_BREAKER",    None),
+        ("memory.episodic_memory",   "_BM25_CORPUS", None),
+        ("memory.episodic_memory",   "_BM25_INDEX",  None),
+        ("memory.learning_store",    "_STORE",      None),
+        ("retrieval.hybrid",         "_HYBRID_CACHE", {}),
+        ("retrieval.hybrid",         "_IN_FLIGHT",   {}),
+    ]
+    for _mod_path, _attr, _reset_val in _null_attrs:
+        try:
+            import importlib
+            _mod = importlib.import_module(_mod_path)
+            if hasattr(_mod, _attr):
+                setattr(_mod, _attr, _reset_val)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+    gc.collect()
 
 
 # Secrets generated at import time — never stored as literals in source.
