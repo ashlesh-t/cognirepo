@@ -166,6 +166,13 @@ class ChromaDBAdapter(VectorStorageAdapter):
         except Exception as exc:  # pylint: disable=broad-except
             log.warning("ChromaDBAdapter.remove() failed: %s", exc)
 
+    def count(self) -> int:
+        """Return total number of vectors in the collection."""
+        try:
+            return self._col.count()
+        except Exception:
+            return 0
+
     def persist(self) -> None:
         # ChromaDB PersistentClient auto-persists; this is a no-op.
         pass

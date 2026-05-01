@@ -22,12 +22,12 @@ import pytest
 class TestInitProject:
     def test_gitignore_is_created(self):
         from cli.init_project import init_project
-        init_project(no_index=True)
+        init_project(no_index=True, interactive=False, non_interactive=True)
         assert os.path.exists(".cognirepo/.gitignore")
 
     def test_gitignore_content(self):
         from cli.init_project import init_project
-        init_project(no_index=True)
+        init_project(no_index=True, interactive=False, non_interactive=True)
         with open(".cognirepo/.gitignore", encoding="utf-8") as f:
             content = f.read()
         # Blanket pattern: everything is excluded, only .gitignore is whitelisted
@@ -36,7 +36,7 @@ class TestInitProject:
 
     def test_config_json_created(self):
         from cli.init_project import init_project
-        init_project(no_index=True)
+        init_project(no_index=True, interactive=False, non_interactive=True)
         assert os.path.exists(".cognirepo/config.json")
         with open(".cognirepo/config.json", encoding="utf-8") as f:
             data = json.load(f)
@@ -47,16 +47,16 @@ class TestInitProject:
 
     def test_no_index_returns_none_triple(self):
         from cli.init_project import init_project
-        result = init_project(no_index=True)
+        result = init_project(no_index=True, interactive=False, non_interactive=True)
         assert result == (None, None, None)
 
     def test_idempotent_project_id_preserved(self):
         """Re-running init must not regenerate the project_id."""
         from cli.init_project import init_project
-        init_project(no_index=True)
+        init_project(no_index=True, interactive=False, non_interactive=True)
         with open(".cognirepo/config.json", encoding="utf-8") as f:
             original_id = json.load(f)["project_id"]
-        init_project(no_index=True)
+        init_project(no_index=True, interactive=False, non_interactive=True)
         with open(".cognirepo/config.json", encoding="utf-8") as f:
             current_id = json.load(f)["project_id"]
         assert current_id == original_id
@@ -64,7 +64,7 @@ class TestInitProject:
     def test_no_secrets_in_config_when_keyring_available(self, monkeypatch):
         """Config must not contain password_hash or jwt_secret (removed in v0.2)."""
         from cli.init_project import init_project
-        init_project(no_index=True)
+        init_project(no_index=True, interactive=False, non_interactive=True)
         with open(".cognirepo/config.json", encoding="utf-8") as f:
             data = json.load(f)
         assert "password_hash" not in data
@@ -73,18 +73,18 @@ class TestInitProject:
     def test_prompt_n_returns_none_triple(self, monkeypatch):
         """--no-index skips indexing and returns (None, None, None)."""
         from cli.init_project import init_project
-        result = init_project(no_index=True, non_interactive=True)
+        result = init_project(no_index=True, interactive=False, non_interactive=True)
         assert result == (None, None, None)
 
     def test_prompt_no_returns_none_triple(self, monkeypatch):
         """no_index=True is the canonical way to skip indexing (prompt was removed)."""
         from cli.init_project import init_project
-        result = init_project(no_index=True, non_interactive=True)
+        result = init_project(no_index=True, interactive=False, non_interactive=True)
         assert result == (None, None, None)
 
     def test_scaffold_dirs_created(self):
         from cli.init_project import init_project
-        init_project(no_index=True)
+        init_project(no_index=True, interactive=False, non_interactive=True)
         for d in (".cognirepo/memory", ".cognirepo/index", ".cognirepo/graph", ".cognirepo/vector_db"):
             assert os.path.isdir(d)
 
