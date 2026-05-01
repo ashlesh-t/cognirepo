@@ -1,3 +1,4 @@
+
 # SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: MIT
 #
@@ -64,12 +65,16 @@ def test_prime_session_empty(isolated_cognirepo):
     ["status"],
     ["list"],
     ["doctor"],
+    ["org", "list"],
+    ["metrics", "--help"],
+    ["export-spec", "--help"],
+    ["prune", "--help"],
+    ["seed", "--help"],
 ])
 def test_cli_smoke_commands(cmd, isolated_cognirepo):
     # Use subprocess to exercise cli/main.py entry point and all imports/argparse branches
     res = subprocess.run([sys.executable, "-m", "cli.main"] + cmd, capture_output=True, text=True)
-    # We don't necessarily care if it fails (e.g. status might fail if no repo),
-    # we just want to exercise the code paths.
+    # We don't necessarily care if it fails, we just want to exercise the code paths.
     assert res.returncode in (0, 1, 2)
 
 
@@ -140,3 +145,37 @@ def test_behaviour_hook_main_noop(capsys):
         main()
     captured = capsys.readouterr()
     assert "Usage" in captured.out or not captured.err
+
+
+# ── 8. retrieval/docs_search.py (logic coverage) ─────────────────────────────
+
+def test_docs_search_basic(tmp_path, monkeypatch):
+    from retrieval.docs_search import search_docs
+    monkeypatch.chdir(tmp_path)
+    # Create dummy md
+    (tmp_path / "doc.md").write_text("The secret word is pineapple.", encoding="utf-8")
+    
+    # Fast path (index missing) will fall through to walk
+    results = search_docs("pineapple")
+    assert len(results) == 1
+    assert results[0]["path"] == "./doc.md"
+    assert "pineapple" in results[0]["context"]
+
+
+# ── 9. retrieval/cross_repo.py (logic coverage) ──────────────────────────────
+
+def test_cross_repo_router_basic(tmp_path, monkeypatch):
+    from retrieval.cross_repo import CrossRepoRouter
+    monkeypatch.chdir(tmp_path)
+    
+    with patch("retrieval.cross_repo.get_repo_org", return_value="my-org"), \
+         patch("retrieval.cross_repo.get_repo_project", return_value=("my-org", "my-proj")):
+        router = CrossRepoRouter()
+        assert router.org_name == "my-org"
+        assert router._project_name == "my-proj"
+        
+        # Test sibling fallback
+        with patch("retrieval.cross_repo.list_orgs", return_value={"my-org": {"repos": ["/other/repo"]}}), \
+             patch("retrieval.cross_repo.purge_stale_repos"):
+            siblings = router.get_sibling_repos()
+            assert "/other/repo" in siblings
