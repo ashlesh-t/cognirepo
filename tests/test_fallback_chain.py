@@ -19,9 +19,6 @@ import pytest
 
 # ── Stub heavy deps BEFORE any project imports ────────────────────────────────
 # Try to import each dep first; only stub if the real package is absent.
-# This prevents us from injecting a MagicMock when the real package is installed
-# but just hasn't been imported yet (which would leave stale stubs in other
-# modules' globals after cleanup).
 _HEAVY_DEPS_STUBBED: list[str] = []
 for _dep in ("faiss", "fastembed"):
     try:
@@ -67,7 +64,6 @@ for _mod in (
         _STUBBED_BY_THIS_FILE.append(_mod)
 
 # graph.knowledge_graph needs networkx — never stub it if networkx is real
-# (the API tests need the real KnowledgeGraph after our tests run)
 _need_graph_stub = not _try_real_import("graph.knowledge_graph")
 if _need_graph_stub and "graph.knowledge_graph" not in sys.modules:
     sys.modules["graph.knowledge_graph"] = MagicMock()
@@ -87,40 +83,44 @@ def _restore_stubs():
         if "graph.knowledge_graph" in _mod or "retrieval" in _mod:
             sys.modules.pop(_mod, None)
 
-# ── Import router (guarded against MagicMock pollution from other test files) ─
-def _get_router_fns():
-    """Return real _dispatch_with_fallback and _available_providers.
+# ── Router Fixture (Guards against sys.modules pollution) ─────────────────────
 
-    If another test file has stubbed orchestrator.router as a MagicMock, pop it
-    so Python re-imports the real module with our error stubs already in place.
+@pytest.fixture
+def router():
+    """
+    Ensure orchestrator.router is the real module and return it.
+    Fixes issue where other tests stub router as MagicMock and xdist workers 
+    share sys.modules.
     """
     existing = sys.modules.get("orchestrator.router")
-    if existing is not None and isinstance(existing, MagicMock):
-        del sys.modules["orchestrator.router"]
-    from orchestrator.router import _dispatch_with_fallback, _available_providers  # noqa: E402
-    return _dispatch_with_fallback, _available_providers
-
-
-_dispatch_with_fallback, _available_providers = _get_router_fns()
+    if existing is None or isinstance(existing, MagicMock):
+        sys.modules.pop("orchestrator.router", None)
+        import orchestrator.router as router_mod
+        import importlib
+        importlib.reload(router_mod)
+    else:
+        import orchestrator.router as router_mod
+    
+    return router_mod
 
 
 # ── fallback chain ────────────────────────────────────────────────────────────
 
-def test_fallback_from_anthropic_to_gemini():
+def test_fallback_from_anthropic_to_gemini(router):
     """If anthropic fails with a retryable error, falls back to gemini."""
     gemini_response = ModelResponse(
         text="gemini answer", model="gemini-2.0-flash", provider="gemini"
     )
 
     with (
-        patch("orchestrator.router._available_providers", return_value=["anthropic", "gemini"]),
-        patch("orchestrator.router._call_adapter") as mock_call,
+        patch.object(router, "_available_providers", return_value=["anthropic", "gemini"]),
+        patch.object(router, "_call_adapter") as mock_call,
     ):
         mock_call.side_effect = [
             ModelCallError("anthropic", 429, "quota"),
             gemini_response,
         ]
-        result = _dispatch_with_fallback(
+        result = router._dispatch_with_fallback(
             query="test",
             primary_provider="anthropic",
             primary_model="claude-haiku-4-5",
@@ -133,17 +133,17 @@ def test_fallback_from_anthropic_to_gemini():
     assert mock_call.call_count == 2
 
 
-def test_all_providers_fail_raises():
+def test_all_providers_fail_raises(router):
     """If all providers fail, raises ModelCallError."""
     with (
-        patch("orchestrator.router._available_providers", return_value=["anthropic"]),
-        patch(
-            "orchestrator.router._call_adapter",
+        patch.object(router, "_available_providers", return_value=["anthropic"]),
+        patch.object(
+            router, "_call_adapter",
             side_effect=ModelCallError("anthropic", 429, "all fail"),
         ),
     ):
         with pytest.raises(ModelCallError):
-            _dispatch_with_fallback(
+            router._dispatch_with_fallback(
                 query="test",
                 primary_provider="anthropic",
                 primary_model="claude-haiku-4-5",
@@ -153,7 +153,7 @@ def test_all_providers_fail_raises():
             )
 
 
-def test_non_retryable_error_does_not_try_fallback():
+def test_non_retryable_error_does_not_try_fallback(router):
     """A 401 (auth) error should NOT trigger fallback (non-retryable)."""
     call_count = 0
 
@@ -163,11 +163,11 @@ def test_non_retryable_error_does_not_try_fallback():
         raise ModelCallError("anthropic", 401, "Unauthorized")
 
     with (
-        patch("orchestrator.router._available_providers", return_value=["anthropic", "gemini"]),
-        patch("orchestrator.router._call_adapter", side_effect=_raise_401),
+        patch.object(router, "_available_providers", return_value=["anthropic", "gemini"]),
+        patch.object(router, "_call_adapter", side_effect=_raise_401),
     ):
         with pytest.raises(ModelCallError):
-            _dispatch_with_fallback(
+            router._dispatch_with_fallback(
                 query="test",
                 primary_provider="anthropic",
                 primary_model="claude-haiku-4-5",
@@ -179,20 +179,18 @@ def test_non_retryable_error_does_not_try_fallback():
     assert call_count == 1  # only one attempt, no fallback
 
 
-def test_local_primary_with_no_api_keys_calls_adapter_once():
+def test_local_primary_with_no_api_keys_calls_adapter_once(router):
     """When primary=local and no API keys are configured, _dispatch_with_fallback
-    falls back to calling _call_adapter with local as the only option.
-    The internal NoLocalAnswer→promote logic is covered by test_local_adapter.py."""
+    falls back to calling _call_adapter with local as the only option."""
     standard_response = ModelResponse(
         text="promoted answer", model="claude-haiku-4-5", provider="anthropic"
     )
 
     with (
-        # No API keys → _available_providers() = [] → ordered = [primary] = ["local"]
-        patch("orchestrator.router._available_providers", return_value=[]),
-        patch("orchestrator.router._call_adapter", return_value=standard_response) as mock_call,
+        patch.object(router, "_available_providers", return_value=[]),
+        patch.object(router, "_call_adapter", return_value=standard_response) as mock_call,
     ):
-        result = _dispatch_with_fallback(
+        result = router._dispatch_with_fallback(
             query="test",
             primary_provider="local",
             primary_model="local-resolver",
@@ -205,7 +203,7 @@ def test_local_primary_with_no_api_keys_calls_adapter_once():
     assert mock_call.call_count == 1
 
 
-def test_available_providers_lists_configured_keys(monkeypatch):
+def test_available_providers_lists_configured_keys(router, monkeypatch):
     """_available_providers() returns only providers with API keys set."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
@@ -213,6 +211,6 @@ def test_available_providers_lists_configured_keys(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("GROK_API_KEY", raising=False)
 
-    providers = _available_providers()
+    providers = router._available_providers()
     assert "anthropic" in providers
     assert "gemini" not in providers

@@ -180,9 +180,15 @@ def _parse_go_mod(root: Path) -> set[str]:
             if in_require and line == ")":
                 in_require = False
                 continue
-            if line.startswith("require ") or in_require:
-                module = line.split()[0].lstrip("require").strip()
-                if module:
+            if line.startswith("require "):
+                parts = line.split()
+                if len(parts) > 1:
+                    module = parts[1]
+                    names.add(module.split("/")[-1])
+            elif in_require:
+                parts = line.split()
+                if parts:
+                    module = parts[0]
                     names.add(module.split("/")[-1])
     except OSError:
         pass
