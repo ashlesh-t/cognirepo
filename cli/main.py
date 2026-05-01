@@ -893,10 +893,10 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     cwd = os.getcwd()
     project_name = os.path.basename(cwd)
 
-    # ── Step 1: init ─────────────────────────────────────────────────────────
+    # ── Step 1: init (wizard runs here if stdin is a tty) ────────────────────
     print(f"\n[1/4] Initialising .cognirepo/ for '{project_name}'...")
     try:
-        init_project(no_index=True, interactive=False)
+        init_project(no_index=True, interactive=sys.stdin.isatty())
         print("  ✓ .cognirepo/ scaffolded")
     except Exception as exc:  # pylint: disable=broad-except
         print(f"  ✗ init failed: {exc}")
@@ -1379,9 +1379,15 @@ def _direct_index(path, embed: bool = True):
     peak_rss_mb = (rss_after - rss_before) / _rss_scale / 1024
     peak_rss_mb = max(0, round(peak_rss_mb, 1))
 
-    _sym = summary.get("symbols", summary.get("reverse_index", 0))
-    n_symbols = _sym if isinstance(_sym, int) else len(_sym)
-    n_files = summary.get("files_indexed", summary.get("files", 0))
+    try:
+        _sym = summary.get("symbols", summary.get("reverse_index", 0))
+        n_symbols = _sym if isinstance(_sym, int) else len(_sym)
+        n_files = summary.get("files_indexed", summary.get("files", 0))
+        if not isinstance(n_files, int):
+            n_files = len(n_files)
+    except TypeError:
+        n_symbols = summary.get("total_symbols", 0)
+        n_files = 0
     print(
         f"Index complete: {n_symbols:,} symbols across {n_files:,} files "
         f"in {elapsed:.1f}s (peak RSS delta: {peak_rss_mb} MB)"

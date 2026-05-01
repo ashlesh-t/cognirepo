@@ -77,20 +77,21 @@ def _scaffold_dirs() -> None:
     os.makedirs(get_path("episodic"), exist_ok=True)
 
 
-def _init_empty_stores() -> None:
+def _init_empty_stores(vector_backend: str = "faiss") -> None:
     """
     Create empty FAISS index and episodic log on first init so `doctor`
     does not report false failures immediately after `cognirepo init`.
     """
-    # Empty FAISS index
-    idx_file = get_path("vector_db/semantic.index")
-    if not os.path.exists(idx_file):
-        try:
-            import faiss  # pylint: disable=import-outside-toplevel
-            _idx = faiss.IndexFlatL2(384)
-            faiss.write_index(_idx, idx_file)
-        except Exception:  # pylint: disable=broad-except
-            pass  # faiss not installed — skip; doctor will show clear hint
+    # Empty FAISS index — only for FAISS backend
+    if vector_backend == "faiss":
+        idx_file = get_path("vector_db/semantic.index")
+        if not os.path.exists(idx_file):
+            try:
+                import faiss  # pylint: disable=import-outside-toplevel
+                _idx = faiss.IndexFlatL2(384)
+                faiss.write_index(_idx, idx_file)
+            except Exception:  # pylint: disable=broad-except
+                pass  # faiss not installed — skip; doctor will show clear hint
 
     # Empty episodic log
     ep_file = get_path("memory/episodic.json")
@@ -735,7 +736,8 @@ def init_project(
         print("Already initialized — updating config without losing existing index.")
 
     # ── run wizard (interactive mode) ─────────────────────────────────────────
-    if interactive and not no_index and not non_interactive:
+    _wizard_ran = False
+    if interactive  and not non_interactive:
         try:
             from cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
             wizard_cfg = run_wizard()
@@ -748,6 +750,7 @@ def init_project(
             mcp_global     = wizard_cfg.get("mcp_global", mcp_global)
             autosave_context = wizard_cfg.get("autosave_context", autosave_context)
             behaviour_tracking = wizard_cfg.get("behaviour_tracking", behaviour_tracking)
+            _wizard_ran = True
         except (ImportError, KeyboardInterrupt):
             # Fall back to non-interactive with defaults
             mcp_targets = mcp_targets or []
@@ -755,8 +758,8 @@ def init_project(
     if mcp_targets is None:
         mcp_targets = []
 
-    # ── autosave_context prompt (non-wizard interactive) ─────────────────────
-    if not non_interactive and sys.stdin.isatty():
+    # ── autosave_context prompt (non-wizard interactive, wizard already asked) ─
+    if not _wizard_ran and not non_interactive and sys.stdin.isatty():
         try:
             _ans = input(
                 "\nAuto-save context for inter-agent sharing? (y/n) [y]: "
@@ -767,7 +770,7 @@ def init_project(
 
     # ── scaffold directories and write config ─────────────────────────────────
     _scaffold_dirs()
-    _init_empty_stores()
+    _init_empty_stores(vector_backend=vector_backend)
     _write_config(
         project_name=project_name,
         org=org,
