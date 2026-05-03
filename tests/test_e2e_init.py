@@ -72,3 +72,30 @@ def test_no_index_flag_skips_indexing(tmp_path, monkeypatch):
     assert result == (None, None, None), (
         f"Expected (None, None, None) with --no-index, got: {result}"
     )
+
+
+def test_setup_calls_init_subprocess(tmp_path, monkeypatch):
+    """cognirepo setup must shell out to 'cognirepo init' as a subprocess."""
+    from unittest.mock import patch, MagicMock
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
+    (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
+
+    mock_run = MagicMock(return_value=MagicMock(returncode=0))
+
+    # Patch all the setup-only steps so they don't fail in isolation
+    with patch("subprocess.run", mock_run), \
+         patch("cli.main._direct_index", return_value=({"index_symbols": 0, "index_files": 0}, MagicMock(), MagicMock())), \
+         patch("cli.main._write_cursor_rules", return_value=None), \
+         patch("cli.main._write_claude_hooks", return_value=None), \
+         patch("cli.init_project.setup_mcp", return_value=None):
+        from cli.main import _cmd_setup
+        _cmd_setup(no_index=True)
+
+    # subprocess.run must have been called with cognirepo init as the command
+    assert mock_run.called
+    found = any(
+        "cognirepo" in str(call_args) and "init" in str(call_args)
+        for call_args in mock_run.call_args_list
+    )
+    assert found, f"subprocess.run was not called with cognirepo init. Calls: {mock_run.call_args_list}"
