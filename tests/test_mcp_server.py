@@ -267,3 +267,93 @@ class TestManifestFormat:
             tools = json.load(f)
         assert isinstance(tools, list)
         assert all(t["type"] == "function" for t in tools)
+
+
+class TestAgentBootstrapFraming:
+    def test_agent_bootstrap_framing_populated(self, tmp_path, monkeypatch):
+        """framing.depth must not be 'unknown' when behaviour data is present."""
+        from unittest.mock import patch, MagicMock
+        monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
+        (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
+
+        fake_profile = {
+            "depth_preference": "detailed",
+            "top_terminology": ["auth", "token"],
+            "framing_hints": "prefers code-first answers",
+            "explicit_preferences": {},
+        }
+        fake_bt = MagicMock()
+        fake_bt.data = {"symbol_weights": {}}
+        fake_bt.get_user_profile.return_value = fake_profile
+        fake_bt.get_error_patterns.return_value = []
+
+        with patch("server.mcp_server._behaviour_enabled", return_value=True), \
+             patch("server.mcp_server.BehaviourTracker", return_value=fake_bt) if False else \
+             patch("graph.behaviour_tracker.BehaviourTracker", return_value=fake_bt):
+            from server.mcp_server import get_agent_bootstrap
+            with patch("server.mcp_server._behaviour_enabled", return_value=True), \
+                 patch("server.mcp_server._get_graph", return_value=MagicMock()), \
+                 patch("graph.behaviour_tracker.BehaviourTracker", return_value=fake_bt), \
+                 patch("server.mcp_server._index_is_stale", return_value=False):
+                result = get_agent_bootstrap()
+
+        assert result["framing"]["depth"] != "unknown"
+        assert result["framing"]["hints"] == "prefers code-first answers"
+        assert "auth" in result["framing"]["vocabulary"]
+
+    def test_agent_bootstrap_framing_empty_when_disabled(self, tmp_path, monkeypatch):
+        """framing must be empty dict when behaviour tracking is disabled."""
+        from unittest.mock import patch
+        monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
+        (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
+
+        with patch("server.mcp_server._behaviour_enabled", return_value=False), \
+             patch("server.mcp_server._index_is_stale", return_value=False):
+            from server.mcp_server import get_agent_bootstrap
+            result = get_agent_bootstrap()
+
+        assert result["framing"] == {}
+
+    def test_agent_bootstrap_staleness_triggers_reindex(self, tmp_path, monkeypatch):
+        """Background reindex must be spawned when index is stale and no lock exists."""
+        from unittest.mock import patch, MagicMock
+        # Set up a real .cognirepo/index dir so file I/O works
+        cognirepo_dir = tmp_path / ".cognirepo"
+        cognirepo_dir.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("COGNIREPO_DIR", str(cognirepo_dir))
+
+        mock_popen = MagicMock()
+        with patch("server.mcp_server._behaviour_enabled", return_value=False), \
+             patch("server.mcp_server._index_is_stale", return_value=True), \
+             patch("config.paths.get_path", side_effect=lambda p: str(cognirepo_dir / p)), \
+             patch("subprocess.Popen", mock_popen):
+            from server.mcp_server import get_agent_bootstrap
+            result = get_agent_bootstrap()
+
+        assert result["index_health"]["status"] == "reindexing"
+        mock_popen.assert_called_once()
+        call_args = mock_popen.call_args[0][0]
+        assert "cognirepo" in call_args
+        assert "--changed-only" in call_args
+
+    def test_agent_bootstrap_no_double_reindex(self, tmp_path, monkeypatch):
+        """No second Popen when lock file already exists."""
+        from unittest.mock import patch, MagicMock
+        cognirepo_dir = tmp_path / ".cognirepo"
+        (cognirepo_dir / "index").mkdir(parents=True, exist_ok=True)
+        lock_path = cognirepo_dir / "index" / "reindex.lock"
+        lock_path.touch()
+        monkeypatch.setenv("COGNIREPO_DIR", str(cognirepo_dir))
+
+        mock_idx = MagicMock()
+        mock_idx.index_data = {"files": {}}
+        mock_popen = MagicMock()
+        with patch("server.mcp_server._behaviour_enabled", return_value=False), \
+             patch("server.mcp_server._index_is_stale", return_value=True), \
+             patch("server.mcp_server._get_indexer", return_value=mock_idx), \
+             patch("config.paths.get_path", side_effect=lambda p: str(cognirepo_dir / p)), \
+             patch("subprocess.Popen", mock_popen):
+            from server.mcp_server import get_agent_bootstrap
+            get_agent_bootstrap()
+
+        mock_popen.assert_not_called()

@@ -97,6 +97,24 @@ def _behaviour_enabled() -> bool:
         return False
 
 
+def _index_is_stale() -> bool:
+    """Return True if git HEAD has advanced past the last-indexed commit SHA."""
+    try:
+        import subprocess as _sp  # pylint: disable=import-outside-toplevel
+        from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
+        head = _sp.check_output(
+            ["git", "rev-parse", "HEAD"], text=True, stderr=_sp.DEVNULL
+        ).strip()
+        last_indexed_path = _gp("index/last_indexed.json")
+        if not os.path.exists(last_indexed_path):
+            return False  # no SHA stored yet — treat as up-to-date (can't determine)
+        with open(last_indexed_path, encoding="utf-8") as _f:
+            import json as _j  # pylint: disable=import-outside-toplevel
+            return _j.load(_f).get("commit_sha") != head
+    except Exception:  # pylint: disable=broad-except
+        return False
+
+
 @contextlib.contextmanager
 def _repo_ctx(repo_path: str | None):
     """
@@ -488,8 +506,27 @@ def list_org_context() -> dict:
     and which scope (project vs org) is appropriate.
     """
     from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
     router = CrossRepoRouter()
-    return router.get_context_summary()
+    summary = router.get_context_summary()
+
+    # Enrich sibling repos with service metadata stored on OrgGraph nodes
+    try:
+        og = get_org_graph()
+        enriched = []
+        for repo_path in summary.get("sibling_repos", []):
+            abs_path = os.path.abspath(repo_path)
+            node_data = og.G.nodes.get(abs_path, {})
+            entry: dict = {"path": repo_path, "name": os.path.basename(repo_path)}
+            for key in ("service_type", "port", "api_base_url"):
+                if key in node_data:
+                    entry[key] = node_data[key]
+            enriched.append(entry)
+        summary["sibling_repos"] = enriched
+    except Exception:  # pylint: disable=broad-except
+        pass  # fall back to plain list if org graph unavailable
+
+    return summary
 
 
 @mcp.tool()
@@ -938,6 +975,7 @@ def log_episode(
     """
     with _repo_ctx(repo_path):
         log_event(event=event, metadata=metadata or None)
+    intercept_after_episode(event, metadata=metadata or {})
     return {"logged": True}
 
 
@@ -1207,6 +1245,29 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         except Exception:  # pylint: disable=broad-except
             symbol_count, file_count, index_status = 0, 0, "unavailable"
 
+        # ── staleness check: spawn background reindex if HEAD has moved ───────
+        if index_status in ("ok", "empty"):
+            try:
+                from config.paths import get_path as _gp_lock  # pylint: disable=import-outside-toplevel
+                _lock_path = _gp_lock("index/reindex.lock")
+                if _index_is_stale() and not os.path.exists(_lock_path):
+                    import subprocess as _sp_ri  # pylint: disable=import-outside-toplevel
+                    os.makedirs(os.path.dirname(_lock_path), exist_ok=True)
+                    open(_lock_path, "w").close()  # noqa: WPS515
+                    _sp_ri.Popen(
+                        [
+                            "cognirepo", "index-repo",
+                            "--changed-only", "--no-watch",
+                            "--remove-lock", _lock_path,
+                        ],
+                        stdout=_sp_ri.DEVNULL,
+                        stderr=_sp_ri.DEVNULL,
+                        close_fds=True,
+                    )
+                    index_status = "reindexing"
+            except Exception:  # pylint: disable=broad-except
+                pass
+
         # ── architecture summary ──────────────────────────────────────────────
         architecture = ""
         try:
@@ -1240,10 +1301,10 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
                 top = sorted(sw.items(), key=lambda x: x[1].get("hit_count", 0), reverse=True)[:8]
                 hot_symbols = [sym for sym, _ in top]
                 profile = bt.get_user_profile()
-                style = profile.get("interaction_style", {})
                 framing = {
-                    "depth": style.get("preferred_depth", "unknown"),
-                    "vocabulary": list(style.get("terminology", {}).keys())[:8],
+                    "depth": profile.get("depth_preference", "unknown"),
+                    "vocabulary": profile.get("top_terminology", [])[:8],
+                    "hints": profile.get("framing_hints", ""),
                 }
                 error_patterns = bt.get_error_patterns(min_count=1)[:3]
             except Exception:  # pylint: disable=broad-except
@@ -1469,7 +1530,7 @@ def _build_manifest() -> dict:
     """Return the tool-schema manifest so non-MCP clients can read it."""
     return {
         "name": "cognirepo",
-        "version": "0.1.0",
+        "version": "1.1.0",
         "transport": "stdio",
         "tools": [
             {
@@ -1760,6 +1821,195 @@ def _build_manifest() -> dict:
                         },
                     },
                     "required": ["query"],
+                },
+            },
+            # ── 16 tools added in v1.1.0 ─────────────────────────────────────
+            {
+                "name": "org_wide_search",
+                "description": "PRIMARY cross-repo search. Semantic search across ALL registered repos in the org.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                        "top_k": {"type": "integer", "default": 5},
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "cross_repo_search",
+                "description": "Search memories scoped to a project or the full org.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                        "scope": {"type": "string", "description": "project | org", "default": "project"},
+                        "top_k": {"type": "integer", "default": 5},
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "cross_repo_traverse",
+                "description": "Walk the org dependency graph from a starting repo, annotating each hop with symbol locations.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "symbol":      {"type": "string", "description": "Symbol to look up in each repo"},
+                        "start_repo":  {"type": "string", "description": "Absolute path to starting repo"},
+                        "direction":   {"type": "string", "description": "dependencies | dependents | both", "default": "both"},
+                        "depth":       {"type": "integer", "default": 2},
+                    },
+                    "required": ["symbol", "start_repo"],
+                },
+            },
+            {
+                "name": "list_org_context",
+                "description": "Return org, project, and sibling repo metadata for the current repo.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+            {
+                "name": "link_repos",
+                "description": "Record an inter-repo dependency edge. Auto-detected: IMPORTS only. CALLS_API and SHARES_SCHEMA must be declared manually.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "src":              {"type": "string", "description": "Absolute path to source repo"},
+                        "dst":              {"type": "string", "description": "Absolute path to destination repo"},
+                        "relationship":     {"type": "string", "description": "imports | calls_api | shares_schema | discovered | child_of", "default": "imports"},
+                        "note":             {"type": "string", "description": "Optional note about the relationship", "default": ""},
+                        "src_service_type": {"type": "string", "description": "Optional service type for src (rest_api, grpc, worker, etc.)", "default": None},
+                        "src_port":         {"type": "integer", "description": "Optional port for src service", "default": None},
+                        "src_api_base_url": {"type": "string", "description": "Optional API base URL for src service", "default": None},
+                    },
+                    "required": ["src", "dst"],
+                },
+            },
+            {
+                "name": "record_decision",
+                "description": "Record an architectural decision with rationale to episodic memory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "summary":   {"type": "string", "description": "One-line decision summary"},
+                        "rationale": {"type": "string", "description": "Why this decision was made", "default": ""},
+                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
+                    },
+                    "required": ["summary"],
+                },
+            },
+            {
+                "name": "supersede_learning",
+                "description": "Deprecate an outdated memory entry and replace it with corrected text in one call.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "old_id":    {"type": "string", "description": "ID of the memory entry to replace (from store_memory conflicts list)"},
+                        "new_text":  {"type": "string", "description": "Replacement memory text"},
+                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
+                    },
+                    "required": ["old_id", "new_text"],
+                },
+            },
+            {
+                "name": "search_token",
+                "description": "Fast BM25 token search over symbol names and docs — no embedding needed.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "token":     {"type": "string", "description": "Word or identifier fragment to search"},
+                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
+                    },
+                    "required": ["token"],
+                },
+            },
+            {
+                "name": "get_session_brief",
+                "description": "Return architecture summary, hot symbols, entry points, and index health. Call at session start.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
+                    },
+                },
+            },
+            {
+                "name": "get_last_context",
+                "description": "Return what the last agent was looking at — resume from cross-agent handoff.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                },
+            },
+            {
+                "name": "get_session_history",
+                "description": "Return recent session records with message counts and last exchange snippets.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "description": "Max sessions to return", "default": 5},
+                    },
+                },
+            },
+            {
+                "name": "get_agent_bootstrap",
+                "description": "Single-call session bootstrap. Replaces get_session_brief + get_last_context + get_user_profile + get_error_patterns (~300 tokens vs ~900). Call ONCE at session start.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
+                    },
+                },
+            },
+            {
+                "name": "get_user_profile",
+                "description": "Return interaction style profile: depth preference, framing hints, top terminology. Apply framing_hints to all responses.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
+                    },
+                },
+            },
+            {
+                "name": "record_user_preference",
+                "description": "Store an explicit user preference or query-rewrite correction for future sessions.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "preference_key":   {"type": "string", "description": "Preference label (e.g. response_format) or 'query_rewrite'"},
+                        "preference_value": {"type": "string", "description": "Value of the preference"},
+                        "context":          {"type": "string", "description": "Extra context (used for query_rewrite intent)", "default": ""},
+                        "repo_path":        {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
+                    },
+                    "required": ["preference_key", "preference_value"],
+                },
+            },
+            {
+                "name": "record_error",
+                "description": "Log a recurring error with message so get_error_patterns can surface prevention hints.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "error_type": {"type": "string", "description": "Error class name (e.g. ImportError)"},
+                        "message":    {"type": "string", "description": "Error message or description", "default": ""},
+                        "repo_path":  {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
+                    },
+                    "required": ["error_type"],
+                },
+            },
+            {
+                "name": "get_error_patterns",
+                "description": "Return recurring errors with counts and prevention hints. Check before proposing a fix.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "min_count": {"type": "integer", "description": "Only return errors seen at least this many times", "default": 1},
+                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
+                    },
                 },
             },
         ],

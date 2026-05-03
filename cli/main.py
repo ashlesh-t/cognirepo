@@ -886,27 +886,34 @@ def _cmd_status() -> None:
 
 def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     """
-    One-command onboarding: scaffold .cognirepo/, index the repo,
+    One-command onboarding: run cognirepo init (full wizard), index the repo,
     and auto-write MCP config for Claude Desktop, Cursor, and/or VS Code.
     """
     import shutil as _shutil  # pylint: disable=import-outside-toplevel
+    import subprocess as _subprocess  # pylint: disable=import-outside-toplevel
     cwd = os.getcwd()
     project_name = os.path.basename(cwd)
 
-    # ── Step 1: init (wizard runs here if stdin is a tty) ────────────────────
-    print(f"\n[1/4] Initialising .cognirepo/ for '{project_name}'...")
+    # ── Step 1: run cognirepo init as a subprocess so the user sees the full wizard ──
+    print(f"\n[1/5] Running cognirepo init for '{project_name}'...")
     try:
-        init_project(no_index=True, interactive=sys.stdin.isatty())
-        print("  ✓ .cognirepo/ scaffolded")
+        result = _subprocess.run(["cognirepo", "init"], check=False)
+        if result.returncode != 0:
+            print("  cognirepo init exited non-zero — setup cancelled.")
+            return
+        print("  ✓ cognirepo init complete")
+    except FileNotFoundError:
+        print("  ✗ cognirepo not found on PATH. Install with: pip install cognirepo")
+        return
     except Exception as exc:  # pylint: disable=broad-except
         print(f"  ✗ init failed: {exc}")
         return
 
     # ── Step 2: index (full pipeline: symbols → summaries → docs → inter-repo) ─
     if no_index:
-        print("[2/4] Skipping index (--no-index)")
+        print("[2/5] Skipping index (--no-index)")
     else:
-        print("[2/4] Indexing repository (symbols → summaries → docs → inter-repo)...")
+        print("[2/5] Indexing repository (symbols → summaries → docs → inter-repo)...")
         try:
             _idx_summary, _kg, _idx = _direct_index(cwd, embed=True)
             _ns = _idx_summary.get("index_symbols", _idx_summary.get("symbol_count", "?"))
@@ -919,7 +926,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
             print("    Run manually: cognirepo index-repo .")
 
     # ── Step 3: auto-detect MCP targets ──────────────────────────────────────
-    print("[3/4] Configuring MCP integrations...")
+    print("[3/5] Configuring MCP integrations...")
     if targets is None:
         targets = []
         # Always offer Claude Code (writes .mcp.json)
@@ -943,7 +950,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
         print(f"  ✗ MCP setup failed: {exc}")
 
     # ── Step 4: cursor rules file ─────────────────────────────────────────────
-    print("[4/4] Writing IDE rules...")
+    print("[4/5] Writing IDE rules...")
     cursor_dir = os.path.join(cwd, ".cursor", "rules")
     if os.path.isdir(os.path.join(cwd, ".cursor")):
         try:
@@ -1407,6 +1414,8 @@ def _direct_index(path, embed: bool = True):
     except Exception:  # pylint: disable=broad-except
         pass  # non-fatal
 
+    _write_last_indexed_sha(abs_path)
+
     return {
         "status": "indexed",
         "path": abs_path,
@@ -1414,6 +1423,22 @@ def _direct_index(path, embed: bool = True):
         "index_peak_rss_mb": peak_rss_mb,
         **summary,
     }, kg, indexer
+
+
+def _write_last_indexed_sha(repo_path: str) -> None:
+    """Store the current git HEAD SHA to .cognirepo/index/last_indexed.json."""
+    import subprocess as _sp  # pylint: disable=import-outside-toplevel
+    from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+    try:
+        sha = _sp.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=repo_path, text=True, stderr=_sp.DEVNULL
+        ).strip()
+        path = get_path("index/last_indexed.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as _f:
+            json.dump({"commit_sha": sha, "indexed_at": datetime.now(timezone.utc).isoformat()}, _f)
+    except Exception:  # pylint: disable=broad-except
+        pass  # non-git repos silently skip
 
 
 def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
@@ -2386,6 +2411,12 @@ def main():
             "untracked files) and reindex only those. Ideal for post-commit hooks."
         ),
     )
+    p_idx.add_argument(
+        "--remove-lock",
+        metavar="LOCK_PATH",
+        default=None,
+        help="Delete the file at LOCK_PATH after indexing (used by background reindex to release the lock).",
+    )
 
     # benchmark
     p_bench = sub.add_parser("benchmark", help="Run quantitative value benchmarks")
@@ -2940,6 +2971,13 @@ def main():
                       + (" …" if len(_changed) > 5 else ""))
             else:
                 print("No changed files detected.")
+            _write_last_indexed_sha(os.path.abspath(getattr(args, "path", ".")))
+            _remove_lock = getattr(args, "remove_lock", None)
+            if _remove_lock and os.path.exists(_remove_lock):
+                try:
+                    os.remove(_remove_lock)
+                except OSError:
+                    pass
             return
 
         # ── selective reindex (--files) ──────────────────────────────────────
@@ -2973,6 +3011,12 @@ def main():
             sys.exit(1)
         _print_results(summary)
         _cmd_coverage()
+        _remove_lock = getattr(args, "remove_lock", None)
+        if _remove_lock and os.path.exists(_remove_lock):
+            try:
+                os.remove(_remove_lock)
+            except OSError:
+                pass
         if not args.no_watch:
             _start_watcher(args.path, kg, indexer, daemon=args.daemon)
         return
