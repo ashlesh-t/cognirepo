@@ -68,10 +68,14 @@ def _get_indexer():
     """Lazily load ASTIndexer (double-checked locking for thread safety)."""
     global _INDEXER  # pylint: disable=global-statement
     if _INDEXER is None:
+        # Initialize graph BEFORE acquiring _SINGLETON_LOCK to avoid self-deadlock:
+        # _get_graph() also acquires _SINGLETON_LOCK internally; since it's a non-reentrant
+        # Lock, calling it while already holding the lock would deadlock on cold start.
+        graph = _get_graph()
         with _SINGLETON_LOCK:
             if _INDEXER is None:
                 from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-                _INDEXER = ASTIndexer(_get_graph())
+                _INDEXER = ASTIndexer(graph)
                 _INDEXER.load()
     return _INDEXER
 
@@ -245,6 +249,18 @@ def _behaviour_record_query(query: str, result) -> None:
                     symbols.append(sym)
         qid = str(_uuid.uuid4())[:8]
         bt.record_query(qid, query, [s for s in symbols if s])
+        # Auto-feedback in MCP-only workflow: treat high-confidence results as useful
+        # so symbol_weights accumulate even without a file watcher.
+        high_conf_sections = []
+        if isinstance(result, dict):
+            high_conf_sections = [
+                s for s in result.get("sections", [])
+                if float(s.get("score", 0)) > 0.5
+            ]
+        elif isinstance(result, list):
+            high_conf_sections = [r for r in result if isinstance(r, dict) and float(r.get("score", r.get("final_score", 0))) > 0.5]
+        if high_conf_sections and symbols:
+            bt.record_feedback(qid, useful=True)
         patterns = bt.data.get("interaction_style", {}).get("query_patterns", [])
         if len(patterns) % BehaviourTracker._STYLE_SUMMARIZE_EVERY == 0 and patterns:
             bt.summarize_interaction_style()
@@ -597,7 +613,8 @@ def link_repos(
     }
     kind = kind_map.get(relationship.lower(), "DISCOVERED")
     og = get_org_graph()
-    # Store microservice metadata on the destination node
+    og.link_repos(src_repo, dst_repo, kind=kind, note=note)
+    # Store microservice metadata on the destination node (must be after link_repos adds the node)
     svc_meta: dict = {}
     if service_type:
         svc_meta["service_type"] = service_type
@@ -605,9 +622,10 @@ def link_repos(
         svc_meta["port"] = port
     if api_base_url:
         svc_meta["api_base_url"] = api_base_url
-    if svc_meta and dst_repo in og.G.nodes:
-        og.G.nodes[dst_repo].update(svc_meta)
-    og.link_repos(src_repo, dst_repo, kind=kind, note=note)
+    if svc_meta:
+        abs_dst = os.path.abspath(dst_repo)
+        if abs_dst in og.G.nodes:
+            og.G.nodes[abs_dst].update(svc_meta)
     og.save()
     invalidate_org_graph()
     return {"linked": True, "edge": {"src": src_repo, "dst": dst_repo, "kind": kind}}
@@ -686,11 +704,13 @@ def lookup_symbol(name: str, include_org: bool = False, repo_path: str | None = 
     with _repo_ctx(repo_path) as (_root, g, idx):
         if g is None:
             if _graph_is_empty():
-                return _EMPTY_GRAPH_WARNING
+                logger.info("lookup_symbol: graph empty, returning []")
+                return []
             idx = _get_indexer()
         else:
             if g.G.number_of_nodes() == 0:
-                return _EMPTY_GRAPH_WARNING
+                logger.info("lookup_symbol: graph empty for repo_path, returning []")
+                return []
 
         locations = idx.lookup_symbol(name)
         result = []
@@ -825,19 +845,24 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
     with _repo_ctx(repo_path) as (repo_root, g, _idx):
         if g is None:
             if _graph_is_empty():
-                return _EMPTY_GRAPH_WARNING
+                logger.info("who_calls: graph empty, returning empty dict")
+                return {"local_callers": [], "cross_repo_callers": [], "truncated": False}
             g = _get_graph()
         else:
             if g.G.number_of_nodes() == 0:
-                return _EMPTY_GRAPH_WARNING
+                logger.info("who_calls: graph empty for repo_path, returning empty dict")
+                return {"local_callers": [], "cross_repo_callers": [], "truncated": False}
 
         from graph.knowledge_graph import EdgeType  # pylint: disable=import-outside-toplevel
         callee_node = f"symbol::{function_name}"
         if not g.node_exists(callee_node):
             fallback = _who_calls_dynamic_fallback(function_name, repo_root)
-            if fallback:
-                return fallback
-            return []
+            _auto_store_hook("who_calls", fallback)
+            return {
+                "local_callers": fallback[:50],
+                "cross_repo_callers": [],
+                "truncated": len(fallback) > 50,
+            }
         result = []
         for caller in g.G.successors(callee_node):
             edge_data = g.G[callee_node][caller]
@@ -1454,7 +1479,7 @@ def record_user_preference(
         if g is None:
             g = _get_graph()
         if not _behaviour_enabled():
-            return {"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
+            return {"recorded": False, "behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
         from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g)
         if preference_key == "query_rewrite":
@@ -1479,7 +1504,7 @@ def get_error_patterns(min_count: int = 1, repo_path: str | None = None) -> list
         if g is None:
             g = _get_graph()
         if not _behaviour_enabled():
-            return {"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
+            return [{"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}]
         from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g)
     return bt.get_error_patterns(min_count=min_count)
@@ -1508,7 +1533,7 @@ def record_error(
         if g is None:
             g = _get_graph()
         if not _behaviour_enabled():
-            return {"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
+            return {"recorded": False, "behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
         from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g)
         bt.record_error(
@@ -1594,10 +1619,12 @@ def _build_manifest() -> dict:
             },
             {
                 "name": "org_dependencies",
-                "description": "List all repositories linked within the same local organization.",
+                "description": "Return the bidirectional inter-repo dependency graph for the current organization.",
                 "parameters": {
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "depth": {"type": "integer", "description": "Max hops to traverse (default 2)", "default": 2},
+                    },
                 },
             },
             {
@@ -1860,7 +1887,7 @@ def _build_manifest() -> dict:
                         "direction":   {"type": "string", "description": "dependencies | dependents | both", "default": "both"},
                         "depth":       {"type": "integer", "default": 2},
                     },
-                    "required": ["symbol", "start_repo"],
+                    "required": [],
                 },
             },
             {
@@ -1877,15 +1904,15 @@ def _build_manifest() -> dict:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "src":              {"type": "string", "description": "Absolute path to source repo"},
-                        "dst":              {"type": "string", "description": "Absolute path to destination repo"},
-                        "relationship":     {"type": "string", "description": "imports | calls_api | shares_schema | discovered | child_of", "default": "imports"},
-                        "note":             {"type": "string", "description": "Optional note about the relationship", "default": ""},
-                        "src_service_type": {"type": "string", "description": "Optional service type for src (rest_api, grpc, worker, etc.)", "default": None},
-                        "src_port":         {"type": "integer", "description": "Optional port for src service", "default": None},
-                        "src_api_base_url": {"type": "string", "description": "Optional API base URL for src service", "default": None},
+                        "src_repo":      {"type": "string", "description": "Absolute path to source repo"},
+                        "dst_repo":      {"type": "string", "description": "Absolute path to destination repo"},
+                        "relationship":  {"type": "string", "description": "imports | calls_api | shares_schema | discovered | child_of", "default": "imports"},
+                        "note":          {"type": "string", "description": "Optional note about the relationship", "default": ""},
+                        "service_type":  {"type": "string", "description": "Optional service type for destination (rest_api, grpc, worker, frontend, library)", "default": ""},
+                        "port":          {"type": "integer", "description": "Optional port the destination service listens on", "default": 0},
+                        "api_base_url":  {"type": "string", "description": "Optional API base URL/path prefix for destination service", "default": ""},
                     },
-                    "required": ["src", "dst"],
+                    "required": ["src_repo", "dst_repo"],
                 },
             },
             {
@@ -1894,9 +1921,10 @@ def _build_manifest() -> dict:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "summary":   {"type": "string", "description": "One-line decision summary"},
-                        "rationale": {"type": "string", "description": "Why this decision was made", "default": ""},
-                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
+                        "summary":        {"type": "string", "description": "One-line decision summary"},
+                        "rationale":      {"type": "string", "description": "Why this decision was made", "default": ""},
+                        "affected_files": {"type": "array", "items": {"type": "string"}, "description": "Files changed by this decision", "default": []},
+                        "repo_path":      {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
                     },
                     "required": ["summary"],
                 },
@@ -1920,10 +1948,10 @@ def _build_manifest() -> dict:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "token":     {"type": "string", "description": "Word or identifier fragment to search"},
+                        "word":      {"type": "string", "description": "Word or identifier fragment to search"},
                         "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
                     },
-                    "required": ["token"],
+                    "required": ["word"],
                 },
             },
             {
@@ -1994,9 +2022,11 @@ def _build_manifest() -> dict:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "error_type": {"type": "string", "description": "Error class name (e.g. ImportError)"},
-                        "message":    {"type": "string", "description": "Error message or description", "default": ""},
-                        "repo_path":  {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
+                        "error_type":    {"type": "string", "description": "Error class name (e.g. ImportError)"},
+                        "message":       {"type": "string", "description": "Error message or description", "default": ""},
+                        "file_path":     {"type": "string", "description": "Source file where the error occurred", "default": ""},
+                        "query_context": {"type": "string", "description": "Query or action that triggered the error", "default": ""},
+                        "repo_path":     {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
                     },
                     "required": ["error_type"],
                 },

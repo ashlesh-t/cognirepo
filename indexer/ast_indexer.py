@@ -1612,7 +1612,7 @@ class ASTIndexer:
     @functools.lru_cache(maxsize=512)
     def lookup_symbol(self, symbol_name: str) -> list[dict]:
         """O(1) reverse-index lookup. Returns [{'file': str, 'line': int}]."""
-        entries = self.index_data["reverse_index"].get(symbol_name, [])
+        entries = self.index_data.get("reverse_index", {}).get(symbol_name, [])
         return [{"file": f, "line": l} for f, l in entries]
 
     @functools.lru_cache(maxsize=512)

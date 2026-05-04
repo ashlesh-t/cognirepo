@@ -360,7 +360,12 @@ class BehaviourTracker:
         if top_terms:
             hints_parts.append(f"domain vocabulary: {', '.join(top_terms[:5])}")
 
-        framing_hints = "; ".join(hints_parts) if hints_parts else "no profile yet"
+        # Use cached snapshot when patterns were cleared after summarization
+        framing_hints = (
+            "; ".join(hints_parts)
+            if hints_parts
+            else style.get("framing_hints") or "no profile yet"
+        )
 
         sample_queries = patterns[-3:] if patterns else []
 

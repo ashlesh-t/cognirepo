@@ -41,7 +41,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ### Docs
 - `docs/MCP_TOOLS.md` — all 32 tools documented
-- `docs/MANUAL_TEST_SUITE.md` — 34-test manual test suite with prompts and result blocks
+- `MANUAL_TEST_SUITE.md` — 39-test manual test suite with prompts and result blocks
 - `README.md` — corrected install command (removed `cpu` extra)
 - `CLAUDE.md` — stack updated to fastembed/ONNX, argparse
 
