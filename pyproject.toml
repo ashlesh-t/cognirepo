@@ -79,16 +79,12 @@ security = [
     "keyring>=25.0",
 ]
 cli = [
-    "rich>=13.7",
-    "prompt_toolkit>=3.0",
-    "tomli-w>=1.0",
-    "pyfiglet>=1.0",
+    "tqdm>=4.60",
 ]
 providers = [
     # Model routing for `cognirepo ask`. Not required for MCP index server.
     # Install: pip install 'cognirepo[providers]'
     "anthropic>=0.87.0",
-    "google-generativeai>=0.8",
     "google-genai>=0.3",
     "openai>=1.0",
 ]
@@ -112,7 +108,6 @@ dev = [
     "bcrypt>=4.0",
     # Include providers so tests can import router/adapters without install hint
     "anthropic>=0.87.0",
-    "google-generativeai>=0.8",
     "google-genai>=0.3",
     "openai>=1.0",
 ]
