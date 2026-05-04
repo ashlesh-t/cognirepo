@@ -82,10 +82,16 @@
     },
     {
       "name": "org_dependencies",
-      "description": "List all repositories linked within the same local organization.",
+      "description": "Return the bidirectional inter-repo dependency graph for the current organization.",
       "parameters": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "depth": {
+            "type": "integer",
+            "description": "Max hops to traverse (default 2)",
+            "default": 2
+          }
+        }
       }
     },
     {
@@ -432,10 +438,7 @@
             "default": 2
           }
         },
-        "required": [
-          "symbol",
-          "start_repo"
-        ]
+        "required": []
       }
     },
     {
@@ -452,11 +455,11 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "src": {
+          "src_repo": {
             "type": "string",
             "description": "Absolute path to source repo"
           },
-          "dst": {
+          "dst_repo": {
             "type": "string",
             "description": "Absolute path to destination repo"
           },
@@ -470,25 +473,25 @@
             "description": "Optional note about the relationship",
             "default": ""
           },
-          "src_service_type": {
+          "service_type": {
             "type": "string",
-            "description": "Optional service type for src (rest_api, grpc, worker, etc.)",
-            "default": null
+            "description": "Optional service type for destination (rest_api, grpc, worker, frontend, library)",
+            "default": ""
           },
-          "src_port": {
+          "port": {
             "type": "integer",
-            "description": "Optional port for src service",
-            "default": null
+            "description": "Optional port the destination service listens on",
+            "default": 0
           },
-          "src_api_base_url": {
+          "api_base_url": {
             "type": "string",
-            "description": "Optional API base URL for src service",
-            "default": null
+            "description": "Optional API base URL/path prefix for destination service",
+            "default": ""
           }
         },
         "required": [
-          "src",
-          "dst"
+          "src_repo",
+          "dst_repo"
         ]
       }
     },
@@ -506,6 +509,14 @@
             "type": "string",
             "description": "Why this decision was made",
             "default": ""
+          },
+          "affected_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Files changed by this decision",
+            "default": []
           },
           "repo_path": {
             "type": "string",
@@ -550,7 +561,7 @@
       "parameters": {
         "type": "object",
         "properties": {
-          "token": {
+          "word": {
             "type": "string",
             "description": "Word or identifier fragment to search"
           },
@@ -561,7 +572,7 @@
           }
         },
         "required": [
-          "token"
+          "word"
         ]
       }
     },
@@ -673,6 +684,16 @@
           "message": {
             "type": "string",
             "description": "Error message or description",
+            "default": ""
+          },
+          "file_path": {
+            "type": "string",
+            "description": "Source file where the error occurred",
+            "default": ""
+          },
+          "query_context": {
+            "type": "string",
+            "description": "Query or action that triggered the error",
             "default": ""
           },
           "repo_path": {
