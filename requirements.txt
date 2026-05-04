@@ -31,14 +31,9 @@ fastmcp==3.2.4
 filelock==3.29.0
 flatbuffers==25.12.19
 fsspec==2026.4.0
-google-api-core==2.25.2
 google-auth==2.49.1
-google-auth-httplib2==0.3.0
 google-genai==1.68.0
-googleapis-common-protos==1.73.1
 griffelib==2.0.2
-grpcio==1.78.0
-grpcio-status==1.71.2
 h11==0.16.0
 hf-xet==1.4.3
 httpcore==1.0.9
@@ -67,7 +62,6 @@ mmh3==5.2.1
 more-itertools==11.0.2
 networkx==3.6.1
 numpy==2.4.4
-oauthlib==3.3.1
 onnxruntime==1.25.1
 openai==2.33.0
 openapi-pydantic==0.5.1
@@ -80,14 +74,10 @@ pillow==12.2.0
 platformdirs==4.9.6
 pluggy==1.6.0
 prometheus_client==0.25.0
-proto-plus==1.27.2
 protobuf==7.34.1
 psutil==7.2.2
 py-key-value-aio==0.4.4
 py_rust_stemmers==0.1.5
-pyasn1==0.6.3
-pyasn1_modules==0.4.2
-pybase64==1.4.3
 pycparser==3.0
 pydantic==2.13.3
 pydantic-settings==2.14.0
@@ -108,7 +98,6 @@ rank-bm25==0.2.2
 referencing==0.37.0
 regex==2026.4.4
 requests==2.33.1
-requests-oauthlib==2.0.0
 rich==15.0.0
 rich-rst==1.3.2
 rpds-py==0.30.0
