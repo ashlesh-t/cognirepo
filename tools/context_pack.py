@@ -160,19 +160,25 @@ def context_pack(
 
     Returns
     -------
+    Always returns all 5 base keys:
     {
         "query": str,
+        "status": "ok" | "no_confident_match" | "index_empty",
         "token_count": int,
         "sections": [{"type", "source", "score", "content"}, ...],
         "truncated": bool
     }
 
-    On no confident match:
-    {
-        "status": "no_confident_match",
+    On no confident match, additionally includes:
         "best_score": float,
         "suggestion": str
-    }
+
+    On index_empty, additionally includes:
+        "suggestion": str
+
+    Optional keys when query enhancement fires:
+        "enhanced_query": str,
+        "enhancement_method": str
     """
     # ── file-mode: return all indexed context for a specific file ────────────
     if file:

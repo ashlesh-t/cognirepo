@@ -47,7 +47,7 @@ across sessions, across tools, across time.
 ## When to use CogniRepo
 
 **Most effective on codebases ≥ 15K LOC.** On small repos (< 10K LOC), native file reads
-are fast enough that the MCP tool schema overhead (~3,650 tokens for 30 tools) takes more
+are fast enough that the MCP tool schema overhead (~3,900 tokens for 32 tools) takes more
 than you save. Break-even is roughly 4 tool calls on a medium-sized repo.
 
 **CogniRepo vs. claude-context / similar tools:**
@@ -237,7 +237,7 @@ docker compose up mcp         # MCP stdio server
 
 ## MCP Tools — complete reference
 
-All 30 tools are available to Claude, Cursor, and any MCP-compatible client.
+All 32 tools are available to Claude, Cursor, and any MCP-compatible client.
 
 ### Core retrieval
 
@@ -263,6 +263,7 @@ All 30 tools are available to Claude, Cursor, and any MCP-compatible client.
 |------|-------------|-------------|
 | `get_user_profile()` | User's interaction style: depth pref, question types, vocabulary | **Call at session start** — calibrates Claude's response style |
 | `get_session_history(limit=10)` | Recent conversation exchanges across sessions | Resuming context from prior sessions |
+| `record_user_preference(key, value, context="")` | Store a style or format preference | When user corrects interpretation or states a preference |
 
 ### Error tracking & prevention
 
@@ -275,8 +276,9 @@ All 30 tools are available to Claude, Cursor, and any MCP-compatible client.
 
 | Tool | Description | When to use |
 |------|-------------|-------------|
-| `get_session_brief()` | Architecture + hot symbols + index health | **First call every session** |
-| `get_last_context()` | Most recent context_pack snapshot from prior session | **Second call every session** — resume where previous agent left off |
+| `get_agent_bootstrap()` | Single-call session start: brief + last context + profile + errors (~300 tokens vs ~900) | **Preferred first call** — replaces the 4-call sequence |
+| `get_session_brief()` | Architecture + hot symbols + index health | First call when you need granular parts separately |
+| `get_last_context()` | Most recent context_pack snapshot from prior session | Resume where previous agent left off |
 
 ### Memory & storage
 
@@ -285,6 +287,7 @@ All 30 tools are available to Claude, Cursor, and any MCP-compatible client.
 | `store_memory(text, source="")` | Persist a memory to the FAISS index | After solving bugs, recording decisions |
 | `log_episode(event, metadata={})` | Append event to episodic journal | Track milestones, incidents, deployments |
 | `record_decision(summary, rationale="")` | Record architectural decision to episodic memory | When making non-obvious design choices |
+| `supersede_learning(old_memory_id, new_text)` | Deprecate and replace an outdated memory in one call | When a past decision or fact has changed |
 
 ### Cross-repo (organization)
 

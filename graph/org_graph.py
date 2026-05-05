@@ -83,6 +83,12 @@ class OrgGraph:
                 from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
                 raw = decrypt_bytes(raw, get_or_create_key(project_id))
             self.G = pickle.loads(raw)  # nosec B301
+        except FileNotFoundError:
+            logger.debug("OrgGraph: no graph file at %s — starting fresh", path)
+            self.G = nx.DiGraph()
+        except (EOFError, pickle.UnpicklingError):
+            logger.debug("OrgGraph: graph file empty or corrupt at %s — starting fresh", path)
+            self.G = nx.DiGraph()
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning("OrgGraph: failed to load %s: %s", path, exc)
             self.G = nx.DiGraph()
