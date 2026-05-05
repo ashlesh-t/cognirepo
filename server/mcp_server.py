@@ -793,7 +793,6 @@ def _who_calls_dynamic_fallback(function_name: str, repo_root: str | None = None
     results = []
     try:
         # Search for function_name as a string argument in source files
-        pattern = rf'["\']?{_re.escape(function_name)}["\']?\s*[,)]'
         proc = subprocess.run(  # nosec B603
             ["grep", "-rn", "--include=*.py", "--include=*.js", "--include=*.ts",
              function_name, repo_root],
@@ -1054,7 +1053,7 @@ def graph_stats(repo_path: str | None = None) -> dict:
 def semantic_search_code(
     query: str,
     top_k: int = 5,
-    language: str = None,
+    language: str | None = None,
     repo_path: str | None = None,
 ) -> list:
     """
@@ -1160,6 +1159,7 @@ def context_pack(
     include_episodic: bool = True,
     include_symbols: bool = True,
     window_lines: int = 15,
+    file: str = "",
     repo_path: str | None = None,
 ) -> dict:
     """
@@ -1169,6 +1169,7 @@ def context_pack(
     Returns at most max_tokens (default 2000) tokens — much smaller than raw files.
     Do NOT call for known short files (< 50 lines) — use Read directly instead.
 
+    file: optional relative path to scope retrieval to a single file.
     repo_path: optional absolute path to the target repository. When omitted,
     defaults to the server's configured project directory.
     """
@@ -1181,6 +1182,7 @@ def context_pack(
             include_episodic=include_episodic,
             include_symbols=include_symbols,
             window_lines=window_lines,
+            file=file,
             repo_root=repo_root,
         )
         _auto_store_hook("context_pack", result)

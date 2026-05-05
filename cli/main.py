@@ -589,34 +589,48 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
 
     # ── Check 8: Daemon heartbeat ─────────────────────────────────────────────
     try:
-        from cli.daemon import heartbeat_age_seconds, read_heartbeat  # pylint: disable=import-outside-toplevel
+        from cli.daemon import heartbeat_age_seconds, read_heartbeat, _is_alive  # pylint: disable=import-outside-toplevel
         _hb_age = heartbeat_age_seconds()
         _hb = read_heartbeat()
         if _hb_age is None:
-            _ok("Daemon heartbeat — no watcher running (start with: cognirepo watch --ensure-running .)")
-        elif _hb_age < 60:
-            _ok(f"Daemon heartbeat — OK (last beat: {_hb_age:.0f}s ago, PID {_hb.get('pid', '?')})")
-        elif _hb_age < 120:
-            _ok(f"Daemon heartbeat — slow ({_hb_age:.0f}s since last beat)")
+            _ok("Daemon heartbeat — no watcher running (optional; start with: cognirepo watch .)")
         else:
-            _fail(
-                f"Daemon heartbeat — STALE ({_hb_age:.0f}s since last beat)",
-                "Daemon may be dead. Run: cognirepo watch --ensure-running .",
-            )
-            # stale daemon is a warning — file watcher is optional for MCP operation
+            _pid = _hb.get("pid", -1) if _hb else -1
+            if not _is_alive(_pid):
+                # Stale heartbeat file from a previous run — clean it up silently
+                try:
+                    from cli.daemon import _heartbeat_file  # pylint: disable=import-outside-toplevel
+                    _heartbeat_file().unlink(missing_ok=True)
+                except Exception:  # pylint: disable=broad-except
+                    pass
+                _ok("Daemon heartbeat — no watcher running (optional; start with: cognirepo watch .)")
+            elif _hb_age < 60:
+                _ok(f"Daemon heartbeat — OK (last beat: {_hb_age:.0f}s ago, PID {_pid})")
+            elif _hb_age < 120:
+                _ok(f"Daemon heartbeat — slow ({_hb_age:.0f}s since last beat)")
+            else:
+                _warn(f"Daemon heartbeat — slow ({_hb_age:.0f}s since last beat)")
     except Exception as exc:  # pylint: disable=broad-except
         _ok(f"Daemon heartbeat — skipped ({exc})")
 
-    # ── Check 9 (was 8): Circuit breaker ─────────────────────────────────────
+    # ── Check 9: Circuit breaker ──────────────────────────────────────────────
     try:
         from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
         import psutil  # pylint: disable=import-outside-toplevel
         _cb = get_breaker()
         _rss_mb = psutil.Process().memory_info().rss / 1024 / 1024
-        _limit_mb = _cb._rss_limit_mb  # pylint: disable=protected-access
-        _ok(f"Circuit breaker — {_cb.state} (RSS: {_rss_mb:.0f} MB / {_limit_mb:.0f} MB limit)")
+        # Probe-based CB: get limit from first RSSProbe if present
+        _limit_mb = None
+        for _probe in getattr(_cb, "_probes", []):
+            _limit_mb = getattr(_probe, "_limit_mb", None) or getattr(_probe, "limit_mb", None)
+            if _limit_mb:
+                break
+        if _limit_mb:
+            _ok(f"Circuit breaker — {_cb.state} (RSS: {_rss_mb:.0f} MB / {_limit_mb:.0f} MB limit)")
+        else:
+            _ok(f"Circuit breaker — {_cb.state} (RSS: {_rss_mb:.0f} MB)")
     except Exception:  # pylint: disable=broad-except
-        _ok("Circuit breaker — OK (psutil not available for RSS check)")
+        _ok("Circuit breaker — OK")
 
     # ── Check 10: BM25 backend (always shown) ────────────────────────────────
     try:

@@ -103,7 +103,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [0.3.0] — 2026-04-24
+## [0.6.0] — 2026-04-24
 
 ### Added
 - **`.env` seeded on `cognirepo init`** (`cli/init_project.py`) — `.env.example` is now shipped as package data and automatically copied to `.env` on first init, so users discover circuit-breaker and API-key variables without reading docs.
@@ -275,7 +275,8 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 [Unreleased]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.0...HEAD
 [1.1.0]: https://github.com/ashlesh-t/cognirepo/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.3.0...v1.0.0
+[1.0.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.6.0...v1.0.0
+[0.6.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.2.0...v0.3.0
