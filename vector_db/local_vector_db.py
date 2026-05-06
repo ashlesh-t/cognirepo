@@ -153,6 +153,36 @@ class LocalVectorDB(VectorStorageAdapter):
 
         self.save()
 
+    def add_batch(
+        self,
+        entries: list[tuple],
+        source: str = "memory",
+    ) -> int:
+        """
+        Add multiple vectors in one shot and save once at the end.
+
+        Each entry is a tuple of (vector, text, importance) or
+        (vector, text, importance, source) — the per-entry source overrides
+        the default *source* argument when present.
+
+        Returns the number of vectors successfully added.
+        """
+        if not entries:
+            return 0
+        for item in entries:
+            vec, text, importance = item[0], item[1], item[2]
+            entry_source = item[3] if len(item) > 3 else source
+            vec = np.array([vec]).astype("float32")
+            self.index.add(vec)
+            self.metadata.append({
+                "text": text,
+                "importance": importance,
+                "source": entry_source,
+                "behaviour_score": 0.0,
+            })
+        self.save()
+        return len(entries)
+
     def update_behaviour_score(self, row_id: int, new_score: float) -> bool:
         """Update behaviour_score for an existing entry by row index."""
         if row_id < 0 or row_id >= len(self.metadata):

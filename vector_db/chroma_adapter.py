@@ -88,6 +88,35 @@ class ChromaDBAdapter(VectorStorageAdapter):
             }],
         )
 
+    def add_batch(
+        self,
+        entries: list[tuple],
+        source: str = "memory",
+    ) -> int:
+        """
+        Add multiple vectors in one Chroma upsert and return count stored.
+        Each entry is (vector, text, importance) or (vector, text, importance, source).
+        """
+        if not entries:
+            return 0
+        ids, embeddings, documents, metadatas = [], [], [], []
+        for item in entries:
+            vec, text, importance = item[0], item[1], item[2]
+            entry_source = item[3] if len(item) > 3 else source
+            doc_id = str(self._next_id)
+            self._next_id += 1
+            ids.append(doc_id)
+            embeddings.append(vec.tolist())
+            documents.append(text)
+            metadatas.append({
+                "importance": importance,
+                "source": entry_source,
+                "text": text,
+                "behaviour_score": 0.0,
+            })
+        self._col.add(ids=ids, embeddings=embeddings, documents=documents, metadatas=metadatas)
+        return len(entries)
+
     def update_behaviour_score(self, row_id: int, new_score: float) -> bool:
         """Update behaviour_score metadata for a Chroma entry (row_id = insert order)."""
         doc_id = str(row_id)

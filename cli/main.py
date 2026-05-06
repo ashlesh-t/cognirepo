@@ -988,8 +988,10 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     else:
         print("  — .claude/ not found, skipping Claude Code hooks")
 
-    print(f"\nCogniRepo ready. Open Claude Code or Cursor in '{cwd}'.")
-    print("Run `cognirepo prime` to get a session bootstrap brief.\n")
+    print(f"\n✓ Done — CogniRepo is ready for '{project_name}'.")
+    print("  Open Claude Code or Cursor in this directory to start.")
+    print("  Run `cognirepo prime` for a session bootstrap brief.")
+    print("  Press Ctrl+C to stop any background watcher.\n")
 
 
 def _write_claude_hooks(claude_dir: str, project_dir: str) -> None:
