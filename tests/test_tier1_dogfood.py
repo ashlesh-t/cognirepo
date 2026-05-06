@@ -8,7 +8,7 @@
 Tier-1 dogfood tests — verify the docs index integrates correctly with
 the classifier and the router local-resolver.
 
-Uses sys.modules mocking so faiss/sentence-transformers/networkx are not required.
+Uses sys.modules mocking so faiss/fastembed/networkx are not required.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 
 def _stub_heavy_deps():
     """Stub out packages that aren't installed in the test environment."""
-    for name in ("networkx", "faiss", "sentence_transformers"):
+    for name in ("networkx", "faiss", "fastembed"):
         try:
             __import__(name)
         except ImportError:

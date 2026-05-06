@@ -96,8 +96,8 @@ cognirepo prime                 # bootstrap session context (CLI version of get_
 
 ## Stack
 
-Python 3.11+ · FAISS · sentence-transformers (all-MiniLM-L6-v2, dim 384) · NetworkX ·
-tree-sitter · FastMCP · Typer · tiktoken
+Python 3.11+ · FAISS · fastembed/ONNX (all-MiniLM-L6-v2, dim 384) · NetworkX ·
+tree-sitter · FastMCP · argparse (CLI) · tiktoken
 
 ## Dev detail
 

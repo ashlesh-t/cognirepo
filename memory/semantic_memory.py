@@ -10,7 +10,7 @@ Module for managing and retrieving semantic memories using vector embeddings.
 import logging
 
 from vector_db.factory import get_vector_adapter
-from memory.embeddings import get_model
+from memory.embeddings import encode_with_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +21,8 @@ class SemanticMemory:
     """
     def __init__(self):
         """
-        Initialize the embedding model and vector database.
+        Initialize the vector database.
         """
-        self.model = get_model()
         self.db = get_vector_adapter(dim=384)
 
     def compute_importance(self, text):
@@ -46,7 +45,7 @@ class SemanticMemory:
         """
         Store a text memory with its calculated importance.
         """
-        vector = self.model.encode(text)
+        vector = encode_with_timeout(text)
 
         importance = self.compute_importance(text)
 
@@ -58,8 +57,12 @@ class SemanticMemory:
         """
         Search for memories similar to the query.
         """
-        vector = self.model.encode(query)
+        vector = encode_with_timeout(query)
         return self.db.search(vector, top_k=top_k)
+
+    def search(self, query: str, top_k: int = 5) -> list:
+        """Alias for retrieve() used by cross_repo and org search."""
+        return self.retrieve(query, top_k=top_k)
 
     def deprecate(self, text: str) -> int:
         """

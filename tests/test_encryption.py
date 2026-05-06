@@ -220,8 +220,8 @@ class TestGitignoreBlanket:
     def test_gitignore_blanket_pattern(self, isolated_cognirepo):
         """cognirepo init must write * as the primary gitignore pattern."""
         from cli.init_project import init_project
-        with mock.patch("builtins.input", return_value="n"):
-            init_project(no_index=True)
+        # Ensure it doesn't try to run the wizard or ask questions
+        init_project(no_index=True, interactive=False, non_interactive=True)
 
         with open(".cognirepo/.gitignore", encoding="utf-8") as f:
             content = f.read()

@@ -226,12 +226,13 @@ class KnowledgeGraph:
         if not self.G.has_node(node_id):
             return []
 
+        from collections import deque  # pylint: disable=import-outside-toplevel
         visited: dict[str, int] = {node_id: 0}
-        queue = [node_id]
+        queue: deque[str] = deque([node_id])
         results: list[dict] = []
 
         while queue:
-            current = queue.pop(0)
+            current = queue.popleft()
             current_hops = visited[current]
             if current_hops >= depth:
                 continue

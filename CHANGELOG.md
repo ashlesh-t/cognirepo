@@ -10,6 +10,43 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.1.0] — 2026-04-29
+
+### Added
+- **`get_agent_bootstrap()` MCP tool** — single-call session start replacing 4-call sequence; ~300 tokens vs ~900
+- **`supersede_learning()` MCP tool** — deprecate and replace an outdated memory entry in one call
+- **Behaviour tracking opt-in** — wizard now asks during `cognirepo setup`; off by default; `behaviour.json` encrypted when encryption is enabled
+- **Behaviour query recording** — `context_pack`, `lookup_symbol`, `who_calls`, `semantic_search_code`, `episodic_search` now record to behaviour tracker (when opted in)
+- **Auto-summarize interaction style** — triggers every 10 queries automatically
+- **`autosave_context` wizard step** — cross-agent handoff now asked during setup (default: on)
+- **`DEFAULT_MODELS_BY_PROVIDER`** in `orchestrator/classifier.py` — single source for model names
+
+### Fixed
+- **fastembed migration** — removed all `model.encode()` calls across 11 files; replaced with `model.embed()` generator API; no more CUDA/nvidia packages on `pip install cognirepo`
+- **`get_children()` always returning empty** — `direction == "reverse"` → `direction == "forward"` in org_graph
+- **Episodic type bug** — `log_event` was called with dict as first arg; now correctly passes `event=str, metadata=dict`
+- **Org graph race condition** — `save()` re-reads disk state within file lock before writing (last-write-wins → additive merge)
+- **BFS O(n) queue** — `list.pop(0)` → `collections.deque.popleft()` in 3 locations
+- **`context_pack` response shape** — always returns `{query, status, token_count, sections, truncated}`; no more 3 different shapes
+- **`who_calls` response shape** — always returns `{local_callers, cross_repo_callers, truncated}`
+- **`org_dependencies` response bloat** — removed redundant `graph.to_dict()` field (~30% smaller)
+- **`prime_session` text limits** — architecture truncation raised from 200 → 600 chars; removed stale `known_blind_spots`
+
+### Changed
+- **`pip install cognirepo`** — no longer pulls PyTorch/CUDA; fastembed/ONNX only (~50MB vs ~1.5GB)
+- **Doctor** — checks for 32/32 tools (was 30)
+- **`org_wide_search` docstring** — marked as PRIMARY cross-repo tool; `org_search` marked as DEPRECATED fallback
+- **`behaviour.json`** — now encrypted/decrypted using same Fernet key as `graph.pkl` when encryption is on
+- **`BehaviourTracker`** — receives `db_adapter` injection; feedback scores propagate to vector store; temporal decay on relevance scores (`old * 0.95 + 0.1`)
+
+### Docs
+- `docs/MCP_TOOLS.md` — all 32 tools documented
+- `MANUAL_TEST_SUITE.md` — 39-test manual test suite with prompts and result blocks
+- `README.md` — corrected install command (removed `cpu` extra)
+- `CLAUDE.md` — stack updated to fastembed/ONNX, argparse
+
+---
+
 ## [1.0.0] — 2026-04-26
 
 ### Added
@@ -17,7 +54,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **`cognirepo setup`** — one-command onboarding: init + index + writes MCP configs for Claude, Cursor, VS Code
 - **`get_last_context()` MCP tool** — reads `~/.cognirepo/<repo>/last_context.json`; second agent resumes where first left off
 - **`get_session_brief()` MCP tool** — returns architecture summary, hot symbols, entry points, index health; call at session start
-- **`cognirepo ask` (local-only mode)** — zero-API query using QUICK-tier local resolver; no API keys required
+- **`cognirepo ask` (local-only mode)** — ⚠️ planned — not yet available in this release; command prints a "not yet available" message
 - **Cursor MDC rules** — `.cursor/rules/cognirepo.mdc` with `alwaysApply: true`, session-start sequence, NEVER directives
 - **VS Code MCP config** — `.vscode/mcp.json` + `.vscode/mcp.json.example` for VS Code / GitHub Copilot integration
 - **`docs/USAGE.md`** — Cursor Integration, VS Code MCP Setup, GitHub Copilot Integration sections
@@ -47,10 +84,26 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **`episodic_bm25_filter` time_range** — BM25 now rebuilt from filtered events when `time_range` is active; was searching wrong event set
 - **`to_undirected()` performance** — cached in `HybridRetriever.__init__`; was O(V+E) × 20 per query
 - **Concurrent cache miss amplification** — `_IN_FLIGHT` dict + `threading.Event` dedup; N concurrent misses → 1 retrieve call
+- **`lookup_symbol(include_org=True)` thread-safety** (`server/mcp_server.py`) — replaced process-wide globals with `_CTX_DIR.set()` / `_CTX_DIR.reset()` ContextVar pattern; eliminates race under concurrent MCP calls
+- **`_who_calls_dynamic_fallback` repo root** (`server/mcp_server.py`) — grep fallback now receives explicit `repo_root` from `_repo_ctx`; correct directory used when `repo_path` is specified
+- **Test suite cross-contamination** — eliminated all `sys.modules` pollution between test files; full suite: **702 passed, 14 skipped, 2 xfailed, 0 failures**
+
+### Also in 1.0.0 (internal sprint additions)
+
+- **AST FAISS in hybrid retrieval** (`retrieval/hybrid.py`) — `_ast_faiss_retrieve()` enables cold-start retrieval without pre-stored semantic memories
+- **`repo_path` parameter on all MCP tools** — all 32 tools accept `repo_path: str | None`; enables single server process to serve multiple repos without cross-repo data leaks
+- **`_repo_ctx()` context manager** — thread-safe per-call repo scope switching via ContextVar
+- **Idle resource eviction** (`server/idle_manager.py`) — evicts embedding model, KnowledgeGraph, ASTIndexer after configurable idle TTL (default 10 min); frees ~400 MB+
+- **CI test workflow** (`.github/workflows/ci.yml`) — pytest on Python 3.11 and 3.12; bootstraps `.cognirepo` index before suite; `--cov-fail-under=50`
+- **`pytest-cov`** in dev extras; CI uploads HTML artifact; coverage fail-under gate
+- **`GET /status/detailed`** REST endpoint — full diagnostics JSON (uptime, FAISS size, graph stats, circuit breaker)
+- **`deploy/grafana/cognirepo.json`** — pre-built Grafana 10 dashboard (HTTP rate, latency p50/p95, FAISS vectors, graph nodes/edges)
+- **`publish.yml`** migrated to OIDC trusted publishing; `wheel-smoke` job added between build and publish
+- **`docs/CLI.md`** — full interactive REPL reference
 
 ---
 
-## [0.3.0] — 2026-04-24
+## [0.6.0] — 2026-04-24
 
 ### Added
 - **`.env` seeded on `cognirepo init`** (`cli/init_project.py`) — `.env.example` is now shipped as package data and automatically copied to `.env` on first init, so users discover circuit-breaker and API-key variables without reading docs.
@@ -80,42 +133,6 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **`.env.example` API key comment updated** — removed `NOT-FUNCTIONAL-YET` annotation; comment now accurately states keys are reserved for the future `cognirepo ask` command.
 - **Summarizer engine architecture** — Fully transitioned to local-only summarization using AST index, removing previous LLM routing logic.
 
-## [Unreleased — prev sprint notes, to be sorted into next release]
-
-### Added
-- **AST FAISS in hybrid retrieval** (`retrieval/hybrid.py`) — `HybridRetriever._ast_faiss_retrieve()` queries the AST FAISS index (code symbols) directly via vector similarity. Previously `context_pack` and `retrieve_memory` returned empty results on freshly-indexed repos because `hybrid_retrieve` only queried the semantic memory FAISS (empty until memories are stored) and did exact-name entity lookup (which returns nothing for natural-language queries). All three paths now feed `_merge_candidates()` with vector_score promotion so FAISS scores upgrade exact-match candidates that had `vector_score=0.0`.
-- **`repo_path` parameter on all MCP tools** (`server/mcp_server.py`) — `context_pack`, `lookup_symbol`, `who_calls`, `subgraph`, `graph_stats`, `search_token`, `semantic_search_code`, `retrieve_memory`, `store_memory`, `episodic_search`, `architecture_overview`, `dependency_graph`, `explain_change` now accept `repo_path: str | None = None`. When set, all reads/writes are scoped to that repo's storage directory using the thread-safe `_CTX_DIR` ContextVar, fresh graph/indexer instances are loaded (singletons untouched), and the correct source root is passed to `context_pack`'s file-window reader. Enables a single MCP server process to serve multiple indexed repos without cross-repo data leaks.
-- **`_repo_ctx()` context manager** (`server/mcp_server.py`) — thread-safe scope switch for one tool call. Sets `_CTX_DIR`, loads fresh `KnowledgeGraph` + `ASTIndexer` for the target repo, and resets on exit. Module-level singletons are never mutated by cross-repo calls.
-- **`repo_root` parameter on `context_pack()`** (`tools/context_pack.py`) — passed to `_read_window()` and `_file_mode_context()` so source file line-window extraction resolves paths relative to the target repo, not the server's working directory.
-- **CI test workflow** (`.github/workflows/ci.yml`) — runs `pytest` on Python 3.11 and 3.12, bootstraps the project's own `.cognirepo` index before the suite, collects coverage, enforces `--cov-fail-under=50`. Fixes the broken `ci.yml` badge in README.
-- **Idle resource eviction** — `server/idle_manager.py` (`IdleManager`) evicts the SentenceTransformer embedding model, KnowledgeGraph, and ASTIndexer from RAM after a configurable idle TTL (default 10 min). Controlled via `idle_ttl_seconds` in `.cognirepo/config.json`. Resources reload lazily on next tool call with ~2 s warm-up. Frees ~400 MB+ for users who leave the MCP server running overnight.
-
-### Fixed
-- **`lookup_symbol(include_org=True)` thread-safety** (`server/mcp_server.py`) — replaced `set_cognirepo_dir(original_dir)` / `get_cognirepo_dir()` process-wide globals (racy under concurrent MCP calls) with `_CTX_DIR.set()` / `_CTX_DIR.reset()` ContextVar pattern already used by `CrossRepoRouter`.
-- **`_who_calls_dynamic_fallback` repo root** (`server/mcp_server.py`) — grep fallback for dynamic dispatch now receives explicit `repo_root` from `_repo_ctx`, so it searches the correct directory when `repo_path` is specified.
-- **Test suite cross-contamination** — eliminated all `sys.modules` pollution between test files. Root causes: unconditional `dotenv` stubbing clobbered real `python-dotenv` for `test_env_wizard.py`; `if dep not in sys.modules` stub guards installed MagicMocks when real packages existed but weren't cached yet; networkx DiGraph was mutated even on the real installed module; `rpc.proto.cognirepo_pb2_grpc` MagicMock caused `QueryServiceServicer` to be constructed as a Mock (inheriting from a Mock attribute loses all defined methods). Full suite: **702 passed, 14 skipped, 2 xfailed, 0 failures**.
-
----
-
-## [1.0.0] — 2026-04-10
-
-### Added
-
-- **Sprint 4.1** — `pytest-cov` in dev extras; CI runs with `--cov` and uploads HTML artifact; coverage fail-under gate at 50% baseline.
-- **Sprint 4.1** — `GET /status/detailed` REST endpoint returns full diagnostics JSON (uptime, FAISS size, graph stats, circuit breaker, multi-agent flag) — no auth required.
-- **Sprint 4.1** — `deploy/grafana/cognirepo.json` — pre-built Grafana 10 dashboard wired to Prometheus metrics (HTTP rate, latency p50/p95, FAISS vectors, graph nodes/edges, circuit breaker gauge, retrieval latency, memory op rate).
-- **Sprint 4.2** — `scripts/release_checklist.md` — manual pre-release checklist (version bump, CHANGELOG, RC dry-run, OIDC setup, stable tag).
-- **Sprint 4.2** — `scripts/check_wheel.sh` extended with Step 5: Tier-1 REPL Q&A via stdin after installing `[cli]` extras.
-- **Sprint 4.3** — `docs/CLI.md` — full interactive REPL reference (slash commands, tiers, session persistence, multi-agent mode, environment variables, CLI config).
-
-### Changed
-
-- **Sprint 4.2** — `publish.yml` migrated to OIDC trusted publishing (no long-lived `PYPI_API_TOKEN`); added `publish-testpypi` job for rc/alpha/beta tags; added `wheel-smoke` job between build and publish.
-- **Sprint 4.3** — Docs sweep: all tier names updated to QUICK/STANDARD/COMPLEX/EXPERT in `ARCHITECTURE.md`, `USAGE.md`, `FEATURE.md`.
-
-### Breaking
-
-- **Sprint 3.1** (v0.5.0) — Tier names renamed: `FAST→STANDARD`, `BALANCED→COMPLEX`, `DEEP→EXPERT`. `config.json` using old names raises `ConfigMigrationError`. Auto-fix: `cognirepo migrate-config`.
 
 ---
 
@@ -256,5 +273,12 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - README.md — complete project documentation with badges
 - USAGE.md — complete CLI, REST, MCP, Docker, and security reference
 
-[Unreleased]: https://github.com/ashlesh-t/cognirepo/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/ashlesh-t/cognirepo/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.6.0...v1.0.0
+[0.6.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ashlesh-t/cognirepo/releases/tag/v0.1.0

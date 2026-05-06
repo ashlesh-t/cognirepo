@@ -13,7 +13,7 @@ cd cognirepo
 pip install -e ".[dev,security]"
 
 # Initialize the project
-cognirepo init --no-index
+cognirepo init
 
 # Run tests
 pytest tests/ -v --tb=short

@@ -589,34 +589,48 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
 
     # ── Check 8: Daemon heartbeat ─────────────────────────────────────────────
     try:
-        from cli.daemon import heartbeat_age_seconds, read_heartbeat  # pylint: disable=import-outside-toplevel
+        from cli.daemon import heartbeat_age_seconds, read_heartbeat, _is_alive  # pylint: disable=import-outside-toplevel
         _hb_age = heartbeat_age_seconds()
         _hb = read_heartbeat()
         if _hb_age is None:
-            _ok("Daemon heartbeat — no watcher running (start with: cognirepo watch --ensure-running .)")
-        elif _hb_age < 60:
-            _ok(f"Daemon heartbeat — OK (last beat: {_hb_age:.0f}s ago, PID {_hb.get('pid', '?')})")
-        elif _hb_age < 120:
-            _ok(f"Daemon heartbeat — slow ({_hb_age:.0f}s since last beat)")
+            _ok("Daemon heartbeat — no watcher running (optional; start with: cognirepo watch .)")
         else:
-            _fail(
-                f"Daemon heartbeat — STALE ({_hb_age:.0f}s since last beat)",
-                "Daemon may be dead. Run: cognirepo watch --ensure-running .",
-            )
-            # stale daemon is a warning — file watcher is optional for MCP operation
+            _pid = _hb.get("pid", -1) if _hb else -1
+            if not _is_alive(_pid):
+                # Stale heartbeat file from a previous run — clean it up silently
+                try:
+                    from cli.daemon import _heartbeat_file  # pylint: disable=import-outside-toplevel
+                    _heartbeat_file().unlink(missing_ok=True)
+                except Exception:  # pylint: disable=broad-except
+                    pass
+                _ok("Daemon heartbeat — no watcher running (optional; start with: cognirepo watch .)")
+            elif _hb_age < 60:
+                _ok(f"Daemon heartbeat — OK (last beat: {_hb_age:.0f}s ago, PID {_pid})")
+            elif _hb_age < 120:
+                _ok(f"Daemon heartbeat — slow ({_hb_age:.0f}s since last beat)")
+            else:
+                _warn(f"Daemon heartbeat — slow ({_hb_age:.0f}s since last beat)")
     except Exception as exc:  # pylint: disable=broad-except
         _ok(f"Daemon heartbeat — skipped ({exc})")
 
-    # ── Check 9 (was 8): Circuit breaker ─────────────────────────────────────
+    # ── Check 9: Circuit breaker ──────────────────────────────────────────────
     try:
         from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
         import psutil  # pylint: disable=import-outside-toplevel
         _cb = get_breaker()
         _rss_mb = psutil.Process().memory_info().rss / 1024 / 1024
-        _limit_mb = _cb._rss_limit_mb  # pylint: disable=protected-access
-        _ok(f"Circuit breaker — {_cb.state} (RSS: {_rss_mb:.0f} MB / {_limit_mb:.0f} MB limit)")
+        # Probe-based CB: get limit from first RSSProbe if present
+        _limit_mb = None
+        for _probe in getattr(_cb, "_probes", []):
+            _limit_mb = getattr(_probe, "_limit_mb", None) or getattr(_probe, "limit_mb", None)
+            if _limit_mb:
+                break
+        if _limit_mb:
+            _ok(f"Circuit breaker — {_cb.state} (RSS: {_rss_mb:.0f} MB / {_limit_mb:.0f} MB limit)")
+        else:
+            _ok(f"Circuit breaker — {_cb.state} (RSS: {_rss_mb:.0f} MB)")
     except Exception:  # pylint: disable=broad-except
-        _ok("Circuit breaker — OK (psutil not available for RSS check)")
+        _ok("Circuit breaker — OK")
 
     # ── Check 10: BM25 backend (always shown) ────────────────────────────────
     try:
@@ -658,15 +672,15 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             _fail(f"Package — {_pkg_name} not installed", _pkg_install)
             issues += 1
 
-    # ── Check 13: sentence-transformers importable ────────────────────────────
+    # ── Check 13: fastembed importable ───────────────────────────────────────
     try:
-        import sentence_transformers as _st  # pylint: disable=import-outside-toplevel
-        _st_ver = getattr(_st, "__version__", "unknown")
-        _ok(f"sentence-transformers — v{_st_ver} importable")
+        import fastembed as _fe  # pylint: disable=import-outside-toplevel
+        _fe_ver = getattr(_fe, "__version__", "unknown")
+        _ok(f"fastembed — v{_fe_ver} importable")
     except ImportError:
         _fail(
-            "sentence-transformers — not installed",
-            "Run: pip install 'cognirepo[cpu]'",
+            "fastembed — not installed",
+            "Run: pip install fastembed",
         )
         issues += 1
 
@@ -684,7 +698,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             "org_wide_search", "org_search", "list_org_context", "link_repos",
             "search_docs",
             "get_user_profile", "record_error", "get_error_patterns",
-            "record_user_preference",
+            "record_user_preference", "supersede_learning", "get_agent_bootstrap",
         ]
         _registered = getattr(_mcp_mod, "_REGISTERED_TOOLS", None)
         if _registered is not None:
@@ -695,7 +709,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
                     f"{', '.join(_missing_tools)}",
                 )
             else:
-                _ok(f"MCP tools — all {len(_required_tools)}/30 tools registered")
+                _ok(f"MCP tools — all {len(_required_tools)}/32 tools registered")
         else:
             _ok("MCP tools — server module importable (tool list not exposed)")
     except Exception as exc:  # pylint: disable=broad-except
@@ -886,27 +900,34 @@ def _cmd_status() -> None:
 
 def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     """
-    One-command onboarding: scaffold .cognirepo/, index the repo,
+    One-command onboarding: run cognirepo init (full wizard), index the repo,
     and auto-write MCP config for Claude Desktop, Cursor, and/or VS Code.
     """
     import shutil as _shutil  # pylint: disable=import-outside-toplevel
+    import subprocess as _subprocess  # pylint: disable=import-outside-toplevel
     cwd = os.getcwd()
     project_name = os.path.basename(cwd)
 
-    # ── Step 1: init ─────────────────────────────────────────────────────────
-    print(f"\n[1/4] Initialising .cognirepo/ for '{project_name}'...")
+    # ── Step 1: run cognirepo init as a subprocess so the user sees the full wizard ──
+    print(f"\n[1/5] Running cognirepo init for '{project_name}'...")
     try:
-        init_project(no_index=True, interactive=False)
-        print("  ✓ .cognirepo/ scaffolded")
+        result = _subprocess.run(["cognirepo", "init"], check=False)
+        if result.returncode != 0:
+            print("  cognirepo init exited non-zero — setup cancelled.")
+            return
+        print("  ✓ cognirepo init complete")
+    except FileNotFoundError:
+        print("  ✗ cognirepo not found on PATH. Install with: pip install cognirepo")
+        return
     except Exception as exc:  # pylint: disable=broad-except
         print(f"  ✗ init failed: {exc}")
         return
 
     # ── Step 2: index (full pipeline: symbols → summaries → docs → inter-repo) ─
     if no_index:
-        print("[2/4] Skipping index (--no-index)")
+        print("[2/5] Skipping index (--no-index)")
     else:
-        print("[2/4] Indexing repository (symbols → summaries → docs → inter-repo)...")
+        print("[2/5] Indexing repository (symbols → summaries → docs → inter-repo)...")
         try:
             _idx_summary, _kg, _idx = _direct_index(cwd, embed=True)
             _ns = _idx_summary.get("index_symbols", _idx_summary.get("symbol_count", "?"))
@@ -919,7 +940,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
             print("    Run manually: cognirepo index-repo .")
 
     # ── Step 3: auto-detect MCP targets ──────────────────────────────────────
-    print("[3/4] Configuring MCP integrations...")
+    print("[3/5] Configuring MCP integrations...")
     if targets is None:
         targets = []
         # Always offer Claude Code (writes .mcp.json)
@@ -943,7 +964,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
         print(f"  ✗ MCP setup failed: {exc}")
 
     # ── Step 4: cursor rules file ─────────────────────────────────────────────
-    print("[4/4] Writing IDE rules...")
+    print("[4/5] Writing IDE rules...")
     cursor_dir = os.path.join(cwd, ".cursor", "rules")
     if os.path.isdir(os.path.join(cwd, ".cursor")):
         try:
@@ -967,8 +988,10 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     else:
         print("  — .claude/ not found, skipping Claude Code hooks")
 
-    print(f"\nCogniRepo ready. Open Claude Code or Cursor in '{cwd}'.")
-    print("Run `cognirepo prime` to get a session bootstrap brief.\n")
+    print(f"\n✓ Done — CogniRepo is ready for '{project_name}'.")
+    print("  Open Claude Code or Cursor in this directory to start.")
+    print("  Run `cognirepo prime` for a session bootstrap brief.")
+    print("  Press Ctrl+C to stop any background watcher.\n")
 
 
 def _write_claude_hooks(claude_dir: str, project_dir: str) -> None:
@@ -1379,8 +1402,15 @@ def _direct_index(path, embed: bool = True):
     peak_rss_mb = (rss_after - rss_before) / _rss_scale / 1024
     peak_rss_mb = max(0, round(peak_rss_mb, 1))
 
-    n_symbols = summary.get("symbols", 0)
-    n_files = summary.get("files_indexed", summary.get("files", 0))
+    try:
+        _sym = summary.get("symbols", summary.get("reverse_index", 0))
+        n_symbols = _sym if isinstance(_sym, int) else len(_sym)
+        n_files = summary.get("files_indexed", summary.get("files", 0))
+        if not isinstance(n_files, int):
+            n_files = len(n_files)
+    except TypeError:
+        n_symbols = summary.get("total_symbols", 0)
+        n_files = 0
     print(
         f"Index complete: {n_symbols:,} symbols across {n_files:,} files "
         f"in {elapsed:.1f}s (peak RSS delta: {peak_rss_mb} MB)"
@@ -1400,6 +1430,8 @@ def _direct_index(path, embed: bool = True):
     except Exception:  # pylint: disable=broad-except
         pass  # non-fatal
 
+    _write_last_indexed_sha(abs_path)
+
     return {
         "status": "indexed",
         "path": abs_path,
@@ -1407,6 +1439,22 @@ def _direct_index(path, embed: bool = True):
         "index_peak_rss_mb": peak_rss_mb,
         **summary,
     }, kg, indexer
+
+
+def _write_last_indexed_sha(repo_path: str) -> None:
+    """Store the current git HEAD SHA to .cognirepo/index/last_indexed.json."""
+    import subprocess as _sp  # pylint: disable=import-outside-toplevel
+    from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+    try:
+        sha = _sp.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=repo_path, text=True, stderr=_sp.DEVNULL
+        ).strip()
+        path = get_path("index/last_indexed.json")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as _f:
+            json.dump({"commit_sha": sha, "indexed_at": datetime.now(timezone.utc).isoformat()}, _f)
+    except Exception:  # pylint: disable=broad-except
+        pass  # non-git repos silently skip
 
 
 def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
@@ -2379,6 +2427,12 @@ def main():
             "untracked files) and reindex only those. Ideal for post-commit hooks."
         ),
     )
+    p_idx.add_argument(
+        "--remove-lock",
+        metavar="LOCK_PATH",
+        default=None,
+        help="Delete the file at LOCK_PATH after indexing (used by background reindex to release the lock).",
+    )
 
     # benchmark
     p_bench = sub.add_parser("benchmark", help="Run quantitative value benchmarks")
@@ -2933,6 +2987,13 @@ def main():
                       + (" …" if len(_changed) > 5 else ""))
             else:
                 print("No changed files detected.")
+            _write_last_indexed_sha(os.path.abspath(getattr(args, "path", ".")))
+            _remove_lock = getattr(args, "remove_lock", None)
+            if _remove_lock and os.path.exists(_remove_lock):
+                try:
+                    os.remove(_remove_lock)
+                except OSError:
+                    pass
             return
 
         # ── selective reindex (--files) ──────────────────────────────────────
@@ -2966,6 +3027,12 @@ def main():
             sys.exit(1)
         _print_results(summary)
         _cmd_coverage()
+        _remove_lock = getattr(args, "remove_lock", None)
+        if _remove_lock and os.path.exists(_remove_lock):
+            try:
+                os.remove(_remove_lock)
+            except OSError:
+                pass
         if not args.no_watch:
             _start_watcher(args.path, kg, indexer, daemon=args.daemon)
         return

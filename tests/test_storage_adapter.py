@@ -40,7 +40,7 @@ class TestAdapterABC:
         }
         assert abstract_methods == {
             "add", "search", "search_with_scores", "remove", "persist",
-            "update_behaviour_score",
+            "update_behaviour_score", "count",
         }
 
 

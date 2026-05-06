@@ -39,6 +39,16 @@ If you are adding logic in `server/mcp_server.py`, `api/routes/`, or `rpc/server
 
 ---
 
+## v1.1.0 Feature Highlights
+
+**`get_agent_bootstrap()`** — call this at the start of every session instead of the 4-call sequence (`get_session_brief` → `get_last_context` → `get_user_profile` → `get_error_patterns`). It returns architecture summary, hot symbols, last context, user profile framing hints, and error patterns in a single ~300-token response.
+
+**`behaviour_tracking`** — opt-in flag in `.cognirepo/config.json`. When enabled, CogniRepo records query patterns, terminology, interaction depth, and symbol access frequency. `get_user_profile()` returns framing hints that adjust response depth and vocabulary. Enable via `cognirepo setup` (prompts during wizard) or set `"behaviour_tracking": true` in config manually.
+
+All 32 MCP tools are documented in [`docs/MCP_TOOLS.md`](docs/MCP_TOOLS.md).
+
+---
+
 ## Technical Guides
 
 For step-by-step instructions on extending CogniRepo, refer to the [Developer Guide](docs/DEVELOPER_GUIDE.md):

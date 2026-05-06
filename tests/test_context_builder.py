@@ -17,7 +17,7 @@ import sys
 from unittest.mock import MagicMock
 
 # Stub heavy deps only when the real package is not installed.
-for _dep in ("networkx", "faiss", "sentence_transformers"):
+for _dep in ("networkx", "faiss", "fastembed"):
     try:
         __import__(_dep)
     except ImportError:
