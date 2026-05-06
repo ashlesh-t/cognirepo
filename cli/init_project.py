@@ -77,20 +77,21 @@ def _scaffold_dirs() -> None:
     os.makedirs(get_path("episodic"), exist_ok=True)
 
 
-def _init_empty_stores() -> None:
+def _init_empty_stores(vector_backend: str = "faiss") -> None:
     """
     Create empty FAISS index and episodic log on first init so `doctor`
     does not report false failures immediately after `cognirepo init`.
     """
-    # Empty FAISS index
-    idx_file = get_path("vector_db/semantic.index")
-    if not os.path.exists(idx_file):
-        try:
-            import faiss  # pylint: disable=import-outside-toplevel
-            _idx = faiss.IndexFlatL2(384)
-            faiss.write_index(_idx, idx_file)
-        except Exception:  # pylint: disable=broad-except
-            pass  # faiss not installed — skip; doctor will show clear hint
+    # Empty FAISS index — only for FAISS backend
+    if vector_backend == "faiss":
+        idx_file = get_path("vector_db/semantic.index")
+        if not os.path.exists(idx_file):
+            try:
+                import faiss  # pylint: disable=import-outside-toplevel
+                _idx = faiss.IndexFlatL2(384)
+                faiss.write_index(_idx, idx_file)
+            except Exception:  # pylint: disable=broad-except
+                pass  # faiss not installed — skip; doctor will show clear hint
 
     # Empty episodic log
     ep_file = get_path("memory/episodic.json")
@@ -109,6 +110,7 @@ def _write_config(
     encrypt: bool = False,
     vector_backend: str = "faiss",
     autosave_context: bool = True,
+    behaviour_tracking: bool = False,
 ) -> str:
     """
     Write config.json (new) or backfill missing keys (existing).
@@ -118,6 +120,7 @@ def _write_config(
         project_id = str(uuid.uuid4())
 
         config: dict = {
+            "schema_version": 1,
             "project_id":   project_id,
             "project_name": project_name or os.path.basename(os.getcwd()),
             "org":          org,
@@ -126,6 +129,7 @@ def _write_config(
             "retrieval_weights": {"vector": 0.5, "graph": 0.3, "behaviour": 0.2},
             "model":        DEFAULT_MODEL,
             "autosave_context": autosave_context,
+            "behaviour_tracking": behaviour_tracking,
         }
 
         with open(get_path("config.json"), "w", encoding="utf-8") as f:
@@ -139,11 +143,13 @@ def _write_config(
 
     changed = False
     defaults: list[tuple] = [
+        ("schema_version", 1),
         ("project_id",    str(uuid.uuid4())),
         ("project_name",  project_name or os.path.basename(os.getcwd())),
         ("retrieval_weights", {"vector": 0.5, "graph": 0.3, "behaviour": 0.2}),
         ("model",         DEFAULT_MODEL),
         ("autosave_context", True),
+        ("behaviour_tracking", False),
         ("project",       None),
     ]
     for key, val in defaults:
@@ -706,6 +712,7 @@ def init_project(
     mcp_targets: list[str] | None = None,
     mcp_global: bool = False,
     autosave_context: bool = True,
+    behaviour_tracking: bool = False,
     # deprecated — accepted but ignored for backward compat
     multi_model: bool = True,
     redis: bool = False,
@@ -729,7 +736,8 @@ def init_project(
         print("Already initialized — updating config without losing existing index.")
 
     # ── run wizard (interactive mode) ─────────────────────────────────────────
-    if interactive and not no_index and not non_interactive:
+    _wizard_ran = False
+    if interactive  and not non_interactive:
         try:
             from cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
             wizard_cfg = run_wizard()
@@ -741,6 +749,8 @@ def init_project(
             mcp_targets    = wizard_cfg.get("mcp_targets", mcp_targets or [])
             mcp_global     = wizard_cfg.get("mcp_global", mcp_global)
             autosave_context = wizard_cfg.get("autosave_context", autosave_context)
+            behaviour_tracking = wizard_cfg.get("behaviour_tracking", behaviour_tracking)
+            _wizard_ran = True
         except (ImportError, KeyboardInterrupt):
             # Fall back to non-interactive with defaults
             mcp_targets = mcp_targets or []
@@ -748,8 +758,8 @@ def init_project(
     if mcp_targets is None:
         mcp_targets = []
 
-    # ── autosave_context prompt (non-wizard interactive) ─────────────────────
-    if not non_interactive and sys.stdin.isatty():
+    # ── autosave_context prompt (non-wizard interactive, wizard already asked) ─
+    if not _wizard_ran and not non_interactive and sys.stdin.isatty():
         try:
             _ans = input(
                 "\nAuto-save context for inter-agent sharing? (y/n) [y]: "
@@ -760,7 +770,7 @@ def init_project(
 
     # ── scaffold directories and write config ─────────────────────────────────
     _scaffold_dirs()
-    _init_empty_stores()
+    _init_empty_stores(vector_backend=vector_backend)
     _write_config(
         project_name=project_name,
         org=org,
@@ -768,6 +778,7 @@ def init_project(
         encrypt=encrypt,
         vector_backend=vector_backend,
         autosave_context=autosave_context,
+        behaviour_tracking=behaviour_tracking,
     )
     _write_gitignore()
     _seed_dotenv()
@@ -883,5 +894,18 @@ def init_project(
         except Exception as _sum_exc:  # pylint: disable=broad-except
             print(f"  Summarization skipped ({_sum_exc}).")
             print("  Run 'cognirepo summarize' once an LLM API key is configured.")
+
+    # ── doc ingestion: embed docs/README/git-log into semantic store ──────────
+    try:
+        from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
+        _ing_result = DocIngester(cwd).ingest()
+        _n_chunks = _ing_result.get("chunks", 0)
+        if _n_chunks > 0:
+            print(f"  Semantic store: {_n_chunks} doc chunks embedded.")
+    except Exception:  # pylint: disable=broad-except
+        pass  # best-effort — never block init
+
+    print("\n✓ Done — CogniRepo is ready.")
+    print("  Watcher running in background. Press Ctrl+C to stop it anytime.")
 
     return summary, kg, indexer

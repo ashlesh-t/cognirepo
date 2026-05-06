@@ -30,9 +30,13 @@ def _load_profile(project_dir: str) -> dict | None:
     """Load user profile from behaviour tracker without starting the MCP server."""
     try:
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from config.paths import set_cognirepo_dir, get_cognirepo_dir_for_repo
+        from config.paths import set_cognirepo_dir, get_cognirepo_dir_for_repo, get_path
         cog_dir = get_cognirepo_dir_for_repo(project_dir)
         set_cognirepo_dir(cog_dir)
+        import json as _json
+        with open(get_path("config.json"), encoding="utf-8") as _f:
+            if not _json.load(_f).get("behaviour_tracking", False):
+                return None
         from graph.knowledge_graph import KnowledgeGraph
         from graph.behaviour_tracker import BehaviourTracker
         bt = BehaviourTracker(KnowledgeGraph())
@@ -44,9 +48,13 @@ def _load_profile(project_dir: str) -> dict | None:
 def _record_query(project_dir: str, query_text: str) -> None:
     """Record query text to behaviour tracker for profile building."""
     try:
-        from config.paths import set_cognirepo_dir, get_cognirepo_dir_for_repo
+        from config.paths import set_cognirepo_dir, get_cognirepo_dir_for_repo, get_path
         cog_dir = get_cognirepo_dir_for_repo(project_dir)
         set_cognirepo_dir(cog_dir)
+        import json as _json
+        with open(get_path("config.json"), encoding="utf-8") as _f:
+            if not _json.load(_f).get("behaviour_tracking", False):
+                return
         from graph.knowledge_graph import KnowledgeGraph
         from graph.behaviour_tracker import BehaviourTracker
         bt = BehaviourTracker(KnowledgeGraph())

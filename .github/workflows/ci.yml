@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         # 3.11 = min supported, 3.12 = common prod target.
-        # 3.13 excluded: heavy deps (faiss-cpu, sentence-transformers) often lag
+        # 3.13 excluded: heavy deps (faiss-cpu, fastembed) often lag
         # a release cycle behind on pre-built wheels, causing 15-min source builds.
         python-version: ["3.11", "3.12"]
 
@@ -30,26 +30,26 @@ jobs:
       - name: Install system deps
         run: sudo apt-get install -y libgomp1
 
-      - name: Cache HuggingFace model
+      - name: Cache fastembed model
         uses: actions/cache@v4
         with:
-          # Whole huggingface dir: hub/ blobs + symlink trees stay consistent.
-          path: ~/.cache/huggingface
-          key: hf-all-MiniLM-L6-v2-${{ runner.os }}-${{ matrix.python-version }}
+          # fastembed stores ONNX models under ~/.cache/fastembed
+          path: ~/.cache/fastembed
+          key: fastembed-all-MiniLM-L6-v2-${{ runner.os }}-${{ matrix.python-version }}
 
       - name: Install package + dev extras
         run: pip install -e ".[dev,languages,security]"
         timeout-minutes: 15
 
       - name: Pre-warm embedding model
-        # Download all-MiniLM-L6-v2 once; later steps and tests use the cache.
+        # Download all-MiniLM-L6-v2 ONNX weights once; later steps use the cache.
         # Isolated from bootstrap so a slow download doesn't corrupt the index.
         timeout-minutes: 5
         run: |
           python - <<'PYEOF'
-          from sentence_transformers import SentenceTransformer
-          m = SentenceTransformer("all-MiniLM-L6-v2")
-          _ = m.encode("warmup")
+          from fastembed import TextEmbedding
+          m = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
+          _ = list(m.embed(["warmup"]))
           print("Embedding model ready.")
           PYEOF
 
@@ -77,7 +77,7 @@ jobs:
           PYEOF
           cognirepo index-repo . --no-watch --no-embed
         env:
-          HF_HUB_OFFLINE: "1"
+          FASTEMBED_CACHE_PATH: ~/.cache/fastembed
 
       - name: Run tests
         timeout-minutes: 10
@@ -93,7 +93,7 @@ jobs:
             -x
         env:
           COGNIREPO_DIR: .cognirepo
-          HF_HUB_OFFLINE: "1"
+          FASTEMBED_CACHE_PATH: ~/.cache/fastembed
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4

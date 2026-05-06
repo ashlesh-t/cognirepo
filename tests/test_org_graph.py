@@ -125,3 +125,97 @@ class TestOrgGraphEncryption:
         invalidate_org_graph()
         og = OrgGraph()
         assert og.G.number_of_nodes() == 0
+
+
+# ── OrgGraph edge case tests ──────────────────────────────────────────────────
+
+class TestOrgGraphEdgeCases:
+    def test_link_repos_duplicate_is_idempotent(self, org_graph_path, isolated_cognirepo):
+        """Calling link_repos() twice with the same src/dst must not duplicate edges."""
+        from graph.org_graph import OrgGraph, invalidate_org_graph
+
+        invalidate_org_graph()
+        og = OrgGraph()
+        og.link_repos("/tmp/repo_a", "/tmp/repo_b", kind="IMPORTS")
+        og.link_repos("/tmp/repo_a", "/tmp/repo_b", kind="IMPORTS")
+
+        forward_edges = [
+            (u, v) for u, v, d in og.G.edges(data=True)
+            if d.get("direction") == "forward"
+            and u == os.path.abspath("/tmp/repo_a")
+            and v == os.path.abspath("/tmp/repo_b")
+        ]
+        assert len(forward_edges) == 1
+
+    def test_get_dependencies_returns_correct_shape(self, org_graph_path, isolated_cognirepo):
+        """get_dependencies() returns list of dicts with required keys."""
+        from graph.org_graph import OrgGraph, invalidate_org_graph
+
+        invalidate_org_graph()
+        og = OrgGraph()
+        og.link_repos("/tmp/src_repo", "/tmp/dst_repo", kind="IMPORTS")
+
+        deps = og.get_dependencies("/tmp/src_repo", depth=1)
+        assert len(deps) == 1
+        dep = deps[0]
+        assert "repo" in dep
+        assert "name" in dep
+        assert "kind" in dep
+        assert "depth" in dep
+        assert "auto" in dep
+        assert dep["kind"] == "IMPORTS"
+        assert dep["depth"] == 1
+
+    def test_get_dependents_returns_correct_shape(self, org_graph_path, isolated_cognirepo):
+        """get_dependents() returns repos that depend ON the given repo."""
+        from graph.org_graph import OrgGraph, invalidate_org_graph
+
+        invalidate_org_graph()
+        og = OrgGraph()
+        og.link_repos("/tmp/consumer", "/tmp/library", kind="IMPORTS")
+
+        dependents = og.get_dependents("/tmp/library", depth=1)
+        assert len(dependents) == 1
+        assert dependents[0]["kind"] == "IMPORTS"
+        assert dependents[0]["depth"] == 1
+
+    def test_summary_returns_correct_shape(self, org_graph_path, isolated_cognirepo):
+        """summary() returns dict with repo_count, edge_count, repos."""
+        from graph.org_graph import OrgGraph, invalidate_org_graph
+
+        invalidate_org_graph()
+        og = OrgGraph()
+        og.add_repo("/tmp/repo_x")
+        og.link_repos("/tmp/repo_x", "/tmp/repo_y", kind="CALLS_API")
+
+        s = og.summary()
+        assert "repo_count" in s
+        assert "edge_count" in s
+        assert "repos" in s
+        assert isinstance(s["repos"], list)
+        assert s["repo_count"] >= 1
+        assert s["edge_count"] >= 1
+
+    def test_unknown_edge_kind_defaults_to_discovered(self, org_graph_path, isolated_cognirepo):
+        """link_repos with an invalid edge kind must silently fall back to DISCOVERED."""
+        from graph.org_graph import OrgGraph, invalidate_org_graph
+
+        invalidate_org_graph()
+        og = OrgGraph()
+        og.link_repos("/tmp/a", "/tmp/b", kind="COMPLETELY_INVALID")
+
+        forward_edges = [
+            d for _, _, d in og.G.edges(data=True)
+            if d.get("direction") == "forward"
+        ]
+        assert len(forward_edges) == 1
+        assert forward_edges[0]["kind"] == "DISCOVERED"
+
+    def test_get_dependencies_unregistered_repo_returns_empty(self, org_graph_path, isolated_cognirepo):
+        """Querying deps for a repo not in graph returns [] not exception."""
+        from graph.org_graph import OrgGraph, invalidate_org_graph
+
+        invalidate_org_graph()
+        og = OrgGraph()
+        deps = og.get_dependencies("/tmp/nonexistent_repo_xyz", depth=2)
+        assert deps == []

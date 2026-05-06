@@ -149,10 +149,10 @@ def _run_doctor(
     fake_bm25_mod.BACKEND = "python"
     monkeypatch.setitem(sys.modules, "_bm25", fake_bm25_mod)
 
-    # ── stub sentence-transformers (new check 13) ─────────────────────────────
-    fake_st_mod = types.ModuleType("sentence_transformers")
-    fake_st_mod.__version__ = "3.0.0"
-    monkeypatch.setitem(sys.modules, "sentence_transformers", fake_st_mod)
+    # ── stub fastembed (check 13) ─────────────────────────────────────────────
+    fake_fe_mod = types.ModuleType("fastembed")
+    fake_fe_mod.__version__ = "0.3.6"
+    monkeypatch.setitem(sys.modules, "fastembed", fake_fe_mod)
 
     # ── stub server.mcp_server (new check 14) ─────────────────────────────────
     fake_mcp_server_mod = types.ModuleType("server.mcp_server")
@@ -167,7 +167,7 @@ def _run_doctor(
         "org_wide_search", "org_search", "list_org_context", "link_repos",
         "search_docs",
         "get_user_profile", "record_error", "get_error_patterns",
-        "record_user_preference",
+        "record_user_preference", "supersede_learning", "get_agent_bootstrap",
     }
     monkeypatch.setitem(sys.modules, "server", types.ModuleType("server"))
     monkeypatch.setitem(sys.modules, "server.mcp_server", fake_mcp_server_mod)

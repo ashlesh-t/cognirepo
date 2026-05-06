@@ -35,7 +35,7 @@ import traceback
 from dataclasses import dataclass
 from typing import Generator
 
-from orchestrator.classifier import ClassifierResult, classify
+from orchestrator.classifier import ClassifierResult, classify, DEFAULT_MODELS_BY_PROVIDER
 from orchestrator.context_builder import ContextBundle, build as build_context
 from orchestrator.model_adapters.anthropic_adapter import ModelResponse
 from orchestrator.model_adapters.errors import ModelCallError
@@ -247,12 +247,10 @@ def route(
 #: Priority order for provider fallback (most capable first)
 _PROVIDER_PRIORITY = ["anthropic", "gemini", "grok", "openai"]
 
-#: Default model IDs used when falling back to a provider not in the classifier result
+#: Default model IDs per provider — sourced from orchestrator/classifier.py (single source of truth)
 _PROVIDER_DEFAULT_MODELS: dict[str, str] = {
-    "anthropic": "claude-haiku-4-5",   # cheapest model for STANDARD promotion
-    "gemini": "gemini-2.0-flash",
-    "grok": "grok-beta",
-    "openai": "gpt-4o-mini",
+    **DEFAULT_MODELS_BY_PROVIDER,
+    "grok": "grok-beta",  # grok not in base classifier; extend here
 }
 
 
@@ -412,30 +410,18 @@ def try_local_resolve(query: str, context_bundle) -> str | None:
 
     Patterns handled
     ----------------
-    - CogniRepo usage questions    → docs FAISS index (Tier-1, score ≥ 0.6)
     - "where is <symbol>"         → reverse-index lookup
     - "who calls <function>"      → call-graph predecessors in knowledge graph
     - "list files" / "what files" → AST index file list
     - "graph stats" / "how many nodes" → graph node/edge count
     - "recent history" / "what did I do" → last 5 episodic events
+    - CogniRepo usage questions    → docs FAISS index (Tier-1, score ≥ 0.6)
     """
     import re  # pylint: disable=import-outside-toplevel
 
-    # ── Tier-1: embedded docs index (CogniRepo usage questions) ─────────────
-    try:
-        from cli.docs_index import ensure_docs_index, _CONFIDENCE_THRESHOLD  # pylint: disable=import-outside-toplevel
-        _docs_idx = ensure_docs_index()
-        if _docs_idx is not None and _docs_idx.is_docs_query(query):
-            results = _docs_idx.answer(query, top_k=3)
-            if results and results[0]["score"] >= _CONFIDENCE_THRESHOLD:
-                top = results[0]
-                answer = top["text"]
-                footer = f"\n\n→ see: {top['file']} § {top['section']}"
-                return answer + footer
-    except Exception:  # pylint: disable=broad-except
-        pass  # never break routing on docs-index errors
-
     q = query.strip().lower()
+
+    # ── Tier-0: exact patterns ───────────────────────────────────────────────
 
     # "where is <symbol>" / "where can i find <symbol>"
     m = re.match(r"where (?:is|can i find)\s+(.+?)[\?\.]*$", q)
@@ -458,6 +444,21 @@ def try_local_resolve(query: str, context_bundle) -> str | None:
     # "recent history" / "what did i do" / "show history"
     if re.search(r"\b(recent history|what did i do|show history)\b", q):
         return _recent_history()
+
+    # ── Tier-1: embedded docs index (CogniRepo usage questions) ─────────────
+    # Relegated to catch-all because "graph" is a docs keyword and would swallow "graph stats"
+    try:
+        from cli.docs_index import ensure_docs_index, _CONFIDENCE_THRESHOLD  # pylint: disable=import-outside-toplevel
+        _docs_idx = ensure_docs_index()
+        if _docs_idx is not None and _docs_idx.is_docs_query(query):
+            results = _docs_idx.answer(query, top_k=3)
+            if results and results[0]["score"] >= _CONFIDENCE_THRESHOLD:
+                top = results[0]
+                answer = top["text"]
+                footer = f"\n\n→ see: {top['file']} § {top['section']}"
+                return answer + footer
+    except Exception:  # pylint: disable=broad-except
+        pass  # never break routing on docs-index errors
 
     return None
 

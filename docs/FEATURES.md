@@ -312,7 +312,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 |----------|--------|---------|
 | `README.md` | ✅ | Root |
 | `ARCHITECTURE.md` | ✅ | Root + `docs/ARCHITECTURE.md` |
-| `docs/MCP_TOOLS.md` | ✅ | All 30 MCP tools with signatures and examples |
+| `docs/MCP_TOOLS.md` | ✅ | All 32 MCP tools with signatures and examples |
 | `docs/CLI_REFERENCE.md` | ✅ | All commands with flags |
 | `docs/CONFIGURATION.md` | ✅ | config.json fields, env vars, storage layout |
 | `docs/CONTRIBUTING.md` | ✅ | Dev setup, add-tool and add-language walkthroughs |
@@ -359,3 +359,32 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | CogniRepo Cloud sync | 🔲 | All storage is strictly local |
 | Fine-tuned embeddings | 🔲 | Uses `all-MiniLM-L6-v2` (general purpose); no project-specific fine-tuning |
 | Plugin system | 🔲 | No plugin API; extend by forking |
+| Automatic CALLS_API edge detection | 🔲 | CogniRepo detects **IMPORTS edges only** (pyproject.toml, package.json, go.mod, Cargo.toml, requirements.txt). CALLS_API and SHARES_SCHEMA must be declared manually via `link_repos()` MCP tool or `cognirepo org link-repos`. |
+| Automatic SHARES_SCHEMA detection | 🔲 | Same as above — manual declaration required. |
+
+---
+
+## 17. Microservices Setup Reference
+
+Register a microservice and its relationships:
+
+```bash
+# Register child repo with metadata
+cognirepo init --parent-repo /path/to/monorepo --service-type rest_api --port 8080 --api-base-url /api/v1
+
+# Declare edges manually (CALLS_API/SHARES_SCHEMA are never auto-detected)
+# Via MCP tool:
+link_repos(src="/path/to/api", dst="/path/to/auth", relationship="calls_api")
+# Via CLI:
+cognirepo org link-repos /path/to/api /path/to/auth --type CALLS_API
+```
+
+**Edge type auto-detection table:**
+
+| Edge Type | Auto-detected? | How |
+|-----------|---------------|-----|
+| `IMPORTS` | ✅ Yes | Scans pyproject.toml, package.json, go.mod, Cargo.toml, requirements.txt |
+| `CALLS_API` | ❌ No | Must call `link_repos()` manually |
+| `SHARES_SCHEMA` | ❌ No | Must call `link_repos()` manually |
+| `CHILD_OF` | ✅ Yes | Set via `cognirepo init --parent-repo` |
+| `DISCOVERED` | ✅ Yes | Added by AI agents dynamically via `link_repos()` |

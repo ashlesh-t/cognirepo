@@ -17,36 +17,127 @@ so tests never need a real OS keychain.
 """
 from __future__ import annotations
 
+import gc
 import json
 import os
+from unittest.mock import MagicMock
 
 import bcrypt
 import psutil
 import pytest
+import numpy as np
 
-_MEMORY_LIMIT_GB = 5.0
-_MEMORY_WARN_GB = 4.5
+# Calculate 70% of total RAM for the circuit breaker
+_TOTAL_RAM = psutil.virtual_memory().total
+_MEMORY_LIMIT_BYTES = int(_TOTAL_RAM * 0.7)
+_MEMORY_LIMIT_GB = _MEMORY_LIMIT_BYTES / (1024 ** 3)
 _proc = psutil.Process(os.getpid())
+
+
+@pytest.fixture(autouse=True, scope="session")
+def mock_embeddings():
+    """
+    Globally mock fastembed to prevent ONNX model downloads/loading in tests.
+    Returns deterministic one-hot vectors based on keywords to ensure 
+    predictable ranking for tests that rely on similarity.
+    """
+    import numpy as np
+
+    with MagicMock() as mock_engine:
+        def fake_embed(texts):
+            results = []
+            # List of keywords that tests look for. 
+            # Order matters: we pick the FIRST matching keyword to define the vector.
+            keywords = [
+                "jwt", "auth", "authentication", "docker", "python", 
+                "memory", "graph", "context", "store", "retrieve", 
+                "implementation", "setup", "verify", "token"
+            ]
+            
+            for text in texts:
+                vec = np.zeros(384, dtype="float32")
+                found = False
+                for i, kw in enumerate(keywords):
+                    if kw in text.lower():
+                        # One-hot encoding for the keyword
+                        vec[i] = 1.0
+                        found = True
+                        break
+                
+                if not found:
+                    # Fallback for texts with no keywords: use hash of first char
+                    if text:
+                        idx = (ord(text[0]) % 100) + len(keywords)
+                        vec[idx] = 1.0
+                    else:
+                        vec[0] = 1.0
+                
+                results.append(vec)
+            return iter(results)
+
+        mock_engine.embed.side_effect = fake_embed
+        
+        with MagicMock() as mock_class:
+            mock_class.return_value = mock_engine
+            
+            # Patch fastembed.TextEmbedding
+            with pytest.MonkeyPatch().context() as mp:
+                try:
+                    import fastembed
+                    mp.setattr("fastembed.TextEmbedding", mock_class)
+                except ImportError:
+                    pass
+                yield
 
 
 @pytest.fixture(autouse=True)
 def memory_circuit_breaker():
-    """Abort test session if process RSS exceeds 5 GB to prevent OOM crashes."""
-    rss_gb = _proc.memory_info().rss / 1024 ** 3
-    if rss_gb >= _MEMORY_LIMIT_GB:
+    """Abort test session if process RSS exceeds 70% of total RAM."""
+    rss_bytes = _proc.memory_info().rss
+    if rss_bytes >= _MEMORY_LIMIT_BYTES:
         pytest.exit(
-            f"Memory circuit breaker: {rss_gb:.2f} GB >= {_MEMORY_LIMIT_GB} GB limit. "
-            "Aborting to prevent OOM.",
+            f"Memory circuit breaker: {rss_bytes / 1024**3:.2f} GB >= {_MEMORY_LIMIT_GB:.2f} GB (70% RAM). "
+            "Aborting to prevent system crash.",
             returncode=3,
         )
-    elif rss_gb >= _MEMORY_WARN_GB:
-        import warnings
-        warnings.warn(
-            f"Memory usage {rss_gb:.2f} GB is approaching the {_MEMORY_LIMIT_GB} GB limit.",
-            ResourceWarning,
-            stacklevel=2,
-        )
     yield
+    gc.collect()
+
+
+@pytest.fixture(autouse=True)
+def _reset_singletons():
+    """
+    Reset module-level singletons that accumulate memory across tests.
+
+    Each test gets isolated tmp_path storage, but Python module globals
+    (FAISS indices, BM25 corpora, hybrid caches, learning store, circuit
+    breaker) persist for the process lifetime. Nulling them here lets
+    CPython and C-extension allocators reclaim memory before the next test.
+    """
+    yield
+    _null_attrs = [
+        # (module_path, attr_name, reset_value)
+        ("memory.embeddings",        "MODEL",       None),
+        ("memory.circuit_breaker",   "_BREAKER",    None),
+        ("memory.episodic_memory",   "_BM25_CORPUS", None),
+        ("memory.episodic_memory",   "_BM25_INDEX",  None),
+        ("memory.learning_store",    "_STORE",      None),
+        ("retrieval.hybrid",         "_HYBRID_CACHE", {}),
+        ("retrieval.hybrid",         "_IN_FLIGHT",   {}),
+        # Reset MCP server singletons so tests don't share state across execution order
+        ("server.mcp_server",        "_GRAPH",      None),
+        ("server.mcp_server",        "_INDEXER",    None),
+    ]
+    for _mod_path, _attr, _reset_val in _null_attrs:
+        try:
+            import importlib
+            _mod = importlib.import_module(_mod_path)
+            if hasattr(_mod, _attr):
+                setattr(_mod, _attr, _reset_val)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+    gc.collect()
 
 
 # Secrets generated at import time — never stored as literals in source.

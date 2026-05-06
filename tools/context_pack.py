@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Optional
 
 from config.lock import store_lock
-from retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter, is_faiss_cold, MAX_QUERY_LEN
+from retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter, is_index_cold, MAX_QUERY_LEN
 from retrieval.query_enhancer import enhance_query
 
 _logger = logging.getLogger(__name__)
@@ -160,19 +160,25 @@ def context_pack(
 
     Returns
     -------
+    Always returns all 5 base keys:
     {
         "query": str,
+        "status": "ok" | "no_confident_match" | "index_empty",
         "token_count": int,
         "sections": [{"type", "source", "score", "content"}, ...],
         "truncated": bool
     }
 
-    On no confident match:
-    {
-        "status": "no_confident_match",
+    On no confident match, additionally includes:
         "best_score": float,
         "suggestion": str
-    }
+
+    On index_empty, additionally includes:
+        "suggestion": str
+
+    Optional keys when query enhancement fires:
+        "enhanced_query": str,
+        "enhancement_method": str
     """
     # ── file-mode: return all indexed context for a specific file ────────────
     if file:
@@ -204,7 +210,7 @@ def context_pack(
     if include_symbols:
         candidates = hybrid_retrieve(retrieval_query, top_k=20)
 
-        _cold_index = not candidates and is_faiss_cold()
+        _cold_index = not candidates and is_index_cold()
 
         # Two-bucket split: code_index vs doc_index
         # code_hits: AST symbols (source == "ast") — always returned for code queries
@@ -228,6 +234,9 @@ def context_pack(
                 result = {
                     "query": query,
                     "status": "no_confident_match",
+                    "token_count": 0,
+                    "sections": [],
+                    "truncated": False,
                     "best_score": round(max(best_score, best_semantic), 4),
                     "suggestion": (
                         "run `cognirepo index-repo .` or use a more specific symbol name. "
@@ -333,6 +342,7 @@ def context_pack(
     total_tokens = max_tokens - token_budget
     result: dict = {
         "query": query,
+        "status": "ok",
         "token_count": total_tokens,
         "sections": sections,
         "truncated": truncated,

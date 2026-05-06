@@ -84,23 +84,23 @@ class DocIngester:
 
         try:
             from memory.embeddings import get_model          # pylint: disable=import-outside-toplevel
-            from vector_db.local_vector_db import LocalVectorDB  # pylint: disable=import-outside-toplevel
+            from vector_db.factory import get_vector_db      # pylint: disable=import-outside-toplevel
         except ImportError as exc:
             log.warning("DocIngester: cannot import dependencies (%s) — skipping", exc)
             return {"chunks": 0, "files": 0}
 
         model = get_model()
-        db = LocalVectorDB()
+        db = get_vector_db()
 
-        stored = 0
+        batch: list[tuple] = []
         for chunk in chunks:
             try:
-                vec = model.encode(chunk["text"]).astype("float32")
-                db.add(vec, chunk["text"], importance=0.6, source="init_doc")
-                stored += 1
+                vec = next(iter(model.embed([chunk["text"]]))).astype("float32")
+                batch.append((vec, chunk["text"], 0.6, "init_doc"))
             except Exception as exc:  # pylint: disable=broad-except
                 log.debug("DocIngester: failed to embed chunk: %s", exc)
 
+        stored = db.add_batch(batch)
         files_seen = len({c["source"] for c in chunks})
         log.info("DocIngester: stored %d chunks from %d source(s)", stored, files_seen)
         return {"chunks": stored, "files": files_seen}
