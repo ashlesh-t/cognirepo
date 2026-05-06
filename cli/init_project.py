@@ -895,4 +895,17 @@ def init_project(
             print(f"  Summarization skipped ({_sum_exc}).")
             print("  Run 'cognirepo summarize' once an LLM API key is configured.")
 
+    # ── doc ingestion: embed docs/README/git-log into semantic store ──────────
+    try:
+        from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
+        _ing_result = DocIngester(cwd).ingest()
+        _n_chunks = _ing_result.get("chunks", 0)
+        if _n_chunks > 0:
+            print(f"  Semantic store: {_n_chunks} doc chunks embedded.")
+    except Exception:  # pylint: disable=broad-except
+        pass  # best-effort — never block init
+
+    print("\n✓ Done — CogniRepo is ready.")
+    print("  Watcher running in background. Press Ctrl+C to stop it anytime.")
+
     return summary, kg, indexer
