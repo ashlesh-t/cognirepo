@@ -14,6 +14,8 @@ Model: sentence-transformers/all-MiniLM-L6-v2, dim=384.
 import concurrent.futures
 import logging
 import os
+import subprocess
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +32,15 @@ def get_model():
     if MODEL is None:
         logger.info("Loading embedding model (first use — ~2-5s)...")
         # Lazy import — keeps fastembed/ONNX out of server startup path
-        from fastembed import TextEmbedding  # pylint: disable=import-outside-toplevel
+        try:
+            from fastembed import TextEmbedding  # pylint: disable=import-outside-toplevel
+        except ModuleNotFoundError:
+            logger.info("fastembed not found — installing into %s...", sys.executable)
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "fastembed>=0.3.6"],
+                stdout=subprocess.DEVNULL,
+            )
+            from fastembed import TextEmbedding  # pylint: disable=import-outside-toplevel
         MODEL = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
 
     return MODEL

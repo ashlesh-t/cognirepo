@@ -905,13 +905,20 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     """
     import shutil as _shutil  # pylint: disable=import-outside-toplevel
     import subprocess as _subprocess  # pylint: disable=import-outside-toplevel
+    from pathlib import Path  # pylint: disable=import-outside-toplevel
     cwd = os.getcwd()
     project_name = os.path.basename(cwd)
+
+    # Prefer the cognirepo binary co-located with the running Python interpreter
+    # so the subprocess uses the same venv/environment (and its installed deps).
+    _bin_dir = Path(sys.executable).parent
+    _colocated = _bin_dir / "cognirepo"
+    _cognirepo_cmd = str(_colocated) if _colocated.exists() else "cognirepo"
 
     # ── Step 1: run cognirepo init as a subprocess so the user sees the full wizard ──
     print(f"\n[1/5] Running cognirepo init for '{project_name}'...")
     try:
-        result = _subprocess.run(["cognirepo", "init"], check=False)
+        result = _subprocess.run([_cognirepo_cmd, "init"], check=False)
         if result.returncode != 0:
             print("  cognirepo init exited non-zero — setup cancelled.")
             return
