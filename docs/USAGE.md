@@ -22,20 +22,43 @@ Complete documentation for every command, MCP tool, and configuration option.
 
 ## Installation
 
-### pip (recommended)
+### pipx (recommended — one command, global, works on all distros)
 
 ```bash
-pip install cognirepo                      # core — Python only, no extras
-pip install cognirepo[languages]           # + multi-language AST indexing (JS, TS, Java, Go, Rust, C++)
-pip install cognirepo[security]            # + encryption at rest (Fernet + OS keychain)
-pip install cognirepo[dev]                 # + dev tools (pytest, bandit, etc.)
-pip install cognirepo[languages,security]  # everything
+pipx install cognirepo
+```
+
+`cognirepo setup` installs optional extras (languages, security, providers) automatically
+via `pipx inject` when you enable them in the wizard. No need to specify extras upfront.
+
+> **Arch Linux / Debian 12+ / Ubuntu 24.04+:** Do NOT `pip install` into system Python.
+> These distros enforce PEP 668. Use pipx or a virtual environment.
+
+Install pipx if needed:
+```bash
+sudo pacman -S python-pipx   # Arch
+sudo apt install pipx         # Debian/Ubuntu
+brew install pipx             # macOS
+```
+
+### pip (inside a virtual environment)
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install cognirepo
+# extras (languages, security, providers) are installed by the setup wizard
 ```
 
 ### From source
 
 ```bash
 git clone https://github.com/ashlesh-t/cognirepo && cd cognirepo
+
+# Option A — pipx (global, isolated, recommended):
+
+pipx install -e '.[dev,languages]'
+
+# Option B — inside a venv:
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -e ".[dev,languages]"
 

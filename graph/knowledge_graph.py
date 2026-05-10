@@ -81,6 +81,7 @@ class NodeType:  # pylint: disable=too-few-public-methods
     USER_ACTION = "USER_ACTION"
     MEMORY = "MEMORY"          # cross-agent memory nodes (synced from Claude/Gemini/etc.)
     ERROR = "ERROR"            # error pattern nodes for tracking recurring mistakes
+    ENDPOINT = "ENDPOINT"      # exposed HTTP/gRPC endpoint (method + path pattern)
 
 
 class EdgeType:  # pylint: disable=too-few-public-methods
@@ -93,6 +94,8 @@ class EdgeType:  # pylint: disable=too-few-public-methods
     CO_OCCURS = "CO_OCCURS"
     IMPORTS = "IMPORTS"        # file A imports module/file B
     INHERITS = "INHERITS"      # class A inherits from class B
+    EXPOSES = "EXPOSES"        # function → ENDPOINT node (this function handles this route)
+    CALLS_ENDPOINT = "CALLS_ENDPOINT"  # caller function → remote ENDPOINT stub (cross-service)
 
 
 class KnowledgeGraph:

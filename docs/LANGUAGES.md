@@ -21,7 +21,7 @@ pip install cognirepo[languages]     # all supported languages
 |----------|------------|--------|-----------------|
 | Python | `.py` | Stable — built-in | tree-sitter-python (optional, stdlib fallback) |
 | JavaScript | `.js` `.jsx` | Stable | tree-sitter-javascript |
-| TypeScript | `.ts` `.tsx` | Stable | tree-sitter-javascript |
+| TypeScript | `.ts` `.tsx` | Stable | tree-sitter-typescript |
 | Java | `.java` | Stable | tree-sitter-java |
 | Go | `.go` | Stable | tree-sitter-go |
 | Rust | `.rs` | Stable | tree-sitter-rust |

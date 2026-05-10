@@ -63,6 +63,7 @@ Discord = "https://discord.com/channels/1488386981917360289/1488387271190380636"
 languages = [
     "tree-sitter-python>=0.23",
     "tree-sitter-javascript>=0.23",
+    "tree-sitter-typescript>=0.23",
     "tree-sitter-java>=0.23",
     "tree-sitter-cpp>=0.23",
     "tree-sitter-go>=0.23",

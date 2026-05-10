@@ -221,9 +221,19 @@ class SummarizationEngine:
 
         print(f"Building summaries for {len(all_files)} indexed files (local, no API)…")
 
+        try:
+            from tqdm import tqdm as _tqdm  # pylint: disable=import-outside-toplevel
+        except ImportError:
+            _tqdm = None
+
+        def _maybe_tqdm(iterable, **kwargs):
+            return _tqdm(iterable, **kwargs) if _tqdm else iterable
+
         # ── Level 1: file summaries ───────────────────────────────────────────
         file_summaries: dict[str, dict] = {}
-        for rel_path, file_data in all_files.items():
+        for rel_path, file_data in _maybe_tqdm(
+            all_files.items(), desc="File summaries", unit="file", dynamic_ncols=True
+        ):
             fs = _build_file_summary(rel_path, file_data)
             if fs["symbol_count"] > 0:
                 file_summaries[rel_path] = fs
@@ -238,7 +248,9 @@ class SummarizationEngine:
             dir_to_files[parent].append(fs)
 
         dir_summaries: dict[str, dict] = {}
-        for rel_dir, child_files in dir_to_files.items():
+        for rel_dir, child_files in _maybe_tqdm(
+            dir_to_files.items(), desc="Dir summaries", unit="dir", dynamic_ncols=True
+        ):
             dir_summaries[rel_dir] = _build_dir_summary(rel_dir, child_files)
 
         # ── Level 3: repo summary ─────────────────────────────────────────────
@@ -289,7 +301,18 @@ class SummarizationEngine:
             model = get_model()
             indexer._ensure_faiss()
 
-            for rel_path, fs in file_summaries.items():
+            try:
+                from tqdm import tqdm as _tqdm  # pylint: disable=import-outside-toplevel
+                _embed_iter = _tqdm(
+                    file_summaries.items(),
+                    desc="Embedding summaries",
+                    unit="file",
+                    dynamic_ncols=True,
+                )
+            except ImportError:
+                _embed_iter = file_summaries.items()
+
+            for rel_path, fs in _embed_iter:
                 # Build embed text from structured summary
                 parts = ["FILE_SUMMARY", os.path.basename(rel_path)]
                 if fs.get("purpose"):

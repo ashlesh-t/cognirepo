@@ -26,8 +26,9 @@ def _require_deps():
         return Fernet, keyring
     except ImportError as exc:
         raise ImportError(
-            "Encryption requires additional packages. "
-            "Run: pip install 'cognirepo[security]'"
+            "Encryption requires additional packages.\n"
+            "  pipx (recommended):  pipx inject cognirepo keyring cryptography\n"
+            "  venv/pip:            pip install 'cognirepo[security]'"
         ) from exc
 
 

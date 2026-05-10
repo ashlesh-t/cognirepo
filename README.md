@@ -145,23 +145,55 @@ graph/behaviour_tracker.py                  DEFINED_IN, CO_OCCURS,
 
 ### Install
 
+#### Recommended — pipx (global, one command, works on all distros)
+
 ```bash
-# Recommended — ONNX/fastembed, no GPU/CUDA required (~50 MB install):
-pip install 'cognirepo[languages]'
+pipx install cognirepo
+```
 
-# For encryption at rest:
-pip install 'cognirepo[languages,security]'
+That's it. `cognirepo setup` handles the rest — it installs optional extras (languages,
+security, providers) via `pipx inject` automatically when you enable them in the wizard.
 
-# With model routing (cognirepo ask — needs an API key):
-pip install 'cognirepo[languages,providers]'
+> **Why pipx?** It creates an isolated venv for cognirepo automatically so `fastembed`
+> and all deps install cleanly. The `cognirepo` command is then globally available in
+> every directory — no per-repo venv needed.
+>
+> **Arch Linux / Debian 12+ / Ubuntu 24.04+:** Do NOT `pip install` into system Python.
+> These distros enforce PEP 668 and block system-wide pip installs. Use pipx.
 
-# Full development install:
-pip install -e '.[dev,security,languages]'
+#### Install pipx first (if needed)
+
+```bash
+# Arch Linux
+sudo pacman -S python-pipx
+
+# Debian / Ubuntu
+sudo apt install pipx
+
+# macOS
+brew install pipx
+
+# Any platform (fallback)
+pip install pipx --user
+```
+
+#### Inside a virtual environment (alternative)
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install cognirepo
+# extras are installed by the setup wizard automatically
+```
+
+#### Development install (from source)
+
+```bash
+pipx install -e '.[dev,security,languages]'
+# or inside a venv: pip install -e '.[dev,security,languages]'
 ```
 
 > **Note:** CPU-only embeddings are the default (fastembed/ONNX, no PyTorch/CUDA required).
-> Use `pip install 'cognirepo[gpu]'` and install torch separately for GPU acceleration:
-> `pip install torch --index-url https://download.pytorch.org/whl/cu121`
+> For GPU: `pipx inject cognirepo 'cognirepo[gpu]'` then install torch separately.
 
 ### Run
 
