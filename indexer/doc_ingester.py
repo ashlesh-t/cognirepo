@@ -84,13 +84,13 @@ class DocIngester:
 
         try:
             from memory.embeddings import get_model          # pylint: disable=import-outside-toplevel
-            from vector_db.factory import get_vector_db      # pylint: disable=import-outside-toplevel
+            from vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
         except ImportError as exc:
             log.warning("DocIngester: cannot import dependencies (%s) — skipping", exc)
             return {"chunks": 0, "files": 0}
 
         model = get_model()
-        db = get_vector_db()
+        db = get_vector_adapter()
 
         batch: list[tuple] = []
         for chunk in chunks:

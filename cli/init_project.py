@@ -68,6 +68,13 @@ def _seed_dotenv() -> None:
 
 
 def _scaffold_dirs() -> None:
+    # Always create local .cognirepo/ FIRST so all subsequent get_path() calls
+    # resolve to the local dir (not the global fallback). Without this, a brand-new
+    # repo has no local .cognirepo/ and config.json lands at ~/.cognirepo/storage/<hash>/
+    # while a later get_path() call (after some other code creates the local dir)
+    # resolves locally — causing config.json missing in doctor.
+    local_dir = os.path.join(os.getcwd(), ".cognirepo")
+    os.makedirs(local_dir, exist_ok=True)
     os.makedirs(get_path("memory"), exist_ok=True)
     os.makedirs(get_path("docs"), exist_ok=True)
     os.makedirs(get_path("index"), exist_ok=True)
@@ -92,6 +99,14 @@ def _init_empty_stores(vector_backend: str = "faiss") -> None:
                 faiss.write_index(_idx, idx_file)
             except Exception:  # pylint: disable=broad-except
                 pass  # faiss not installed — skip; doctor will show clear hint
+    elif vector_backend == "chroma":
+        # Eagerly create the ChromaDB directory so `doctor` finds it immediately
+        # after init (ChromaDB is otherwise lazy — created on first embedding).
+        try:
+            from vector_db.chroma_adapter import ChromaDBAdapter  # pylint: disable=import-outside-toplevel
+            ChromaDBAdapter()  # triggers chromadb.PersistentClient → creates the directory
+        except Exception:  # pylint: disable=broad-except
+            pass  # chromadb not installed — doctor will surface the missing package
 
     # Empty episodic log
     ep_file = get_path("memory/episodic.json")
@@ -703,6 +718,7 @@ def init_project(
     no_index: bool = False,
     interactive: bool = True,
     non_interactive: bool = False,
+    no_graph: bool = False,
     # wizard-supplied overrides (used when interactive=False or wizard ran)
     project_name: str = "",
     org: str | None = None,
@@ -740,7 +756,9 @@ def init_project(
     if interactive  and not non_interactive:
         try:
             from cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
-            wizard_cfg = run_wizard()
+            wizard_cfg = None
+            while wizard_cfg is None:
+                wizard_cfg = run_wizard()
             project_name   = wizard_cfg.get("project_name", project_name)
             org            = wizard_cfg.get("org", org)
             project        = wizard_cfg.get("project", project)
@@ -851,11 +869,56 @@ def init_project(
     except ImportError:
         _ctx = None
 
-    summary = indexer.index_repo(cwd)
+    summary = indexer.index_repo(cwd, skip_graph=True if no_graph else None)
     if _ctx is not None:
         _ctx.close()
 
-    kg.save()
+    # Free large in-memory objects before graph serialization to reduce RSS peak.
+    indexer.free_large_objects()
+
+    try:
+        kg.save()
+    except Exception as _kg_exc:  # pylint: disable=broad-except
+        _exc_name = type(_kg_exc).__name__
+        if "CircuitOpen" in _exc_name or "CircuitBreaker" in _exc_name:
+            print(
+                f"  ⚠  Knowledge graph not saved (memory limit hit). "
+                "AST index and embeddings are intact — cognirepo will still work. "
+                "Use --no-graph to disable graph, or set "
+                "COGNIREPO_CB_RSS_LIMIT_MB=4000 to raise the limit."
+            )
+        else:
+            raise
+
+    # ── auto-launch Tier 2 background pass if pending queue was written ──────
+    try:
+        from config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
+        import subprocess as _sp  # pylint: disable=import-outside-toplevel
+        from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
+        _t2_queue = pending_tier2_path()
+        if os.path.exists(_t2_queue):
+            import json as _json  # pylint: disable=import-outside-toplevel
+            with open(_t2_queue, encoding="utf-8") as _t2f:
+                _t2_data = _json.load(_t2f)
+            _t2_count = len(_t2_data.get("files", []))
+            _embed_pending = _t2_data.get("embed_pending", False)
+            if _t2_count > 0 or _embed_pending:
+                _bin_dir = _Path(sys.executable).parent
+                _colocated = _bin_dir / "cognirepo"
+                _cogcmd = str(_colocated) if _colocated.exists() else "cognirepo"
+                _sp.Popen(
+                    [_cogcmd, "index-repo", cwd, "--tier", "2", "--no-watch"],
+                    stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                    start_new_session=True,
+                )
+                _what = []
+                if _t2_count > 0:
+                    _what.append(f"{_t2_count:,} files")
+                if _embed_pending:
+                    _what.append("FAISS embeddings")
+                print(f"  Tier 2: {' + '.join(_what)} queued — background indexing started.")
+    except Exception:  # pylint: disable=broad-except
+        pass
 
     # seed behaviour weights from git history (fast — no embedding, just git log)
     try:

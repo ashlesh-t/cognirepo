@@ -713,6 +713,13 @@ def lookup_symbol(name: str, include_org: bool = False, repo_path: str | None = 
                 return []
 
         locations = idx.lookup_symbol(name)
+        if not locations:
+            try:
+                from indexer.on_demand import expand_on_access_for_symbol  # pylint: disable=import-outside-toplevel
+                if expand_on_access_for_symbol(name, _root, idx):
+                    locations = idx.lookup_symbol(name)
+            except Exception:  # pylint: disable=broad-except
+                pass
         result = []
         for loc in locations:
             file_path = loc["file"]
@@ -934,6 +941,65 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
     }
     _behaviour_record_query(function_name, final)
     return final
+
+
+@mcp.tool()
+def find_symbol_path(
+    from_symbol: str,
+    to_symbol: str,
+    from_repo: str = "",
+    to_repo: str = "",
+) -> dict:
+    """
+    Find the shortest call-graph path between two symbols, crossing service
+    boundaries via the org graph when needed.
+
+    Uses weighted Dijkstra (w=1.0→cost 1, w=0.75→1.3, w=0.5→2.0,
+    cross-service org edge→5) to prefer traversal through core entry-point
+    symbols over indirect paths.
+
+    from_symbol : Name of the source symbol.
+    to_symbol   : Name of the destination symbol.
+    from_repo   : Absolute path to source repo (auto-detected if omitted).
+    to_repo     : Absolute path to destination repo (auto-detected if omitted).
+
+    Returns {path, hops, crosses_services, services_traversed} or {error}.
+    """
+    from graph.cross_service_path import find_symbol_path as _find_path  # pylint: disable=import-outside-toplevel
+    return _find_path(
+        from_symbol=from_symbol,
+        to_symbol=to_symbol,
+        from_repo=from_repo or None,
+        to_repo=to_repo or None,
+    )
+
+
+@mcp.tool()
+def get_service_endpoints(repo_path: str = "") -> dict:
+    """
+    Return the HTTP endpoint registry for a service (from endpoints.json).
+
+    Endpoints are populated by cognirepo index-repo and include method,
+    path pattern, handler function name, file, and framework.
+
+    repo_path: absolute path to the target repo (defaults to current project).
+
+    Returns {endpoints, count, scanned_at} or {endpoints: [], count: 0}.
+    """
+    from indexer.endpoint_scanner import load_endpoints  # pylint: disable=import-outside-toplevel
+    from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+
+    _target = os.path.abspath(repo_path) if repo_path else os.getcwd()
+    try:
+        _sib_dir = get_cognirepo_dir_for_repo(_target)
+        _token = _CTX_DIR.set(_sib_dir)
+        try:
+            eps = load_endpoints(_target)
+        finally:
+            _CTX_DIR.reset(_token)
+    except Exception:  # pylint: disable=broad-except
+        eps = []
+    return {"endpoints": eps, "count": len(eps), "repo": os.path.basename(_target)}
 
 
 @mcp.tool()
@@ -2064,6 +2130,7 @@ _REGISTERED_TOOLS: set[str] = {
     "cross_repo_traverse", "episodic_search", "org_wide_search", "list_org_context",
     "get_user_profile", "record_error", "get_error_patterns", "link_repos",
     "record_user_preference", "supersede_learning", "get_agent_bootstrap",
+    "find_symbol_path", "get_service_endpoints",
 }
 
 

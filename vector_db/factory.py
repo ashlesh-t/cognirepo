@@ -58,6 +58,5 @@ def _find_config() -> Path | None:
 
 def _get_vector_db_path() -> Path:
     config = _find_config()
-    if config:
-        return config.parent / "vector_db"
-    return Path.home() / ".cognirepo" / "vector_db"
+    base = config.parent / "vector_db" if config else Path.home() / ".cognirepo" / "vector_db"
+    return base / "chroma"

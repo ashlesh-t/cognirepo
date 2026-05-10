@@ -9,11 +9,20 @@ Thank you for contributing! This guide covers the basics to get you started. For
 ```bash
 git clone https://github.com/ashlesh-t/cognirepo
 cd cognirepo
+
+# Option A — pipx (global binary, isolated venv, works on Arch/Debian/Ubuntu):
+pipx install -e ".[dev,languages,security]"
+
+# Option B — inside a local venv:
 python -m venv venv && source venv/bin/activate
 pip install -e ".[dev,languages,security]"
+
 pre-commit install
 pytest tests/ -v   # should all be green
 ```
+
+> **Arch Linux / Debian 12+ / Ubuntu 24.04+:** Do not `pip install` into system Python.
+> Use pipx (Option A) or activate a venv first (Option B).
 
 ---
 

@@ -121,12 +121,101 @@ def _section(step: int, total: int, title: str, subtitle: str = "") -> None:
         print(f"  {_c(_DIM, subtitle)}")
 
 
-# ── pip install helper ────────────────────────────────────────────────────────
+# ── pip/pipx install helpers ──────────────────────────────────────────────────
+
+# Maps extra names to the actual packages they contain. Using real package names
+# ensures install works regardless of whether the local editable or PyPI version
+# of cognirepo is resolved (self-referential 'cognirepo[extra]' can install wrong version).
+_EXTRA_PACKAGES: dict[str, list[str]] = {
+    "security": ["keyring>=25.0", "cryptography>=46.0.7"],
+    "languages": [
+        "tree-sitter-python>=0.23",
+        "tree-sitter-javascript>=0.23",
+        "tree-sitter-typescript>=0.23",
+        "tree-sitter-java>=0.23",
+        "tree-sitter-cpp>=0.23",
+        "tree-sitter-go>=0.23",
+        "tree-sitter-rust>=0.23",
+        "tree-sitter-bash>=0.23",
+        "tree-sitter-yaml>=0.6",
+    ],
+}
+
+
+def _is_pipx() -> bool:
+    """Return True if cognirepo is running inside a pipx-managed venv."""
+    exe = sys.executable.replace("\\", "/")
+    return "pipx/venvs" in exe or "pipx\\venvs" in sys.executable
+
+
+def _is_externally_managed() -> bool:
+    """Return True if system Python is PEP 668 externally managed (Arch, Debian 12+, Ubuntu 24.04+)."""
+    import sysconfig  # pylint: disable=import-outside-toplevel
+    stdlib = sysconfig.get_path("stdlib")
+    if stdlib and os.path.exists(os.path.join(stdlib, "EXTERNALLY-MANAGED")):
+        return True
+    base = sysconfig.get_config_var("installed_base") or ""
+    base_lib = os.path.join(base, "lib", f"python{sys.version_info.major}.{sys.version_info.minor}")
+    return os.path.exists(os.path.join(base_lib, "EXTERNALLY-MANAGED"))
+
 
 def _pip_install(extra: str) -> bool:
+    """Install a cognirepo extra. Uses pipx inject when running under pipx, pip otherwise."""
+    packages = _EXTRA_PACKAGES.get(extra, [f"cognirepo[{extra}]"])
+
+    if _is_pipx():
+        try:
+            subprocess.check_call(
+                ["pipx", "inject", "cognirepo", *packages, "-q"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return False
+
+    if _is_externally_managed():
+        pkg_str = " ".join(packages)
+        _warn(
+            f"System Python is externally managed (PEP 668) — cannot auto-install cognirepo[{extra}].\n"
+            f"      Run: pipx inject cognirepo {pkg_str}"
+        )
+        return False
+
     try:
         subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", f"cognirepo[{extra}]", "-q"],
+            [sys.executable, "-m", "pip", "install", *packages, "-q"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
+def _install_package(package: str) -> bool:
+    """Install an arbitrary package. Uses pipx inject when running under pipx, pip otherwise."""
+    if _is_pipx():
+        try:
+            subprocess.check_call(
+                ["pipx", "inject", "cognirepo", package, "-q"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return False
+
+    if _is_externally_managed():
+        _warn(
+            f"System Python is externally managed (PEP 668) — cannot auto-install {package}.\n"
+            f"      Run: pipx inject cognirepo {package}"
+        )
+        return False
+
+    try:
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", package, "-q"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -193,14 +282,10 @@ def run_wizard() -> dict:
     cfg["vector_backend"] = "faiss" if vb_idx == 0 else "chroma"
     if cfg["vector_backend"] == "chroma":
         print(f"  {_c(_DIM, '  Installing chromadb ...')}", end="", flush=True)
-        try:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "chromadb", "-q"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
+        if _install_package("chromadb"):
             _ok("chromadb installed")
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            _warn("Install failed — run: pip install chromadb")
+        else:
+            _warn("Install failed — run: pipx inject cognirepo chromadb  (or: pip install chromadb)")
 
     # ── 3. Behaviour tracking opt-in ─────────────────────────────────────────
     _section(3, STEPS, "Behaviour profiling",
@@ -365,7 +450,10 @@ def run_wizard() -> dict:
     print()
 
     if not _ask_yn("Proceed with this configuration?", default=True):
-        print(f"\n  {_c(_YELLOW, 'Init cancelled. Run cognirepo init again to retry.')}\n")
-        sys.exit(0)
+        print(f"\n  {_c(_YELLOW, 'Restarting wizard...')}\n")
+        import time  # pylint: disable=import-outside-toplevel
+        time.sleep(0.8)
+        os.system("clear")
+        return None  # caller loops
 
     return cfg

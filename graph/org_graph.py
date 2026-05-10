@@ -197,11 +197,18 @@ class OrgGraph:
         kind: EdgeKind = "IMPORTS",
         bidirectional: bool = True,
         auto: bool = False,
+        **extra_attrs: object,
     ) -> None:
         """
         Add a dependency edge src → dst.
         If bidirectional=True, also stores the reverse edge dst → src
         with direction="reverse" so get_dependents() is O(degree).
+
+        extra_attrs: optional function-level annotations for CALLS_API edges:
+          caller_fn        — name of the calling function
+          caller_file      — relative path of the caller's file
+          endpoint_pattern — URL pattern being called (e.g. "/users/{id}")
+          endpoint_fn      — name of the handler function in the destination service
         """
         abs_src = os.path.abspath(src)
         abs_dst = os.path.abspath(dst)
@@ -209,7 +216,8 @@ class OrgGraph:
             return
         self.add_repo(abs_src)
         self.add_repo(abs_dst)
-        self.G.add_edge(abs_src, abs_dst, kind=kind, direction="forward", auto=auto)
+        fwd_attrs = {"kind": kind, "direction": "forward", "auto": auto, **extra_attrs}
+        self.G.add_edge(abs_src, abs_dst, **fwd_attrs)
         if bidirectional:
             self.G.add_edge(abs_dst, abs_src, kind=kind, direction="reverse", auto=auto)
 

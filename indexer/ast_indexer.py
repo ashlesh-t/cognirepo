@@ -39,6 +39,7 @@ from pathlib import Path
 
 import faiss
 import numpy as np
+import warnings
 
 from graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
 from graph.graph_utils import make_node_id, node_id_from_symbol_record
@@ -97,6 +98,24 @@ _MAX_FILE_BYTES: int = 300_000  # 300 KB
 
 # Threshold above which a large-repo embed warning is printed.
 _LARGE_REPO_FILE_THRESHOLD: int = 3_000
+
+# Extensions where embedding adds little value (config/data files).
+# AST symbol index is still built; only FAISS embedding is skipped.
+_NO_EMBED_EXTS: frozenset[str] = frozenset({".yaml", ".yml", ".sh", ".bash", ".toml", ".ini", ".cfg"})
+
+# Above this many source files, switch to lightweight graph mode (only high-weight symbols).
+# Users can override with index_repo(skip_graph=True) to disable graph entirely.
+_AUTO_SKIP_GRAPH_THRESHOLD: int = 10_000
+
+# Minimum crawl weight for a symbol to be included in the graph in lite-graph mode.
+# 1.0 = direct entry-point reachable, 0.75 = hop-2 reachable, 0.5 = git-tracked indirect.
+# At 0.75 only direct + hop-2 symbols appear, keeping graph to ~1k–5k nodes on large repos.
+_LITE_GRAPH_WEIGHT_MIN: float = 0.75
+
+# Tiered indexing: Tier 1 covers high-weight files (fast bootstrap for large repos).
+# Tier 2 covers everything else in a background pass.
+_TIER1_WEIGHT_MIN: float = 0.5    # Tier 1: all BFS-reachable files (direct + indirect imports)
+_LARGE_REPO_TIER_THRESHOLD: int = _AUTO_SKIP_GRAPH_THRESHOLD  # same boundary as lite-graph
 
 
 def _print_cold_start_banner() -> None:
@@ -1149,7 +1168,16 @@ class ASTIndexer:
         print(f"  Embedding {len(texts):,} texts in batches of {batch_size}…")
         try:
             import numpy as _np  # pylint: disable=import-outside-toplevel
-            vecs = _np.array(list(self.model.embed(texts))).astype("float32")
+            from tqdm import tqdm  # pylint: disable=import-outside-toplevel
+            _embed_gen = self.model.embed(texts)
+            _vecs_list = list(tqdm(
+                _embed_gen,
+                total=len(texts),
+                desc="Embedding",
+                unit="vec",
+                dynamic_ncols=True,
+            ))
+            vecs = _np.array(_vecs_list).astype("float32")
         except Exception as exc:  # pylint: disable=broad-except
             log.warning("Batch encode failed (%s) — skipping FAISS embed", exc)
             return
@@ -1164,7 +1192,13 @@ class ASTIndexer:
                 sym["faiss_id"] = faiss_id
         self._pending_embeds.clear()
 
-    def index_repo(self, repo_root: str, embed: bool = True) -> dict:
+    def index_repo(
+        self,
+        repo_root: str,
+        embed: bool = True,
+        skip_graph: bool | None = None,
+        tier: "int | str | None" = None,
+    ) -> dict:
         """
         Walk *repo_root*, index every supported file (skipping _SKIP_DIRS),
         build the reverse index, and save everything to disk.
@@ -1174,12 +1208,22 @@ class ASTIndexer:
         ----------
         embed : If False, skip FAISS embedding (AST/symbol index + graph only).
                 Faster for CI or when only symbol lookup is needed.
+        skip_graph : If True, skip knowledge-graph node/edge building entirely.
+                     Defaults to auto (True when source files > _AUTO_SKIP_GRAPH_THRESHOLD).
+                     Prevents OOM on very large repos (e.g. kubernetes at 23k files → 2.9 GB).
+        tier : Tiered indexing for large repos (>_LARGE_REPO_TIER_THRESHOLD files):
+               None  → auto: Tier 1 for large repos, full index for small repos.
+               1     → Tier 1 only: index w≥0.75 files (fast, ~5 min for large repos).
+               2     → Tier 2 only: index w<0.75 files from pending_tier2.json queue.
+               "all" → index everything regardless of size (current small-repo behaviour).
         """
         self._embed_enabled = embed  # pylint: disable=attribute-defined-outside-init
         # Batch mode: defer all model.encode() calls; flush once at the end
         # for a 20-50x speedup on large repos.
         self._batch_mode = embed  # pylint: disable=attribute-defined-outside-init
         self._pending_embeds: list = []  # pylint: disable=attribute-defined-outside-init
+        self._skip_graph: bool = False  # pylint: disable=attribute-defined-outside-init
+        self._graph_weight_min: float = 0.0  # pylint: disable=attribute-defined-outside-init
         self._ensure_faiss()
         repo_root = os.path.abspath(repo_root)
         self.index_data["repo_root"] = repo_root
@@ -1220,20 +1264,44 @@ class ASTIndexer:
                     print(f"  Git repo detected — indexing {len(_tracked)} tracked file(s) (no entry points, all w=0.5).")
 
         # ── large-repo warning (embed pass only) ────────────────────────────────
-        if embed:
-            if _tracked is not None:
-                _n_candidates = sum(1 for f in _tracked if is_supported(Path(f)))
-            else:
-                _n_candidates = 0
-                for _dp, _dns, _fns in os.walk(repo_root):
-                    _dns[:] = [d for d in _dns if d not in skip_dirs]
-                    _n_candidates += sum(1 for f in _fns if is_supported(Path(f)))
-            if _n_candidates > _LARGE_REPO_FILE_THRESHOLD:
+        if _tracked is not None:
+            _n_candidates = sum(1 for f in _tracked if is_supported(Path(f)))
+        else:
+            _n_candidates = 0
+            for _dp, _dns, _fns in os.walk(repo_root):
+                _dns[:] = [d for d in _dns if d not in skip_dirs]
+                _n_candidates += sum(1 for f in _fns if is_supported(Path(f)))
+
+        if embed and _n_candidates > _LARGE_REPO_FILE_THRESHOLD:
+            print(
+                f"  ⚠  Large repo detected ({_n_candidates} source files). "
+                "First-run tip: use --no-embed for a faster symbol-only index, "
+                "then run index-repo again to add embeddings."
+            )
+
+        # Graph mode selection for large repos.
+        # skip_graph=True  → no graph at all (--no-graph flag).
+        # skip_graph=None  → auto: lite-graph (w≥0.75 only) for large repos, full graph for small.
+        # skip_graph=False → force full graph regardless of size (risks OOM).
+        if skip_graph is True:
+            self._skip_graph = True  # pylint: disable=attribute-defined-outside-init
+            self._graph_weight_min = 1.1  # effectively blocks all nodes  # pylint: disable=attribute-defined-outside-init
+        elif skip_graph is False:
+            self._skip_graph = False  # pylint: disable=attribute-defined-outside-init
+            self._graph_weight_min = 0.0  # pylint: disable=attribute-defined-outside-init
+        else:
+            # Auto mode: lite-graph for large repos
+            if _n_candidates > _AUTO_SKIP_GRAPH_THRESHOLD:
+                self._skip_graph = False  # pylint: disable=attribute-defined-outside-init
+                self._graph_weight_min = _LITE_GRAPH_WEIGHT_MIN  # pylint: disable=attribute-defined-outside-init
                 print(
-                    f"  ⚠  Large repo detected ({_n_candidates} source files). "
-                    "First-run tip: use --no-embed for a faster symbol-only index, "
-                    "then run index-repo again to add embeddings."
+                    f"  ℹ  Large repo ({_n_candidates} files): lightweight graph mode — "
+                    f"only symbols with weight≥{_LITE_GRAPH_WEIGHT_MIN} (direct + hop-2 reachable). "
+                    "Use --no-graph to disable entirely, or skip_graph=False to force full graph."
                 )
+            else:
+                self._skip_graph = False  # pylint: disable=attribute-defined-outside-init
+                self._graph_weight_min = 0.0  # pylint: disable=attribute-defined-outside-init
 
         lang_file_counts: dict[str, int] = defaultdict(int)
         skipped_exts: set[str] = set()
@@ -1246,8 +1314,44 @@ class ASTIndexer:
             ".whl", ".zip", ".tar", ".gz",
         }
 
+        # ── Tiered indexing: resolve effective tier ───────────────────────────
+        # tier=None → auto: Tier 1 for large repos (≥threshold), full for small.
+        # tier=1    → Tier 1 only (w≥0.5, all BFS-reachable). Queues truly unvisited files.
+        # tier=2    → Tier 2 only: reads pending_tier2.json, processes unvisited files.
+        # tier="all"→ full index regardless of size.
+        _is_large_repo = _n_candidates >= _LARGE_REPO_TIER_THRESHOLD
+        if tier is None:
+            _effective_tier: "int | str" = 1 if _is_large_repo else "all"
+        else:
+            _effective_tier = tier
+
+        # Tier 2: read the pending queue instead of walking the repo
+        if _effective_tier == 2:
+            return self._index_tier2(repo_root, embed)
+
+        from tqdm import tqdm  # pylint: disable=import-outside-toplevel
+
+        # For large repos in auto Tier 1: skip embedding (30-min bottleneck for 150k+ vectors).
+        # AST symbol lookup works immediately. Tier 2 background pass handles embeddings.
+        _embed_deferred = False
+        _effective_embed = embed
+        if _is_large_repo and _effective_tier == 1 and embed:
+            _effective_embed = False
+            _embed_deferred = True
+            print(
+                "  ℹ  Large repo: FAISS embedding deferred to Tier 2 background. "
+                "Symbol lookup (AST index) works immediately. "
+                "Run 'cognirepo index-repo . --tier 2' to add semantic embeddings."
+            )
+        self._embed_enabled = _effective_embed  # pylint: disable=attribute-defined-outside-init
+
+        # Build the file list: apply tier filter if Tier 1
+        _tier2_pending: list[dict] = []  # files deferred for background Tier 2
+
         if _tracked is not None:
-            for rel_path in sorted(_tracked):
+            _sorted_tracked = sorted(_tracked)
+            _pbar = tqdm(_sorted_tracked, desc="Indexing files", unit="file", dynamic_ncols=True)
+            for rel_path in _pbar:
                 abs_path = os.path.join(repo_root, rel_path)
                 if not os.path.isfile(abs_path):
                     continue
@@ -1257,13 +1361,21 @@ class ASTIndexer:
                         skipped_exts.add(ext)
                     continue
                 _w = _file_weights.get(rel_path, 0.5)
+                # Tier 1: defer low-weight files to pending_tier2 queue
+                if _effective_tier == 1 and _w < _TIER1_WEIGHT_MIN:
+                    _tier2_pending.append({"rel_path": rel_path, "abs_path": abs_path, "weight": _w})
+                    continue
                 try:
-                    self.index_file(rel_path, abs_path, weight=_w)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", SyntaxWarning)
+                        self.index_file(rel_path, abs_path, weight=_w)
                     lang_file_counts[lang_label(ext)] += 1
                     total_files += 1
+                    _pbar.set_postfix({"file": Path(rel_path).name[:30]}, refresh=False)
                 except Exception as exc:  # pylint: disable=broad-except
                     log.debug("  [skip] %s: %s", rel_path, exc)
         else:
+            _all_files: list[tuple[str, str]] = []
             for dirpath, dirnames, filenames in os.walk(repo_root):
                 dirnames[:] = [d for d in dirnames if d not in skip_dirs]
                 for fname in filenames:
@@ -1274,15 +1386,26 @@ class ASTIndexer:
                         continue
                     abs_path = os.path.join(dirpath, fname)
                     rel_path = os.path.relpath(abs_path, repo_root)
-                    try:
+                    _all_files.append((rel_path, abs_path))
+            _pbar = tqdm(_all_files, desc="Indexing files", unit="file", dynamic_ncols=True)
+            for rel_path, abs_path in _pbar:
+                ext = Path(rel_path).suffix
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", SyntaxWarning)
                         self.index_file(rel_path, abs_path, weight=1.0)
-                        lang_file_counts[lang_label(ext)] += 1
-                        total_files += 1
-                    except Exception as exc:  # pylint: disable=broad-except
-                        log.debug("  [skip] %s: %s", rel_path, exc)
+                    lang_file_counts[lang_label(ext)] += 1
+                    total_files += 1
+                    _pbar.set_postfix({"file": Path(rel_path).name[:30]}, refresh=False)
+                except Exception as exc:  # pylint: disable=broad-except
+                    log.debug("  [skip] %s: %s", rel_path, exc)
+
+        # Write pending_tier2.json if Tier 1 deferred any files, or if embeddings deferred
+        if _tier2_pending or _embed_deferred:
+            self._write_pending_tier2(repo_root, _tier2_pending, embed_pending=_embed_deferred)
 
         # ── flush deferred batch embeddings ──────────────────────────────────
-        if embed:
+        if _effective_embed:
             self._batch_embed_pending()
         self._batch_mode = False  # pylint: disable=attribute-defined-outside-init
 
@@ -1311,11 +1434,19 @@ class ASTIndexer:
         # ── cold-start transparency banner ────────────────────────────────────
         _print_cold_start_banner()
 
+        if _tier2_pending:
+            print(
+                f"  ℹ  Tier 1 complete ({total_files} files, {total_symbols} symbols). "
+                f"Tier 2: {len(_tier2_pending)} low-weight files queued for background indexing. "
+                "Run: cognirepo index-repo . --tier 2"
+            )
+
         return {
             "files": total_files,
             "symbols": total_symbols,
             "languages": dict(lang_file_counts),
             "skipped_extensions": sorted(skipped_exts),
+            "tier2_queued": len(_tier2_pending),
         }
 
     def index_file(self, rel_path: str, abs_path: str | None = None, weight: float = 1.0) -> dict:
@@ -1367,8 +1498,8 @@ class ASTIndexer:
             except Exception:  # pylint: disable=broad-except
                 pass
 
-        # embed + add to FAISS (skipped when embed=False / --no-embed)
-        embed_enabled = getattr(self, "_embed_enabled", True)
+        # embed + add to FAISS (skipped when embed=False / --no-embed / config/data ext)
+        embed_enabled = getattr(self, "_embed_enabled", True) and ext not in _NO_EMBED_EXTS
 
         # Pre-read source lines once per file for body-snippet enrichment
         _src_lines: list[str] = []
@@ -1419,12 +1550,14 @@ class ASTIndexer:
                     self.faiss_meta.append(meta)
                     sym["faiss_id"] = faiss_id
 
-            # knowledge graph — weight attribute lets graph-scoring prefer core files
-            file_node = make_node_id("FILE", rel_path)
-            sym_node = node_id_from_symbol_record(sym, rel_path)
-            self.graph.add_node(file_node, NodeType.FILE, weight=weight)
-            self.graph.add_node(sym_node, sym["type"], file=rel_path, line=sym["start_line"], weight=weight)
-            self.graph.add_edge(sym_node, file_node, EdgeType.DEFINED_IN)
+            # knowledge graph — skipped or weight-filtered for large repos to prevent OOM
+            _graph_min = getattr(self, "_graph_weight_min", 0.0)
+            if not getattr(self, "_skip_graph", False) and weight >= _graph_min:
+                file_node = make_node_id("FILE", rel_path)
+                sym_node = node_id_from_symbol_record(sym, rel_path)
+                self.graph.add_node(file_node, NodeType.FILE, weight=weight)
+                self.graph.add_node(sym_node, sym["type"], file=rel_path, line=sym["start_line"], weight=weight)
+                self.graph.add_edge(sym_node, file_node, EdgeType.DEFINED_IN)
 
         # ── file-level summary embedding ──────────────────────────────────────
         if embed_enabled and raw_symbols:
@@ -1607,6 +1740,166 @@ class ASTIndexer:
 
         self.index_data["word_reverse_index"] = word_idx
 
+    # ── tiered indexing helpers ───────────────────────────────────────────────
+
+    def _write_pending_tier2(
+        self, repo_root: str, pending: "list[dict]", embed_pending: bool = False
+    ) -> None:
+        """Write the Tier 2 pending queue to disk (thread-safe via filelock)."""
+        import json as _json  # pylint: disable=import-outside-toplevel
+        from config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
+        try:
+            import filelock as _fl  # pylint: disable=import-outside-toplevel
+            _lock = _fl.FileLock(pending_tier2_path() + ".lock", timeout=10)
+            with _lock:
+                with open(pending_tier2_path(), "w", encoding="utf-8") as _f:
+                    _json.dump(
+                        {
+                            "repo_root": repo_root,
+                            "files": pending,
+                            "embed_pending": embed_pending,
+                            "total_queued": len(pending),
+                        },
+                        _f, indent=2,
+                    )
+        except Exception as _exc:  # pylint: disable=broad-except
+            log.warning("Could not write pending_tier2.json: %s", _exc)
+
+    def _repopulate_embeds_from_index(self) -> None:
+        """
+        Rebuild _pending_embeds from the existing in-memory AST index.
+        Called by Tier 2 when embedding was deferred in Tier 1 (large repos).
+        """
+        self._pending_embeds = []  # pylint: disable=attribute-defined-outside-init
+        for rel_path, file_data in self.index_data.get("files", {}).items():
+            for sym in file_data.get("symbols", []):
+                name = sym.get("name", "")
+                doc = sym.get("docstring", "")
+                embed_text = f"{name} {doc}".strip() if doc else name
+                meta = {
+                    "file": rel_path, "name": name, "line": sym.get("start_line", 0),
+                    "type": sym.get("type", ""), "source": "symbol",
+                }
+                self._pending_embeds.append((embed_text, meta, sym))
+            # File-level embed
+            file_embed_text = f"file {rel_path}"
+            file_meta = {"file": rel_path, "name": rel_path, "line": 0, "type": "FILE", "source": "file"}
+            self._pending_embeds.append((file_embed_text, file_meta, None))
+
+    def _index_tier2(self, repo_root: str, embed: bool) -> dict:
+        """
+        Process the Tier 2 pending queue (low-weight files not indexed in Tier 1).
+        Reads pending_tier2.json, indexes in batches of 500, updates progress file.
+        """
+        # Load existing Tier 1 AST index first — without this, self.save() at the end
+        # would overwrite the Tier 1 data with an empty dict (fresh subprocess has no index).
+        self.load()
+
+        import json as _json  # pylint: disable=import-outside-toplevel
+        from config.paths import pending_tier2_path, tier2_progress_path  # pylint: disable=import-outside-toplevel
+        from tqdm import tqdm  # pylint: disable=import-outside-toplevel
+
+        _queue_path = pending_tier2_path()
+        if not os.path.exists(_queue_path):
+            print("  Tier 2: no pending queue found. Run Tier 1 first: cognirepo index-repo . --tier 1")
+            return {"files": 0, "symbols": 0, "languages": {}, "skipped_extensions": [], "tier2_queued": 0}
+
+        try:
+            import filelock as _fl  # pylint: disable=import-outside-toplevel
+            _lock = _fl.FileLock(_queue_path + ".lock", timeout=30)
+            with _lock:
+                with open(_queue_path, encoding="utf-8") as _f:
+                    _data = _json.load(_f)
+        except Exception as _exc:  # pylint: disable=broad-except
+            log.error("Tier 2: failed to read pending queue: %s", _exc)
+            return {"files": 0, "symbols": 0, "languages": {}, "skipped_extensions": [], "tier2_queued": 0}
+
+        _pending: list[dict] = _data.get("files", [])
+        _embed_pending: bool = _data.get("embed_pending", False)
+        _batch_size = 500
+        lang_file_counts: dict[str, int] = defaultdict(int)
+        total_files = 0
+        skipped_exts: set[str] = set()
+        _remaining = list(_pending)
+
+        # If embedding was deferred in Tier 1 (large repo), embed all already-indexed files first.
+        if _embed_pending and embed:
+            print("  Tier 2: running deferred FAISS embedding for already-indexed files…")
+            self._repopulate_embeds_from_index()
+            self._batch_embed_pending()
+            _data["embed_pending"] = False
+            try:
+                import filelock as _fl  # pylint: disable=import-outside-toplevel
+                with _fl.FileLock(_queue_path + ".lock", timeout=10):
+                    with open(_queue_path, "w", encoding="utf-8") as _qf:
+                        import json as _j2  # pylint: disable=import-outside-toplevel
+                        _j2.dump(_data, _qf, indent=2)
+            except Exception:  # pylint: disable=broad-except
+                pass
+
+        print(f"  Tier 2: processing {len(_pending)} queued files in batches of {_batch_size}…")
+        _pbar = tqdm(_pending, desc="Tier 2 indexing", unit="file", dynamic_ncols=True)
+
+        for _entry in _pbar:
+            rel_path = _entry["rel_path"]
+            abs_path = _entry["abs_path"]
+            _w = _entry.get("weight", 0.5)
+            ext = Path(rel_path).suffix
+            if not os.path.isfile(abs_path):
+                _remaining = [e for e in _remaining if e["rel_path"] != rel_path]
+                continue
+            try:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", SyntaxWarning)
+                    self.index_file(rel_path, abs_path, weight=_w)
+                lang_file_counts[lang_label(ext)] += 1
+                total_files += 1
+                _pbar.set_postfix({"file": Path(rel_path).name[:30]}, refresh=False)
+            except Exception as _exc:  # pylint: disable=broad-except
+                log.debug("  [tier2-skip] %s: %s", rel_path, _exc)
+            finally:
+                _remaining = [e for e in _remaining if e["rel_path"] != rel_path]
+
+            # Flush batch and write progress every _batch_size files
+            if total_files % _batch_size == 0:
+                if embed:
+                    self._batch_embed_pending()
+                self._build_reverse_index()
+                self.save()
+                try:
+                    import json as _j  # pylint: disable=import-outside-toplevel
+                    with _fl.FileLock(_queue_path + ".lock", timeout=10):
+                        with open(_queue_path, "w", encoding="utf-8") as _qf:
+                            _j.dump({"repo_root": repo_root, "files": _remaining, "embed_pending": False}, _qf, indent=2)
+                    with open(tier2_progress_path(), "w", encoding="utf-8") as _pf:
+                        _j.dump({"processed": total_files, "remaining": len(_remaining)}, _pf, indent=2)
+                except Exception:  # pylint: disable=broad-except
+                    pass
+
+        if embed:
+            self._batch_embed_pending()
+        self._batch_mode = False  # pylint: disable=attribute-defined-outside-init
+        self._build_reverse_index()
+        total_symbols = sum(len(f.get("symbols", [])) for f in self.index_data["files"].values())
+        self.index_data["total_symbols"] = total_symbols
+        self.save()
+
+        # Clear the queue when done
+        try:
+            os.remove(_queue_path)
+            _prog = tier2_progress_path()
+            if os.path.exists(_prog):
+                os.remove(_prog)
+        except OSError:
+            pass
+
+        print(f"  Tier 2 complete: {total_files} additional files indexed.")
+        return {
+            "files": total_files, "symbols": total_symbols,
+            "languages": dict(lang_file_counts),
+            "skipped_extensions": sorted(skipped_exts), "tier2_queued": 0,
+        }
+
     # ── lookup ────────────────────────────────────────────────────────────────
 
     @functools.lru_cache(maxsize=512)
@@ -1638,6 +1931,24 @@ class ASTIndexer:
     def get_symbol_table(self, file_path: str) -> SymbolTable:
         """Return a SymbolTable for bisect-based line-range queries."""
         return build_symbol_table_from_index(file_path, self.index_data)
+
+    def free_large_objects(self) -> None:
+        """Free FAISS index, AST symbol dicts, and pending embeds from RAM.
+
+        Call after save() completes and before kg.save() to reduce RSS peak
+        on large repos. Frees ~400–700 MB that would otherwise cause the
+        circuit breaker to fire during graph serialization.
+        """
+        import gc  # pylint: disable=import-outside-toplevel
+        self.faiss_index = None
+        self.faiss_meta = []
+        self.index_data = {
+            "files": {}, "reverse_index": {},
+            "repo_root": self.index_data.get("repo_root", ""),
+            "indexed_at": self.index_data.get("indexed_at", ""),
+        }
+        self._pending_embeds = []  # pylint: disable=attribute-defined-outside-init
+        gc.collect()
 
     # ── persistence ───────────────────────────────────────────────────────────
 
