@@ -207,6 +207,7 @@ def context_pack(
         retrieval_query = query
 
     # ── 1. hybrid retrieval (semantic + AST) — two-bucket architecture ──────
+    _retrieval_mode = "hybrid"
     if include_symbols:
         candidates = hybrid_retrieve(retrieval_query, top_k=20)
 
@@ -223,6 +224,26 @@ def context_pack(
         # This prevents README noise from being returned for code queries.
         best_score = max((c.get("final_score", 0.0) for c in code_hits), default=0.0)
         doc_intent = _is_doc_query(query)
+
+        # ── BM25 boost: re-rank when FAISS confidence is low ──────────────
+        # When best_score < 0.35 and BM25 top score beats FAISS top score,
+        # boost BM25 weight so keyword-dense repos get better coverage.
+        _BM25_BOOST_THRESHOLD = 0.35
+        if code_hits and 0 < best_score < _BM25_BOOST_THRESHOLD:
+            _bm25_top = max(
+                (c.get("final_score", 0.0) for c in code_hits
+                 if c.get("retrieval_mode") == "bm25_fallback"),
+                default=0.0,
+            )
+            if _bm25_top > best_score:
+                for c in code_hits:
+                    bm25_s = c.get("bm25_score", 0.0)
+                    faiss_s = c.get("vector_score", c.get("final_score", 0.0))
+                    if bm25_s > 0 or faiss_s > 0:
+                        c["final_score"] = 0.7 * bm25_s + 0.3 * faiss_s
+                code_hits.sort(key=lambda x: x.get("final_score", 0.0), reverse=True)
+                best_score = max((c.get("final_score", 0.0) for c in code_hits), default=0.0)
+                _retrieval_mode = "bm25_boosted"
 
         if code_hits and best_score < _MIN_CODE_CONFIDENCE and not doc_intent:
             # No confident code hit — check if any semantic hit is better
@@ -347,6 +368,8 @@ def context_pack(
         "sections": sections,
         "truncated": truncated,
     }
+    if _retrieval_mode != "hybrid":
+        result["retrieval_mode"] = _retrieval_mode
     if _enhanced and _enhanced.was_enhanced:
         result["enhanced_query"] = _enhanced.text
         result["enhancement_method"] = _enhanced.method

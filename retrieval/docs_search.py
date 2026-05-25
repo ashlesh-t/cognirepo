@@ -29,7 +29,21 @@ from config.paths import get_path
 def _ast_index_file() -> str:
     return get_path("index/ast_index.json")
 _SKIP_DIRS = {".git", "venv", ".venv", "__pycache__", "node_modules", ".cognirepo"}
+# Filename substrings to skip — prevents test harness / CogniRepo internals from
+# polluting search results (e.g. MANUAL_TEST_SUITE.md matching every test prompt).
+_SKIP_FILE_SUBSTRINGS = {
+    "MANUAL_TEST_SUITE",
+    "TEST_SUITE",
+    "test_suite",
+    "MANUAL_TEST",
+}
 _CONTEXT_LINES = 2  # lines before and after the matching line
+
+
+def _should_skip_file(path: str) -> bool:
+    """Return True if the file path contains any of the skip substrings."""
+    basename = os.path.basename(path)
+    return any(sub in basename for sub in _SKIP_FILE_SUBSTRINGS)
 
 
 # ── snippet extractor ─────────────────────────────────────────────────────────
@@ -97,7 +111,7 @@ def search_docs(query: str) -> list[dict]:
             for token in query.lower().split():
                 for entry in rev.get(token, []):
                     file_path = entry[0] if isinstance(entry, list) else entry
-                    if file_path.endswith(".md"):
+                    if file_path.endswith(".md") and not _should_skip_file(file_path):
                         candidate_paths.add(file_path)
         except (json.JSONDecodeError, OSError, IndexError):
             pass  # fall through to full-text scan
@@ -109,6 +123,8 @@ def search_docs(query: str) -> list[dict]:
             if not fname.endswith(".md"):
                 continue
             path = os.path.join(root, fname)
+            if _should_skip_file(path):
+                continue
             if path in candidate_paths:
                 continue  # already a candidate; will be scanned below
             # Quick content check before full snippet extraction

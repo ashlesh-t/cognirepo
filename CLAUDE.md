@@ -11,7 +11,8 @@ Goal: cut token overhead and context loss between AI sessions, not add complexit
 - Model names only in `orchestrator/classifier.py`. No hardcoding elsewhere.
 - `retrieval/hybrid.py` owns all retrieval. Never call FAISS or the graph directly from tools.
 - Tools in `tools/` are the single entry point. Stateless, no cross-tool calls.
-
+- When ever any code parts get updated and if the document existing ones dont cover or needs changes ,then update the docs accordingly.
+ 
 ## Session start sequence (run in this order)
 
 1. `get_session_brief()` — architecture + hot symbols + index health

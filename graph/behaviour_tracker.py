@@ -53,12 +53,29 @@ _ERROR_HINTS: list[tuple[str, str]] = [
 ]
 
 
+_ACTIONABLE_INSTALL_PATTERNS = (
+    "pip install", "pipx install", "npm install", "yarn add",
+    "brew install", "apt install", "apt-get install", "conda install", "cargo install",
+)
+
+
 def _error_prevention_hint(error_type: str) -> str:
     """Return a short prevention tip based on the error type name."""
     for key, hint in _ERROR_HINTS:
         if key.lower() in error_type.lower():
             return hint
     return "Track root cause and add a targeted guard at the call site."
+
+
+def _enrich_hint_from_context(generic_hint: str, recent_message: str) -> str:
+    """Prepend an actionable command from the stored error message to the generic hint."""
+    if not recent_message:
+        return generic_hint
+    for line in recent_message.splitlines():
+        line_stripped = line.strip()
+        if any(pat in line_stripped for pat in _ACTIONABLE_INSTALL_PATTERNS):
+            return f"{line_stripped} — {generic_hint}"
+    return generic_hint
 
 
 class BehaviourTracker:
@@ -442,16 +459,17 @@ class BehaviourTracker:
         for error_type, data in ep.items():
             if data.get("count", 0) < min_count:
                 continue
+            recent_msg = (data.get("occurrences") or [{}])[-1].get("message", "")
+            generic_hint = data.get("prevention_hint", _error_prevention_hint(error_type))
+            enriched_hint = _enrich_hint_from_context(generic_hint, recent_msg)
             result.append({
                 "error_type": error_type,
                 "count": data.get("count", 0),
                 "files": data.get("files", []),
                 "last_seen": data.get("last_seen"),
                 "signature": data.get("signature", ""),
-                "prevention_hint": data.get(
-                    "prevention_hint", _error_prevention_hint(error_type)
-                ),
-                "recent_context": (data.get("occurrences") or [{}])[-1].get("message", ""),
+                "prevention_hint": enriched_hint,
+                "recent_context": recent_msg,
             })
         result.sort(key=lambda x: x["count"], reverse=True)
         return result

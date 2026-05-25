@@ -159,27 +159,29 @@ def _is_externally_managed() -> bool:
     return os.path.exists(os.path.join(base_lib, "EXTERNALLY-MANAGED"))
 
 
+def _pipx_inject(*packages: str) -> bool:
+    """Try `pipx inject cognirepo <packages>`. Returns True on success."""
+    try:
+        subprocess.check_call(
+            ["pipx", "inject", "cognirepo", *packages, "-q"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
 def _pip_install(extra: str) -> bool:
-    """Install a cognirepo extra. Uses pipx inject when running under pipx, pip otherwise."""
+    """Install a cognirepo extra. Prefers pipx inject, falls back to pip."""
     packages = _EXTRA_PACKAGES.get(extra, [f"cognirepo[{extra}]"])
 
-    if _is_pipx():
-        try:
-            subprocess.check_call(
-                ["pipx", "inject", "cognirepo", *packages, "-q"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+    # pipx-managed env or externally-managed system Python → use pipx inject
+    if _is_pipx() or _is_externally_managed():
+        if _pipx_inject(*packages):
             return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return False
-
-    if _is_externally_managed():
         pkg_str = " ".join(packages)
-        _warn(
-            f"System Python is externally managed (PEP 668) — cannot auto-install cognirepo[{extra}].\n"
-            f"      Run: pipx inject cognirepo {pkg_str}"
-        )
+        _warn(f"Auto-install failed. Run manually: pipx inject cognirepo {pkg_str}")
         return False
 
     try:
@@ -194,23 +196,12 @@ def _pip_install(extra: str) -> bool:
 
 
 def _install_package(package: str) -> bool:
-    """Install an arbitrary package. Uses pipx inject when running under pipx, pip otherwise."""
-    if _is_pipx():
-        try:
-            subprocess.check_call(
-                ["pipx", "inject", "cognirepo", package, "-q"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+    """Install an arbitrary package. Prefers pipx inject, falls back to pip."""
+    # pipx-managed env or externally-managed system Python → use pipx inject
+    if _is_pipx() or _is_externally_managed():
+        if _pipx_inject(package):
             return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            return False
-
-    if _is_externally_managed():
-        _warn(
-            f"System Python is externally managed (PEP 668) — cannot auto-install {package}.\n"
-            f"      Run: pipx inject cognirepo {package}"
-        )
+        _warn(f"Auto-install failed. Run manually: pipx inject cognirepo {package}")
         return False
 
     try:
@@ -231,13 +222,13 @@ def run_wizard() -> dict:
     Run the interactive init wizard. Returns a configuration dict with keys:
 
       project_name      str   human-readable project label
-      encrypt           bool  encrypt FAISS + episodic at rest
-      vector_backend    str   "faiss" | "chroma"
+      encrypt           bool  encrypt episodic at rest
       install_languages bool  install extended tree-sitter language parsers
       mcp_targets       list  subset of ["claude", "gemini", "cursor", "vscode"]
-      mcp_global        bool  register MCP server globally
       org               str | None  organization name
       project           str | None  project within org
+
+    Vector storage is fixed: FAISS for AST indexing, ChromaDB for semantic text.
     """
     STEPS = 7
 
@@ -259,9 +250,10 @@ def run_wizard() -> dict:
         "Project name", default=os.path.basename(os.getcwd())
     )
 
-    # ── 2. Encryption + vector backend ───────────────────────────────────────
+    # ── 2. Encryption ─────────────────────────────────────────────────────────
     _section(2, STEPS, "Storage",
-             "Encryption uses Fernet AES-128 (key in OS keychain). ChromaDB optional.")
+             "Encryption uses Fernet AES-128 (key in OS keychain).\n"
+             "  Vector storage is fixed: FAISS for AST indexing, ChromaDB for semantic text.")
     cfg["encrypt"] = _ask_yn("Enable encryption at rest?", default=False)
     if cfg["encrypt"]:
         print(f"  {_c(_DIM, '  Installing cognirepo[security] ...')}", end="", flush=True)
@@ -270,22 +262,12 @@ def run_wizard() -> dict:
         else:
             _warn("Install failed — run: pip install cognirepo[security]")
 
-    vb_idx = _ask_choice(
-        "Vector backend:",
-        ["FAISS  (local, no extra install)", "ChromaDB  (persistent client, richer metadata)"],
-        descriptions=[
-            "Default — fast, zero config",
-            "Run: pip install chromadb",
-        ],
-        default=0,
-    )
-    cfg["vector_backend"] = "faiss" if vb_idx == 0 else "chroma"
-    if cfg["vector_backend"] == "chroma":
-        print(f"  {_c(_DIM, '  Installing chromadb ...')}", end="", flush=True)
-        if _install_package("chromadb"):
-            _ok("chromadb installed")
-        else:
-            _warn("Install failed — run: pipx inject cognirepo chromadb  (or: pip install chromadb)")
+    # Install chromadb automatically (always needed for semantic store)
+    print(f"  {_c(_DIM, '  Installing chromadb (semantic text store) ...')}", end="", flush=True)
+    if _install_package("chromadb"):
+        _ok("chromadb installed")
+    else:
+        _warn("chromadb install failed — run: pip install chromadb")
 
     # ── 3. Behaviour tracking opt-in ─────────────────────────────────────────
     _section(3, STEPS, "Behaviour profiling",
@@ -350,17 +332,7 @@ def run_wizard() -> dict:
     }
     cfg["mcp_targets"] = mcp_map[mcp_idx]
 
-    cfg["mcp_global"] = False
-    if cfg["mcp_targets"]:
-        print(
-            f"\n  {_c(_DIM, 'Global: registers in ~/.claude.json / ~/.gemini/settings.json')}"
-        )
-        print(
-            f"  {_c(_DIM, 'so the server appears in every session, not just this project.')}"
-        )
-        cfg["mcp_global"] = _ask_yn(
-            "Register globally (available in all sessions)?", default=True
-        )
+    cfg["mcp_global"] = False  # always project-scoped; global registration removed
 
     # ── 6. Cross-agent context handoff ───────────────────────────────────────
     _section(6, STEPS, "Cross-agent context handoff",
@@ -437,10 +409,11 @@ def run_wizard() -> dict:
         ("Encryption",    "yes" if cfg["encrypt"] else "no"),
         ("Behaviour",     "enabled" if cfg.get("behaviour_tracking") else "disabled"),
         ("Context handoff", "yes" if cfg.get("autosave_context", True) else "no"),
-        ("Vector backend", cfg["vector_backend"]),
+        ("AST indexing",  "FAISS"),
+        ("Semantic text", "ChromaDB"),
         ("Languages",     "extended" if cfg["install_languages"] else "Python only"),
         ("MCP targets",   ", ".join(cfg["mcp_targets"]) or "none"),
-        ("MCP scope",     "global" if cfg.get("mcp_global") else "project-only"),
+        ("MCP scope",     "project-only"),
         ("Organisation",  cfg["org"] or "none"),
         ("Project",       cfg["project"] or "none"),
     ]

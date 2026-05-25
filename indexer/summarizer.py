@@ -25,6 +25,29 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Path fragment patterns that identify test/benchmark/example code.
+# Symbols whose source file contains any of these substrings are excluded
+# from "key classes/functions" rankings so noise like WideDeepModel or
+# TestBoilerplate don't surface as architecture-level symbols.
+_TEST_PATH_PATTERNS = (
+    "/test/", "/tests/", "_test.", "_test/",
+    "/bench/", "/benchmark/", "/benchmarks/",
+    "/example/", "/examples/",
+    "/fixture/", "/fixtures/",
+    "/mock/", "/mocks/",
+    "/stub/", "/stubs/",
+    "test_", "bench_",
+)
+
+
+def _is_test_path(rel_path: str) -> bool:
+    """Return True if rel_path looks like a test/benchmark/example file."""
+    p = rel_path.replace("\\", "/").lower()
+    # Also catch _test.go style Go test files
+    if p.endswith("_test.go") or p.endswith("_test.py"):
+        return True
+    return any(pat in p for pat in _TEST_PATH_PATTERNS)
+
 
 def _first_sentence(text: str) -> str:
     """Extract the first meaningful sentence from a docstring."""
@@ -115,9 +138,14 @@ def _build_dir_summary(rel_dir: str, child_file_summaries: list[dict]) -> dict:
     file_count = len(child_file_summaries)
     languages: dict[str, int] = defaultdict(int)
 
-    for fs in child_file_summaries:
+    source_files = [fs for fs in child_file_summaries if not _is_test_path(fs.get("path", ""))]
+    # Fall back to all files only if directory is entirely test code (e.g. tests/)
+    ranking_files = source_files if source_files else child_file_summaries
+
+    for fs in ranking_files:
         all_classes.extend(fs.get("classes", []))
         all_functions.extend(fs.get("functions", []))
+    for fs in child_file_summaries:
         lang = fs.get("language", "")
         if lang and lang != "unknown":
             languages[lang] += 1
@@ -148,10 +176,14 @@ def _build_repo_summary(repo_name: str, dir_summaries: list[dict], file_summarie
     total_files = sum(d.get("file_count", 0) for d in dir_summaries)
     total_symbols = sum(f.get("symbol_count", 0) for f in file_summaries)
 
-    # Collect all classes and functions across the whole repo
+    # Collect classes/functions from non-test directories first.
+    # Fall back to all dirs only if the repo is entirely test code.
+    source_dirs = [d for d in dir_summaries if not _is_test_path((d.get("path") or "") + "/")]
+    ranking_dirs = source_dirs if source_dirs else dir_summaries
+
     all_classes: list[str] = []
     all_functions: list[str] = []
-    for d in dir_summaries:
+    for d in ranking_dirs:
         all_classes.extend(d.get("top_classes", []))
         all_functions.extend(d.get("top_functions", []))
 
@@ -196,9 +228,13 @@ class SummarizationEngine:
             file_data = indexer.index_data.get("files", {}).get(rel_path, {})
         return _build_file_summary(rel_path, file_data or {})
 
-    def run_full_summarization(self) -> dict:
+    def run_full_summarization(self, scope: str | None = None) -> dict:
         """
         Build the full summary tree from the local AST index.
+
+        scope: optional directory prefix to restrict summarization (e.g. "pkg/").
+               When provided, only files whose path starts with scope are processed.
+               Existing summaries.json entries outside the scope are preserved.
 
         No LLM calls. No API key required. Pure local from ast_index.json.
         Also embeds file summary text into FAISS so architecture queries
@@ -219,7 +255,16 @@ class SummarizationEngine:
             logger.warning("No indexed files — run 'cognirepo index-repo .' first.")
             return {"repo": "", "directories": {}, "files": {}}
 
-        print(f"Building summaries for {len(all_files)} indexed files (local, no API)…")
+        # Apply scope filter if requested
+        scope_prefix = scope.rstrip("/") + "/" if scope else None
+        if scope_prefix:
+            all_files = {k: v for k, v in all_files.items() if k.startswith(scope_prefix)}
+            if not all_files:
+                logger.warning("No indexed files under scope '%s'. Check the path.", scope)
+                return {"repo": "", "directories": {}, "files": {}}
+            print(f"Summarizing {len(all_files)} files under scope '{scope}'…")
+        else:
+            print(f"Building summaries for {len(all_files)} indexed files (local, no API)…")
 
         try:
             from tqdm import tqdm as _tqdm  # pylint: disable=import-outside-toplevel
@@ -254,10 +299,21 @@ class SummarizationEngine:
             dir_summaries[rel_dir] = _build_dir_summary(rel_dir, child_files)
 
         # ── Level 3: repo summary ─────────────────────────────────────────────
+        # Sort directories by non-test source file count descending so that the
+        # repo-level summary reflects real source packages, not shell/build dirs.
+        sorted_dir_summaries = sorted(
+            dir_summaries.values(),
+            key=lambda d: sum(
+                1 for fp in file_summaries
+                if fp.startswith((d["path"] + "/") if d["path"] else "")
+                and not _is_test_path(fp)
+            ),
+            reverse=True,
+        )
         repo_name = os.path.basename(self.project_root)
         repo_summary = _build_repo_summary(
             repo_name,
-            list(dir_summaries.values()),
+            sorted_dir_summaries,
             list(file_summaries.values()),
         )
 
