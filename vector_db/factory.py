@@ -4,7 +4,8 @@
 vector_db/factory.py
 Reads storage.vector_backend from .cognirepo/config.json and returns
 the appropriate VectorStorageAdapter implementation.
-Defaults to "faiss" if config unreadable or key missing.
+Defaults to "chroma" (ChromaDB) for semantic text storage.
+FAISS is always used separately for AST indexing (via ast_indexer.py).
 """
 from __future__ import annotations
 
@@ -41,10 +42,10 @@ def _read_backend() -> str:
         config_path = _find_config()
         if config_path and config_path.exists():
             data = json.loads(config_path.read_text(encoding="utf-8"))
-            return data.get("storage", {}).get("vector_backend", "faiss")
+            return data.get("storage", {}).get("vector_backend", "chroma")
     except Exception:  # pylint: disable=broad-except
         pass
-    return "faiss"
+    return "chroma"
 
 
 def _find_config() -> Path | None:

@@ -84,29 +84,20 @@ def _scaffold_dirs() -> None:
     os.makedirs(get_path("episodic"), exist_ok=True)
 
 
-def _init_empty_stores(vector_backend: str = "faiss") -> None:
+def _init_empty_stores() -> None:
     """
-    Create empty FAISS index and episodic log on first init so `doctor`
-    does not report false failures immediately after `cognirepo init`.
+    Create empty ChromaDB collection and episodic log on first init so `doctor`
+    shows 0 vectors immediately after `cognirepo init` instead of "not found".
+
+    FAISS is used for AST indexing (built by `cognirepo index-repo`).
+    ChromaDB is always used for semantic text memory.
     """
-    # Empty FAISS index — only for FAISS backend
-    if vector_backend == "faiss":
-        idx_file = get_path("vector_db/semantic.index")
-        if not os.path.exists(idx_file):
-            try:
-                import faiss  # pylint: disable=import-outside-toplevel
-                _idx = faiss.IndexFlatL2(384)
-                faiss.write_index(_idx, idx_file)
-            except Exception:  # pylint: disable=broad-except
-                pass  # faiss not installed — skip; doctor will show clear hint
-    elif vector_backend == "chroma":
-        # Eagerly create the ChromaDB directory so `doctor` finds it immediately
-        # after init (ChromaDB is otherwise lazy — created on first embedding).
-        try:
-            from vector_db.chroma_adapter import ChromaDBAdapter  # pylint: disable=import-outside-toplevel
-            ChromaDBAdapter()  # triggers chromadb.PersistentClient → creates the directory
-        except Exception:  # pylint: disable=broad-except
-            pass  # chromadb not installed — doctor will surface the missing package
+    # Eagerly create ChromaDB collection so doctor finds it immediately.
+    try:
+        from vector_db.chroma_adapter import ChromaDBAdapter  # pylint: disable=import-outside-toplevel
+        ChromaDBAdapter()  # triggers PersistentClient → creates the on-disk directory
+    except Exception:  # pylint: disable=broad-except
+        pass  # chromadb not installed — doctor will surface the hint
 
     # Empty episodic log
     ep_file = get_path("memory/episodic.json")
@@ -123,7 +114,7 @@ def _write_config(
     org: str | None = None,
     project: str | None = None,
     encrypt: bool = False,
-    vector_backend: str = "faiss",
+    vector_backend: str = "chroma",
     autosave_context: bool = True,
     behaviour_tracking: bool = False,
 ) -> str:
@@ -724,9 +715,8 @@ def init_project(
     org: str | None = None,
     project: str | None = None,
     encrypt: bool = False,
-    vector_backend: str = "faiss",
+    vector_backend: str = "chroma",
     mcp_targets: list[str] | None = None,
-    mcp_global: bool = False,
     autosave_context: bool = True,
     behaviour_tracking: bool = False,
     # deprecated — accepted but ignored for backward compat
@@ -765,7 +755,6 @@ def init_project(
             encrypt        = wizard_cfg.get("encrypt", encrypt)
             vector_backend = wizard_cfg.get("vector_backend", vector_backend)
             mcp_targets    = wizard_cfg.get("mcp_targets", mcp_targets or [])
-            mcp_global     = wizard_cfg.get("mcp_global", mcp_global)
             autosave_context = wizard_cfg.get("autosave_context", autosave_context)
             behaviour_tracking = wizard_cfg.get("behaviour_tracking", behaviour_tracking)
             _wizard_ran = True
@@ -788,7 +777,7 @@ def init_project(
 
     # ── scaffold directories and write config ─────────────────────────────────
     _scaffold_dirs()
-    _init_empty_stores(vector_backend=vector_backend)
+    _init_empty_stores()
     _write_config(
         project_name=project_name,
         org=org,
@@ -818,7 +807,7 @@ def init_project(
     if mcp_targets:
         print("\nConfiguring MCP integration:")
         project_path = os.path.abspath(os.getcwd())
-        setup_mcp(mcp_targets, project_name, project_path, global_scope=mcp_global)
+        setup_mcp(mcp_targets, project_name, project_path, global_scope=False)
 
     # Read back encrypt flag for status display
     try:

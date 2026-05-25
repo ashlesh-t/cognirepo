@@ -52,6 +52,45 @@ _GRAPH = None  # pylint: disable=invalid-name
 _INDEXER = None  # pylint: disable=invalid-name
 _SINGLETON_LOCK = threading.Lock()
 
+# ── MCP session tracking ──────────────────────────────────────────────────────
+# One session is created per server process; tool calls are appended as
+# user/assistant exchange pairs so get_session_history() reflects MCP usage.
+_MCP_SESSION: dict | None = None  # pylint: disable=invalid-name
+_SESSION_LOCK = threading.Lock()
+
+
+def _get_mcp_session() -> dict | None:
+    return _MCP_SESSION
+
+
+def _init_mcp_session() -> None:
+    """Create a new session for this server process (called once at startup)."""
+    global _MCP_SESSION  # pylint: disable=global-statement
+    try:
+        from orchestrator.session import create_session  # pylint: disable=import-outside-toplevel
+        with _SESSION_LOCK:
+            _MCP_SESSION = create_session(model="mcp-server")
+        logger.debug("MCP session created: %s", _MCP_SESSION["session_id"])
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("MCP session init failed (non-fatal): %s", exc)
+
+
+def _record_mcp_tool_call(tool_name: str, query_summary: str, result_summary: str) -> None:
+    """Append a tool call as an exchange to the MCP session (best-effort)."""
+    global _MCP_SESSION  # pylint: disable=global-statement
+    if _MCP_SESSION is None:
+        return
+    try:
+        from orchestrator.session import append_exchange  # pylint: disable=import-outside-toplevel
+        with _SESSION_LOCK:
+            _MCP_SESSION = append_exchange(
+                _MCP_SESSION,
+                user_msg=f"[tool:{tool_name}] {query_summary}"[:500],
+                assistant_msg=result_summary[:500],
+            )
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.debug("MCP session append failed (non-fatal): %s", exc)
+
 
 def _get_graph():
     """Lazily load KnowledgeGraph (double-checked locking for thread safety)."""
@@ -343,6 +382,15 @@ def _traced(tool_name: str, fn, *args, **kwargs):
         result = fn(*args, **kwargs)
         logger.info("mcp.tool.end", extra={"tool": tool_name, "status": "ok"})
         get_breaker().record_success()
+        # Record tool call in the MCP session for get_session_history() visibility
+        _query = kwargs.get("query") or kwargs.get("name") or kwargs.get("text") or kwargs.get("function_name") or ""
+        _result_summary = (
+            f"status={result.get('status','ok')} tokens={result.get('token_count','')} "
+            f"sections={len(result.get('sections', []))}"
+            if isinstance(result, dict) else f"{len(result)} results"
+            if isinstance(result, list) else "done"
+        )
+        _record_mcp_tool_call(tool_name, str(_query)[:200], _result_summary)
         return result
     except Exception:
         logger.exception("mcp.tool.error", extra={"tool": tool_name})
@@ -789,17 +837,39 @@ def search_token(word: str, repo_path: str | None = None) -> dict:
 
 def _who_calls_dynamic_fallback(function_name: str, repo_root: str | None = None) -> list[dict]:
     """
-    String-literal grep fallback for dynamic dispatch patterns.
-    Finds function_name as a string argument to add_job(), connect(), app.route(), etc.
-    Returns hits labelled found_via=dynamic_dispatch_fallback.
+    Grep fallback for callers not captured in the call graph.
+
+    Three search patterns:
+    1. String-literal dynamic dispatch: "fn_name" / 'fn_name' next to scheduler/signal keywords
+    2. Go receiver method calls: .fn_name( in .go files
+    3. General function calls: fn_name( in any source file (broader net)
     """
     import subprocess  # pylint: disable=import-outside-toplevel
     import re as _re  # pylint: disable=import-outside-toplevel
 
     repo_root = repo_root or os.environ.get("COGNIREPO_ROOT", os.getcwd())
     results = []
+    seen_locs: set[str] = set()
+
+    def _add_result(fpath: str, lineno_s: str, code: str, found_via: str) -> None:
+        loc_key = f"{fpath}:{lineno_s}"
+        if loc_key in seen_locs:
+            return
+        seen_locs.add(loc_key)
+        try:
+            rel_path = os.path.relpath(fpath, repo_root)
+        except ValueError:
+            rel_path = fpath
+        results.append({
+            "caller": f"{found_via}::{rel_path}:{lineno_s}",
+            "file": rel_path,
+            "line": int(lineno_s),
+            "code_snippet": code.strip()[:120],
+            "found_via": found_via,
+        })
+
     try:
-        # Search for function_name as a string argument in source files
+        # ── Pattern 1: dynamic dispatch (Python/JS/TS string argument patterns) ─
         proc = subprocess.run(  # nosec B603
             ["grep", "-rn", "--include=*.py", "--include=*.js", "--include=*.ts",
              function_name, repo_root],
@@ -810,25 +880,43 @@ def _who_calls_dynamic_fallback(function_name: str, repo_root: str | None = None
             if len(parts) < 3:
                 continue
             fpath, lineno_s, code = parts
-            # Only include lines that look like dynamic registration (not definitions)
             if (f"def {function_name}" in code or f"class {function_name}" in code):
                 continue
-            # Check for string argument or scheduler/signal patterns
             if (function_name in code and
                     (f'"{function_name}"' in code or f"'{function_name}'" in code or
                      any(kw in code for kw in ["add_job", "connect", "route", "task",
                                                "signal", "register", "handler", "callback"]))):
-                try:
-                    rel_path = os.path.relpath(fpath, repo_root)
-                except ValueError:
-                    rel_path = fpath
-                results.append({
-                    "caller": f"dynamic_dispatch::{rel_path}:{lineno_s}",
-                    "file": rel_path,
-                    "line": int(lineno_s),
-                    "code_snippet": code.strip()[:120],
-                    "found_via": "dynamic_dispatch_fallback",
-                })
+                _add_result(fpath, lineno_s, code, "dynamic_dispatch_fallback")
+
+        # ── Pattern 2: Go receiver method calls — .fn_name( ────────────────────
+        go_pattern = rf"\.{_re.escape(function_name)}\s*\("
+        proc_go = subprocess.run(  # nosec B603
+            ["grep", "-rn", "-E", "--include=*.go", go_pattern, repo_root],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in proc_go.stdout.splitlines():
+            parts = line.split(":", 2)
+            if len(parts) < 3:
+                continue
+            fpath, lineno_s, code = parts
+            # Skip the definition line itself
+            if f"func " in code and function_name in code:
+                continue
+            _add_result(fpath, lineno_s, code, "go_receiver_fallback")
+
+        # ── Pattern 3: Java/Kotlin method calls — .fn_name( ────────────────────
+        proc_jvm = subprocess.run(  # nosec B603
+            ["grep", "-rn", "-E", "--include=*.java", "--include=*.kt",
+             rf"\.{_re.escape(function_name)}\s*\(", repo_root],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in proc_jvm.stdout.splitlines():
+            parts = line.split(":", 2)
+            if len(parts) < 3:
+                continue
+            fpath, lineno_s, code = parts
+            _add_result(fpath, lineno_s, code, "jvm_method_fallback")
+
     except Exception as _exc:  # pylint: disable=broad-except
         import logging as _logging  # pylint: disable=import-outside-toplevel
         _logging.getLogger(__name__).warning("who_calls grep fallback failed: %s", _exc)
@@ -895,6 +983,17 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
             fallback = _who_calls_dynamic_fallback(function_name, repo_root)
             if fallback:
                 result = fallback
+            else:
+                return {
+                    "local_callers": [],
+                    "cross_repo_callers": [],
+                    "truncated": False,
+                    "note": (
+                        f"No callers found for '{function_name}' in graph or via grep fallback. "
+                        f"For Go receiver methods, ensure the repo is indexed: "
+                        f"cognirepo index-repo . — then retry."
+                    ),
+                }
 
         # Cross-repo: check dependent services for callers of this function
         cross_repo_callers: list[dict] = []
@@ -1019,7 +1118,13 @@ def subgraph(entity: str, depth: int = 2, repo_path: str | None = None) -> dict:
                 return _EMPTY_GRAPH_WARNING
         _MAX_NODES, _MAX_EDGES = 200, 500
         candidates = [entity, f"symbol::{entity}", f"concept::{entity.lower()}"]
-        for candidate in candidates:
+        # Also try case-insensitive suffix scan as a fuzzy last resort
+        entity_lower = entity.lower()
+        fuzzy_candidates = [
+            n for n in g.G.nodes
+            if n.lower().endswith(f"::{entity_lower}") or n.lower() == entity_lower
+        ]
+        for candidate in candidates + fuzzy_candidates:
             if g.node_exists(candidate):
                 result = g.subgraph_around(candidate, radius=depth)
                 nodes = result.get("nodes", [])
@@ -1035,7 +1140,16 @@ def subgraph(entity: str, depth: int = 2, repo_path: str | None = None) -> dict:
                     }
                 _auto_store_hook("subgraph", result)
                 return result
-    return {"nodes": [], "edges": []}
+    return {
+        "nodes": [], "edges": [],
+        "status": "not_found",
+        "hint": (
+            f"Symbol '{entity}' not found in the knowledge graph. "
+            f"Try lookup_symbol('{entity}') first to find the exact indexed name. "
+            f"The graph uses 'symbol::name' prefixes internally — "
+            f"e.g. subgraph('symbol::{entity}') or subgraph('concept::{entity.lower()}')."
+        ),
+    }
 
 
 @mcp.tool()
@@ -1105,6 +1219,22 @@ def graph_stats(repo_path: str | None = None) -> dict:
                 index_stale = index_age_minutes > 60 and not watcher_running
             except Exception:  # pylint: disable=broad-except
                 pass
+    stale_reindexing_triggered = False
+    if index_stale:
+        try:
+            _lock_path = get_path("index/reindex.lock")
+            if not os.path.exists(_lock_path) and _index_is_stale():
+                import subprocess as _sp_gs  # pylint: disable=import-outside-toplevel
+                os.makedirs(os.path.dirname(_lock_path), exist_ok=True)
+                open(_lock_path, "w").close()  # noqa: WPS515
+                _sp_gs.Popen(
+                    ["cognirepo", "index-repo", "--changed-only", "--no-watch",
+                     "--remove-lock", _lock_path],
+                    stdout=_sp_gs.DEVNULL, stderr=_sp_gs.DEVNULL, close_fds=True,
+                )
+                stale_reindexing_triggered = True
+        except Exception:  # pylint: disable=broad-except
+            pass
     return {
         "node_count": stats["nodes"],
         "edge_count": stats["edges"],
@@ -1112,6 +1242,7 @@ def graph_stats(repo_path: str | None = None) -> dict:
         "last_indexed": last_indexed,
         "index_age_minutes": index_age_minutes,
         "index_stale": index_stale,
+        "stale_reindexing_triggered": stale_reindexing_triggered,
     }
 
 
@@ -2181,6 +2312,7 @@ def run_server(project_dir: str | None = None) -> None:
         pass  # watcher is best-effort — never block server startup
 
     _write_manifest()
+    _init_mcp_session()
 
     # Pre-warm embedding model in background — reduces first-query latency from ~6s to ~0s
     import threading as _threading  # pylint: disable=import-outside-toplevel

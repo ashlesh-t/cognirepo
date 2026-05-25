@@ -61,13 +61,13 @@ class CrossRepoRouter:
         seen: set[str] = set()
         result: list[str] = []
         for repo in org_data.get("repos", []):
-            abs_repo = os.path.abspath(repo)
+            abs_repo = os.path.realpath(os.path.normpath(repo))
             if abs_repo != self.repo_path and abs_repo not in seen:
                 seen.add(abs_repo)
                 result.append(abs_repo)
         for project_data in org_data.get("projects", {}).values():
             for repo in project_data.get("repos", []):
-                abs_repo = os.path.abspath(repo)
+                abs_repo = os.path.realpath(os.path.normpath(repo))
                 if abs_repo != self.repo_path and abs_repo not in seen:
                     seen.add(abs_repo)
                     result.append(abs_repo)
@@ -85,20 +85,30 @@ class CrossRepoRouter:
         from memory.semantic_memory import SemanticMemory  # pylint: disable=import-outside-toplevel
         from config.paths import _CTX_DIR  # pylint: disable=import-outside-toplevel
         for repo in all_repos:
-            cognirepo_dir = get_cognirepo_dir_for_repo(repo)
-            if not os.path.isdir(cognirepo_dir):
+            repo_norm = os.path.realpath(os.path.normpath(repo))
+            cognirepo_dir = get_cognirepo_dir_for_repo(repo_norm)
+            index_exists = os.path.isdir(cognirepo_dir)
+            logger.debug(
+                "org_search: querying repo=%s, cognirepo_dir=%s, index_exists=%s",
+                repo_norm, cognirepo_dir, index_exists,
+            )
+            if not index_exists:
+                logger.warning(
+                    "org_search: skipping repo '%s' — .cognirepo/ index not found at %s",
+                    os.path.basename(repo_norm), cognirepo_dir,
+                )
                 continue
             token = _CTX_DIR.set(cognirepo_dir)
             try:
                 mem = SemanticMemory()
                 results = mem.search(query, top_k=top_k)
-                repo_name = os.path.basename(repo)
+                repo_name = os.path.basename(repo_norm)
                 for r in results:
                     r["source_repo"] = repo_name
-                    r["repo_path"] = repo
+                    r["repo_path"] = repo_norm
                 all_results.extend(results)
             except Exception as exc:
-                logger.error("Failed to query repo %s: %s", repo, exc)
+                logger.error("Failed to query repo %s: %s", repo_norm, exc)
             finally:
                 _CTX_DIR.reset(token)
         all_results.sort(key=lambda x: x.get("score", 1.0))

@@ -100,17 +100,23 @@ def measure_token_reduction(queries: list[str]) -> dict:
     Returns average savings %.
     """
     from tools.context_pack import context_pack
+    from memory.circuit_breaker import CircuitOpenError
 
     savings_naive = []
     savings_targeted = []
     details = []
+    skipped = []
     for q in queries:
         keyword = q.split()[0].lower()
         naive_raw = _read_files_for_query(keyword, REPO_ROOT)
         targeted_raw = _targeted_baseline(keyword, REPO_ROOT)
         if naive_raw == 0:
             continue
-        result = context_pack(q, max_tokens=2000)
+        try:
+            result = context_pack(q, max_tokens=2000)
+        except CircuitOpenError as _cb_err:
+            skipped.append({"query": q, "reason": "circuit_open", "detail": str(_cb_err)})
+            continue
         packed = result.get("token_count", 0)
         if packed == 0:
             packed = 1  # context was empty — treat as 1 token for ratio purposes
@@ -132,10 +138,15 @@ def measure_token_reduction(queries: list[str]) -> dict:
 
     avg_naive = round(sum(savings_naive) / len(savings_naive), 1) if savings_naive else 0.0
     avg_targeted = round(sum(savings_targeted) / len(savings_targeted), 1) if savings_targeted else 0.0
+    if skipped:
+        print(f"  ⚠  {len(skipped)} quer{'y' if len(skipped)==1 else 'ies'} skipped "
+              f"(CogniRepo server under memory pressure). Run: cognirepo server restart",
+              flush=True)
     return {
         "token_reduction_pct": avg_naive,
         "token_reduction_vs_targeted_pct": avg_targeted,
         "details": details,
+        "skipped": skipped,
     }
 
 
@@ -405,10 +416,21 @@ def _benchmark_memories() -> list[str]:
 
 def run_benchmark() -> dict:
     """Run all benchmarks and return a consolidated metrics dict."""
+    from memory.circuit_breaker import CircuitOpenError
+
     print("Running CogniRepo benchmark...", flush=True)
 
     print("  [1/7] Token reduction...", flush=True)
-    token_metrics = measure_token_reduction(_BENCHMARK_QUERIES)
+    try:
+        token_metrics = measure_token_reduction(_BENCHMARK_QUERIES)
+    except CircuitOpenError as _cb_err:
+        print(
+            f"\n⚠  Benchmark aborted at step [1/7]: CogniRepo server is under memory pressure.\n"
+            f"   Error: {_cb_err}\n"
+            f"   Fix:   cognirepo server restart\n",
+            flush=True,
+        )
+        return {"aborted": True, "reason": "circuit_open", "detail": str(_cb_err)}
 
     print("  [2/7] Symbol lookup latency...", flush=True)
     lookup_metrics = measure_symbol_lookup(_BENCHMARK_SYMBOLS)

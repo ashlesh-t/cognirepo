@@ -165,15 +165,15 @@ class OrgGraph:
         Register a repo node. If parent_path is given, adds a CHILD_OF edge
         so get_children(parent_path) returns this repo.
         """
-        abs_path = os.path.abspath(path)
+        abs_path = os.path.realpath(os.path.normpath(path))
         node_attrs = {"node_type": "REPO", "name": os.path.basename(abs_path)}
         if parent_path:
-            node_attrs["parent"] = os.path.abspath(parent_path)
+            node_attrs["parent"] = os.path.realpath(os.path.normpath(parent_path))
         if metadata:
             node_attrs.update(metadata)
         self.G.add_node(abs_path, **node_attrs)
         if parent_path:
-            abs_parent = os.path.abspath(parent_path)
+            abs_parent = os.path.realpath(os.path.normpath(parent_path))
             # Ensure parent node exists
             if not self.G.has_node(abs_parent):
                 self.G.add_node(abs_parent, node_type="REPO", name=os.path.basename(abs_parent))

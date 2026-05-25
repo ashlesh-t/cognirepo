@@ -35,6 +35,7 @@ from graph.behaviour_tracker import BehaviourTracker
 from graph.graph_utils import extract_entities_from_text, make_node_id
 from graph.knowledge_graph import KnowledgeGraph
 from indexer.ast_indexer import ASTIndexer
+from memory.circuit_breaker import CircuitOpenError
 from memory.embeddings import encode_with_timeout
 from memory.episodic_memory import get_history
 from vector_db.local_vector_db import LocalVectorDB
@@ -95,7 +96,11 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
                 f"Maximum: {MAX_QUERY_LEN:,}. "
                 "Truncate or set COGNIREPO_MAX_QUERY_LEN to override."
             )
-        query_vector = encode_with_timeout(query).astype("float32")
+        try:
+            query_vector = encode_with_timeout(query).astype("float32")
+        except CircuitOpenError:
+            # Embedding unavailable — degrade gracefully to BM25+AST exact only
+            return self._bm25_only_retrieve(query, top_k)
 
         # 1. wider vector net before re-ranking (semantic memory backend)
         vector_candidates = self._vector_retrieve(query_vector, top_k * 3)
@@ -138,6 +143,20 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
             pass
 
         return top
+
+    def _bm25_only_retrieve(self, query: str, top_k: int) -> list[dict]:
+        """BM25 + AST exact fallback used when embeddings are unavailable (circuit open)."""
+        entities = extract_entities_from_text(query)
+        ast_candidates = self._ast_retrieve(entities)
+        # Score purely by AST exact match (score=1.0) + simple keyword overlap
+        results = []
+        q_tokens = set(query.lower().split())
+        for c in ast_candidates:
+            text_tokens = set(c.get("text", "").lower().split())
+            overlap = len(q_tokens & text_tokens) / max(len(q_tokens), 1)
+            results.append({**c, "final_score": overlap, "retrieval_mode": "bm25_fallback"})
+        results.sort(key=lambda x: x["final_score"], reverse=True)
+        return results[:top_k]
 
     # ── private helpers ───────────────────────────────────────────────────────
 
@@ -467,6 +486,14 @@ def hybrid_retrieve(query: str, top_k: int = 5, min_score: float | None = None) 
         now = time.monotonic()
         with _CACHE_LOCK:
             _HYBRID_CACHE[cache_key] = (result, now)
+    except CircuitOpenError:
+        # Don't cache degraded results; signal caller with structured response
+        with _IN_FLIGHT_LOCK:
+            _IN_FLIGHT.pop(cache_key, None)
+        done_event.set()
+        return [{"status": "circuit_open", "sections": [], "token_count": 0,
+                 "hint": "CogniRepo server is under memory pressure. "
+                         "Run: cognirepo server restart"}]
     finally:
         with _IN_FLIGHT_LOCK:
             _IN_FLIGHT.pop(cache_key, None)

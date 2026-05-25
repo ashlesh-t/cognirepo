@@ -398,38 +398,26 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         _fail(f"Storage — {exc}", "Run: cognirepo init")
         issues += 1
 
-    # ── Check 2: vector index (FAISS or ChromaDB depending on config) ────────
-    _vbackend = nonlocal_config.get("storage", {}).get("vector_backend", "faiss")
-    if _vbackend == "chroma":
-        _chroma_path = get_path("vector_db/chroma")
-        if os.path.isdir(_chroma_path):
-            try:
-                import chromadb as _chromadb  # pylint: disable=import-outside-toplevel
-                _client = _chromadb.PersistentClient(path=_chroma_path)
-                _col = _client.get_or_create_collection("cognirepo")
-                _ok(f"ChromaDB index — {_col.count()} vectors")
-                if verbose:
-                    print(f"       {os.path.abspath(_chroma_path)}")
-            except Exception as exc:  # pylint: disable=broad-except
-                _fail(f"ChromaDB index — {exc}", "Run: cognirepo init")
-                issues += 1
-        else:
-            _warn("ChromaDB index — not found (will be created on first index-repo run)")
-    else:
-        _faiss_path = get_path("vector_db/semantic.index")
-        if os.path.exists(_faiss_path):
-            try:
-                import faiss as _faiss  # pylint: disable=import-outside-toplevel
-                _fidx = _faiss.read_index(_faiss_path)
-                _ok(f"FAISS index — {_fidx.ntotal} vectors")
-                if verbose:
-                    print(f"       {os.path.abspath(_faiss_path)}")
-            except Exception as exc:  # pylint: disable=broad-except
-                _fail(f"FAISS index — {exc}", "Run: cognirepo init")
-                issues += 1
-        else:
-            _fail("FAISS index — not found", "Run: cognirepo init")
+    # ── Check 2: ChromaDB (semantic text store) ───────────────────────────────
+    _chroma_path = get_path("vector_db/chroma")
+    if os.path.isdir(_chroma_path):
+        try:
+            import chromadb as _chromadb  # pylint: disable=import-outside-toplevel
+            _client = _chromadb.PersistentClient(path=_chroma_path)
+            _col = _client.get_or_create_collection("cognirepo")
+            _chroma_count = _col.count()
+            _chroma_hint = " (run: cognirepo store-memory or cognirepo seed)" if _chroma_count == 0 else ""
+            _ok(f"ChromaDB (semantic text) — {_chroma_count} vectors{_chroma_hint}")
+            if verbose:
+                print(f"       {os.path.abspath(_chroma_path)}")
+        except Exception as exc:  # pylint: disable=broad-except
+            _fail(f"ChromaDB (semantic text) — {exc}", "Run: pip install chromadb")
             issues += 1
+    else:
+        _warn(
+            "ChromaDB (semantic text) — not found (0 vectors)",
+            "Run: cognirepo init  to create the collection",
+        )
 
     # ── Check 3: Knowledge graph ──────────────────────────────────────────────
     try:
@@ -445,7 +433,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         _fail(f"Knowledge graph — {exc}", "Run: cognirepo index-repo .")
         issues += 1
 
-    # ── Check 4: AST index (lightweight — parse JSON directly, no model load) ─
+    # ── Check 4: FAISS (AST indexing) ────────────────────────────────────────
     _ast_path = get_path("index/ast_index.json")
     if os.path.exists(_ast_path):
         try:
@@ -455,25 +443,27 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             _sym_count = sum(len(v.get("symbols", [])) for v in _ast_files.values())
             if _sym_count == 0 and len(_ast_files) > 0:
                 _warn(
-                    f"AST index — {len(_ast_files)} files indexed but 0 symbols parsed."
+                    f"FAISS (AST indexing) — {len(_ast_files)} files indexed but 0 symbols parsed."
                     " Queries will return empty results.",
                     "Run: cognirepo index-repo . (check language support with --verbose)",
                 )
                 issues += 1
             elif _sym_count == 0:
-                _warn("AST index — file exists but contains no symbols.",
+                _warn("FAISS (AST indexing) — file exists but contains no symbols.",
                       "Run: cognirepo index-repo .")
                 issues += 1
             else:
-                _ok(f"AST index — {_sym_count:,} symbols across {len(_ast_files)} files")
+                _ok(f"FAISS (AST indexing) — {_sym_count:,} symbols across {len(_ast_files)} files")
             if verbose:
                 print(f"       {os.path.abspath(_ast_path)}")
         except Exception as exc:  # pylint: disable=broad-except
-            _fail(f"AST index — {exc}", "Run: cognirepo index-repo .")
+            _fail(f"FAISS (AST indexing) — {exc}", "Run: cognirepo index-repo .")
             issues += 1
     else:
-        _fail("AST index — not found", "Run: cognirepo index-repo .")
-        issues += 1
+        _warn(
+            "FAISS (AST indexing) — 0 symbols (index not built yet)",
+            "Run: cognirepo index-repo .  to index the codebase",
+        )
 
     # ── Check 4a: AST index staleness ────────────────────────────────────────
     if os.path.exists(_ast_path):
@@ -481,7 +471,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             _ast_age_h = (time.time() - os.path.getmtime(_ast_path)) / 3600
             if _ast_age_h > 24:
                 _warn(
-                    f"AST index — last updated {_ast_age_h:.0f}h ago (may be stale)",
+                    f"FAISS (AST indexing) — last updated {_ast_age_h:.0f}h ago (may be stale)",
                     "Run: cognirepo index-repo . to refresh",
                 )
         except OSError:
@@ -744,6 +734,59 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         )
         issues += 1
 
+    # ── Check 16: behaviour hook script exists at expected path ─────────────
+    _bh_path_ok = False
+    try:
+        _settings_path = ".claude/settings.json"
+        if os.path.exists(_settings_path):
+            with open(_settings_path, encoding="utf-8") as _sf:
+                _settings_data = json.load(_sf)
+            _hooks = _settings_data.get("hooks", {})
+            for _hook_events in _hooks.values():
+                for _hook_entry in (_hook_events if isinstance(_hook_events, list) else []):
+                    _cmd = _hook_entry.get("command", "") if isinstance(_hook_entry, dict) else ""
+                    if "behaviour_hook.py" in _cmd:
+                        # Extract the path from the command string
+                        _parts = _cmd.split()
+                        for _part in _parts:
+                            if _part.endswith("behaviour_hook.py"):
+                                if os.path.exists(_part):
+                                    _ok(f"Behaviour hook — script found at {_part}")
+                                else:
+                                    _warn(
+                                        f"Behaviour hook — script NOT found: {_part}",
+                                        "Re-run: cognirepo setup",
+                                    )
+                                _bh_path_ok = True
+                                break
+        if not _bh_path_ok and verbose:
+            print("  ○  Behaviour hook — not configured (run: cognirepo setup)")
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: behaviour hook check failed: %s", _exc)
+
+    # ── Check 17: org member repos have valid indexes ────────────────────────
+    try:
+        from graph.org_graph import get_org_graph as _get_og  # pylint: disable=import-outside-toplevel
+        from config.paths import get_cognirepo_dir_for_repo as _gcdr  # pylint: disable=import-outside-toplevel
+        _og2 = _get_og()
+        _org_repos = _og2.list_repos() if _og2 else []
+        _current_repo = os.path.realpath(os.getcwd())
+        for _org_repo in _org_repos:
+            if os.path.realpath(_org_repo) == _current_repo:
+                continue
+            _cog_dir = _gcdr(_org_repo)
+            _ast_idx = os.path.join(_cog_dir, "index", "ast_index.json")
+            _repo_label = os.path.basename(_org_repo)
+            if not os.path.exists(_ast_idx):
+                _warn(
+                    f"Org member '{_repo_label}' — index not found at {_cog_dir}",
+                    f"Run: cd {_org_repo} && cognirepo index-repo .",
+                )
+            elif verbose:
+                _ok(f"Org member '{_repo_label}' — index found")
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: org member check failed: %s", _exc)
+
     # ── Check N: AI tool MCP configs (informational, not failures) ───────────
     _tool_checks = [
         ("Claude Code", ".claude/settings.json", "mcpServers"),
@@ -896,7 +939,7 @@ def _cmd_status() -> None:
         # Cold-start guidance
         if g_nodes <= 10:
             print("\n  Currently running: pure vector search (graph cold)")
-            print("  Fix: cognirepo index-repo . && cognirepo seed --from-git")
+            print("  Fix: cognirepo index-repo .  (rebuilds graph nodes from codebase)")
         elif b_count < 50:
             print(f"\n  Behaviour warm-up: {b_count}/50 queries needed")
         else:
@@ -1002,20 +1045,32 @@ def _write_claude_hooks(claude_dir: str, project_dir: str) -> None:
                 cfg = {}
 
     python_exe = sys.executable  # use the same Python that's running cognirepo
+
+    # Resolve hook scripts from the installed cognirepo package, not from project_dir.
+    # This ensures child repos (bank-service, npci-service, etc.) that don't contain
+    # the cognirepo source tree always get a valid absolute path to the hook scripts.
+    try:
+        import cognirepo as _cr_pkg  # pylint: disable=import-outside-toplevel
+        _pkg_tools = os.path.join(os.path.dirname(_cr_pkg.__file__), "tools")
+    except Exception:  # pylint: disable=broad-except
+        _pkg_tools = os.path.join(project_dir, "tools")  # fallback to project dir
+    _bh_script = os.path.join(_pkg_tools, "behaviour_hook.py")
+    _sm_script = os.path.join(_pkg_tools, "sync_claude_memory.py")
+
     hooks_cfg = cfg.setdefault("hooks", {})
 
     # UserPromptSubmit — behaviour profile tracking
     _uph = hooks_cfg.setdefault("UserPromptSubmit", [])
-    _bh_cmd = f"{python_exe} {os.path.join(project_dir, 'tools', 'behaviour_hook.py')} {project_dir}"
+    _bh_cmd = f"{python_exe} {_bh_script} {project_dir}"
     _uph_entry = {"hooks": [{"type": "command", "command": _bh_cmd}]}
-    if not any(_bh_cmd in str(e) for e in _uph):
+    if not any(_bh_script in str(e) for e in _uph):
         _uph.append(_uph_entry)
 
     # PostToolUse(Write) — sync Claude memory files into semantic store
     _ptuh = hooks_cfg.setdefault("PostToolUse", [])
-    _sm_cmd = f"{python_exe} {os.path.join(project_dir, 'tools', 'sync_claude_memory.py')}"
+    _sm_cmd = f"{python_exe} {_sm_script}"
     _ptuh_entry = {"matcher": "Write", "hooks": [{"type": "command", "command": _sm_cmd}]}
-    if not any(_sm_cmd in str(e) for e in _ptuh):
+    if not any(_sm_script in str(e) for e in _ptuh):
         _ptuh.append(_ptuh_entry)
 
     with open(settings_path, "w", encoding="utf-8") as _f:
@@ -2663,9 +2718,15 @@ def _main():
     )
 
     # summarize — generate hierarchical architectural summaries (Level 1-3)
-    sub.add_parser(
+    p_summarize = sub.add_parser(
         "summarize",
         help="Generate hierarchical architectural summaries (Level 1-3) via LLM",
+    )
+    p_summarize.add_argument(
+        "--scope",
+        metavar="DIR",
+        default=None,
+        help="Restrict summarization to files under this directory prefix (e.g. 'pkg/').",
     )
 
     # doctor — environment health check
@@ -3255,10 +3316,14 @@ def _main():
     if args.command == "summarize":
         from indexer.summarizer import SummarizationEngine
         engine = SummarizationEngine()
-        result = engine.run_full_summarization()
+        scope = getattr(args, "scope", None)
+        result = engine.run_full_summarization(scope=scope)
         print("\n--- Repository Summary ---")
         print(result["repo"])
-        print("\nSummaries saved to .cognirepo/index/summaries.json")
+        dir_count = len(result.get("directories", {}))
+        file_count = len(result.get("files", {}))
+        print(f"\nSummarized {file_count} files across {dir_count} directories.")
+        print("Summaries saved to .cognirepo/index/summaries.json")
         return
 
     if args.command == "coverage":

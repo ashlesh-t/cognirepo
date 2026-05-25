@@ -118,34 +118,6 @@ _TIER1_WEIGHT_MIN: float = 0.5    # Tier 1: all BFS-reachable files (direct + in
 _LARGE_REPO_TIER_THRESHOLD: int = _AUTO_SKIP_GRAPH_THRESHOLD  # same boundary as lite-graph
 
 
-def _print_cold_start_banner() -> None:
-    """
-    Print a cold-start transparency banner when graph/behaviour scores are zero.
-    Shown after index-repo and cognirepo init so users understand the warm-up state.
-    """
-    try:
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
-        kg = KnowledgeGraph()
-        bt = BehaviourTracker(kg)
-        g_nodes = kg.G.number_of_nodes()
-        b_weights = len(bt.data.get("symbol_weights", {}))
-
-        graph_score_str = "warm" if g_nodes > 10 else "0.0 (cold)"
-        behaviour_str = "warm" if b_weights > 50 else f"0.0 (needs ~50 queries to calibrate, have {b_weights})"
-        is_cold = g_nodes <= 10 or b_weights <= 0
-
-        if is_cold:
-            print("\n  Cold-start status:")
-            print(f"    graph_score     : {graph_score_str}")
-            print(f"    behaviour_score : {behaviour_str}")
-            if g_nodes <= 10:
-                print("    Currently running: pure vector search")
-                print("    Run `cognirepo seed --from-git` to prime graph from git history")
-            print()
-    except Exception:  # pylint: disable=broad-except
-        pass  # banner is informational only
-
 
 def _effective_skip_dirs() -> frozenset[str]:
     """Return _SKIP_DIRS merged with any extra dirs from .cognirepo/config.json."""
@@ -435,7 +407,16 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
             prop = fn.child_by_field_name("property")
             name_node = prop if prop else fn
             if name_node.type in ("identifier", "property_identifier", "field_identifier"):
-                out.append(_ts_text(name_node, source))
+                method_name = _ts_text(name_node, source)
+                out.append(method_name)
+                # For Go selector_expression, also record "receiver::method" so
+                # who_calls() can match type-specific receiver calls.
+                if fn.type == "selector_expression":
+                    obj_node = fn.child_by_field_name("operand")
+                    if obj_node and obj_node.type == "identifier":
+                        receiver_type = _ts_text(obj_node, source)
+                        if receiver_type and receiver_type[0].isupper():
+                            out.append(f"{receiver_type}::{method_name}")
     elif node.type == "method_invocation":  # Java
         name_node = node.child_by_field_name("name")
         if name_node:
@@ -1430,9 +1411,6 @@ class ASTIndexer:
                 f"  Unsupported extensions skipped: {skipped_str} "
                 f"(install cognirepo[languages])"
             )
-
-        # ── cold-start transparency banner ────────────────────────────────────
-        _print_cold_start_banner()
 
         if _tier2_pending:
             print(
