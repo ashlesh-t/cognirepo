@@ -90,8 +90,17 @@ class OrgGraph:
             logger.debug("OrgGraph: graph file empty or corrupt at %s — starting fresh", path)
             self.G = nx.DiGraph()
         except Exception as exc:  # pylint: disable=broad-except
-            logger.warning("OrgGraph: failed to load %s: %s", path, exc)
+            # Recoverable — always start fresh. Logged at DEBUG because the graph
+            # rebuilds itself on the next save; a WARNING here is misleading noise.
+            msg = str(exc) or type(exc).__name__
+            logger.debug("OrgGraph: failed to load %s (%s) — starting fresh", path, msg)
             self.G = nx.DiGraph()
+            # Remove the corrupt file so it doesn't trigger this on every startup.
+            try:
+                os.remove(path)
+                logger.debug("OrgGraph: removed unloadable file %s", path)
+            except OSError:
+                pass
 
     def _migrate_from_orgs_json(self) -> None:
         """One-time migration: read orgs.json repo lists into the org graph."""
