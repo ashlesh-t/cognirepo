@@ -84,7 +84,11 @@ def test_chroma_adapter_basic_mocked():
     """Ensure ChromaDBAdapter logic is exercised via mocking if real lib is missing."""
     import sys
     from unittest.mock import MagicMock
-    
+
+    # Force reimport of chroma_adapter so it picks up the mocked chromadb,
+    # regardless of what previous tests left in sys.modules.
+    sys.modules.pop("vector_db.chroma_adapter", None)
+
     with patch.dict(sys.modules, {"chromadb": MagicMock()}):
         from vector_db.chroma_adapter import ChromaDBAdapter
         # We need to mock the client and collection

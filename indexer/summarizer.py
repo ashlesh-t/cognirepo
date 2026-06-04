@@ -39,14 +39,36 @@ _TEST_PATH_PATTERNS = (
     "test_", "bench_",
 )
 
+# Name prefixes/suffixes that mark a class or function as test/mock infrastructure.
+# Checked at the symbol level so TestBoilerplate in lib/utils.py is still filtered.
+_TEST_NAME_PREFIXES = ("Test", "test_", "Mock", "Stub", "Fake", "Fixture", "Benchmark")
+_TEST_NAME_SUFFIXES = ("Test", "_test", "Mock", "Tests")
+# Common test base classes — if a class inherits from one of these it's a test class.
+_TEST_BASE_CLASSES = frozenset({"TestCase", "unittest.TestCase", "SimpleTestCase",
+                                 "TransactionTestCase", "LiveServerTestCase"})
+
 
 def _is_test_path(rel_path: str) -> bool:
     """Return True if rel_path looks like a test/benchmark/example file."""
     p = rel_path.replace("\\", "/").lower()
-    # Also catch _test.go style Go test files
+    # Catch _test.go and _test.py style files (Go/Python test conventions)
     if p.endswith("_test.go") or p.endswith("_test.py"):
         return True
     return any(pat in p for pat in _TEST_PATH_PATTERNS)
+
+
+def _is_test_symbol(name: str, sym: dict | None = None) -> bool:
+    """Return True if a symbol name or its bases mark it as test/mock code."""
+    if any(name.startswith(p) for p in _TEST_NAME_PREFIXES):
+        return True
+    if any(name.endswith(s) for s in _TEST_NAME_SUFFIXES):
+        return True
+    # Check inherited base classes (Python unittest-style)
+    if sym:
+        bases = sym.get("bases", [])
+        if isinstance(bases, list) and any(b in _TEST_BASE_CLASSES for b in bases):
+            return True
+    return False
 
 
 def _first_sentence(text: str) -> str:
@@ -83,13 +105,16 @@ def _build_file_summary(rel_path: str, file_data: dict) -> dict:
         doc = sym.get("docstring", "") or ""
 
         if stype == "CLASS":
-            classes.append(name)
-            if not purpose:
-                purpose = _first_sentence(doc)
+            # Exclude test/mock/fixture classes by name and base class
+            if not _is_test_symbol(name, sym):
+                classes.append(name)
+                if not purpose:
+                    purpose = _first_sentence(doc)
         elif stype == "FUNCTION":
             # skip dunders for the summary (keep API surface clean)
             if not (name.startswith("__") and name.endswith("__")):
-                functions.append(name)
+                if not _is_test_symbol(name):
+                    functions.append(name)
             if not purpose:
                 purpose = _first_sentence(doc)
         elif stype in ("CONSTANT", "VARIABLE"):
@@ -228,13 +253,21 @@ class SummarizationEngine:
             file_data = indexer.index_data.get("files", {}).get(rel_path, {})
         return _build_file_summary(rel_path, file_data or {})
 
-    def run_full_summarization(self, scope: str | None = None) -> dict:
+    # Repos with more files than this threshold skip inline summary embedding
+    # and queue it as a background Tier-2 pass instead, to avoid blocking init
+    # for 5-10+ minutes on large repos.
+    _EMBED_INLINE_THRESHOLD = 2000
+
+    def run_full_summarization(self, scope: str | None = None, embed: bool = True) -> dict:
         """
         Build the full summary tree from the local AST index.
 
         scope: optional directory prefix to restrict summarization (e.g. "pkg/").
                When provided, only files whose path starts with scope are processed.
                Existing summaries.json entries outside the scope are preserved.
+        embed: embed file summaries into FAISS.  Automatically set to False for
+               repos above _EMBED_INLINE_THRESHOLD files — a background pass is
+               launched instead so init doesn't block for 5-10+ minutes.
 
         No LLM calls. No API key required. Pure local from ast_index.json.
         Also embeds file summary text into FAISS so architecture queries
@@ -318,7 +351,39 @@ class SummarizationEngine:
         )
 
         # ── Embed file summaries into FAISS for semantic search ───────────────
-        self._embed_summaries(indexer, file_summaries)
+        # For large repos, skip inline embedding (blocks 5-10+ min) and queue
+        # a Tier-2 background pass instead.
+        n_files = len(file_summaries)
+        _do_embed = embed and n_files <= self._EMBED_INLINE_THRESHOLD
+        if embed and not _do_embed:
+            print(
+                f"  ℹ  {n_files:,} files: summary embedding deferred to background "
+                f"(threshold {self._EMBED_INLINE_THRESHOLD:,}). "
+                "Run 'cognirepo index-repo . --tier 2' to embed now."
+            )
+            # Launch background embed process + progress UI (each in its own guard)
+            try:
+                import subprocess as _sp  # pylint: disable=import-outside-toplevel
+                import sys as _sys  # pylint: disable=import-outside-toplevel
+                from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
+                _bin_dir = _Path(_sys.executable).parent
+                _colocated = _bin_dir / "cognirepo"
+                _cogcmd = str(_colocated) if _colocated.exists() else "cognirepo"
+                _sp.Popen(
+                    [_cogcmd, "summarize", "--embed-only"],
+                    stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                    start_new_session=True,
+                )
+            except Exception:  # pylint: disable=broad-except
+                pass
+            # edge: launch progress window (failure never blocks summarization)
+            try:
+                from tools.bg_progress import launch_progress_ui  # pylint: disable=import-outside-toplevel
+                launch_progress_ui()
+            except Exception:  # pylint: disable=broad-except
+                pass
+        if _do_embed:
+            self._embed_summaries(indexer, file_summaries)
 
         result = {
             "repo": repo_summary,
@@ -349,6 +414,10 @@ class SummarizationEngine:
         This makes `semantic_search_code` and `context_pack` able to match
         architecture questions (e.g. "where is auth handled?") to the right
         files via the existing vector index — no separate summary search path.
+
+        Progress is reported via TaskProgress (edge-transaction guard: any failure
+        in the progress layer is silently swallowed; the embedding loop itself is
+        never interrupted by a progress-tracking error).
         """
         try:
             import numpy as np  # pylint: disable=import-outside-toplevel
@@ -357,19 +426,37 @@ class SummarizationEngine:
             model = get_model()
             indexer._ensure_faiss()
 
+            items = list(file_summaries.items())
+            total = len(items)
+
+            # ── edge 1: set up progress tracker (failure → bare tqdm/silent) ──
+            _prog = None
+            try:
+                import time as _time  # pylint: disable=import-outside-toplevel
+                _task_id = f"embed_summaries_{int(_time.time())}"
+                from tools.bg_progress import TaskProgress  # pylint: disable=import-outside-toplevel
+                _prog = TaskProgress(_task_id, "Embedding summaries", total)
+            except Exception:  # pylint: disable=broad-except
+                pass  # progress UI unavailable — continue without it
+
+            # ── edge 2: tqdm terminal bar (independent of progress UI) ─────────
             try:
                 from tqdm import tqdm as _tqdm  # pylint: disable=import-outside-toplevel
-                _embed_iter = _tqdm(
-                    file_summaries.items(),
-                    desc="Embedding summaries",
-                    unit="file",
-                    dynamic_ncols=True,
-                )
+                _embed_iter = _tqdm(items, desc="Embedding summaries",
+                                    unit="file", dynamic_ncols=True)
             except ImportError:
-                _embed_iter = file_summaries.items()
+                _embed_iter = iter(items)
 
-            for rel_path, fs in _embed_iter:
-                # Build embed text from structured summary
+            for idx, (rel_path, fs) in enumerate(_embed_iter):
+                # ── edge 3: check stop signal (failure → continue) ────────────
+                try:
+                    if _prog is not None and _prog.should_stop():
+                        logger.info("Summary embedding stopped by user request.")
+                        break
+                except Exception:  # pylint: disable=broad-except
+                    pass
+
+                # ── core embedding logic (unchanged) ──────────────────────────
                 parts = ["FILE_SUMMARY", os.path.basename(rel_path)]
                 if fs.get("purpose"):
                     parts.append(fs["purpose"])
@@ -396,8 +483,23 @@ class SummarizationEngine:
                     "source": "file_summary",
                 })
 
+                # ── edge 4: update progress (failure → continue) ──────────────
+                try:
+                    if _prog is not None:
+                        _prog.update(idx + 1)
+                except Exception:  # pylint: disable=broad-except
+                    pass
+
             # Save updated FAISS index and metadata
             indexer.save()
             logger.debug("Embedded %d file summaries into FAISS.", len(file_summaries))
+
+            # ── edge 5: mark complete (failure → irrelevant, task is done) ────
+            try:
+                if _prog is not None:
+                    _prog.complete()
+            except Exception:  # pylint: disable=broad-except
+                pass
+
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning("Summary embedding skipped: %s", exc)

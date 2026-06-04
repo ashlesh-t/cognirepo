@@ -140,10 +140,14 @@ class ChromaDBAdapter(VectorStorageAdapter):
         kwargs: dict = {"query_embeddings": [vector.tolist()], "n_results": n}
         if where:
             kwargs["where"] = where
+        # "ids" is always returned by ChromaDB query() and must NOT appear in include.
+        kwargs["include"] = ["metadatas"]
         res = self._col.query(**kwargs)
         results = []
-        for meta in (res.get("metadatas") or [[]])[0]:
+        ids_list = (res.get("ids") or [[]])[0]   # always present regardless of include
+        for i, meta in enumerate((res.get("metadatas") or [[]])[0]):
             results.append({
+                "id": ids_list[i] if i < len(ids_list) else "",
                 "text": meta.get("text", ""),
                 "importance": meta.get("importance", 0.5),
                 "source": meta.get("source", "memory"),

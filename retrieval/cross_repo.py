@@ -52,25 +52,47 @@ class CrossRepoRouter:
         return [r for r in repos if os.path.abspath(r) != self.repo_path]
 
     def get_all_org_repos(self) -> list[str]:
-        """Return absolute paths to ALL repos across every project in the org."""
-        if not self.org_name:
-            return []
-        purge_stale_repos(self.org_name)
-        orgs = list_orgs()
-        org_data = orgs.get(self.org_name, {})
+        """Return absolute paths to ALL repos across every project in the org.
+
+        Reads from OrgGraph (authoritative) first, then merges in any repos
+        from the legacy orgs.json file for backward compatibility.
+        """
         seen: set[str] = set()
         result: list[str] = []
-        for repo in org_data.get("repos", []):
-            abs_repo = os.path.realpath(os.path.normpath(repo))
-            if abs_repo != self.repo_path and abs_repo not in seen:
-                seen.add(abs_repo)
-                result.append(abs_repo)
-        for project_data in org_data.get("projects", {}).values():
-            for repo in project_data.get("repos", []):
+
+        # Primary source: OrgGraph (~/.cognirepo/org_graph.pkl) — this is where
+        # child repos registered via `cognirepo init --parent-repo` live.
+        try:
+            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            og = get_org_graph()
+            for repo_path in og.list_repos():
+                abs_repo = os.path.realpath(os.path.normpath(repo_path))
+                if abs_repo != self.repo_path and abs_repo not in seen and os.path.isdir(abs_repo):
+                    seen.add(abs_repo)
+                    result.append(abs_repo)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        # Secondary source: orgs.json (legacy, kept for backward compatibility)
+        if not self.org_name:
+            return result
+        try:
+            purge_stale_repos(self.org_name)
+            orgs = list_orgs()
+            org_data = orgs.get(self.org_name, {})
+            for repo in org_data.get("repos", []):
                 abs_repo = os.path.realpath(os.path.normpath(repo))
                 if abs_repo != self.repo_path and abs_repo not in seen:
                     seen.add(abs_repo)
                     result.append(abs_repo)
+            for project_data in org_data.get("projects", {}).values():
+                for repo in project_data.get("repos", []):
+                    abs_repo = os.path.realpath(os.path.normpath(repo))
+                    if abs_repo != self.repo_path and abs_repo not in seen:
+                        seen.add(abs_repo)
+                        result.append(abs_repo)
+        except Exception:  # pylint: disable=broad-except
+            pass
         return result
 
     def query_all_org_repos(self, query: str, top_k: int = 5) -> list[dict]:
@@ -81,8 +103,8 @@ class CrossRepoRouter:
         all_repos = self.get_all_org_repos()
         if not all_repos:
             return []
-        all_results = []
-        from memory.semantic_memory import SemanticMemory  # pylint: disable=import-outside-toplevel
+        all_results: list[dict] = []
+        seen_hashes: set[int] = set()
         from config.paths import _CTX_DIR  # pylint: disable=import-outside-toplevel
         for repo in all_repos:
             repo_norm = os.path.realpath(os.path.normpath(repo))
@@ -100,18 +122,26 @@ class CrossRepoRouter:
                 continue
             token = _CTX_DIR.set(cognirepo_dir)
             try:
-                mem = SemanticMemory()
-                results = mem.search(query, top_k=top_k)
+                # Use hybrid retrieval (AST symbols + semantic memories) so code-level
+                # results are included — SemanticMemory alone only returns user-stored
+                # memories and misses all indexed code symbols.
+                from retrieval.hybrid import hybrid_retrieve  # pylint: disable=import-outside-toplevel
+                results = hybrid_retrieve(query, top_k=top_k)
                 repo_name = os.path.basename(repo_norm)
                 for r in results:
                     r["source_repo"] = repo_name
                     r["repo_path"] = repo_norm
-                all_results.extend(results)
+                    # Deduplicate by text content across all repos
+                    text_hash = hash(r.get("text", ""))
+                    if text_hash not in seen_hashes:
+                        seen_hashes.add(text_hash)
+                        all_results.append(r)
             except Exception as exc:
                 logger.error("Failed to query repo %s: %s", repo_norm, exc)
             finally:
                 _CTX_DIR.reset(token)
-        all_results.sort(key=lambda x: x.get("score", 1.0))
+        # Sort descending by score (highest relevance first)
+        all_results.sort(key=lambda x: x.get("final_score", x.get("score", 0.0)), reverse=True)
         return all_results[:top_k]
 
     def query_org_memories(self, query: str, top_k: int = 5) -> list[dict]:
@@ -151,8 +181,8 @@ class CrossRepoRouter:
             finally:
                 _CTX_DIR.reset(token)
 
-        # Re-sort combined results by score (lower is better for L2 distance)
-        all_results.sort(key=lambda x: x.get("score", 1.0))
+        # Re-sort combined results by score (higher is better)
+        all_results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
         return all_results[:top_k]
 
     def query_project_memories(self, query: str, top_k: int = 5) -> list[dict]:

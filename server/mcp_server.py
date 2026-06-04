@@ -415,10 +415,16 @@ def store_memory(text: str, source: str = "", repo_path: str | None = None) -> d
     with _repo_ctx(repo_path):
         result = _traced("store_memory", _store_memory, text, source)
         intercept_after_store(text, source=source)
-        conflicts = get_learning_store().detect_conflicts(text, top_k=3)
+        # conflicts are already detected against the vector DB in _store_memory and
+        # include the ChromaDB document id needed by supersede_learning.
+        # Normalise field name (conflict_type → type) for API consistency.
         result["conflicts"] = [
-            {"id": c.get("id"), "text": c.get("text"), "type": c.get("type")}
-            for c in conflicts
+            {
+                "id": c.get("id", ""),
+                "text": c.get("text", ""),
+                "type": c.get("conflict_type", c.get("type", "semantic_overlap")),
+            }
+            for c in result.get("conflicts", [])
         ]
     return result
 
@@ -431,18 +437,46 @@ def supersede_learning(
     repo_path: str | None = None,
 ) -> dict:
     """
-    Deprecate an existing learning (by ID from store_memory conflicts list) and
+    Deprecate an existing memory (by ID from store_memory conflicts list) and
     replace it with corrected text.  Use when store_memory returns a conflict
     that contains incorrect or outdated information.
 
+    old_id is the ChromaDB document ID returned in the conflicts list.
     Returns: {found_old: bool, new_id: str}
 
     repo_path: optional absolute path to the target repository.
     """
     with _repo_ctx(repo_path):
-        from memory.learning_store import get_learning_store as _gls  # pylint: disable=import-outside-toplevel
-        result = _gls().supersede_learning(old_id, new_text, learning_type)
-    return result
+        # ChromaDB IDs are numeric strings ("0", "42", …).  Remove the old
+        # entry from the vector DB, then store the replacement.
+        found_old = False
+        new_chroma_id = ""
+        try:
+            from vector_db.factory import get_vector_adapter as _gva  # pylint: disable=import-outside-toplevel
+            from memory.semantic_memory import SemanticMemory as _SM  # pylint: disable=import-outside-toplevel
+            _db = _gva()
+            _db.remove([int(old_id)])
+            found_old = True
+        except Exception:  # pylint: disable=broad-except
+            # Not a ChromaDB id, or entry already removed — fall through to
+            # learning-store path so the API remains backward-compatible.
+            pass
+
+        # Store replacement in the vector DB regardless (new memory either way).
+        try:
+            _sm = _SM()
+            _sm.store(new_text)
+            new_chroma_id = str(_sm.db._next_id - 1)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        if not found_old:
+            # Fallback: try learning-store supersede (for structured learnings).
+            from memory.learning_store import get_learning_store as _gls  # pylint: disable=import-outside-toplevel
+            ls_result = _gls().supersede_learning(old_id, new_text, learning_type)
+            return ls_result
+
+    return {"found_old": found_old, "new_id": new_chroma_id}
 
 
 @mcp.tool()
@@ -465,6 +499,11 @@ def retrieve_memory(query: str, top_k: int = 5, include_org: bool = False, repo_
             results.sort(key=lambda x: x.get("final_score", x.get("score", 0.0)), reverse=True)
             results = results[:top_k]
 
+    try:
+        from tools.context_pack import save_query_context  # pylint: disable=import-outside-toplevel
+        save_query_context(query, tool="retrieve_memory")
+    except Exception:  # pylint: disable=broad-except
+        pass
     return results
 
 
@@ -587,6 +626,20 @@ def list_org_context() -> dict:
                     entry[key] = node_data[key]
             enriched.append(entry)
         summary["sibling_repos"] = enriched
+
+        # Add child services (only populated when this is an orchestrator/parent repo)
+        _SERVICE_KEYS = ("service_type", "port", "api_base_url", "name")
+        child_paths = og.get_children(os.path.abspath("."))
+        child_repos = []
+        for cp in child_paths:
+            nd = og.G.nodes.get(cp, {})
+            entry = {"path": cp, "name": os.path.basename(cp)}
+            for k in _SERVICE_KEYS:
+                if k in nd:
+                    entry[k] = nd[k]
+            child_repos.append(entry)
+        if child_repos:
+            summary["child_repos"] = child_repos
     except Exception:  # pylint: disable=broad-except
         pass  # fall back to plain list if org graph unavailable
 
@@ -948,29 +1001,60 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
                 return {"local_callers": [], "cross_repo_callers": [], "truncated": False}
 
         from graph.knowledge_graph import EdgeType  # pylint: disable=import-outside-toplevel
+
+        # After stub resolution, callers may have been moved to real file-qualified
+        # nodes (e.g. "utils/auth.py::verify_token") or remain as "symbol::verify_token".
+        # Search both to catch either case.
         callee_node = f"symbol::{function_name}"
+        _real_callee: str | None = None
         if not g.node_exists(callee_node):
-            fallback = _who_calls_dynamic_fallback(function_name, repo_root)
-            _auto_store_hook("who_calls", fallback)
-            return {
-                "local_callers": fallback[:50],
-                "cross_repo_callers": [],
-                "truncated": len(fallback) > 50,
-            }
-        result = []
-        for caller in g.G.successors(callee_node):
-            edge_data = g.G[callee_node][caller]
-            if edge_data.get("rel") == EdgeType.CALLS:
-                node_data = dict(g.G.nodes[caller])
-                result.append({
-                    "caller": caller,
-                    "file": node_data.get("file", ""),
-                    "line": node_data.get("line", -1),
-                    "source": "graph",
-                })
+            # Try resolved real nodes: any node whose last segment matches function_name
+            _candidates = [
+                n for n in g.G.nodes()
+                if n.endswith(f"::{function_name}") and not n.startswith("symbol::")
+            ]
+            if _candidates:
+                _real_callee = _candidates[0]
+            else:
+                fallback = _who_calls_dynamic_fallback(function_name, repo_root)
+                _auto_store_hook("who_calls", fallback)
+                return {
+                    "local_callers": fallback[:50],
+                    "cross_repo_callers": [],
+                    "truncated": len(fallback) > 50,
+                }
+
+        def _collect_callers(node: str, found_via: str) -> list[dict]:
+            callers: list[dict] = []
+            for caller in g.G.successors(node):
+                edge_data = g.G[node][caller]
+                if edge_data.get("rel") == EdgeType.CALLS:
+                    node_data = dict(g.G.nodes[caller])
+                    callers.append({
+                        "caller": caller,
+                        "file": node_data.get("file", ""),
+                        "line": node_data.get("line", -1),
+                        "source": found_via,
+                    })
+            return callers
+
+        result: list[dict] = []
+        _search_node = _real_callee or callee_node
+        result = _collect_callers(_search_node, "graph")
+
+        if not result and _real_callee is None:
+            # Check if stub is tagged as resolved/ambiguous and search real nodes too
+            stub_data = dict(g.G.nodes.get(callee_node, {}))
+            if stub_data.get("ambiguous") and stub_data.get("candidates"):
+                for cand_file in stub_data["candidates"][:3]:
+                    real_node = f"{cand_file}::{function_name}"
+                    result.extend(_collect_callers(real_node, "graph_resolved_ambiguous"))
+
         if not result:
-            for caller in g.G.predecessors(callee_node):
-                edge_data = g.G[caller][callee_node]
+            # Legacy direction: predecessors with CALLED_BY
+            _search_node2 = _real_callee or callee_node
+            for caller in g.G.predecessors(_search_node2):
+                edge_data = g.G[caller][_search_node2]
                 if edge_data.get("rel") == EdgeType.CALLED_BY:
                     node_data = dict(g.G.nodes[caller])
                     result.append({
@@ -984,15 +1068,24 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
             if fallback:
                 result = fallback
             else:
+                # Check if stub exists but is unresolved (function defined but never called)
+                _stub_data = dict(g.G.nodes.get(callee_node, {}))
+                _note = (
+                    f"No callers found for '{function_name}' in graph or via grep fallback. "
+                    "For Go receiver methods, ensure the repo is indexed: "
+                    "cognirepo index-repo . — then retry."
+                )
+                if _stub_data.get("unresolved"):
+                    _note = (
+                        f"'{function_name}' is called in some files but the definition "
+                        "was not found in the index. Re-run 'cognirepo index-repo .' to resolve."
+                    )
                 return {
                     "local_callers": [],
                     "cross_repo_callers": [],
                     "truncated": False,
-                    "note": (
-                        f"No callers found for '{function_name}' in graph or via grep fallback. "
-                        f"For Go receiver methods, ensure the repo is indexed: "
-                        f"cognirepo index-repo . — then retry."
-                    ),
+                    "note": _note,
+                    "found_via": "stub_unresolved" if _stub_data.get("unresolved") else "not_found",
                 }
 
         # Cross-repo: check dependent services for callers of this function
@@ -1162,6 +1255,11 @@ def episodic_search(query: str, limit: int = 10, repo_path: str | None = None) -
     with _repo_ctx(repo_path):
         result = search_episodes(query, limit)
     _behaviour_record_query(query, result)
+    try:
+        from tools.context_pack import save_query_context  # pylint: disable=import-outside-toplevel
+        save_query_context(query, tool="episodic_search")
+    except Exception:  # pylint: disable=broad-except
+        pass
     return result
 
 
@@ -1281,6 +1379,11 @@ def search_docs(query: str, top_k: int = 5, repo_path: str | None = None) -> dic
         result = _traced("search_docs", _search_docs, query=query)
         if isinstance(result, list):
             result = result[:top_k]
+    try:
+        from tools.context_pack import save_query_context  # pylint: disable=import-outside-toplevel
+        save_query_context(query, tool="search_docs")
+    except Exception:  # pylint: disable=broad-except
+        pass
     return result if isinstance(result, dict) else {"results": result, "count": len(result)}
 
 
@@ -1552,7 +1655,33 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         except Exception:  # pylint: disable=broad-except
             pass
 
-    return {
+    # ── child services (orchestrator repos only) ──────────────────────────────
+    child_services: list[dict] = []
+    try:
+        from graph.org_graph import get_org_graph as _gog  # pylint: disable=import-outside-toplevel
+        _og = _gog()
+        _children = _og.get_children(os.path.abspath("."))
+        for _cp in _children:
+            _nd = _og.G.nodes.get(_cp, {})
+            _entry: dict = {"name": os.path.basename(_cp), "path": _cp}
+            for _k in ("service_type", "port", "api_base_url"):
+                if _k in _nd:
+                    _entry[_k] = _nd[_k]
+            # Check if this child has been indexed
+            try:
+                from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo as _gcdr  # pylint: disable=import-outside-toplevel
+                _ctok = _CTX_DIR.set(_gcdr(_cp))
+                try:
+                    _entry["indexed"] = os.path.exists(get_path("index/ast_index.json"))
+                finally:
+                    _CTX_DIR.reset(_ctok)
+            except Exception:  # pylint: disable=broad-except
+                pass
+            child_services.append(_entry)
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+    result: dict = {
         "repo": repo_name,
         "architecture": architecture,
         "hot_symbols": hot_symbols,
@@ -1561,6 +1690,9 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         "error_patterns": error_patterns,
         "index_health": {"symbols": symbol_count, "files": file_count, "status": index_status},
     }
+    if child_services:
+        result["child_services"] = child_services
+    return result
 
 
 @mcp.tool()

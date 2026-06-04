@@ -306,15 +306,25 @@ class OrgGraph:
                 self.G[abs_src][abs_dst]["note"] = note
 
     def get_children(self, repo_path: str) -> list[str]:
-        """Return direct children (repos linked with CHILD_OF, forward direction)."""
+        """Return direct children (repos registered with parent=repo_path).
+
+        add_repo() stores the parent→child edge with direction="reverse"
+        (the child→parent edge carries direction="forward").  We match the
+        correct stored direction here.
+        """
         abs_path = os.path.abspath(repo_path)
         if not self.G.has_node(abs_path):
             return []
         return [
             n for n in self.G.successors(abs_path)
             if self.G[abs_path][n].get("kind") == "CHILD_OF"
-            and self.G[abs_path][n].get("direction") == "forward"
+            and self.G[abs_path][n].get("direction") == "reverse"
         ]
+
+    def get_parent(self, repo_path: str) -> str | None:
+        """Return the absolute path of the parent repo, or None if not a child."""
+        abs_path = os.path.abspath(repo_path)
+        return self.G.nodes.get(abs_path, {}).get("parent")
 
     def get_siblings(self, repo_path: str) -> list[str]:
         """Return repos that share the same parent as repo_path."""

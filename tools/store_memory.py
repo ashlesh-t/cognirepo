@@ -19,15 +19,65 @@ logger = logging.getLogger(__name__)
 def store_memory(text: str, source: str = "") -> dict:
     """
     Store a text memory in semantic memory and return status.
+
+    Returns a ``conflicts`` list of existing memories that may contradict *text*
+    (detected by word-overlap + numeral-change heuristics).  Callers can use
+    ``supersede_learning`` to replace conflicting entries.
     """
     mem = SemanticMemory()
     importance = mem.compute_importance(text)
+
+    # ── Conflict detection before storing ────────────────────────────────────
+    # Search semantic memory for near-duplicate or value-contradicting entries.
+    _TIME_UNITS = frozenset({
+        "second", "seconds", "minute", "minutes", "hour", "hours",
+        "day", "days", "week", "weeks", "month", "months",
+        "ms", "millisecond", "milliseconds",
+    })
+    conflicts: list[dict] = []
+    try:
+        _new_words = set(text.lower().split())
+        _existing = mem.search(text, top_k=5)
+        for _hit in _existing:
+            _hit_text = _hit.get("text", "")
+            if not _hit_text or _hit_text.strip() == text.strip():
+                continue
+            _hit_words = set(_hit_text.lower().split())
+            _common = _new_words & _hit_words
+            _overlap = len(_common) / max(len(_new_words), 1)
+            if _overlap <= 0.3:
+                continue
+            # Classify: value_contradiction when the only differing tokens are
+            # numbers or time units ("1 hour" → "30 minutes"); otherwise semantic_overlap.
+            _diff = (_new_words | _hit_words) - _common
+            if _diff and all(t.isdigit() or t in _TIME_UNITS for t in _diff):
+                _conflict_type = "value_contradiction"
+            else:
+                _conflict_type = "semantic_overlap"
+            conflicts.append({
+                "id": _hit.get("id", _hit.get("_id", "")),
+                "text": _hit_text,
+                "score": round(_hit.get("score", 0.0), 4),
+                "conflict_type": _conflict_type,
+            })
+    except Exception as _cf_exc:  # pylint: disable=broad-except
+        logger.warning("conflict detection failed: %s", _cf_exc)
+
     try:
         mem.store(text)
         MEMORY_OPS_TOTAL.labels(op="store", result="ok").inc()
     except Exception:
         MEMORY_OPS_TOTAL.labels(op="store", result="error").inc()
         raise
+
+    # Invalidate retrieval cache so the just-stored memory is visible immediately
+    # on the next retrieve_memory call (cache TTL is 5 min — without this, a store
+    # followed immediately by retrieve would return the pre-store snapshot).
+    try:
+        from retrieval.hybrid import invalidate_hybrid_cache  # pylint: disable=import-outside-toplevel
+        invalidate_hybrid_cache()
+    except Exception:  # pylint: disable=broad-except
+        pass
 
     # Log the event in episodic memory
     log_event(
@@ -51,7 +101,13 @@ def store_memory(text: str, source: str = "") -> dict:
     except Exception as _mirror_exc:  # pylint: disable=broad-except
         logger.warning("project memory mirror failed (store succeeded): %s", _mirror_exc)
 
-    return {"status": "stored", "text": text, "source": source, "importance": importance}
+    return {
+        "status": "stored",
+        "text": text,
+        "source": source,
+        "importance": importance,
+        "conflicts": conflicts,
+    }
 
 
 if __name__ == "__main__":

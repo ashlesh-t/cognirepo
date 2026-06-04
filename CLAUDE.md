@@ -100,6 +100,12 @@ cognirepo prime                 # bootstrap session context (CLI version of get_
 Python 3.11+ · FAISS · fastembed/ONNX (all-MiniLM-L6-v2, dim 384) · NetworkX ·
 tree-sitter · FastMCP · argparse (CLI) · tiktoken
 
+## Microservice detection
+
+`cli/service_detect.py::_SERVICE_MARKERS` maps project marker filenames → service type.
+This list **MUST stay in sync** with `indexer/language_registry.py::_GRAMMAR_MAP`.
+Whenever a new language is added to `language_registry`, add its build file marker here too.
+
 ## Dev detail
 
 See `.claude/CLAUDE.md` (gitignored) — repo layout, algorithm flows, checklists.

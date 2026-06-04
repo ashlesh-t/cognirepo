@@ -149,6 +149,17 @@ def _run_doctor(
     fake_bm25_mod.BACKEND = "python"
     monkeypatch.setitem(sys.modules, "_bm25", fake_bm25_mod)
 
+    # ── stub chromadb (check 2) ───────────────────────────────────────────────
+    fake_chroma_mod = types.ModuleType("chromadb")
+    class _FakeChromaCollection:
+        def count(self):
+            return 22
+    class _FakeChromaClient:
+        def get_or_create_collection(self, *_a, **_kw):
+            return _FakeChromaCollection()
+    fake_chroma_mod.PersistentClient = lambda path: _FakeChromaClient()
+    monkeypatch.setitem(sys.modules, "chromadb", fake_chroma_mod)
+
     # ── stub fastembed (check 13) ─────────────────────────────────────────────
     fake_fe_mod = types.ModuleType("fastembed")
     fake_fe_mod.__version__ = "0.3.6"
@@ -186,6 +197,10 @@ def _run_doctor(
         _orig_exists = os.path.exists
         def _fake_exists(p):
             ps = str(p)
+            # When simulating FAISS failure, hide the AST index file so
+            # the doctor treats it as "not built" → increments issues.
+            if faiss_fail and "ast_index.json" in ps:
+                return False
             # Match files checked by doctor
             if "config.json" in ps or "semantic.index" in ps or \
                "graph.pkl" in ps or "ast_index.json" in ps or \

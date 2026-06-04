@@ -997,36 +997,122 @@ def _cmd_status() -> None:
 
 def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     """
-    One-command onboarding: delegates entirely to `cognirepo init`.
-    `init` already handles the wizard, indexing (2 passes), git seed, MCP config,
-    IDE rules, hooks, summaries, and post-init health check — so setup's only job
-    is to invoke it and surface a clean exit message.
+    One-command onboarding: runs the wizard directly (no subprocess) so that
+    ServiceCandidate objects and wizard config can flow into init_project() and
+    _auto_setup_child_repos() without serialization.
     """
-    import subprocess as _subprocess  # pylint: disable=import-outside-toplevel
-    from pathlib import Path  # pylint: disable=import-outside-toplevel
-    project_name = os.path.basename(os.getcwd())
+    from cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
+    from cli.init_project import init_project, _auto_setup_child_repos  # pylint: disable=import-outside-toplevel
 
-    # Prefer the cognirepo binary co-located with sys.executable (same venv/pipx env).
-    _bin_dir = Path(sys.executable).parent
-    _colocated = _bin_dir / "cognirepo"
-    _cognirepo_cmd = str(_colocated) if _colocated.exists() else "cognirepo"
+    parent_path = os.path.abspath(os.getcwd())
 
-    _init_args = [_cognirepo_cmd, "init"]
-    if no_index:
-        _init_args.append("--no-index")
+    # ── 1. Run wizard (loops until confirmed) ────────────────────────────────
+    wizard_cfg: dict | None = None
+    while wizard_cfg is None:
+        wizard_cfg = run_wizard()
 
+    child_repos       = wizard_cfg.pop("child_repos", [])
+    orchestrator_mode = wizard_cfg.pop("orchestrator_mode", False)
+
+    # ── 2. Init + index parent repo ──────────────────────────────────────────
     try:
-        result = _subprocess.run(_init_args, check=False)
-        if result.returncode != 0:
-            print("  cognirepo init exited non-zero — setup cancelled.")
-            sys.exit(result.returncode)
-    except FileNotFoundError:
-        print("  ✗ cognirepo not found on PATH.")
-        print("    Install with: pipx install cognirepo")
-        sys.exit(1)
+        summary, kg, indexer = init_project(
+            interactive=False,
+            non_interactive=True,
+            no_index=no_index,  # orchestrators index their own source (docker-compose, docs, etc.)
+            project_name=wizard_cfg.get("project_name", os.path.basename(parent_path)),
+            org=wizard_cfg.get("org"),
+            project=wizard_cfg.get("project"),
+            encrypt=wizard_cfg.get("encrypt", False),
+            vector_backend="chroma",
+            mcp_targets=wizard_cfg.get("mcp_targets", []),
+            autosave_context=wizard_cfg.get("autosave_context", True),
+            behaviour_tracking=wizard_cfg.get("behaviour_tracking", False),
+        )
+    except KeyboardInterrupt:
+        print("\n  Setup cancelled.")
+        return
     except Exception as exc:  # pylint: disable=broad-except
         print(f"  ✗ init failed: {exc}")
         sys.exit(1)
+
+    # ── 3. Orchestrator: doc-seed parent (no AST index of source) ────────────
+    if orchestrator_mode:
+        from cli.init_project import _seed_learnings_from_docs  # pylint: disable=import-outside-toplevel
+        try:
+            from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
+            DocIngester(parent_path).ingest()
+        except Exception:  # pylint: disable=broad-except
+            pass
+        _seed_learnings_from_docs(parent_path)
+
+        # Register parent in org graph as hub
+        try:
+            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            og = get_org_graph()
+            og.add_repo(parent_path, metadata={"role": "orchestrator"})
+            og.save()
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+    # ── 4. Auto-setup child repos ─────────────────────────────────────────────
+    if child_repos:
+        _auto_setup_child_repos(
+            children    = child_repos,
+            parent_path = parent_path,
+            org         = wizard_cfg.get("org"),
+            encrypt     = wizard_cfg.get("encrypt", False),
+            mcp_targets = wizard_cfg.get("mcp_targets", []),
+        )
+
+    # ── 5. Write Claude Code behaviour hooks ─────────────────────────────────
+    _claude_dir = os.path.join(parent_path, ".claude")
+    if os.path.isdir(_claude_dir):
+        try:
+            _write_claude_hooks(_claude_dir, parent_path)
+            print("  ✓  Behaviour hooks wired (.claude/settings.json)")
+        except Exception as _hook_exc:  # pylint: disable=broad-except
+            print(f"  ⚠  Behaviour hooks skipped: {_hook_exc}")
+
+    # ── 6. Post-setup health check ────────────────────────────────────────────
+    print("\n  Running health check …\n")
+    _cmd_doctor()
+
+    # ── 7. Optional follow-up steps (recommended for best quality) ────────────
+    if sys.stdin.isatty():
+        print("\n" + "─" * 60)
+        print("  Two optional steps improve query quality significantly:\n")
+        print("  [1] Re-run the repo index now?")
+        print("      (recommended — ensures context_pack accuracy is optimal)")
+        _ans1 = input("      [Y/n]: ").strip().lower()
+        if _ans1 not in ("n", "no"):
+            print("  Indexing … (this may take 30–120 s for large repos)\n")
+            try:
+                from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+                from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+                _kg = KnowledgeGraph()
+                _idx = ASTIndexer(graph=_kg)
+                _idx.index_repo(parent_path)
+                print("  ✓  Re-index complete.")
+            except Exception as _reindex_exc:  # pylint: disable=broad-except
+                print(f"  ⚠  Re-index failed: {_reindex_exc}")
+                print("     Run manually: cognirepo index-repo .")
+
+        print()
+        print("  [2] Generate a session brief now?")
+        print("      (recommended — run cognirepo prime to see architecture + hot symbols)")
+        _ans2 = input("      [Y/n]: ").strip().lower()
+        if _ans2 not in ("n", "no"):
+            try:
+                _cmd_prime()
+            except Exception as _prime_exc:  # pylint: disable=broad-except
+                print(f"  ⚠  prime failed: {_prime_exc}")
+                print("     Run manually: cognirepo prime")
+
+        print()
+        print("  Tip: run `cognirepo summarize` (requires an API key) to generate")
+        print("       detailed architecture summaries for architecture_overview.")
+        print("─" * 60 + "\n")
 
 
 def _write_claude_hooks(claude_dir: str, project_dir: str) -> None:
@@ -1046,14 +1132,16 @@ def _write_claude_hooks(claude_dir: str, project_dir: str) -> None:
 
     python_exe = sys.executable  # use the same Python that's running cognirepo
 
-    # Resolve hook scripts from the installed cognirepo package, not from project_dir.
-    # This ensures child repos (bank-service, npci-service, etc.) that don't contain
-    # the cognirepo source tree always get a valid absolute path to the hook scripts.
+    # Resolve hook scripts via the installed 'tools' package (included in the wheel
+    # via pyproject.toml tools* glob).  This works for editable installs AND pipx:
+    #   editable → tools/__file__ = <repo_root>/tools/__init__.py
+    #   pipx/pip → tools/__file__ = site-packages/tools/__init__.py
+    # Both resolve to the directory that contains behaviour_hook.py.
     try:
-        import cognirepo as _cr_pkg  # pylint: disable=import-outside-toplevel
-        _pkg_tools = os.path.join(os.path.dirname(_cr_pkg.__file__), "tools")
+        import tools as _tools_pkg  # pylint: disable=import-outside-toplevel
+        _pkg_tools = os.path.dirname(_tools_pkg.__file__)
     except Exception:  # pylint: disable=broad-except
-        _pkg_tools = os.path.join(project_dir, "tools")  # fallback to project dir
+        _pkg_tools = os.path.join(project_dir, "tools")        # last-resort fallback
     _bh_script = os.path.join(_pkg_tools, "behaviour_hook.py")
     _sm_script = os.path.join(_pkg_tools, "sync_claude_memory.py")
 
@@ -1349,6 +1437,9 @@ def _print_ready_summary(summary: dict | None = None) -> None:
 
     print("\n  Next steps:")
     print("    cognirepo doctor          — check system health")
+    print("    cognirepo index-repo .    — (re)index this repo for best query quality")
+    print("    cognirepo prime           — session bootstrap: architecture + hot symbols")
+    print("    cognirepo summarize       — generate architecture summaries (needs API key)")
     print("    cognirepo retrieve-memory — search your stored context")
     print("    cognirepo store-memory    — save a new insight")
     print("─" * 60 + "\n")
@@ -2728,6 +2819,13 @@ def _main():
         default=None,
         help="Restrict summarization to files under this directory prefix (e.g. 'pkg/').",
     )
+    p_summarize.add_argument(
+        "--embed-only",
+        action="store_true",
+        default=False,
+        help="Skip text summarization; only embed existing summaries.json into FAISS. "
+             "Used automatically by the background pass for large repos.",
+    )
 
     # doctor — environment health check
     p_doctor = sub.add_parser("doctor", help="Check CogniRepo installation health")
@@ -3314,9 +3412,31 @@ def _main():
         sys.exit(_cmd_verify_index())
 
     if args.command == "summarize":
-        from indexer.summarizer import SummarizationEngine
+        from indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
         engine = SummarizationEngine()
         scope = getattr(args, "scope", None)
+        embed_only = getattr(args, "embed_only", False)
+        if embed_only:
+            # Background pass: load existing summaries.json and embed into FAISS only.
+            import json as _json  # pylint: disable=import-outside-toplevel
+            from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
+            _sum_path = _gp("index/summaries.json")
+            if os.path.exists(_sum_path):
+                with open(_sum_path, encoding="utf-8") as _sf:
+                    _existing = _json.load(_sf)
+                _file_sums = _existing.get("_structured", {}).get("files", {})
+                if _file_sums:
+                    from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+                    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+                    _kg = KnowledgeGraph()
+                    _idx = ASTIndexer(graph=_kg)
+                    _idx.load()
+                    engine._embed_summaries(_idx, _file_sums)
+                    _idx.save()
+                    print(f"Summary embeddings done: {len(_file_sums)} files.")
+            else:
+                print("No summaries.json found — run 'cognirepo summarize' first.")
+            return
         result = engine.run_full_summarization(scope=scope)
         print("\n--- Repository Summary ---")
         print(result["repo"])
