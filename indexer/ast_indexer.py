@@ -1391,6 +1391,9 @@ class ASTIndexer:
         self._batch_mode = False  # pylint: disable=attribute-defined-outside-init
 
         self._build_reverse_index()
+        # Resolve symbol:: stub nodes to real file-qualified nodes where unambiguous.
+        if not getattr(self, "_skip_graph", False):
+            self._resolve_call_stubs()
         total_symbols = sum(
             len(f.get("symbols", [])) for f in self.index_data["files"].values()
         )
@@ -1418,6 +1421,20 @@ class ASTIndexer:
                 f"Tier 2: {len(_tier2_pending)} low-weight files queued for background indexing. "
                 "Run: cognirepo index-repo . --tier 2"
             )
+
+        # ── Doc ingestion pass — index all .md/.rst files into semantic store ──
+        # Runs after AST indexing so search_docs() can do semantic search against
+        # these embeddings rather than relying solely on string matching.
+        try:
+            from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
+            _doc_result = DocIngester(repo_root).ingest()
+            if _doc_result.get("chunks", 0) > 0:
+                print(
+                    f"  Docs: {_doc_result['chunks']} chunk(s) from "
+                    f"{_doc_result['files']} file(s) indexed into semantic store"
+                )
+        except Exception as _doc_exc:  # pylint: disable=broad-except
+            log.debug("Doc ingestion skipped: %s", _doc_exc)
 
         return {
             "files": total_files,
@@ -1659,6 +1676,56 @@ class ASTIndexer:
 
         return file_record
 
+    def _resolve_call_stubs(self) -> None:
+        """
+        Second-pass stub resolution: for each ``symbol::fn`` node, look up fn in
+        the complete reverse_index.  When exactly one definition exists, redirect
+        all call edges to the real ``file::fn`` node and remove the stub.  When
+        multiple definitions exist (ambiguous), keep the stub and tag it
+        ``ambiguous=True``.  Unresolved stubs (no definition found) are tagged
+        ``unresolved=True`` so ``who_calls`` can still surface them.
+
+        Must be called AFTER ``_build_reverse_index()`` so the index is complete.
+        Skipped when the graph is empty (graph indexing was disabled).
+        """
+        from graph.knowledge_graph import EdgeType, NodeType  # pylint: disable=import-outside-toplevel
+
+        if self.graph.G.number_of_nodes() == 0:
+            return
+
+        rev = self.index_data.get("reverse_index", {})
+        stub_nodes = [n for n in list(self.graph.G.nodes()) if n.startswith("symbol::")]
+
+        for stub in stub_nodes:
+            fn_name = stub[len("symbol::"):]
+            locations = rev.get(fn_name, [])
+
+            if len(locations) == 1:
+                # Unambiguous — redirect edges to the real node
+                file_path, line = locations[0][0], locations[0][1]
+                real_node = f"{file_path}::{fn_name}"
+                if not self.graph.G.has_node(real_node):
+                    self.graph.add_node(real_node, NodeType.FUNCTION,
+                                        file=file_path, line=line)
+                # Redirect outgoing edges (CALLS → callers)
+                for successor in list(self.graph.G.successors(stub)):
+                    edge_data = dict(self.graph.G[stub][successor])
+                    if not self.graph.G.has_edge(real_node, successor):
+                        self.graph.G.add_edge(real_node, successor, **edge_data)
+                # Redirect incoming edges (CALLED_BY from callers)
+                for predecessor in list(self.graph.G.predecessors(stub)):
+                    edge_data = dict(self.graph.G[predecessor][stub])
+                    if not self.graph.G.has_edge(predecessor, real_node):
+                        self.graph.G.add_edge(predecessor, real_node, **edge_data)
+                self.graph.G.remove_node(stub)
+
+            elif len(locations) > 1:
+                self.graph.G.nodes[stub]["ambiguous"] = True
+                self.graph.G.nodes[stub]["candidates"] = [loc[0] for loc in locations]
+
+            else:
+                self.graph.G.nodes[stub]["unresolved"] = True
+
     # ── kept for ASTIndexer API compatibility ─────────────────────────────────
 
     def _extract_symbols(self, tree: ast.AST, file_path: str) -> list[dict]:
@@ -1818,7 +1885,16 @@ class ASTIndexer:
         print(f"  Tier 2: processing {len(_pending)} queued files in batches of {_batch_size}…")
         _pbar = tqdm(_pending, desc="Tier 2 indexing", unit="file", dynamic_ncols=True)
 
-        for _entry in _pbar:
+        # edge: set up progress tracker — failure falls back to tqdm-only silently
+        _t2_prog = None
+        try:
+            import time as _t2time  # pylint: disable=import-outside-toplevel
+            from tools.bg_progress import TaskProgress as _TP  # pylint: disable=import-outside-toplevel
+            _t2_prog = _TP(f"tier2_index_{int(_t2time.time())}", "Tier 2 indexing", len(_pending))
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        for _idx_t2, _entry in enumerate(_pbar):
             rel_path = _entry["rel_path"]
             abs_path = _entry["abs_path"]
             _w = _entry.get("weight", 0.5)
@@ -1826,6 +1902,14 @@ class ASTIndexer:
             if not os.path.isfile(abs_path):
                 _remaining = [e for e in _remaining if e["rel_path"] != rel_path]
                 continue
+            # edge: stop check — failure is ignored, loop continues
+            try:
+                if _t2_prog is not None and _t2_prog.should_stop():
+                    log.info("Tier 2 indexing stopped by user request.")
+                    break
+            except Exception:  # pylint: disable=broad-except
+                pass
+
             try:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore", SyntaxWarning)
@@ -1837,6 +1921,13 @@ class ASTIndexer:
                 log.debug("  [tier2-skip] %s: %s", rel_path, _exc)
             finally:
                 _remaining = [e for e in _remaining if e["rel_path"] != rel_path]
+
+            # edge: update progress tracker — failure never interrupts indexing
+            try:
+                if _t2_prog is not None:
+                    _t2_prog.update(_idx_t2 + 1, Path(rel_path).name[:30])
+            except Exception:  # pylint: disable=broad-except
+                pass
 
             # Flush batch and write progress every _batch_size files
             if total_files % _batch_size == 0:
@@ -1869,6 +1960,13 @@ class ASTIndexer:
             if os.path.exists(_prog):
                 os.remove(_prog)
         except OSError:
+            pass
+
+        # edge: mark progress complete — failure is irrelevant, task is done
+        try:
+            if _t2_prog is not None:
+                _t2_prog.complete()
+        except Exception:  # pylint: disable=broad-except
             pass
 
         print(f"  Tier 2 complete: {total_files} additional files indexed.")

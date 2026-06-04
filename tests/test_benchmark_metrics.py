@@ -139,13 +139,21 @@ class TestCacheSpeedup:
 class TestMemoryRecall:
     def test_stored_memory_recall_at_3(self):
         from tools.store_memory import store_memory
-        from vector_db.local_vector_db import LocalVectorDB
-        
+        from vector_db.factory import get_vector_adapter
+
         marker = f"BENCHMARK_MARKER_{uuid.uuid4().hex}"
         store_memory(marker, source="test")
 
-        db = LocalVectorDB()
-        stored_texts = [m.get("text", "") for m in db.metadata]
+        # Use the configured backend (may be FAISS or ChromaDB) rather than
+        # hardcoding LocalVectorDB — the test fixture initialises with the
+        # project default (chroma), so LocalVectorDB would always be empty.
+        db = get_vector_adapter()
+        results = db.search(
+            __import__("memory.embeddings", fromlist=["encode_with_timeout"])
+            .encode_with_timeout(marker).astype("float32"),
+            top_k=5,
+        )
+        stored_texts = [r.get("text", "") for r in results]
         assert any(marker in t for t in stored_texts)
 
     def test_retrieve_memory_returns_list(self):

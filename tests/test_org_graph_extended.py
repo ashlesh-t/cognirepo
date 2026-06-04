@@ -18,6 +18,8 @@ def fresh_org_graph(tmp_path, monkeypatch):
     import graph.org_graph as og_mod
     graph_file = str(tmp_path / "org_graph.pkl")
     monkeypatch.setattr(og_mod, "_graph_path", lambda: graph_file)
+    # Prevent _migrate_from_orgs_json from pulling in real ~/.cognirepo/orgs.json
+    monkeypatch.setattr(og_mod.OrgGraph, "_migrate_from_orgs_json", lambda self: None)
     og_mod.invalidate_org_graph()
     return og_mod
 

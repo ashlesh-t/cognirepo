@@ -33,6 +33,8 @@
 | `EdgeType.IMPORTS` | `"IMPORTS"` | FILE → FILE | File A imports module or file B | `subgraph("retrieval/hybrid.py")` |
 | `EdgeType.INHERITS` | `"INHERITS"` | CLASS → CLASS | Class A inherits from class B | `subgraph("BaseRetriever")` |
 | `EdgeType.SIMILAR_TO` | `"SIMILAR_TO"` | any ↔ any | Semantically similar symbols (embedding distance below threshold) | `subgraph("hybrid_retrieve", depth=2)` |
+| `EdgeType.EXPOSES` | `"EXPOSES"` | FUNCTION → ENDPOINT | A function handles a specific HTTP route/endpoint | `subgraph("api_handler")` |
+| `EdgeType.CALLS_ENDPOINT` | `"CALLS_ENDPOINT"` | FUNCTION → ENDPOINT | A function calls a remote endpoint stub (cross-service call) | `cross_repo_traverse("checkout", "payments")` |
 
 ### Direction notes
 

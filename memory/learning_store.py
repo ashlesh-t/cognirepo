@@ -170,6 +170,14 @@ class _LearningBackend:
             self._save(records)
         return updated
 
+    @staticmethod
+    def _is_numeric_token(tok: str) -> bool:
+        """Return True if a token looks like a number or time unit."""
+        _TIME_UNITS = {"second", "seconds", "minute", "minutes", "hour", "hours",
+                       "day", "days", "week", "weeks", "month", "months", "year", "years",
+                       "ms", "millisecond", "milliseconds"}
+        return tok.isdigit() or tok in _TIME_UNITS
+
     def detect_conflicts(self, text: str, top_k: int = 3) -> list[dict]:
         """
         Return existing non-deprecated learnings with significant word overlap to
@@ -177,6 +185,11 @@ class _LearningBackend:
         stored — the caller decides whether a real conflict exists.
 
         A record is returned when its word-overlap ratio with *text* exceeds 0.3.
+
+        Special case: if the ONLY differing tokens between two texts are numeric or
+        time-unit tokens (e.g. "1 hour" vs "30 minutes"), that is always flagged as
+        a conflict regardless of the overlap ratio — these are value contradictions
+        that the word-overlap heuristic otherwise misses.
         """
         records = self._load()
         records = [r for r in records if not r.get("deprecated", False)]
@@ -185,9 +198,18 @@ class _LearningBackend:
         scored: list[tuple[float, dict]] = []
         for r in records:
             existing_words = set(r.get("text", "").lower().split())
-            overlap = len(words & existing_words) / max(len(words), 1)
+            common = words & existing_words
+            overlap = len(common) / max(len(words), 1)
+
             if overlap > 0.3:
-                scored.append((overlap, r))
+                # Value-change heuristic: if all differing tokens are numbers/time
+                # units, classify as value_contradiction and bump score.
+                diff = (words | existing_words) - common
+                if diff and all(self._is_numeric_token(t) for t in diff):
+                    scored.append((overlap + 0.3, {**r, "type": "value_contradiction"}))
+                else:
+                    scored.append((overlap, r))
+
         scored.sort(key=lambda x: x[0], reverse=True)
         return [r for _, r in scored[:top_k]]
 

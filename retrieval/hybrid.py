@@ -103,7 +103,10 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
             return self._bm25_only_retrieve(query, top_k)
 
         # 1. wider vector net before re-ranking (semantic memory backend)
-        vector_candidates = self._vector_retrieve(query_vector, top_k * 3)
+        # Fetch top_k*6 so that user-stored memories (which may rank lower than
+        # many auto-ingested doc chunks by raw vector similarity) are included
+        # in the candidate pool before importance-weighted re-ranking.
+        vector_candidates = self._vector_retrieve(query_vector, top_k * 6)
 
         # 2. AST reverse-index exact lookup (entity names extracted from query)
         entities = extract_entities_from_text(query)
@@ -313,11 +316,21 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
             v_score = c.get("vector_score", 0.0)
             g_score = self._graph_score(c, query_entities)
             b_score = self._behaviour_score(c, all_counts, max_count)
-            final = (
-                self.weights["vector"] * v_score
-                + self.weights["graph"] * g_score
-                + self.weights["behaviour"] * b_score
-            )
+            importance = c.get("importance", 0.5)
+            # Cold-graph renormalization: when graph and behaviour are both zero
+            # (fresh index, no behaviour history), blend vector similarity with
+            # importance so explicitly stored memories (importance≈0.88) rank above
+            # auto-ingested doc chunks (importance=0.6) even when vector scores are close.
+            if g_score == 0.0 and b_score == 0.0:
+                final = v_score * 0.7 + importance * 0.3
+            else:
+                # Warm path: standard weighted formula + importance as a small boost.
+                # Scale existing weights to 0.85 so importance (0.15) slots in cleanly.
+                final = (
+                    self.weights["vector"] * v_score
+                    + self.weights["graph"] * g_score
+                    + self.weights["behaviour"] * b_score
+                ) * 0.85 + importance * 0.15
             result = dict(c)
             result.update({
                 "final_score": round(final, 4),

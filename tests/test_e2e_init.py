@@ -74,28 +74,37 @@ def test_no_index_flag_skips_indexing(tmp_path, monkeypatch):
     )
 
 
-def test_setup_calls_init_subprocess(tmp_path, monkeypatch):
-    """cognirepo setup must shell out to 'cognirepo init' as a subprocess."""
-    from unittest.mock import patch, MagicMock
+def test_setup_calls_wizard_and_init(tmp_path, monkeypatch):
+    """cognirepo setup must call run_wizard() then init_project() directly (no subprocess)."""
+    from unittest.mock import patch, MagicMock, call
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
     (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
 
-    mock_run = MagicMock(return_value=MagicMock(returncode=0))
+    wizard_cfg = {
+        "project_name": "test-proj",
+        "encrypt": False,
+        "install_languages": False,
+        "mcp_targets": [],
+        "org": None,
+        "project": None,
+        "autosave_context": True,
+        "behaviour_tracking": False,
+        # child_repos and orchestrator_mode are popped inside _cmd_setup
+        "child_repos": [],
+        "orchestrator_mode": False,
+    }
 
-    # Patch all the setup-only steps so they don't fail in isolation
-    with patch("subprocess.run", mock_run), \
-         patch("cli.main._direct_index", return_value=({"index_symbols": 0, "index_files": 0}, MagicMock(), MagicMock())), \
-         patch("cli.main._write_cursor_rules", return_value=None), \
-         patch("cli.main._write_claude_hooks", return_value=None), \
-         patch("cli.init_project.setup_mcp", return_value=None):
+    mock_wizard   = MagicMock(return_value=wizard_cfg)
+    mock_init     = MagicMock(return_value=(None, None, None))
+    mock_doctor   = MagicMock()
+
+    with patch("cli.wizard.run_wizard", mock_wizard), \
+         patch("cli.init_project.init_project", mock_init), \
+         patch("cli.main._cmd_doctor", mock_doctor):
         from cli.main import _cmd_setup
         _cmd_setup(no_index=True)
 
-    # subprocess.run must have been called with cognirepo init as the command
-    assert mock_run.called
-    found = any(
-        "cognirepo" in str(call_args) and "init" in str(call_args)
-        for call_args in mock_run.call_args_list
-    )
-    assert found, f"subprocess.run was not called with cognirepo init. Calls: {mock_run.call_args_list}"
+    assert mock_wizard.called, "run_wizard() was not called"
+    assert mock_init.called,   "init_project() was not called"
+    assert mock_doctor.called, "_cmd_doctor() was not called"
