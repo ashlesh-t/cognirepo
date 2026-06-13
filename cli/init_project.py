@@ -93,7 +93,7 @@ def _scaffold_dirs() -> None:
     os.makedirs(get_path("episodic"), exist_ok=True)
 
 
-def _init_empty_stores() -> None:
+def _init_empty_stores(vector_backend: str = "faiss") -> None:
     """
     Create empty ChromaDB collection and episodic log on first init so `doctor`
     shows 0 vectors immediately after `cognirepo init` instead of "not found".
@@ -1154,7 +1154,7 @@ def init_project(
 
     # ── scaffold directories and write config ─────────────────────────────────
     _scaffold_dirs()
-    _init_empty_stores()
+    _init_empty_stores(vector_backend=vector_backend)
     _write_config(
         project_name=project_name,
         org=org,

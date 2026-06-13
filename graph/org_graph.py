@@ -325,7 +325,7 @@ class OrgGraph:
         return [
             n for n in self.G.successors(abs_path)
             if self.G[abs_path][n].get("kind") == "CHILD_OF"
-            and self.G[abs_path][n].get("direction") == "reverse"
+            and self.G[abs_path][n].get("direction") == "forward"
         ]
 
     def get_parent(self, repo_path: str) -> str | None:
