@@ -30,10 +30,17 @@ jobs:
       - name: Install system deps
         run: sudo apt-get install -y libgomp1
 
+      - name: Resolve runtime paths
+        # Export $HOME-based paths into GITHUB_ENV so all subsequent steps
+        # get the expanded value. YAML env: blocks are NOT shell-expanded —
+        # neither ~ nor $HOME work there — so we use a run: step where the
+        # shell resolves $HOME before writing to GITHUB_ENV.
+        run: echo "FASTEMBED_CACHE_PATH=$HOME/.cache/fastembed" >> "$GITHUB_ENV"
+
       - name: Cache fastembed model
         uses: actions/cache@v4
         with:
-          path: ${{ runner.home }}/.cache/fastembed
+          path: ${{ env.FASTEMBED_CACHE_PATH }}
           key: fastembed-all-MiniLM-L6-v2-${{ runner.os }}-${{ matrix.python-version }}
 
       - name: Install package + dev extras
@@ -43,13 +50,7 @@ jobs:
       - name: Pre-warm embedding model
         # Download all-MiniLM-L6-v2 ONNX weights once; later steps use the cache.
         # Isolated from bootstrap so a slow download doesn't corrupt the index.
-        # FASTEMBED_CACHE_PATH must use ${{ runner.home }} — YAML env values do NOT
-        # shell-expand ~ so a literal "~/.cache/fastembed" string would make fastembed
-        # download to a path that doesn't match the restored cache, causing a cache miss
-        # and a re-download on every run.
         timeout-minutes: 5
-        env:
-          FASTEMBED_CACHE_PATH: ${{ runner.home }}/.cache/fastembed
         run: |
           python - <<'PYEOF'
           from fastembed import TextEmbedding
@@ -83,7 +84,6 @@ jobs:
           cognirepo index-repo . --no-watch --no-embed
         env:
           COGNIREPO_DIR: .cognirepo
-          FASTEMBED_CACHE_PATH: ${{ runner.home }}/.cache/fastembed
 
       - name: Run tests
         timeout-minutes: 10
@@ -99,7 +99,6 @@ jobs:
             -x
         env:
           COGNIREPO_DIR: .cognirepo
-          FASTEMBED_CACHE_PATH: ${{ runner.home }}/.cache/fastembed
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
