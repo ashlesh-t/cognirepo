@@ -341,8 +341,9 @@ def cleanup_suppressed(
 
 def main() -> None:
     """CLI entry point for pruning semantic memory."""
-    from dotenv import load_dotenv  # pylint: disable=import-outside-toplevel
-    load_dotenv()
+    from dotenv import load_dotenv, find_dotenv  # pylint: disable=import-outside-toplevel
+    # usecwd=True: resolve .env from the project directory, not this source file
+    load_dotenv(find_dotenv(usecwd=True))
     parser = argparse.ArgumentParser(description="Prune CogniRepo semantic memory")
     parser.add_argument("--dry-run", action="store_true",
                         help="Report only — do not modify any files")

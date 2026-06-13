@@ -10,7 +10,40 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [1.1.0] — 2026-04-29
+## [1.1.0] — 2026-06-11
+
+### Added (release-readiness pass, 2026-06)
+- **`cognirepo org rewire` CLI command** — re-runs cross-service CALLS_API detection for every indexed org repo; repairs edges missed when services were indexed in the wrong order
+- **`org_dependencies` parent rollup** — called from an org parent, now returns `service_topology` with the children's CALLS_API call chain (e.g. client → npci-service → bank-service), including caller function and endpoint pattern
+- **`org_wide_search` transparency** — returns `{results, count, repos_searched, repos_skipped}` so a child repo missing from results is visible (was: silent)
+- **`who_calls` coverage honesty** — when the static call graph returns ≤2 callers, the grep fallback is merged in and a `coverage_note` warns that dynamic/interface dispatch may be missed
+- **Service port auto-detection** — `cognirepo init`/wizard detect `server.port` (Spring), YAML `port:`, and `.env` `PORT=` and store it on the org-graph node; surfaced via `get_agent_bootstrap` child_services
+- **`indexing.unskip_dirs` config** — un-skip default-skipped directories per repo (companion to `skip_dirs`)
+- **`queried_symbols` + `recently_modified_files`** in session brief — replaces the misleading `hot_symbols` label (kept as deprecated alias until 1.2)
+- **Doctor checks 18–20** — AST index JSON validity, doc-index populated, org CALLS_API edges present
+- **Subgraph `resolved_to`** — fuzzy name resolution now scans all `::Name` suffixed nodes ranked by degree, so `subgraph("GenericAPIServer")` resolves file-qualified keys
+
+### Fixed (release-readiness pass, 2026-06)
+- **AST index corruption on large repos** — `ast_index.json`/`ast_metadata.json` writes are now atomic (tmp + `os.replace` + fsync); corrupt files are renamed `.corrupt` and self-heal on load instead of crashing `cognirepo summarize`
+- **`context_pack` empty on Kubernetes-style repos** — `staging/` removed from default skip dirs (it holds real first-party source in k8s); re-add per repo via `indexing.skip_dirs` if needed
+- **`context_pack` BM25 noise** — relative-score gate drops sections below 0.5× the best hit's score (tunable via `COGNIREPO_REL_NOISE_RATIO`)
+- **Subgraph memory blowup** — `subgraph_around()` uses a bounded BFS (caps enforced *during* expansion, hub nodes with degree > 500 skipped) instead of materializing the full `nx.ego_graph`; responses capped at ~30k chars. A single `subgraph(depth=3)` can no longer inflate RSS past the circuit-breaker limit
+- **Stale auto-reindex never firing** — trigger now fires on age-based staleness when the git-SHA comparison is inconclusive; reindex lock acquired atomically (`open(…, "x")`); orphaned locks (>30 min) cleared; dead `watcher.pid` no longer suppresses staleness
+- **Go structs/interfaces missing from index** — `type_spec` added to tree-sitter class types; `architecture_overview` now shows `Scheduler`, `Kubelet`, etc. for Go repos
+- **`search_docs` placeholder noise** — score-0.0 filler results dropped, duplicates removed by normalized text, and empty results return `status: "no_doc_matches"` with a reindex hint
+- **CALLS_API edges lost to indexing order** — after `index-repo` writes a repo's endpoints, siblings indexed earlier are automatically re-wired against it
+- **Memory duplicates** — `store_memory` and the learning store dedupe identical (whitespace-normalized) text, returning the existing entry instead of storing it again
+- **Vendor noise in `architecture_overview`** — `vendor/`, `third_party/`, `node_modules/` excluded from "Top packages" and key class/function ranking
+- **`dependency_graph("celery")`** — bare module/package names now resolve to `<m>.py` / `<m>/__init__.py` / `src/<m>/…` automatically
+- **`get_error_patterns` run-on hints** — adds structured `suggested_command` + `generic_hint` fields alongside the combined `prevention_hint`
+- **Cross-process memory freshness** — `LocalVectorDB` reloads the FAISS index + metadata when another process wrote them (mtime check before searches); long-lived MCP servers no longer serve a stale snapshot
+- **`.env` template shipped an ACTIVE 2 GB circuit-breaker cap** — `cognirepo init` copied `.env.example` with `COGNIREPO_CB_RSS_LIMIT_MB=2000` uncommented, capping every initialized project at 2 GB RSS and causing the recurring breaker trips in benchmark/subgraph/store_memory. Circuit-breaker values in the template are now commented out (smart 80%-of-RAM default applies)
+- **`.env` resolved from the wrong directory** — `load_dotenv()` in the CLI, MCP server, and prune cron resolved `.env` relative to the *package source file*, not the user's project: an editable/dev checkout's `.env` leaked into every command machine-wide, and pip users' project `.env` was never loaded. Now uses `find_dotenv(usecwd=True)`
+- **Encryption flag read from the wrong repo** — `get_storage_config()` read `.cognirepo/config.json` relative to bare CWD instead of the active repo context (`_CTX_DIR`); context-switched saves (org indexing) wrote graph/metadata plaintext while the owning config said `encrypt: true`, making every later load fail decryption and silently start with an EMPTY graph (observed: 76k-node kubernetes graph reported 0 nodes). Now resolves via `config.paths.get_path`; loads also self-heal by attempting plaintext when decryption fails (re-encrypted on next save)
+- **Benchmark crashed under breaker pressure** — steps 2–7 of `run_benchmark()` were unguarded (`CircuitOpenError` traceback at memory-recall); now abort gracefully with the partial token-reduction result, and the CLI no longer KeyErrors printing an aborted report
+- **`graph_stats` staleness coherence** — `index_stale` no longer reports `true` when git HEAD matches the last-indexed SHA (old by age but content-current); reindex triggers verified live: new commit → `stale_reindexing_triggered: true`
+- **Segfault at end of large-repo indexing (doc ingestion)** — reproduced on moby: chromadb 1.5.8's Rust core hits infinite recursion (native stack overflow) merely *opening* a large/poisoned chroma store (`Collection.count()` at adapter init), killing the whole `index-repo` run after a 30-minute embed pass. Three-part fix: (1) doc ingestion now runs in an isolated subprocess (`python -m indexer.doc_ingester`) so a native crash can never kill the index run; (2) crash-evidence self-heal — a `.opening` sentinel left by a crashed open makes the next open quarantine the poisoned store to `chroma.corrupt-<ts>` (kept, not deleted) and start fresh, with one automatic retry; (3) the duplicate DocIngester invocation inside `index_repo()` removed (every entry point calls it explicitly after `free_large_objects()`), which also stops doc chunks being stored twice; chunk embedding is now one streamed batch pass with text-level dedup instead of thousands of individual ONNX calls
+- **`.env.example` missing from wheels** — the template lived at the repo root, which setuptools package-data cannot include, so pip/pipx installs shipped no template and `cognirepo init` silently skipped `.env` creation. The template now also lives at `cognirepo/.env.example` (shipped in the wheel, verified via scratch-venv install; a test keeps both copies in sync), and `init` prints a clear note instead of silently skipping when no template is found
 
 ### Added
 - **`get_agent_bootstrap()` MCP tool** — single-call session start replacing 4-call sequence; ~300 tokens vs ~900
@@ -34,13 +67,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ### Changed
 - **`pip install cognirepo`** — no longer pulls PyTorch/CUDA; fastembed/ONNX only (~50MB vs ~1.5GB)
-- **Doctor** — checks for 32/32 tools (was 30)
+- **Doctor** — checks for all 34 registered MCP tools (was 30); adds `find_symbol_path` and `get_service_endpoints` (microservice KG wiring)
 - **`org_wide_search` docstring** — marked as PRIMARY cross-repo tool; `org_search` marked as DEPRECATED fallback
 - **`behaviour.json`** — now encrypted/decrypted using same Fernet key as `graph.pkl` when encryption is on
 - **`BehaviourTracker`** — receives `db_adapter` injection; feedback scores propagate to vector store; temporal decay on relevance scores (`old * 0.95 + 0.1`)
 
 ### Docs
-- `docs/MCP_TOOLS.md` — all 32 tools documented
+- `docs/MCP_TOOLS.md` — all 34 tools documented
 - `MANUAL_TEST_SUITE.md` — 39-test manual test suite with prompts and result blocks
 - `README.md` — corrected install command (removed `cpu` extra)
 - `CLAUDE.md` — stack updated to fastembed/ONNX, argparse
@@ -75,7 +108,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **`_cmd_prime()` extracted** — body moved to `tools/prime_session.py`; CLI and MCP tool share the same implementation
 - **`docs/USAGE.md`** — table of contents updated; install section leads with `pip install 'cognirepo[cpu,languages]'`
 - **README** — headline reframed as "Persistent Institutional Memory"; 5-minute quickstart with `cognirepo setup`; measured external benchmark table added
-- **`pyproject.toml`** — `fail_under` raised from 50 → 70; `Development Status` → `5 - Production/Stable`
+- **`pyproject.toml`** — `Development Status` → `5 - Production/Stable`; coverage `fail_under` gate held at 50 (matches CI `--cov-fail-under=50`; current measured coverage ~57%)
 
 ### Fixed
 

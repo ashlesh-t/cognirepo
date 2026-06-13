@@ -228,7 +228,11 @@ def prime_session() -> dict:
     except Exception:  # pylint: disable=broad-except
         pass
 
-    # ── hot symbols from behaviour tracker ───────────────────────────────────
+    # ── queried symbols from behaviour tracker ───────────────────────────────
+    # These are the symbols most often surfaced by past QUERIES (retrieval
+    # feedback), NOT recently-edited code. The old "hot_symbols" label misled
+    # agents into reporting CI/config files as "hottest symbols". Both keys
+    # are emitted for one release; hot_symbols is deprecated.
     try:
         from graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
         from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
@@ -239,10 +243,25 @@ def prime_session() -> dict:
             key=lambda x: x[1],
             reverse=True,
         )[:5]
-        brief["hot_symbols"] = [
+        _queried = [
             {"symbol": k.split("::")[-1], "path": k, "score": round(v, 2)}
             for k, v in hot
         ]
+        brief["queried_symbols"] = _queried
+        brief["hot_symbols"] = _queried  # deprecated alias — remove in 1.2
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+    # ── recently modified files (git) ────────────────────────────────────────
+    try:
+        import subprocess as _sp  # pylint: disable=import-outside-toplevel
+        _out = _sp.check_output(
+            ["git", "log", "--name-only", "--pretty=format:", "-n", "20"],
+            text=True, stderr=_sp.DEVNULL,
+        )
+        _recent = list(dict.fromkeys(l for l in _out.splitlines() if l.strip()))[:8]
+        if _recent:
+            brief["recently_modified_files"] = _recent
     except Exception:  # pylint: disable=broad-except
         pass
 

@@ -46,6 +46,9 @@ _SKIP_FILE_SUBSTRINGS = {
 _SKIP_PATH_FRAGMENTS = {".github", ".gitlab", ".bitbucket"}
 _CONTEXT_LINES = 2  # lines before and after the matching line
 
+# Semantic doc hits below this score are treated as no-match filler and dropped.
+_MIN_DOC_SCORE = 0.05
+
 
 def _should_skip_file(path: str) -> bool:
     """Return True if the file should be excluded from doc search results."""
@@ -139,12 +142,19 @@ def search_docs(query: str) -> list[dict]:
             # skip obvious PR/issue template boilerplate (lots of HTML comments with N/A).
             if _text.count("<!--") >= 2 or (_text.count("<!--") >= 1 and "N/A" in _text):
                 continue
-            # Deduplicate by exact text — chunked docs can produce identical hits
-            if _text in _seen_contexts:
+            # Deduplicate by normalized text — chunked docs can produce
+            # identical hits (whitespace variants included)
+            _norm = " ".join(_text.split())
+            if _norm in _seen_contexts:
                 continue
-            _seen_contexts.add(_text)
+            _seen_contexts.add(_norm)
             # combined_score = l2_score*0.8 + behaviour*0.2; l2_score = 1-dist/2
             _score = _h.get("combined_score", max(0.0, 1.0 - _h.get("l2_distance", 2.0) / 2.0))
+            # Zero-score hits are FAISS filler, not matches — returning them
+            # (observed: duplicate score-0.0 placeholder chunks) misleads
+            # agents into treating noise as documentation.
+            if _score < _MIN_DOC_SCORE:
+                continue
             results.append({
                 "path": _src if _src else "semantic",
                 "line": 0,

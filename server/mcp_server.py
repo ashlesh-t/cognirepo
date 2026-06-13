@@ -140,8 +140,14 @@ def _behaviour_enabled() -> bool:
         return False
 
 
-def _index_is_stale() -> bool:
-    """Return True if git HEAD has advanced past the last-indexed commit SHA."""
+def _index_is_stale() -> bool | None:
+    """Return True if git HEAD has advanced past the last-indexed commit SHA.
+
+    Returns None when the comparison is inconclusive (not a git repo, or no
+    SHA recorded yet). Callers should fall back to age-based staleness in
+    that case — previously the False return silently suppressed the
+    auto-reindex trigger even when the index was hours old.
+    """
     try:
         import subprocess as _sp  # pylint: disable=import-outside-toplevel
         from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
@@ -150,10 +156,65 @@ def _index_is_stale() -> bool:
         ).strip()
         last_indexed_path = _gp("index/last_indexed.json")
         if not os.path.exists(last_indexed_path):
-            return False  # no SHA stored yet — treat as up-to-date (can't determine)
+            return None  # no SHA stored yet — inconclusive
         with open(last_indexed_path, encoding="utf-8") as _f:
             import json as _j  # pylint: disable=import-outside-toplevel
             return _j.load(_f).get("commit_sha") != head
+    except Exception:  # pylint: disable=broad-except
+        return None
+
+
+def _watcher_alive() -> bool:
+    """True only if watcher.pid exists AND the process is actually running.
+
+    A dead watcher's leftover PID file used to permanently suppress
+    staleness detection.
+    """
+    try:
+        from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
+        pid_file = _gp("watcher.pid")
+        if not os.path.exists(pid_file):
+            return False
+        with open(pid_file, encoding="utf-8") as _f:
+            pid = int(_f.read().strip())
+        os.kill(pid, 0)  # signal 0 = existence check
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+_REINDEX_LOCK_ORPHAN_S = 30 * 60  # locks older than 30 min are considered orphaned
+
+
+def _spawn_background_reindex(lock_path: str) -> bool:
+    """Atomically acquire the reindex lock and spawn a background reindex.
+
+    Returns True if the reindex subprocess was launched. Uses open(..., "x")
+    so two concurrent tool calls cannot both acquire the lock, and clears
+    orphaned locks left behind by a crashed reindex.
+    """
+    try:
+        import subprocess as _sp  # pylint: disable=import-outside-toplevel
+        os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+        if os.path.exists(lock_path):
+            try:
+                if time.time() - os.path.getmtime(lock_path) > _REINDEX_LOCK_ORPHAN_S:
+                    os.remove(lock_path)  # orphaned lock — a reindex never takes 30 min lock-held
+                else:
+                    return False  # reindex already in flight
+            except OSError:
+                return False
+        try:
+            with open(lock_path, "x", encoding="utf-8"):
+                pass
+        except FileExistsError:
+            return False  # lost the race to another caller
+        _sp.Popen(
+            ["cognirepo", "index-repo", "--changed-only", "--no-watch",
+             "--remove-lock", lock_path],
+            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, close_fds=True,
+        )
+        return True
     except Exception:  # pylint: disable=broad-except
         return False
 
@@ -551,7 +612,7 @@ def org_search(query: str, top_k: int = 5) -> list:
 
 
 @mcp.tool()
-def org_wide_search(query: str, top_k: int = 5) -> list:
+def org_wide_search(query: str, top_k: int = 5) -> dict:
     """
     PRIMARY tool for cross-repo queries. Searches memories across ALL registered repos.
     Use this by default when a query spans multiple services or the answer may live
@@ -560,11 +621,20 @@ def org_wide_search(query: str, top_k: int = 5) -> list:
     Use cross_repo_search when you need explicit scope control (project vs org).
     Use org_search only as a fallback when this returns empty.
 
+    Returns {results, count, repos_searched, repos_skipped} — check repos_skipped
+    if an expected service is missing from results.
+
     Claude: use this as the default cross-repo search.
     """
     from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
     router = CrossRepoRouter()
-    return router.query_all_org_repos(query, top_k=top_k)
+    results, meta = router.query_all_org_repos(query, top_k=top_k, return_meta=True)
+    return {
+        "results": results,
+        "count": len(results),
+        "repos_searched": meta.get("repos_searched", []),
+        "repos_skipped": meta.get("repos_skipped", []),
+    }
 
 
 @mcp.tool()
@@ -670,7 +740,7 @@ def org_dependencies(depth: int = 2) -> dict:
     deps = og.get_dependencies(current, depth=depth)
     dependents = og.get_dependents(current, depth=depth)
 
-    return {
+    result = {
         "current_repo": current,
         "current_repo_name": os.path.basename(current),
         "organization": router.org_name,
@@ -679,6 +749,35 @@ def org_dependencies(depth: int = 2) -> dict:
         "direct_dependents": [d for d in dependents if d["depth"] == 1],
         "transitive_dependents": [d for d in dependents if d["depth"] > 1],
     }
+
+    # ── parent rollup ─────────────────────────────────────────────────────
+    # When called from an org parent, the parent's own edges are only
+    # CHILD_OF — the CALLS_API topology lives on the children. Roll those
+    # edges up so the parent view shows the actual service call chain
+    # (e.g. client → npci-service → bank-service) instead of a flat list.
+    try:
+        service_topology: list[dict] = []
+        for child in og.get_children(current):
+            for nb in og.G.successors(child):
+                ed = og.G[child][nb]
+                if ed.get("kind") != "CALLS_API" or ed.get("direction") != "forward":
+                    continue
+                entry = {
+                    "src": os.path.basename(child),
+                    "dst": os.path.basename(nb),
+                    "kind": "CALLS_API",
+                    "auto": ed.get("auto", False),
+                }
+                for _k in ("caller_fn", "caller_file", "endpoint_pattern", "endpoint_fn"):
+                    if _k in ed:
+                        entry[_k] = ed[_k]
+                service_topology.append(entry)
+        if service_topology:
+            result["service_topology"] = service_topology
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+    return result
 
 
 @mcp.tool()
@@ -732,6 +831,51 @@ def link_repos(
     return {"linked": True, "edge": {"src": src_repo, "dst": dst_repo, "kind": kind}}
 
 
+def _resolve_repo_for_symbol(symbol: str, og) -> str | None:
+    """Return the repo path that contains `symbol`, by searching each registered repo's
+    AST index.
+
+    Search order: leaf (child) repos first, then orchestrators.  This prevents an
+    orchestrator whose FAISS index was built from the root directory (and thus contains
+    all children's symbols) from shadowing the real owner.
+    """
+    from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+    from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+
+    sym_lower = symbol.lower()
+
+    all_repos = og.list_repos()
+    # Separate orchestrators (role="orchestrator") from leaf repos so children are checked first.
+    def _is_orchestrator(rp: str) -> bool:
+        return og.G.nodes.get(rp, {}).get("role") == "orchestrator"
+
+    ordered = [r for r in all_repos if not _is_orchestrator(r)] + \
+              [r for r in all_repos if     _is_orchestrator(r)]
+
+    for repo_path in ordered:
+        if not os.path.isdir(repo_path):
+            continue
+        cognirepo_dir = get_cognirepo_dir_for_repo(repo_path)
+        if not os.path.isdir(cognirepo_dir):
+            continue
+        tok = _CTX_DIR.set(cognirepo_dir)
+        try:
+            kg = KnowledgeGraph()
+            idx = ASTIndexer(graph=kg)
+            idx.load()
+            for entry in (idx.faiss_meta or []):
+                name = entry.get("name", "")
+                fp   = entry.get("file", "")
+                if sym_lower in name.lower() or sym_lower in fp.lower():
+                    return repo_path
+        except Exception:  # pylint: disable=broad-except
+            pass
+        finally:
+            _CTX_DIR.reset(tok)
+    return None
+
+
 @mcp.tool()
 def cross_repo_traverse(
     symbol: str | None = None,
@@ -757,7 +901,15 @@ def cross_repo_traverse(
     from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
 
     og = get_org_graph()
-    current = os.path.abspath(start_repo) if start_repo else os.path.abspath(".")
+    if start_repo:
+        current = os.path.abspath(start_repo)
+    elif symbol:
+        # Auto-resolve: find which registered repo owns this symbol.
+        # Avoids always defaulting to CWD (parent orchestrator) when the symbol
+        # lives in a child service.
+        current = _resolve_repo_for_symbol(symbol, og) or os.path.abspath(".")
+    else:
+        current = os.path.abspath(".")
 
     result: dict = {
         "start_repo": current,
@@ -1088,6 +1240,30 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
                     "found_via": "stub_unresolved" if _stub_data.get("unresolved") else "not_found",
                 }
 
+        # ── coverage honesty ──────────────────────────────────────────────
+        # Static call graphs miss interface/dynamic dispatch (observed on
+        # moby: who_calls("NewDaemon") returned only the test-harness caller
+        # and missed cmd/dockerd). When the graph yields very few callers,
+        # augment with the grep fallback and say so, instead of presenting
+        # a possibly-incomplete list with full confidence.
+        coverage_note: str | None = None
+        if 0 < len(result) <= 2:
+            try:
+                _extra = _who_calls_dynamic_fallback(function_name, repo_root)
+                _seen = {(c.get("file"), c.get("line")) for c in result}
+                for _c in _extra:
+                    _key = (_c.get("file"), _c.get("line"))
+                    if _key not in _seen:
+                        _seen.add(_key)
+                        result.append(_c)
+            except Exception:  # pylint: disable=broad-except
+                pass
+            coverage_note = (
+                "Static call graph returned few callers; results were augmented "
+                "with a text-scan fallback (see found_via tags). Dynamic/interface "
+                "dispatch call sites may still be missing — verify critical callers."
+            )
+
         # Cross-repo: check dependent services for callers of this function
         cross_repo_callers: list[dict] = []
         try:
@@ -1131,6 +1307,8 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
         "cross_repo_callers": cross_repo_callers[:_MAX_CALLERS],
         "truncated": len(result) > _MAX_CALLERS or len(cross_repo_callers) > _MAX_CALLERS,
     }
+    if coverage_note:
+        final["coverage_note"] = coverage_note
     _behaviour_record_query(function_name, final)
     return final
 
@@ -1210,27 +1388,44 @@ def subgraph(entity: str, depth: int = 2, repo_path: str | None = None) -> dict:
             if g.G.number_of_nodes() == 0:
                 return _EMPTY_GRAPH_WARNING
         _MAX_NODES, _MAX_EDGES = 200, 500
+        _MAX_RESPONSE_CHARS = 30_000
         candidates = [entity, f"symbol::{entity}", f"concept::{entity.lower()}"]
-        # Also try case-insensitive suffix scan as a fuzzy last resort
+        # Case-insensitive suffix scan: collect ALL '::<entity>' matches and rank
+        # by degree so file-qualified keys like 'pkg/server/handler.go::GenericAPIServer'
+        # resolve even when the bare/symbol:: forms don't exist.
         entity_lower = entity.lower()
-        fuzzy_candidates = [
-            n for n in g.G.nodes
-            if n.lower().endswith(f"::{entity_lower}") or n.lower() == entity_lower
-        ]
+        fuzzy_candidates = sorted(
+            (
+                n for n in g.G.nodes
+                if n.lower().endswith(f"::{entity_lower}") or n.lower() == entity_lower
+            ),
+            key=g.G.degree,
+            reverse=True,
+        )
         for candidate in candidates + fuzzy_candidates:
             if g.node_exists(candidate):
-                result = g.subgraph_around(candidate, radius=depth)
-                nodes = result.get("nodes", [])
-                edges = result.get("edges", [])
-                truncated = len(nodes) > _MAX_NODES or len(edges) > _MAX_EDGES
-                if truncated:
-                    result = {
-                        "nodes": nodes[:_MAX_NODES],
-                        "edges": edges[:_MAX_EDGES],
-                        "truncated": True,
-                        "total_nodes": len(nodes),
-                        "total_edges": len(edges),
-                    }
+                result = g.subgraph_around(
+                    candidate, radius=depth,
+                    max_nodes=_MAX_NODES, max_edges=_MAX_EDGES,
+                )
+                if candidate != entity:
+                    result["resolved_to"] = candidate
+                # Serialized-size cap: trim node/edge lists until the JSON
+                # payload is reasonable for an MCP response (~30k chars).
+                try:
+                    while (
+                        len(json.dumps(result, default=str)) > _MAX_RESPONSE_CHARS
+                        and (result.get("nodes") or result.get("edges"))
+                    ):
+                        if result.get("edges"):
+                            result["edges"] = result["edges"][: max(len(result["edges"]) // 2, 0) ]
+                        if result.get("nodes") and len(json.dumps(result, default=str)) > _MAX_RESPONSE_CHARS:
+                            result["nodes"] = result["nodes"][: max(len(result["nodes"]) // 2, 0) ]
+                        result["truncated"] = True
+                        if not result.get("nodes") and not result.get("edges"):
+                            break
+                except (TypeError, ValueError):
+                    pass
                 _auto_store_hook("subgraph", result)
                 return result
     return {
@@ -1311,26 +1506,24 @@ def graph_stats(repo_path: str | None = None) -> dict:
                 mtime = os.path.getmtime(ast_index_path)
                 age_s = time.time() - mtime
                 index_age_minutes = int(age_s // 60)
-                # Stale if >60 min old; check for running watcher via PID file
-                _pid_file = get_path("watcher.pid")
-                watcher_running = os.path.exists(_pid_file)
-                index_stale = index_age_minutes > 60 and not watcher_running
+                # Stale if >60 min old; only a LIVE watcher suppresses staleness
+                index_stale = index_age_minutes > 60 and not _watcher_alive()
+                # Age says stale, but if git HEAD still matches the last
+                # indexed SHA the CONTENT is current — reporting stale + not
+                # triggering a reindex read as contradictory to agents.
+                if index_stale and _index_is_stale() is False:
+                    index_stale = False
             except Exception:  # pylint: disable=broad-except
                 pass
     stale_reindexing_triggered = False
     if index_stale:
         try:
-            _lock_path = get_path("index/reindex.lock")
-            if not os.path.exists(_lock_path) and _index_is_stale():
-                import subprocess as _sp_gs  # pylint: disable=import-outside-toplevel
-                os.makedirs(os.path.dirname(_lock_path), exist_ok=True)
-                open(_lock_path, "w").close()  # noqa: WPS515
-                _sp_gs.Popen(
-                    ["cognirepo", "index-repo", "--changed-only", "--no-watch",
-                     "--remove-lock", _lock_path],
-                    stdout=_sp_gs.DEVNULL, stderr=_sp_gs.DEVNULL, close_fds=True,
+            # SHA moved (True) or comparison inconclusive (None) → reindex.
+            # (index_stale is already False when HEAD matches the last SHA.)
+            if _index_is_stale() is not False:
+                stale_reindexing_triggered = _spawn_background_reindex(
+                    get_path("index/reindex.lock")
                 )
-                stale_reindexing_triggered = True
         except Exception:  # pylint: disable=broad-except
             pass
     return {
@@ -1384,7 +1577,16 @@ def search_docs(query: str, top_k: int = 5, repo_path: str | None = None) -> dic
         save_query_context(query, tool="search_docs")
     except Exception:  # pylint: disable=broad-except
         pass
-    return result if isinstance(result, dict) else {"results": result, "count": len(result)}
+    if isinstance(result, dict):
+        return result
+    out: dict = {"results": result, "count": len(result)}
+    if not result:
+        out["status"] = "no_doc_matches"
+        out["hint"] = (
+            "No documentation matched. If this repo has docs, the doc index may "
+            "be empty — run `cognirepo index-repo .` to populate it."
+        )
+    return out
 
 
 @mcp.tool()
@@ -1576,21 +1778,19 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         if index_status in ("ok", "empty"):
             try:
                 from config.paths import get_path as _gp_lock  # pylint: disable=import-outside-toplevel
-                _lock_path = _gp_lock("index/reindex.lock")
-                if _index_is_stale() and not os.path.exists(_lock_path):
-                    import subprocess as _sp_ri  # pylint: disable=import-outside-toplevel
-                    os.makedirs(os.path.dirname(_lock_path), exist_ok=True)
-                    open(_lock_path, "w").close()  # noqa: WPS515
-                    _sp_ri.Popen(
-                        [
-                            "cognirepo", "index-repo",
-                            "--changed-only", "--no-watch",
-                            "--remove-lock", _lock_path,
-                        ],
-                        stdout=_sp_ri.DEVNULL,
-                        stderr=_sp_ri.DEVNULL,
-                        close_fds=True,
-                    )
+                _sha_stale = _index_is_stale()
+                if _sha_stale is None:
+                    # SHA comparison inconclusive — fall back to mtime age
+                    try:
+                        _ast_p = _gp_lock("index/ast_index.json")
+                        _sha_stale = (
+                            os.path.exists(_ast_p)
+                            and (time.time() - os.path.getmtime(_ast_p)) > 3600
+                            and not _watcher_alive()
+                        )
+                    except OSError:
+                        _sha_stale = False
+                if _sha_stale and _spawn_background_reindex(_gp_lock("index/reindex.lock")):
                     index_status = "reindexing"
             except Exception:  # pylint: disable=broad-except
                 pass
@@ -2414,8 +2614,9 @@ def run_server(project_dir: str | None = None) -> None:
     Storage defaults to ``~/.cognirepo/storage/<project_hash>/`` to ensure
     isolation between projects even when started without flags.
     """
-    from dotenv import load_dotenv  # pylint: disable=import-outside-toplevel
-    load_dotenv()
+    from dotenv import load_dotenv, find_dotenv  # pylint: disable=import-outside-toplevel
+    # usecwd=True: resolve .env from the project directory, not this source file
+    load_dotenv(find_dotenv(usecwd=True))
     if project_dir:
         from config.paths import (  # pylint: disable=import-outside-toplevel
             set_cognirepo_dir, get_cognirepo_dir_for_repo,

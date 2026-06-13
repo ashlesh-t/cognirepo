@@ -81,7 +81,11 @@ _SKIP_DIRS: frozenset[str] = frozenset({
     ".gradle", "gradle", "out", "classes", "generated", "generated-sources", "gen",
     ".idea",
     # Go / Kubernetes
-    "vendor", "third_party", "_output", "_artifacts", "staging",
+    # NOTE: "staging" is deliberately NOT skipped — in Kubernetes-style repos
+    # staging/ holds real first-party source (k8s.io/apiserver etc.). Repos that
+    # use staging/ as a build artifact dir can re-add it via config.json:
+    #   {"indexing": {"skip_dirs": ["staging"]}}
+    "vendor", "third_party", "_output", "_artifacts",
     # Bazel
     "bazel-bin", "bazel-out", "bazel-testlogs", "bazel-genfiles",
     # General build
@@ -120,13 +124,21 @@ _LARGE_REPO_TIER_THRESHOLD: int = _AUTO_SKIP_GRAPH_THRESHOLD  # same boundary as
 
 
 def _effective_skip_dirs() -> frozenset[str]:
-    """Return _SKIP_DIRS merged with any extra dirs from .cognirepo/config.json."""
+    """Return _SKIP_DIRS adjusted by .cognirepo/config.json.
+
+    config.json → "indexing": {
+        "skip_dirs":   [...],   # extra dirs to skip (merged with defaults)
+        "unskip_dirs": [...]    # default-skipped dirs to index anyway
+    }
+    """
     try:
         with open(get_path("config.json"), encoding="utf-8") as _f:
             _cfg = json.load(_f)
-        extra: list[str] = _cfg.get("indexing", {}).get("skip_dirs", [])
-        if extra:
-            return _SKIP_DIRS | frozenset(extra)
+        _indexing = _cfg.get("indexing", {})
+        extra: list[str] = _indexing.get("skip_dirs", [])
+        unskip: list[str] = _indexing.get("unskip_dirs", [])
+        if extra or unskip:
+            return (_SKIP_DIRS | frozenset(extra)) - frozenset(unskip)
     except Exception:  # pylint: disable=broad-except
         pass
     return _SKIP_DIRS
@@ -164,6 +176,8 @@ _TS_CLASS_TYPES = frozenset({
     "interface_declaration",      # Java, TS
     "type_alias_declaration",     # TypeScript type aliases
     "enum_declaration",           # TypeScript / Java enums
+    "type_spec",                  # Go: type Foo struct{...} / type Bar interface{...}
+                                  # (name field lives on type_spec, not type_declaration)
 })
 
 
@@ -1422,19 +1436,12 @@ class ASTIndexer:
                 "Run: cognirepo index-repo . --tier 2"
             )
 
-        # ── Doc ingestion pass — index all .md/.rst files into semantic store ──
-        # Runs after AST indexing so search_docs() can do semantic search against
-        # these embeddings rather than relying solely on string matching.
-        try:
-            from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
-            _doc_result = DocIngester(repo_root).ingest()
-            if _doc_result.get("chunks", 0) > 0:
-                print(
-                    f"  Docs: {_doc_result['chunks']} chunk(s) from "
-                    f"{_doc_result['files']} file(s) indexed into semantic store"
-                )
-        except Exception as _doc_exc:  # pylint: disable=broad-except
-            log.debug("Doc ingestion skipped: %s", _doc_exc)
+        # NOTE: doc ingestion deliberately does NOT run here. Every entry point
+        # (cli/main.py index-repo Stage 3, cli/init_project.py, init-all) invokes
+        # DocIngester itself, AFTER free_large_objects(). Running it inside
+        # index_repo ingested every chunk TWICE (duplicate doc hits in
+        # search_docs) and executed at peak RSS — observed as a native
+        # segfault at the end of a large-repo tier-2 run.
 
         return {
             "files": total_files,
@@ -2028,18 +2035,49 @@ class ASTIndexer:
 
     # ── persistence ───────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _atomic_json_dump(obj, path: str) -> None:
+        """Write JSON to a tmp file then os.replace() into place.
+
+        A crash or concurrent reindex mid-write can no longer leave a
+        truncated/corrupt JSON file behind (observed as a parse error at
+        char 73M on a large-monorepo ast_index.json).
+        """
+        tmp_path = path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(obj, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+
+    @staticmethod
+    def _load_json_self_heal(path: str, default):
+        """Load JSON; on corruption rename the file to .corrupt and return default."""
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+            log.warning(
+                "%s is corrupt or unreadable (%s). Renaming to .corrupt and "
+                "starting fresh — re-run `cognirepo index-repo .` to rebuild.",
+                os.path.basename(path), exc,
+            )
+            try:
+                os.replace(path, path + ".corrupt")
+            except OSError:
+                pass
+            return default
+
     def save(self) -> None:
         """Persist AST index, FAISS index, and metadata to disk.
         Also writes manifest.json with git SHA, platform info, and checksums
         so `cognirepo verify-index` can detect staleness or corruption later.
         """
         os.makedirs(os.path.dirname(_ast_index_file()), exist_ok=True)
-        with open(_ast_index_file(), "w", encoding="utf-8") as f:
-            json.dump(self.index_data, f, indent=2)
+        self._atomic_json_dump(self.index_data, _ast_index_file())
         if self.faiss_index is not None:
             faiss.write_index(self.faiss_index, _ast_faiss_file())
-        with open(_ast_meta_file(), "w", encoding="utf-8") as f:
-            json.dump(self.faiss_meta, f, indent=2)
+        self._atomic_json_dump(self.faiss_meta, _ast_meta_file())
 
         # Write integrity manifest after all index files are on disk
         repo_root = self.index_data.get("repo_root") or None
@@ -2082,8 +2120,9 @@ class ASTIndexer:
                 pass  # manifest absent or unreadable — proceed normally
 
         if os.path.exists(_ast_index_file()):
-            with open(_ast_index_file(), encoding="utf-8") as f:
-                self.index_data = json.load(f)
+            loaded = self._load_json_self_heal(_ast_index_file(), None)
+            if loaded is not None:
+                self.index_data = loaded
         if os.path.exists(_ast_faiss_file()):
             try:
                 self.faiss_index = faiss.read_index(_ast_faiss_file())
@@ -2102,6 +2141,5 @@ class ASTIndexer:
         else:
             self._ensure_faiss()
         if os.path.exists(_ast_meta_file()):
-            with open(_ast_meta_file(), encoding="utf-8") as f:
-                self.faiss_meta = json.load(f)
+            self.faiss_meta = self._load_json_self_heal(_ast_meta_file(), [])
         self._loaded = True

@@ -449,7 +449,10 @@ def hybrid_retrieve(query: str, top_k: int = 5, min_score: float | None = None) 
                annotated with "_cold_fallback": True so callers can decide.
     """
     global _CACHE_HITS, _CACHE_MISSES  # pylint: disable=global-statement
-    cache_key = (query, top_k)
+    # Include the active cognirepo dir in the cache key so that org_wide_search
+    # switching _CTX_DIR across repos doesn't serve one repo's results to another.
+    from config.paths import _CTX_DIR as _ctx  # pylint: disable=import-outside-toplevel
+    cache_key = (query, top_k, _ctx.get(""))
     now = time.monotonic()
 
     with _CACHE_LOCK:

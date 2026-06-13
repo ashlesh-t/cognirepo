@@ -1,6 +1,6 @@
 # CogniRepo MCP Tools Reference
 
-32 tools available via the MCP protocol. These are the functions Claude, Gemini, and Cursor can call.
+34 tools available via the MCP protocol. These are the functions Claude, Gemini, and Cursor can call.
 
 ---
 
@@ -591,6 +591,41 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
 **Output:**
 ```json
 {"found_old": true, "new_id": "def456"}
+```
+
+---
+
+## find_symbol_path
+
+**Signature:** `find_symbol_path(from_symbol: str, to_symbol: str, from_repo: str = "", to_repo: str = "") → dict`
+
+**When:** Trace the shortest call-graph path between two symbols, crossing service boundaries via the org graph when needed. Uses weighted Dijkstra (core entry-point symbols preferred over indirect hops; cross-service org edges cost more).
+
+**Input:**
+```json
+{ "from_symbol": "handleTransfer", "to_symbol": "settleNpci", "from_repo": "/projects/bank-service" }
+```
+**Output:**
+```json
+{ "path": ["bank-service::handleTransfer", "npci-service::settle"], "hops": 2, "crosses_services": true, "services_traversed": ["bank-service", "npci-service"] }
+```
+Returns `{error: ...}` when no path exists.
+
+---
+
+## get_service_endpoints
+
+**Signature:** `get_service_endpoints(repo_path: str = "") → dict`
+
+**When:** List the HTTP endpoint registry for a service (from `endpoints.json`, populated by `cognirepo index-repo`). Each entry includes method, path pattern, handler function, file, and framework.
+
+**Input:**
+```json
+{ "repo_path": "/projects/bank-service" }
+```
+**Output:**
+```json
+{ "endpoints": [{"method": "POST", "path": "/api/transfer", "handler": "handleTransfer", "framework": "spring"}], "count": 1, "repo": "bank-service" }
 ```
 
 ---

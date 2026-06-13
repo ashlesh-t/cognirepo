@@ -82,20 +82,30 @@ class TestCrossRepoSearch:
 # ── MCP tool: org_wide_search ─────────────────────────────────────────────────
 
 class TestOrgWideSearch:
-    def test_returns_list(self, isolated_cognirepo):
+    def test_returns_dict_with_meta(self, isolated_cognirepo):
         from server.mcp_server import org_wide_search
         result = org_wide_search("authentication")
-        assert isinstance(result, list)
+        assert isinstance(result, dict)
+        assert isinstance(result["results"], list)
+        assert "repos_searched" in result
+        assert "repos_skipped" in result
+        assert result["count"] == len(result["results"])
 
-    def test_empty_org_returns_empty_list(self, isolated_cognirepo):
+    def test_empty_org_returns_empty_results(self, isolated_cognirepo, monkeypatch):
+        # The global ~/.cognirepo/org_graph.pkl leaks into tests; force an
+        # actually-empty org so the empty-path contract is what's tested.
+        from retrieval.cross_repo import CrossRepoRouter
+        monkeypatch.setattr(CrossRepoRouter, "get_all_org_repos", lambda self: [])
         from server.mcp_server import org_wide_search
         result = org_wide_search("something_nonexistent_zzz")
-        assert result == []
+        assert result["results"] == []
+        assert result["count"] == 0
+        assert result["repos_searched"] == []
 
     def test_top_k_respected(self, isolated_cognirepo):
         from server.mcp_server import org_wide_search
         result = org_wide_search("auth", top_k=3)
-        assert len(result) <= 3
+        assert len(result["results"]) <= 3
 
 
 # ── MCP tool: list_org_context ────────────────────────────────────────────────

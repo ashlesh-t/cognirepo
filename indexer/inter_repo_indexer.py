@@ -47,6 +47,9 @@ def extract_dependencies(repo_path: str, org_repos: list[str]) -> list[DepEdge]:
 
     Matching: package name → repo name (case-insensitive, hyphen/underscore normalized).
     E.g. package "my-auth-service" matches repo at /projects/my_auth_service/.
+
+    Also scans Java application.properties/yml and @FeignClient annotations for
+    runtime HTTP call relationships (CALLS_API edges).
     """
     abs_repo = os.path.abspath(repo_path)
     root = Path(abs_repo)
@@ -73,8 +76,121 @@ def extract_dependencies(repo_path: str, org_repos: list[str]) -> list[DepEdge]:
                 via=dep_name,
             ))
 
+    # Java: detect runtime HTTP call edges from Spring config + source files
+    edges.extend(_scan_java_http_calls(root, abs_repo, repo_index))
+
     if edges:
         logger.info("inter_repo_indexer: %s → found %d inter-repo deps", abs_repo, len(edges))
+
+    return edges
+
+
+def _scan_java_http_calls(
+    root: Path,
+    abs_repo: str,
+    repo_index: dict[str, str],
+) -> list[DepEdge]:
+    """
+    Detect CALLS_API edges from Java Spring Boot projects by scanning:
+    1. application.properties / application.yml — URL config values like
+       `bank.base-url=http://bank-service:8081/api`
+    2. Java source files — @FeignClient(name="service-name") annotations
+
+    Skips files inside subdirectories that are themselves Maven/Gradle projects
+    (i.e. have their own pom.xml or build.gradle at root level) to avoid
+    attributing child-service HTTP calls to the parent directory.
+
+    Returns DepEdge(kind="CALLS_API") for each sibling service referenced by URL.
+    """
+    if not (root / "pom.xml").exists() and not (root / "build.gradle").exists():
+        return []  # not a Java/Gradle project
+
+    # Build set of immediate subdirs that are their OWN Maven/Gradle projects.
+    # Files inside these dirs belong to those projects, not to `root`.
+    excluded_roots: set[Path] = set()
+    for child in root.iterdir():
+        if child.is_dir() and ((child / "pom.xml").exists() or (child / "build.gradle").exists()):
+            excluded_roots.add(child.resolve())
+
+    def _is_excluded(path: Path) -> bool:
+        resolved = path.resolve()
+        return any(
+            resolved == ex or str(resolved).startswith(str(ex) + "/")
+            for ex in excluded_roots
+        )
+
+    edges: list[DepEdge] = []
+    seen_targets: set[str] = set()
+
+    # ── Pass 1: application.properties / application.yml ─────────────────────
+    for props_file in root.rglob("application*.properties"):
+        if _is_excluded(props_file):
+            continue
+        try:
+            for line in props_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                m = re.search(r"=\s*https?://([a-zA-Z0-9_-]+)", line)
+                if m:
+                    host = m.group(1)
+                    matched = _match_repo(host, repo_index)
+                    if matched and matched not in seen_targets:
+                        seen_targets.add(matched)
+                        edges.append(DepEdge(
+                            src_repo=abs_repo,
+                            dst_repo=matched,
+                            kind="CALLS_API",
+                            via=str(props_file.relative_to(root)),
+                        ))
+        except OSError:
+            pass
+
+    for yml_file in root.rglob("application*.yml"):
+        if _is_excluded(yml_file):
+            continue
+        try:
+            for line in yml_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                m = re.search(r":\s*https?://([a-zA-Z0-9_-]+)", line)
+                if m:
+                    host = m.group(1)
+                    matched = _match_repo(host, repo_index)
+                    if matched and matched not in seen_targets:
+                        seen_targets.add(matched)
+                        edges.append(DepEdge(
+                            src_repo=abs_repo,
+                            dst_repo=matched,
+                            kind="CALLS_API",
+                            via=str(yml_file.relative_to(root)),
+                        ))
+        except OSError:
+            pass
+
+    # ── Pass 2: @FeignClient(name/value/url = "…") annotations ───────────────
+    _feign_re = re.compile(
+        r'@FeignClient\s*\([^)]*(?:name|value|url)\s*=\s*"([^"]+)"', re.IGNORECASE
+    )
+    for java_file in root.rglob("*.java"):
+        if _is_excluded(java_file):
+            continue
+        try:
+            text = java_file.read_text(encoding="utf-8", errors="ignore")
+            if "@FeignClient" not in text:
+                continue
+            for m in _feign_re.finditer(text):
+                host_or_name = m.group(1)
+                host_or_name = re.sub(r"^https?://", "", host_or_name).split(":")[0].split("/")[0]
+                matched = _match_repo(host_or_name, repo_index)
+                if matched and matched not in seen_targets:
+                    seen_targets.add(matched)
+                    edges.append(DepEdge(
+                        src_repo=abs_repo,
+                        dst_repo=matched,
+                        kind="CALLS_API",
+                        via=str(java_file.relative_to(root)),
+                    ))
+        except OSError:
+            pass
 
     return edges
 

@@ -93,6 +93,7 @@ cognirepo search-docs <q>       # search indexed docs
 cognirepo doctor                # health check
 cognirepo benchmark             # measure token reduction
 cognirepo prime                 # bootstrap session context (CLI version of get_session_brief)
+cognirepo org rewire            # repair cross-service CALLS_API edges (run after indexing all services)
 ```
 
 ## Stack
