@@ -1056,7 +1056,7 @@ class ASTIndexer:
 
     def __init__(self, graph: KnowledgeGraph) -> None:
         self.graph = graph
-        self.model = get_model()
+        self._model = None  # lazy: loaded only when embedding is actually performed
         self.faiss_index: faiss.Index | None = None
         self.faiss_meta: list[dict] = []
         self.index_data: dict = {
@@ -1070,6 +1070,18 @@ class ASTIndexer:
             "total_symbols": 0,
         }
         self._loaded = False
+
+    # ── embedding model (lazy) ────────────────────────────────────────────────
+
+    @property
+    def model(self):
+        if self._model is None:
+            self._model = get_model()
+        return self._model
+
+    @model.setter
+    def model(self, value):
+        self._model = value
 
     # ── FAISS lifecycle ───────────────────────────────────────────────────────
 
