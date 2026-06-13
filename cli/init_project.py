@@ -65,6 +65,15 @@ def _seed_dotenv() -> None:
     if example.exists() and example.is_file():
         shutil.copy(example, dotenv_dest)
         print(".env created from .env.example — review it to tune circuit breaker limits or add API keys.")
+    else:
+        # Not fatal — all settings have built-in defaults (RSS limit = 80% of
+        # RAM, etc.). But say so instead of silently skipping, so users know
+        # why no .env appeared and what the override mechanism is.
+        print(
+            "Note: .env template not found in this install — skipping .env creation. "
+            "All settings use built-in defaults; create a .env manually to override "
+            "(see docs/USAGE.md → Configuration Reference)."
+        )
 
 
 def _scaffold_dirs() -> None:
@@ -743,12 +752,56 @@ def _index_with_progress(svc_path: str, svc_name: str):
     return result.get("summary"), result.get("kg")
 
 
+def _detect_service_port(svc_path: str) -> int | None:
+    """Best-effort port detection from common service config files.
+
+    Without this, agents answering "what port does X run on?" guess from
+    summaries and get it wrong — the authoritative value lives in the
+    service's own config (e.g. Spring `server.port`, `.env` PORT).
+    """
+    import re as _re  # pylint: disable=import-outside-toplevel
+    candidates = [
+        os.path.join(svc_path, "src", "main", "resources", "application.properties"),
+        os.path.join(svc_path, "src", "main", "resources", "application.yml"),
+        os.path.join(svc_path, "src", "main", "resources", "application.yaml"),
+        os.path.join(svc_path, "application.properties"),
+        os.path.join(svc_path, ".env"),
+    ]
+    patterns = [
+        _re.compile(r"^\s*server\.port\s*[=:]\s*(\d{2,5})", _re.MULTILINE),  # Spring
+        _re.compile(r"^\s*port\s*:\s*(\d{2,5})", _re.MULTILINE),             # YAML
+        _re.compile(r"^\s*PORT\s*=\s*(\d{2,5})", _re.MULTILINE),             # .env
+    ]
+    for path in candidates:
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+        except OSError:
+            continue
+        for pat in patterns:
+            m = pat.search(content)
+            if m:
+                return int(m.group(1))
+    return None
+
+
 def _register_in_org_graph(svc, parent_path: str) -> None:
-    """Add service node + CHILD_OF edge to the org graph."""
+    """Add service node + CHILD_OF edge to the org graph.
+
+    Persists service_type plus auto-detected port so org-level tools
+    (get_agent_bootstrap child_services, list_org_context) report
+    authoritative values instead of leaving agents to guess.
+    """
     try:
         from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
         og = get_org_graph()
-        meta = {"service_type": svc.service_type}
+        meta: dict = {"service_type": svc.service_type}
+        port = getattr(svc, "port", None) or _detect_service_port(svc.path)
+        if port:
+            meta["port"] = port
+        api_base_url = getattr(svc, "api_base_url", None)
+        if api_base_url:
+            meta["api_base_url"] = api_base_url
         og.add_repo(svc.path, parent_path=parent_path, metadata=meta)
         og.save()
     except Exception:  # pylint: disable=broad-except
@@ -798,7 +851,7 @@ def _wire_inter_repo_edges(children: list, parent_path: str) -> None:
 
         if edges_added:
             og.save()
-            print(f"  ✓  Inter-repo edges: {edges_added} IMPORTS relationship(s) auto-detected.")
+            print(f"  ✓  Inter-repo edges: {edges_added} relationship(s) auto-detected (IMPORTS + CALLS_API).")
     except Exception as exc:  # pylint: disable=broad-except
         print(f"  ⚠  Inter-repo edge detection skipped: {exc}")
 
@@ -901,12 +954,42 @@ def _inject_child_stubs_into_parent_kg(children: list, parent_path: str) -> None
         print(f"  ⚠  Parent KG stub injection skipped: {exc}")
 
 
+def _flush_cognirepo(path: str, name: str) -> None:
+    """Remove .cognirepo/ from a repo directory."""
+    import shutil  # pylint: disable=import-outside-toplevel
+    cr_dir = os.path.join(path, ".cognirepo")
+    if os.path.isdir(cr_dir):
+        shutil.rmtree(cr_dir)
+        print(f"  ✓  Flushed .cognirepo/ from {name}")
+    else:
+        print(f"  {name}: no .cognirepo/ to flush")
+
+
+def _write_parent_metadata_to_child(child_path: str, parent_path: str, parent_name: str) -> None:
+    """Inject parent reference into the child's config.json."""
+    cfg_path = os.path.join(child_path, ".cognirepo", "config.json")
+    if not os.path.exists(cfg_path):
+        return
+    try:
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg["parent"] = {"path": parent_path, "project_name": parent_name, "role": "child"}
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
 def _auto_setup_child_repos(
     children: list,
     parent_path: str,
     org: str | None,
     encrypt: bool,
     mcp_targets: list[str],
+    autosave_context: bool = True,
+    behaviour_tracking: bool = False,
+    parent_name: str = "",
+    rejected: list | None = None,
 ) -> None:
     """Animate queue pop/process for each detected microservice."""
     from cli.wizard import (  # pylint: disable=import-outside-toplevel
@@ -914,6 +997,7 @@ def _auto_setup_child_repos(
         _ok, _warn,
     )
     from cli.init_project import init_project as _init_project  # pylint: disable=import-outside-toplevel
+    from cli.main import _write_claude_hooks  # pylint: disable=import-outside-toplevel
 
     _animate_enqueue(children)
 
@@ -930,11 +1014,13 @@ def _auto_setup_child_repos(
             try:
                 if svc.already_init:
                     _ans = _ask_yn(
-                        f"  {svc.name} already has .cognirepo/ — re-initialize?",
+                        f"  {svc.name} already has .cognirepo/ — overwrite (re-initialize)?",
                         default=False,
                     )
                     if not _ans:
-                        print(f"  {svc.name}: skipping init — re-indexing only")
+                        print(f"  {svc.name}: skipping init — re-indexing and updating config")
+                        # Still inject parent metadata and run index even if skipping full init
+                        _write_parent_metadata_to_child(svc.path, parent_path, parent_name)
                         _index_with_progress(svc.path, svc.name)
                         _register_in_org_graph(svc, parent_path)
                         _ok(f"{svc.name} re-indexed\n")
@@ -947,11 +1033,23 @@ def _auto_setup_child_repos(
                     encrypt=encrypt,
                     vector_backend="chroma",
                     mcp_targets=mcp_targets,
+                    autosave_context=autosave_context,
+                    behaviour_tracking=behaviour_tracking,
                     no_index=True,   # indexing done below for live progress bar
                 )
+                # Store parent reference in child config
+                _write_parent_metadata_to_child(svc.path, parent_path, parent_name)
                 # CWD is still svc.path here → KnowledgeGraph() reads child's .cognirepo/
                 _index_with_progress(svc.path, svc.name)
                 _register_in_org_graph(svc, parent_path)
+                # Wire Claude Code / editor hooks inside child if .claude/ exists
+                _child_claude_dir = os.path.join(svc.path, ".claude")
+                if os.path.isdir(_child_claude_dir):
+                    try:
+                        _write_claude_hooks(_child_claude_dir, svc.path)
+                        print(f"  ✓  Behaviour hooks wired for {svc.name}")
+                    except Exception:  # pylint: disable=broad-except
+                        pass
                 _ok(f"{svc.name} done\n")
             finally:
                 os.chdir(old_cwd)
@@ -968,6 +1066,18 @@ def _auto_setup_child_repos(
     print("  Wiring inter-repo relationships …")
     _wire_inter_repo_edges(children, parent_path)
     _inject_child_stubs_into_parent_kg(children, parent_path)
+
+    # ── flush rejected repos that have a stale .cognirepo/ ────────────────────
+    if rejected:
+        stale = [svc for svc in rejected if os.path.isdir(os.path.join(svc.path, ".cognirepo"))]
+        if stale:
+            print(f"\n  {len(stale)} detected-but-not-selected service(s) have an existing .cognirepo/:")
+            for svc in stale:
+                print(f"    • {svc.name}  ({svc.path})")
+            _do_flush = _ask_yn("  Remove their .cognirepo/ directories now?", default=False)
+            if _do_flush:
+                for svc in stale:
+                    _flush_cognirepo(svc.path, svc.name)
 
 
 # ── public API ────────────────────────────────────────────────────────────────
@@ -1221,9 +1331,11 @@ def init_project(
             print("  Run 'cognirepo summarize' once an LLM API key is configured.")
 
     # ── doc ingestion: embed docs/README/git-log into semantic store ──────────
+    # Subprocess-isolated: ingestion in a process that just finished a heavy
+    # indexing pass was observed to segfault (fragmented ONNX/FAISS heaps).
     try:
-        from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
-        _ing_result = DocIngester(cwd).ingest()
+        from indexer.doc_ingester import run_ingest_subprocess  # pylint: disable=import-outside-toplevel
+        _ing_result = run_ingest_subprocess(cwd)
         _n_chunks = _ing_result.get("chunks", 0)
         if _n_chunks > 0:
             print(f"  Semantic store: {_n_chunks} doc chunks embedded.")

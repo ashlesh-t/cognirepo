@@ -47,7 +47,7 @@ across sessions, across tools, across time.
 ## When to use CogniRepo
 
 **Most effective on codebases ≥ 15K LOC.** On small repos (< 10K LOC), native file reads
-are fast enough that the MCP tool schema overhead (~3,900 tokens for 32 tools) takes more
+are fast enough that the MCP tool schema overhead (~4,100 tokens for 34 tools) takes more
 than you save. Break-even is roughly 4 tool calls on a medium-sized repo.
 
 **CogniRepo vs. claude-context / similar tools:**
@@ -269,7 +269,7 @@ docker compose up mcp         # MCP stdio server
 
 ## MCP Tools — complete reference
 
-All 32 tools are available to Claude, Cursor, and any MCP-compatible client.
+All 34 tools are available to Claude, Cursor, and any MCP-compatible client.
 
 ### Core retrieval
 
@@ -330,6 +330,8 @@ All 32 tools are available to Claude, Cursor, and any MCP-compatible client.
 | `org_dependencies(depth=2)` | Bidirectional inter-repo dependency graph | "What does this service depend on?" |
 | `cross_repo_search(query, scope="project")` | Project-scoped or org-scoped search | Finding shared components |
 | `cross_repo_traverse(symbol, direction="both")` | Traverse org graph from a repo or symbol | Tracing bugs across service boundaries |
+| `find_symbol_path(from_symbol, to_symbol)` | Shortest call-graph path between two symbols, across services | Tracing a request flow end-to-end |
+| `get_service_endpoints(repo_path)` | HTTP endpoint registry for a service | Listing a microservice's API surface |
 | `list_org_context()` | Org metadata + sibling repos | Understanding repo relationships |
 | `link_repos(src_repo, dst_repo, relationship)` | Record cross-repo dependency | When you discover one repo imports another |
 

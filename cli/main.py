@@ -20,11 +20,15 @@ server required.
 import argparse
 import datetime
 import json
+import logging
 import os
 import signal
 import sys
 import time
 import traceback
+
+logger = logging.getLogger(__name__)
+log = logger  # legacy alias — some handlers reference `log`
 
 from config.logging import setup_logging
 setup_logging()
@@ -706,6 +710,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             "search_docs",
             "get_user_profile", "record_error", "get_error_patterns",
             "record_user_preference", "supersede_learning", "get_agent_bootstrap",
+            "find_symbol_path", "get_service_endpoints",
         ]
         _registered = getattr(_mcp_mod, "_REGISTERED_TOOLS", None)
         if _registered is not None:
@@ -716,7 +721,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
                     f"{', '.join(_missing_tools)}",
                 )
             else:
-                _ok(f"MCP tools — all {len(_required_tools)}/32 tools registered")
+                _ok(f"MCP tools — all {len(_required_tools)} tools registered")
         else:
             _ok("MCP tools — server module importable (tool list not exposed)")
     except Exception as exc:  # pylint: disable=broad-except
@@ -786,6 +791,77 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
                 _ok(f"Org member '{_repo_label}' — index found")
     except Exception as _exc:  # pylint: disable=broad-except
         logger.debug("doctor: org member check failed: %s", _exc)
+
+    # ── Check 18: AST index JSON validity ────────────────────────────────────
+    # A truncated/corrupt ast_index.json (observed on large monorepos before
+    # writes were made atomic) breaks summarize and degrades retrieval.
+    try:
+        _ast_check_path = get_path("index/ast_index.json")
+        if os.path.exists(_ast_check_path):
+            try:
+                with open(_ast_check_path, encoding="utf-8") as _af:
+                    json.load(_af)
+                if verbose:
+                    _ok("AST index — valid JSON")
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                _fail(
+                    "AST index — ast_index.json is corrupt",
+                    "Run: cognirepo index-repo . (the corrupt file will be replaced)",
+                )
+                issues += 1
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: AST validity check failed: %s", _exc)
+
+    # ── Check 19: doc index populated ────────────────────────────────────────
+    try:
+        _md_present = any(
+            f.endswith((".md", ".rst"))
+            for f in os.listdir(".")
+            if os.path.isfile(f)
+        )
+        _meta_p = get_path("memory/semantic_metadata.json")
+        _doc_chunks = 0
+        if os.path.exists(_meta_p):
+            try:
+                with open(_meta_p, encoding="utf-8") as _mf:
+                    _doc_chunks = sum(
+                        1 for _e in json.load(_mf)
+                        if str(_e.get("source", "")).endswith((".md", ".rst"))
+                        or _e.get("source") in ("doc", "init_doc")
+                    )
+            except Exception:  # pylint: disable=broad-except
+                _doc_chunks = -1  # encrypted or unreadable — skip silently
+        if _md_present and _doc_chunks == 0:
+            _warn(
+                "Doc search — repo has docs but no doc chunks are indexed",
+                "Run: cognirepo index-repo . (triggers DocIngester)",
+            )
+        elif verbose and _doc_chunks > 0:
+            _ok(f"Doc search — {_doc_chunks} doc chunk(s) indexed")
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: doc index check failed: %s", _exc)
+
+    # ── Check 20: org CALLS_API wiring present for registered children ──────
+    try:
+        from graph.org_graph import get_org_graph as _get_og3  # pylint: disable=import-outside-toplevel
+        _og3 = _get_og3()
+        _children3 = _og3.get_children(os.path.abspath(".")) if _og3 else []
+        if _children3:
+            _calls_api_edges = sum(
+                1 for _c in _children3
+                for _nb in _og3.G.successors(_c)
+                if _og3.G[_c][_nb].get("kind") == "CALLS_API"
+            )
+            if _calls_api_edges == 0:
+                _warn(
+                    f"Org graph — {len(_children3)} child service(s) registered but "
+                    "no CALLS_API edges wired",
+                    "Run: cognirepo org rewire (after indexing each child)",
+                )
+            elif verbose:
+                _ok(f"Org graph — {_calls_api_edges} CALLS_API edge(s) across children")
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: org CALLS_API check failed: %s", _exc)
 
     # ── Check N: AI tool MCP configs (informational, not failures) ───────────
     _tool_checks = [
@@ -995,6 +1071,166 @@ def _cmd_status() -> None:
     print()
 
 
+def _cmd_index_progress(interval: float = 1.0, once: bool = False) -> None:
+    """
+    Live terminal view of background indexing progress.
+
+    Polls .cognirepo/bg_tasks/*.json (active background tasks) and
+    index/pending_tier2.json (tier-2 queue) every `interval` seconds,
+    rendering an ANSI-refreshed display.  Ctrl-C exits cleanly.
+    """
+    import time  # pylint: disable=import-outside-toplevel
+    from pathlib import Path  # pylint: disable=import-outside-toplevel
+
+    try:
+        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        bg_dir = Path(get_path("bg_tasks"))
+        t2_path = Path(get_path("index/pending_tier2.json"))
+        t2_prog = Path(get_path("index/tier2_progress.json"))
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"  index-progress: could not resolve .cognirepo paths — {exc}")
+        return
+
+    _CLEAR = "\033[2J\033[H"  # clear screen + cursor home
+    _BOLD  = "\033[1m"
+    _RST   = "\033[0m"
+    _GRN   = "\033[32m"
+    _YLW   = "\033[33m"
+    _CYN   = "\033[36m"
+    _DIM   = "\033[2m"
+
+    def _bar(pct: float, width: int = 30) -> str:
+        filled = int(pct / 100 * width)
+        return f"[{_GRN}{'█' * filled}{_RST}{'░' * (width - filled)}]"
+
+    def _eta_str(current: int, total: int, started_at: str) -> str:
+        try:
+            elapsed = time.time() - time.mktime(
+                time.strptime(started_at, "%Y-%m-%dT%H:%M:%SZ")
+            )
+            if current <= 0 or elapsed <= 0:
+                return ""
+            rate = current / elapsed
+            remaining = (total - current) / rate
+            m, s = divmod(int(remaining), 60)
+            return f"~{m}m {s:02d}s" if m else f"~{s}s"
+        except Exception:  # pylint: disable=broad-except
+            return ""
+
+    def _render() -> tuple[str, bool]:
+        """Return (rendered_string, any_active)."""
+        lines: list[str] = []
+        lines.append(f"{_BOLD}  CogniRepo — Index Progress{_RST}  {_DIM}(Ctrl-C to exit){_RST}")
+        lines.append("  " + "─" * 52)
+
+        any_active = False
+
+        # ── Active background tasks ──────────────────────────────────────────
+        tasks: list[dict] = []
+        if bg_dir.exists():
+            for p in sorted(bg_dir.glob("*.json")):
+                try:
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                    data["_path"] = str(p)
+                    tasks.append(data)
+                except Exception:  # pylint: disable=broad-except
+                    pass
+
+        if tasks:
+            lines.append(f"\n  {_BOLD}Active tasks:{_RST}")
+            for t in tasks:
+                name    = t.get("name", t.get("task_id", "unknown"))
+                total   = t.get("total", 1) or 1
+                current = t.get("current", 0)
+                status  = t.get("status", "running")
+                started = t.get("started_at", "")
+                pct     = current / total * 100
+
+                if status == "done":
+                    lines.append(f"    {_GRN}✓{_RST}  {name}  {_DIM}complete{_RST}")
+                else:
+                    any_active = True
+                    eta = _eta_str(current, total, started)
+                    eta_str = f"  {_CYN}{eta}{_RST}" if eta else ""
+                    lines.append(
+                        f"    {_bar(pct)}  {pct:5.1f}%  {name}"
+                    )
+                    lines.append(
+                        f"         {current:,} / {total:,}{eta_str}"
+                        + (f"  {_DIM}{t.get('message','')}{_RST}" if t.get("message") else "")
+                    )
+        else:
+            lines.append(f"  {_DIM}No active background tasks.{_RST}")
+
+        # ── Tier-2 queue ─────────────────────────────────────────────────────
+        lines.append(f"\n  {_BOLD}Tier-2 FAISS embedding queue:{_RST}")
+        if t2_path.exists():
+            try:
+                t2_data     = json.loads(t2_path.read_text(encoding="utf-8"))
+                t2_files    = t2_data.get("files", [])
+                t2_remaining = len(t2_files)
+                t2_total    = t2_data.get("total_queued", t2_remaining)
+                t2_done     = t2_total - t2_remaining
+                pct         = t2_done / t2_total * 100 if t2_total else 100.0
+
+                lines.append(f"    {_bar(pct)}  {pct:5.1f}%")
+                lines.append(f"    {t2_done:,} / {t2_total:,} files embedded")
+
+                embed_pending = t2_data.get("embed_pending", False)
+                if t2_remaining > 0 or embed_pending:
+                    any_active = True
+                    # ETA from progress file
+                    if t2_prog.exists():
+                        try:
+                            tp = json.loads(t2_prog.read_text(encoding="utf-8"))
+                            eta_s = tp.get("eta_seconds")
+                            if eta_s:
+                                m, s = divmod(int(eta_s), 60)
+                                h, m = divmod(m, 60)
+                                eta_label = (f"{h}h {m:02d}m" if h else f"{m}m {s:02d}s") if m else f"{s}s"
+                                lines.append(f"    ETA: {_CYN}{eta_label}{_RST}")
+                        except Exception:  # pylint: disable=broad-except
+                            pass
+                    if t2_remaining > 0:
+                        lines.append(
+                            f"    {_YLW}⚠  {t2_remaining:,} files pending —"
+                            f" run: cognirepo index-repo . --tier 2{_RST}"
+                        )
+                    else:
+                        lines.append(
+                            f"    {_YLW}⚠  FAISS embeddings deferred —"
+                            f" run: cognirepo index-repo . --tier 2{_RST}"
+                        )
+                else:
+                    lines.append(f"    {_GRN}✓  All files embedded.{_RST}")
+            except Exception:  # pylint: disable=broad-except
+                lines.append(f"    {_DIM}(could not parse pending_tier2.json){_RST}")
+        else:
+            lines.append(f"    {_GRN}✓  No pending Tier-2 work.{_RST}")
+
+        lines.append("")
+        return "\n".join(lines), any_active
+
+    first = True
+    try:
+        while True:
+            rendered, any_active = _render()
+            if first:
+                print(_CLEAR, end="")
+                first = False
+            else:
+                print(_CLEAR, end="")
+            print(rendered)
+
+            if once or (not any_active and not first):
+                if not any_active:
+                    print("  All indexing complete.\n")
+                break
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print("\n  Stopped.\n")
+
+
 def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     """
     One-command onboarding: runs the wizard directly (no subprocess) so that
@@ -1012,6 +1248,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
         wizard_cfg = run_wizard()
 
     child_repos       = wizard_cfg.pop("child_repos", [])
+    rejected_repos    = wizard_cfg.pop("rejected_repos", [])
     orchestrator_mode = wizard_cfg.pop("orchestrator_mode", False)
 
     # ── 2. Init + index parent repo ──────────────────────────────────────────
@@ -1040,8 +1277,8 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     if orchestrator_mode:
         from cli.init_project import _seed_learnings_from_docs  # pylint: disable=import-outside-toplevel
         try:
-            from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
-            DocIngester(parent_path).ingest()
+            from indexer.doc_ingester import run_ingest_subprocess  # pylint: disable=import-outside-toplevel
+            run_ingest_subprocess(parent_path)
         except Exception:  # pylint: disable=broad-except
             pass
         _seed_learnings_from_docs(parent_path)
@@ -1058,11 +1295,15 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     # ── 4. Auto-setup child repos ─────────────────────────────────────────────
     if child_repos:
         _auto_setup_child_repos(
-            children    = child_repos,
-            parent_path = parent_path,
-            org         = wizard_cfg.get("org"),
-            encrypt     = wizard_cfg.get("encrypt", False),
-            mcp_targets = wizard_cfg.get("mcp_targets", []),
+            children           = child_repos,
+            parent_path        = parent_path,
+            org                = wizard_cfg.get("org"),
+            encrypt            = wizard_cfg.get("encrypt", False),
+            mcp_targets        = wizard_cfg.get("mcp_targets", []),
+            autosave_context   = wizard_cfg.get("autosave_context", True),
+            behaviour_tracking = wizard_cfg.get("behaviour_tracking", False),
+            parent_name        = wizard_cfg.get("project_name", os.path.basename(parent_path)),
+            rejected           = rejected_repos,
         )
 
     # ── 5. Write Claude Code behaviour hooks ─────────────────────────────────
@@ -1094,6 +1335,61 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
                 _idx = ASTIndexer(graph=_kg)
                 _idx.index_repo(parent_path)
                 print("  ✓  Re-index complete.")
+
+                # ── Tier-2 prompt for large repos ─────────────────────────────
+                _t2_queue_path = get_path("index/pending_tier2.json")
+                if os.path.exists(_t2_queue_path):
+                    try:
+                        import json as _jt2  # pylint: disable=import-outside-toplevel
+                        with open(_t2_queue_path, encoding="utf-8") as _t2f:
+                            _t2d = _jt2.load(_t2f)
+                        _t2_file_count = len(_t2d.get("files", []))
+                        _t2_embed_pending = _t2d.get("embed_pending", False)
+                        _t2_total = _t2d.get("total_queued", _t2_file_count)
+                        if _t2_file_count > 0 or _t2_embed_pending:
+                            _what = []
+                            if _t2_file_count > 0:
+                                _what.append(f"{_t2_file_count:,} low-weight files")
+                            if _t2_embed_pending:
+                                _what.append("FAISS embeddings")
+                            print(f"\n  ℹ  Large repo detected — {' + '.join(_what)} deferred to Tier 2.")
+                            print("     Tier 2 adds full semantic search coverage.")
+                            print("\n  What would you like to do?\n")
+                            print("    [1] Run Tier 2 now      (blocks until complete — best quality)")
+                            print("    [2] Run in background   (daemon; monitor with: cognirepo index-progress)")
+                            print("    [3] Skip                (run later: cognirepo index-repo . --tier 2)")
+                            _t2_ans = input("\n  Choice [1/2/3]: ").strip()
+
+                            if _t2_ans == "1":
+                                print("\n  Running Tier 2 … (use Ctrl-C to interrupt)\n")
+                                import subprocess as _sp_t2  # pylint: disable=import-outside-toplevel
+                                from pathlib import Path as _Pt2  # pylint: disable=import-outside-toplevel
+                                _bin2 = _Pt2(sys.executable).parent / "cognirepo"
+                                _cmd2 = str(_bin2) if _bin2.exists() else "cognirepo"
+                                _sp_t2.run(
+                                    [_cmd2, "index-repo", parent_path, "--tier", "2", "--no-watch"],
+                                    check=False,
+                                )
+                                print("  ✓  Tier 2 complete.")
+
+                            elif _t2_ans == "2":
+                                import subprocess as _sp_bg  # pylint: disable=import-outside-toplevel
+                                from pathlib import Path as _Pbg  # pylint: disable=import-outside-toplevel
+                                _bin_bg = _Pbg(sys.executable).parent / "cognirepo"
+                                _cmd_bg = str(_bin_bg) if _bin_bg.exists() else "cognirepo"
+                                _sp_bg.Popen(
+                                    [_cmd_bg, "index-repo", parent_path, "--tier", "2", "--no-watch"],
+                                    stdout=_sp_bg.DEVNULL, stderr=_sp_bg.DEVNULL,
+                                    start_new_session=True,
+                                )
+                                print("  ✓  Tier 2 started in background.")
+                                print("     Monitor: cognirepo index-progress")
+
+                            else:
+                                print("  Skipped. Run later: cognirepo index-repo . --tier 2")
+                    except Exception:  # pylint: disable=broad-except
+                        pass  # non-fatal — user can always run tier 2 manually
+
             except Exception as _reindex_exc:  # pylint: disable=broad-except
                 print(f"  ⚠  Re-index failed: {_reindex_exc}")
                 print("     Run manually: cognirepo index-repo .")
@@ -1132,34 +1428,49 @@ def _write_claude_hooks(claude_dir: str, project_dir: str) -> None:
 
     python_exe = sys.executable  # use the same Python that's running cognirepo
 
-    # Resolve hook scripts via the installed 'tools' package (included in the wheel
-    # via pyproject.toml tools* glob).  This works for editable installs AND pipx:
-    #   editable → tools/__file__ = <repo_root>/tools/__init__.py
-    #   pipx/pip → tools/__file__ = site-packages/tools/__init__.py
-    # Both resolve to the directory that contains behaviour_hook.py.
-    try:
-        import tools as _tools_pkg  # pylint: disable=import-outside-toplevel
-        _pkg_tools = os.path.dirname(_tools_pkg.__file__)
-    except Exception:  # pylint: disable=broad-except
-        _pkg_tools = os.path.join(project_dir, "tools")        # last-resort fallback
+    # Resolve hook scripts via __file__ of this module (cli/main.py).
+    # tools/ is always a sibling of cli/ — works for editable AND pipx installs:
+    #   editable → <repo_root>/cli/main.py  →  <repo_root>/tools/
+    #   pipx/pip → site-packages/cli/main.py → site-packages/tools/
+    # We intentionally do NOT use `import tools` here because the child service's
+    # own tools/ directory can shadow the cognirepo package when CWD is inside it.
+    _own_dir   = os.path.dirname(os.path.abspath(__file__))        # …/cli/
+    _pkg_tools = os.path.normpath(os.path.join(_own_dir, "..", "tools"))
+    if not os.path.isfile(os.path.join(_pkg_tools, "behaviour_hook.py")):
+        # Pipx layout puts cli/ and tools/ both under site-packages — already handled.
+        # Genuine fallback: last-resort importlib lookup, then project_dir (legacy).
+        try:
+            import importlib.util as _ilu  # pylint: disable=import-outside-toplevel
+            _spec = _ilu.find_spec("tools.behaviour_hook")
+            if _spec and _spec.origin:
+                _pkg_tools = os.path.dirname(_spec.origin)
+            else:
+                raise ImportError
+        except Exception:  # pylint: disable=broad-except
+            _pkg_tools = os.path.join(project_dir, "tools")
     _bh_script = os.path.join(_pkg_tools, "behaviour_hook.py")
     _sm_script = os.path.join(_pkg_tools, "sync_claude_memory.py")
 
     hooks_cfg = cfg.setdefault("hooks", {})
 
     # UserPromptSubmit — behaviour profile tracking
-    _uph = hooks_cfg.setdefault("UserPromptSubmit", [])
+    # Remove any stale entries that mention behaviour_hook.py with a wrong path,
+    # then write a single canonical entry with the current resolved path.
+    _uph_raw = hooks_cfg.get("UserPromptSubmit", [])
+    _uph_clean = [e for e in _uph_raw if "behaviour_hook.py" not in str(e)]
     _bh_cmd = f"{python_exe} {_bh_script} {project_dir}"
     _uph_entry = {"hooks": [{"type": "command", "command": _bh_cmd}]}
-    if not any(_bh_script in str(e) for e in _uph):
-        _uph.append(_uph_entry)
+    _uph_clean.append(_uph_entry)
+    hooks_cfg["UserPromptSubmit"] = _uph_clean
 
     # PostToolUse(Write) — sync Claude memory files into semantic store
-    _ptuh = hooks_cfg.setdefault("PostToolUse", [])
+    # Same dedup: drop stale sync_claude_memory.py entries, keep one canonical.
+    _ptuh_raw = hooks_cfg.get("PostToolUse", [])
+    _ptuh_clean = [e for e in _ptuh_raw if "sync_claude_memory.py" not in str(e)]
     _sm_cmd = f"{python_exe} {_sm_script}"
     _ptuh_entry = {"matcher": "Write", "hooks": [{"type": "command", "command": _sm_cmd}]}
-    if not any(_sm_script in str(e) for e in _ptuh):
-        _ptuh.append(_ptuh_entry)
+    _ptuh_clean.append(_ptuh_entry)
+    hooks_cfg["PostToolUse"] = _ptuh_clean
 
     with open(settings_path, "w", encoding="utf-8") as _f:
         json.dump(cfg, _f, indent=2)
@@ -1523,12 +1834,17 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
             pass  # best-effort — never block indexing
 
     # ── Stage 3: documentation chunks → semantic store ───────────────────────
+    # Runs in a FRESH subprocess: after a large tier-2 embed pass the parent's
+    # native heaps (ONNX/FAISS) are fragmented enough that in-process ingestion
+    # was observed to segfault at the very end of the run.
     try:
-        from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
-        _ing_result = DocIngester(abs_path).ingest()
+        from indexer.doc_ingester import run_ingest_subprocess  # pylint: disable=import-outside-toplevel
+        _ing_result = run_ingest_subprocess(abs_path)
         _n_chunks = _ing_result.get("chunks", 0)
         if _n_chunks > 0:
             print(f"  Doc ingestion: {_n_chunks} chunks from {_ing_result.get('files', 0)} file(s)")
+        elif _ing_result.get("error"):
+            print(f"  ⚠  Doc ingestion incomplete ({_ing_result['error']}) — doc search may be sparse; re-run: cognirepo index-repo .")
     except Exception:  # pylint: disable=broad-except
         pass  # best-effort
 
@@ -1587,6 +1903,32 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
                         print(f"  Cross-service: {_n_edges} CALLS_API edge(s) wired")
             finally:
                 _CTX_DIR.reset(_hc_token)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        # ── reverse rewire: siblings indexed BEFORE this repo could not see ──
+        # its endpoints.json (it didn't exist yet), so their npci→bank style
+        # CALLS_API edges were silently dropped. Now that this repo's endpoints
+        # are written, re-wire each already-indexed sibling against it.
+        try:
+            from indexer.http_call_scanner import wire_cross_service_edges as _wire_sib  # pylint: disable=import-outside-toplevel
+            from retrieval.cross_repo import CrossRepoRouter as _CRR  # pylint: disable=import-outside-toplevel
+            from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+            _rev_edges = 0
+            for _sib in _CRR().get_sibling_repos():
+                _sib_abs = os.path.abspath(_sib)
+                if _sib_abs == abs_path:
+                    continue
+                _sib_cog = get_cognirepo_dir_for_repo(_sib_abs)
+                if not os.path.exists(os.path.join(_sib_cog, "index", "http_calls.json")):
+                    continue
+                _sib_token = _CTX_DIR.set(_sib_cog)
+                try:
+                    _rev_edges += _wire_sib(_sib_abs, [abs_path])
+                finally:
+                    _CTX_DIR.reset(_sib_token)
+            if _rev_edges > 0:
+                print(f"  Cross-service: {_rev_edges} CALLS_API edge(s) wired from siblings")
         except Exception:  # pylint: disable=broad-except
             pass
 
@@ -2490,8 +2832,12 @@ def main():
 
 
 def _main():
-    from dotenv import load_dotenv
-    load_dotenv()  # load .env from cwd (and parent dirs) before anything else
+    from dotenv import load_dotenv, find_dotenv
+    # usecwd=True: resolve .env from the USER'S project directory upward.
+    # The default resolves relative to this source file — which loaded the
+    # cognirepo package checkout's own .env for every command on the machine
+    # (and never the project's .env for pip installs).
+    load_dotenv(find_dotenv(usecwd=True))
 
     # Show custom help if -h/--help is the first argument (before argparse runs)
     if len(sys.argv) == 1 or (len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help")):
@@ -2510,6 +2856,13 @@ def _main():
         action="store_true",
         default=False,
         help="Show help and exit.",
+    )
+    from cli import __version__ as _cli_version  # pylint: disable=import-outside-toplevel
+    parser.add_argument(
+        "-V", "--version",
+        action="version",
+        version=f"%(prog)s {_cli_version}",
+        help="Show version and exit.",
     )
     sub = parser.add_subparsers(dest="command")
 
@@ -2866,6 +3219,20 @@ def _main():
     # status — show live signal weights and cold-start progress (P1-A)
     sub.add_parser("status", help="Show live retrieval signal weights and index health")
 
+    # index-progress — live terminal view of background indexing / Tier-2 queue
+    p_iprog = sub.add_parser(
+        "index-progress",
+        help="Live terminal view of background indexing and Tier-2 FAISS embedding progress",
+    )
+    p_iprog.add_argument(
+        "--interval", type=float, default=1.0, metavar="SECS",
+        help="Refresh interval in seconds (default: 1.0)",
+    )
+    p_iprog.add_argument(
+        "--once", action="store_true",
+        help="Print once and exit instead of refreshing continuously",
+    )
+
     # org — local organization management (cross-repo context)
     p_org = sub.add_parser("org", help="Manage local repository organizations (cross-repo context)")
     org_sub = p_org.add_subparsers(dest="org_command")
@@ -2897,6 +3264,12 @@ def _main():
 
     p_org_graph = org_sub.add_parser("graph", help="Print the org dependency graph")
     p_org_graph.add_argument("--json", action="store_true", help="Output as JSON")
+
+    org_sub.add_parser(
+        "rewire",
+        help="Re-run cross-service CALLS_API detection for every indexed repo "
+             "in the org (repairs edges missed by indexing-order)",
+    )
 
     # org project subcommands
     p_org_proj = org_sub.add_parser("project", help="Manage projects within an organization")
@@ -3169,6 +3542,12 @@ def _main():
                 _svc_type = getattr(args, "service_type", None)
                 _svc_port = getattr(args, "port", None)
                 _svc_url = getattr(args, "api_base_url", None)
+                if not _svc_port:
+                    try:
+                        from cli.init_project import _detect_service_port  # pylint: disable=import-outside-toplevel
+                        _svc_port = _detect_service_port(_cwd)
+                    except Exception:  # pylint: disable=broad-except
+                        pass
                 if _svc_type:
                     _svc_meta["service_type"] = _svc_type
                 if _svc_port:
@@ -3325,6 +3704,10 @@ def _main():
     if args.command == "benchmark":
         from tools.benchmark import run_benchmark, print_report, load_last_run  # pylint: disable=import-outside-toplevel
         metrics = run_benchmark()
+        if metrics.get("aborted"):
+            # run_benchmark already printed the abort reason + partial result;
+            # the full report would KeyError on the missing metric fields.
+            return
         if args.json:
             print(json.dumps({k: v for k, v in metrics.items() if k != "_details"}, indent=2))
         else:
@@ -3463,6 +3846,13 @@ def _main():
         _cmd_status()
         return
 
+    if args.command == "index-progress":
+        _cmd_index_progress(
+            interval=getattr(args, "interval", 1.0),
+            once=getattr(args, "once", False),
+        )
+        return
+
     if args.command == "org":
         from config.orgs import (  # pylint: disable=import-outside-toplevel
             create_org, list_orgs, link_repo_to_org, unlink_repo_from_org,
@@ -3509,6 +3899,32 @@ def _main():
                 f"→ {os.path.basename(os.path.abspath(args.repo_b))} "
                 f"[{args.edge_type}]"
             )
+        elif args.org_command == "rewire":
+            from graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
+            from indexer.http_call_scanner import wire_cross_service_edges  # pylint: disable=import-outside-toplevel
+            from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+            invalidate_org_graph()
+            og = get_org_graph()
+            all_repos = [os.path.abspath(r) for r in og.list_repos()]
+            indexed = [
+                r for r in all_repos
+                if os.path.isdir(get_cognirepo_dir_for_repo(r))
+            ]
+            total = 0
+            for caller in indexed:
+                cog_dir = get_cognirepo_dir_for_repo(caller)
+                if not os.path.exists(os.path.join(cog_dir, "index", "http_calls.json")):
+                    continue
+                token = _CTX_DIR.set(cog_dir)
+                try:
+                    siblings = [r for r in indexed if r != caller]
+                    n = wire_cross_service_edges(caller, siblings)
+                    if n:
+                        print(f"  {os.path.basename(caller)}: {n} CALLS_API edge(s) wired")
+                    total += n
+                finally:
+                    _CTX_DIR.reset(token)
+            print(f"Rewire complete — {total} CALLS_API edge(s) across {len(indexed)} indexed repo(s).")
         elif args.org_command == "graph":
             from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
             og = get_org_graph()

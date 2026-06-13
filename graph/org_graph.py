@@ -273,13 +273,20 @@ class OrgGraph:
                 if neighbor in visited:
                     continue
                 visited.add(neighbor)
-                results.append({
+                entry = {
                     "repo": neighbor,
                     "name": os.path.basename(neighbor),
                     "kind": edge_data.get("kind", "IMPORTS"),
                     "depth": dist + 1,
                     "auto": edge_data.get("auto", False),
-                })
+                }
+                # Surface function-level CALLS_API metadata stored by
+                # wire_cross_service_edges() — agents previously saw the edge
+                # but not WHICH endpoint/function it represents.
+                for _k in ("caller_fn", "caller_file", "endpoint_pattern", "endpoint_fn", "note"):
+                    if _k in edge_data:
+                        entry[_k] = edge_data[_k]
+                results.append(entry)
                 queue.append((neighbor, dist + 1))
         return results
 

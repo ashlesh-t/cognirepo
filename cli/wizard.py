@@ -687,15 +687,19 @@ def run_wizard() -> dict:
             selected = _ask_multiselect("Select microservices to set up:", _candidates)
             extra    = _ask_fuzzy_add(os.getcwd(), already_shown=_candidates)
             selected += [s for s in extra if s not in selected]
+            selected_paths = {svc.path for svc in selected}
             cfg["child_repos"]       = selected
+            cfg["rejected_repos"]    = [svc for svc in _candidates if svc.path not in selected_paths]
             cfg["orchestrator_mode"] = bool(selected)
         else:
             _warn("No microservice sub-repos detected automatically.")
             print(f"  {_c(_DIM, 'You can register them later with: cognirepo init --parent-repo <path>')}")
             cfg["child_repos"]       = []
+            cfg["rejected_repos"]    = []
             cfg["orchestrator_mode"] = False
     else:
         cfg["child_repos"]       = []
+        cfg["rejected_repos"]    = []
         cfg["orchestrator_mode"] = False
 
     # ── Confirmation summary ──────────────────────────────────────────────────

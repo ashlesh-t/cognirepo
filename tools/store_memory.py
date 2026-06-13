@@ -40,8 +40,20 @@ def store_memory(text: str, source: str = "") -> dict:
         _existing = mem.search(text, top_k=5)
         for _hit in _existing:
             _hit_text = _hit.get("text", "")
-            if not _hit_text or _hit_text.strip() == text.strip():
+            if not _hit_text:
                 continue
+            if " ".join(_hit_text.lower().split()) == " ".join(text.lower().split()):
+                # Exact duplicate already stored — do not store again.
+                # (Observed: identical memory persisted 3× across retries,
+                # multiplying conflict/supersede churn downstream.)
+                return {
+                    "status": "deduplicated",
+                    "text": text,
+                    "source": source,
+                    "importance": importance,
+                    "existing_id": _hit.get("id", _hit.get("_id", "")),
+                    "conflicts": [],
+                }
             _hit_words = set(_hit_text.lower().split())
             _common = _new_words & _hit_words
             _overlap = len(_common) / max(len(_new_words), 1)

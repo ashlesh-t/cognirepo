@@ -462,7 +462,7 @@ class BehaviourTracker:
             recent_msg = (data.get("occurrences") or [{}])[-1].get("message", "")
             generic_hint = data.get("prevention_hint", _error_prevention_hint(error_type))
             enriched_hint = _enrich_hint_from_context(generic_hint, recent_msg)
-            result.append({
+            entry = {
                 "error_type": error_type,
                 "count": data.get("count", 0),
                 "files": data.get("files", []),
@@ -470,7 +470,13 @@ class BehaviourTracker:
                 "signature": data.get("signature", ""),
                 "prevention_hint": enriched_hint,
                 "recent_context": recent_msg,
-            })
+            }
+            # Structured split — the concatenated enriched_hint reads as a
+            # run-on sentence; agents can use these fields directly instead.
+            if enriched_hint != generic_hint:
+                entry["suggested_command"] = enriched_hint.rsplit(" — ", 1)[0]
+                entry["generic_hint"] = generic_hint
+            result.append(entry)
         result.sort(key=lambda x: x["count"], reverse=True)
         return result
 

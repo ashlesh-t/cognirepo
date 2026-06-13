@@ -24,3 +24,6 @@ jobs:
           pylint $(git ls-files '*.py' | grep -v 'venv/' | grep -v '_pb2') \
             --disable=C,R,import-error \
             --fail-under=8.0
+
+      - name: Check no stdout pollution (MCP stdio framing safety)
+        run: python scripts/check_no_stdout_pollution.py

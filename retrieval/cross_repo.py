@@ -95,14 +95,23 @@ class CrossRepoRouter:
             pass
         return result
 
-    def query_all_org_repos(self, query: str, top_k: int = 5) -> list[dict]:
+    def query_all_org_repos(
+        self, query: str, top_k: int = 5, return_meta: bool = False,
+    ):
         """
         Semantic search across ALL repos in the org (top-level + all projects).
         Wider than query_org_memories which only covers top-level org repos.
+
+        return_meta: when True, returns (results, meta) where meta lists
+        repos_searched and repos_skipped (with reason). This makes a child
+        repo silently missing from results (unindexed, query error, or simply
+        outscored) visible to the caller instead of indistinguishable from
+        "searched and found nothing".
         """
+        meta: dict = {"repos_searched": [], "repos_skipped": []}
         all_repos = self.get_all_org_repos()
         if not all_repos:
-            return []
+            return ([], meta) if return_meta else []
         all_results: list[dict] = []
         seen_hashes: set[int] = set()
         from config.paths import _CTX_DIR  # pylint: disable=import-outside-toplevel
@@ -119,6 +128,10 @@ class CrossRepoRouter:
                     "org_search: skipping repo '%s' — .cognirepo/ index not found at %s",
                     os.path.basename(repo_norm), cognirepo_dir,
                 )
+                meta["repos_skipped"].append({
+                    "repo": os.path.basename(repo_norm),
+                    "reason": "no .cognirepo index — run `cognirepo index-repo .` there",
+                })
                 continue
             token = _CTX_DIR.set(cognirepo_dir)
             try:
@@ -128,6 +141,7 @@ class CrossRepoRouter:
                 from retrieval.hybrid import hybrid_retrieve  # pylint: disable=import-outside-toplevel
                 results = hybrid_retrieve(query, top_k=top_k)
                 repo_name = os.path.basename(repo_norm)
+                meta["repos_searched"].append(repo_name)
                 for r in results:
                     r["source_repo"] = repo_name
                     r["repo_path"] = repo_norm
@@ -138,11 +152,16 @@ class CrossRepoRouter:
                         all_results.append(r)
             except Exception as exc:
                 logger.error("Failed to query repo %s: %s", repo_norm, exc)
+                meta["repos_skipped"].append({
+                    "repo": os.path.basename(repo_norm),
+                    "reason": f"query failed: {exc}",
+                })
             finally:
                 _CTX_DIR.reset(token)
         # Sort descending by score (highest relevance first)
         all_results.sort(key=lambda x: x.get("final_score", x.get("score", 0.0)), reverse=True)
-        return all_results[:top_k]
+        final = all_results[:top_k]
+        return (final, meta) if return_meta else final
 
     def query_org_memories(self, query: str, top_k: int = 5) -> list[dict]:
         """

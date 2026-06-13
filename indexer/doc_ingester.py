@@ -113,17 +113,34 @@ class DocIngester:
             log.info("DocIngester: capping %d chunks to %d", len(chunks), _MAX_TOTAL_CHUNKS)
             chunks = chunks[:_MAX_TOTAL_CHUNKS]
 
-        batch: list[tuple] = []
+        # Dedup by normalized text — re-running ingestion (or the historical
+        # double-invocation from inside index_repo) must not store the same
+        # chunk twice.
+        seen_norm: set[str] = set()
+        unique_chunks: list[dict] = []
         for chunk in chunks:
-            try:
-                vec = next(iter(model.embed([chunk["text"]]))).astype("float32")
+            norm = " ".join(chunk["text"].split())
+            if norm in seen_norm:
+                continue
+            seen_norm.add(norm)
+            unique_chunks.append(chunk)
+        chunks = unique_chunks
+
+        # One streamed batch pass instead of N separate model.embed([one])
+        # calls — thousands of individual ONNX invocations in an already
+        # memory-heavy process were implicated in a native segfault at the
+        # end of large-repo indexing runs.
+        batch: list[tuple] = []
+        try:
+            texts = [c["text"] for c in chunks]
+            for chunk, vec in zip(chunks, model.embed(texts, batch_size=64)):
                 # Use the actual relative file path as source so search_docs can
                 # apply _should_skip_file() correctly; fall back to "init_doc" for
                 # chunks without a traceable path (e.g. git log).
                 chunk_source = chunk.get("source") or "init_doc"
-                batch.append((vec, chunk["text"], 0.6, chunk_source))
-            except Exception as exc:  # pylint: disable=broad-except
-                log.debug("DocIngester: failed to embed chunk: %s", exc)
+                batch.append((vec.astype("float32"), chunk["text"], 0.6, chunk_source))
+        except Exception as exc:  # pylint: disable=broad-except
+            log.warning("DocIngester: batch embed failed (%s) — storing %d chunk(s) embedded so far", exc, len(batch))
 
         stored = db.add_batch(batch)
         files_seen = len({c["source"] for c in chunks})
@@ -264,3 +281,60 @@ class DocIngester:
                 break
 
         return chunks[:_MAX_CHUNKS_PER_FILE]
+
+
+def run_ingest_subprocess(project_root: str, timeout: int = 900) -> dict:
+    """Run DocIngester in a fresh interpreter; fall back to in-process.
+
+    After a large indexing run the parent process holds fragmented native
+    heaps (ONNX + FAISS) — running ingestion there was observed to segfault.
+    A clean subprocess is immune, and a native crash becomes a contained
+    non-zero exit code instead of killing the whole index run.
+    """
+    import json as _json  # pylint: disable=import-outside-toplevel
+    import sys as _sys  # pylint: disable=import-outside-toplevel
+    root = os.path.abspath(project_root)
+    try:
+        for attempt in (1, 2):
+            proc = subprocess.run(
+                [_sys.executable, "-m", "indexer.doc_ingester", root],
+                capture_output=True, text=True, timeout=timeout,
+                cwd=root,  # so config/paths resolves the project's .cognirepo/
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                return _json.loads(proc.stdout.strip().splitlines()[-1])
+            if proc.returncode in (-11, 139) and attempt == 1:
+                # Native segfault — a poisoned chroma store crashes chromadb
+                # at open. The crashed attempt left the .opening sentinel
+                # behind; the retry triggers the factory's quarantine-and-
+                # start-fresh self-heal.
+                log.warning(
+                    "DocIngester subprocess segfaulted (likely a poisoned vector "
+                    "store) — quarantining and retrying once…"
+                )
+                continue
+            break
+        log.warning(
+            "DocIngester subprocess exited rc=%s — doc search may be incomplete. "
+            "Re-run: cognirepo index-repo . (stderr tail: %s)",
+            proc.returncode, (proc.stderr or "")[-300:],
+        )
+        return {"chunks": 0, "files": 0, "error": f"subprocess rc={proc.returncode}"}
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        log.debug("DocIngester subprocess unavailable (%s) — running in-process", exc)
+        return DocIngester(root).ingest()
+
+
+# ── subprocess entry point ────────────────────────────────────────────────────
+# `python -m indexer.doc_ingester <project_root>` — used by the CLI to run
+# ingestion in a FRESH process. After a large tier-2 indexing run the parent
+# interpreter holds fragmented native heaps (ONNX + FAISS); running ingestion
+# there was observed to segfault. A clean process is immune, and a native
+# crash becomes a contained non-zero exit instead of killing the index run.
+if __name__ == "__main__":
+    import json as _json
+    import sys as _sys
+
+    _root = _sys.argv[1] if len(_sys.argv) > 1 else "."
+    _result = DocIngester(_root).ingest()
+    print(_json.dumps(_result))

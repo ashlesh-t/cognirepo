@@ -137,8 +137,23 @@ class _LearningBackend:
         )
 
     def store(self, learning_type: str, text: str, metadata: dict, scope: str) -> str:
-        """Persist a learning record; returns its ID."""
+        """Persist a learning record; returns its ID.
+
+        Identical text (whitespace-normalized) already stored and not
+        deprecated is NOT duplicated — the existing record's ID is returned.
+        Observed without this: the same memory stored 3× across retries,
+        which then multiplies conflict/supersede churn.
+        """
         records = self._load()
+        norm = " ".join(text.lower().split())
+        for r in records:
+            if (
+                not r.get("deprecated", False)
+                and r.get("type") == learning_type
+                and " ".join(r.get("text", "").lower().split()) == norm
+            ):
+                logger.debug("Dedup: learning text already stored as %s", r.get("id"))
+                return r["id"]
         record_id = uuid.uuid4().hex
         record = {
             "id": record_id,

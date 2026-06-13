@@ -432,31 +432,50 @@ def run_benchmark() -> dict:
         )
         return {"aborted": True, "reason": "circuit_open", "detail": str(_cb_err)}
 
-    print("  [2/7] Symbol lookup latency...", flush=True)
-    lookup_metrics = measure_symbol_lookup(_BENCHMARK_SYMBOLS)
-    grep_metrics = measure_grep_equivalent(_BENCHMARK_SYMBOLS[:2])  # grep is slow; test 2
+    # Steps 2–7 share the same memory-pressure failure mode as step 1:
+    # any embedding/store call can raise CircuitOpenError on large repos.
+    # Previously only step 1 was guarded — a breaker trip at step 4
+    # (memory recall → store_memory) escaped as a raw traceback.
+    try:
+        print("  [2/7] Symbol lookup latency...", flush=True)
+        lookup_metrics = measure_symbol_lookup(_BENCHMARK_SYMBOLS)
+        grep_metrics = measure_grep_equivalent(_BENCHMARK_SYMBOLS[:2])  # grep is slow; test 2
 
-    print("  [3/7] Cache speedup...", flush=True)
-    cache_metrics = measure_cache_speedup(_BENCHMARK_QUERIES[:3])
+        print("  [3/7] Cache speedup...", flush=True)
+        cache_metrics = measure_cache_speedup(_BENCHMARK_QUERIES[:3])
 
-    print("  [4/7] Memory recall...", flush=True)
-    recall_metrics = measure_memory_recall(_benchmark_memories())
+        print("  [4/7] Memory recall...", flush=True)
+        recall_metrics = measure_memory_recall(_benchmark_memories())
 
-    print("  [5/7] Context relevance...", flush=True)
-    relevance_metrics = measure_context_relevance(_BENCHMARK_QUERIES)
+        print("  [5/7] Context relevance...", flush=True)
+        relevance_metrics = measure_context_relevance(_BENCHMARK_QUERIES)
 
-    print("  [6/7] Precision@k (golden set)...", flush=True)
-    precision_metrics = measure_precision_at_k()
+        print("  [6/7] Precision@k (golden set)...", flush=True)
+        precision_metrics = measure_precision_at_k()
 
-    print("  [7/7] Latency histogram...", flush=True)
-    # Use first 5 golden queries × 3 repeats — enough for p50/p95 without being slow
-    golden_path = REPO_ROOT / "tests" / "fixtures" / "benchmark_golden.json"
-    if golden_path.exists():
-        import json as _json
-        golden_subset = _json.loads(golden_path.read_text(encoding="utf-8"))[:5]
-    else:
-        golden_subset = None
-    latency_metrics = measure_latency(golden=golden_subset, repeats=3)
+        print("  [7/7] Latency histogram...", flush=True)
+        # Use first 5 golden queries × 3 repeats — enough for p50/p95 without being slow
+        golden_path = REPO_ROOT / "tests" / "fixtures" / "benchmark_golden.json"
+        if golden_path.exists():
+            import json as _json
+            golden_subset = _json.loads(golden_path.read_text(encoding="utf-8"))[:5]
+        else:
+            golden_subset = None
+        latency_metrics = measure_latency(golden=golden_subset, repeats=3)
+    except CircuitOpenError as _cb_err:
+        print(
+            f"\n⚠  Benchmark aborted: CogniRepo server is under memory pressure.\n"
+            f"   Partial result: token_reduction_pct={token_metrics.get('token_reduction_pct')}\n"
+            f"   Error: {_cb_err}\n"
+            f"   Fix:   cognirepo server restart\n",
+            flush=True,
+        )
+        return {
+            "aborted": True,
+            "reason": "circuit_open",
+            "detail": str(_cb_err),
+            "token_reduction_pct": token_metrics.get("token_reduction_pct"),
+        }
 
     # Composite speedup: grep vs lookup
     lookup_ms = lookup_metrics["symbol_lookup_ms"]

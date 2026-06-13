@@ -138,6 +138,19 @@ def dependency_graph(
     files = indexer.index_data.get("files", {})
 
     if module not in files:
+        # Bare module/package name → file resolution. Lets callers pass
+        # "celery" instead of having to know it maps to "celery/__init__.py".
+        for _cand in (
+            f"{module}.py",
+            f"{module}/__init__.py",
+            f"src/{module}.py",
+            f"src/{module}/__init__.py",
+        ):
+            if _cand in files:
+                module = _cand
+                break
+
+    if module not in files:
         # try partial match (filename without path)
         matches = [f for f in files if Path(f).name == module or f.endswith("/" + module)]
         if len(matches) == 1:

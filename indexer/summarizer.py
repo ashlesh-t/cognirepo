@@ -203,7 +203,18 @@ def _build_repo_summary(repo_name: str, dir_summaries: list[dict], file_summarie
 
     # Collect classes/functions from non-test directories first.
     # Fall back to all dirs only if the repo is entirely test code.
-    source_dirs = [d for d in dir_summaries if not _is_test_path((d.get("path") or "") + "/")]
+    # Vendored third-party trees are never "key packages" of THIS repo —
+    # without the filter, vendor/grpc and vendor/otel were reported as
+    # top packages on Go repos.
+    def _is_vendored(path: str) -> bool:
+        parts = path.replace("\\", "/").split("/")
+        return any(p in ("vendor", "third_party", "node_modules") for p in parts)
+
+    source_dirs = [
+        d for d in dir_summaries
+        if not _is_test_path((d.get("path") or "") + "/")
+        and not _is_vendored(d.get("path") or "")
+    ]
     ranking_dirs = source_dirs if source_dirs else dir_summaries
 
     all_classes: list[str] = []
@@ -214,7 +225,10 @@ def _build_repo_summary(repo_name: str, dir_summaries: list[dict], file_summarie
 
     top_classes = list(dict.fromkeys(all_classes))[:12]
     top_functions = list(dict.fromkeys(all_functions))[:15]
-    top_dirs = [d["path"] for d in dir_summaries if d["path"]][:8]
+    top_dirs = [
+        d["path"] for d in dir_summaries
+        if d["path"] and not _is_vendored(d["path"])
+    ][:8]
 
     lines = [
         f"Repository: {repo_name}",

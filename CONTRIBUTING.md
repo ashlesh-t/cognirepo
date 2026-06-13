@@ -54,7 +54,7 @@ If you are adding logic in `server/mcp_server.py`, `api/routes/`, or `rpc/server
 
 **`behaviour_tracking`** — opt-in flag in `.cognirepo/config.json`. When enabled, CogniRepo records query patterns, terminology, interaction depth, and symbol access frequency. `get_user_profile()` returns framing hints that adjust response depth and vocabulary. Enable via `cognirepo setup` (prompts during wizard) or set `"behaviour_tracking": true` in config manually.
 
-All 32 MCP tools are documented in [`docs/MCP_TOOLS.md`](docs/MCP_TOOLS.md).
+All 34 MCP tools are documented in [`docs/MCP_TOOLS.md`](docs/MCP_TOOLS.md).
 
 ---
 

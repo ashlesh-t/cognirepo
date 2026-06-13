@@ -14,12 +14,28 @@ import json
 import os
 
 
+def _config_path() -> str:
+    """Resolve config.json via the active repo context (_CTX_DIR), not bare CWD.
+
+    A context-switched operation (org indexing, repo_path tool calls) was
+    reading the WRONG repo's config here, causing graph/metadata to be
+    written plaintext while the owning repo's config says encrypt=true —
+    which then made every later load fail decryption and silently start
+    with an empty graph.
+    """
+    try:
+        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        return get_path("config.json")
+    except Exception:  # pylint: disable=broad-except
+        return ".cognirepo/config.json"
+
+
 def get_project_id() -> str:
     """
     Return the project_id stored in .cognirepo/config.json.
     Falls back to the CWD basename if the config is missing or malformed.
     """
-    config_path = ".cognirepo/config.json"
+    config_path = _config_path()
     try:
         with open(config_path, encoding="utf-8") as f:
             return json.load(f).get(
@@ -35,7 +51,7 @@ def get_storage_config() -> tuple[bool, str]:
     Return (should_encrypt, project_id) from .cognirepo/config.json.
     Returns (False, "") when the config is absent or encryption is disabled.
     """
-    config_path = ".cognirepo/config.json"
+    config_path = _config_path()
     try:
         with open(config_path, encoding="utf-8") as f:
             cfg = json.load(f)

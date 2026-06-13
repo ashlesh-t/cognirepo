@@ -64,6 +64,11 @@ def _count_tokens(text: str) -> int:
 # (scores ~0.10–0.15) while passing genuine code matches (scores ~0.25–0.60).
 _MIN_CODE_CONFIDENCE: float = float(os.environ.get("COGNIREPO_MIN_CONFIDENCE", "0.20"))
 
+# Relative noise gate: sections scoring below this fraction of the best hit in
+# their bucket are dropped from the pack (they're BM25/semantic stragglers, not
+# genuine matches). 0.5 keeps close runners-up while cutting tail noise.
+_REL_NOISE_RATIO: float = float(os.environ.get("COGNIREPO_REL_NOISE_RATIO", "0.5"))
+
 # Intent keywords: queries with these words get doc_index results in addition to code_index
 _DOC_INTENT_PATTERN = re.compile(
     r"\b(how does|overview|architecture|what is|explain|describe|why does|design|"
@@ -379,6 +384,20 @@ def context_pack(
             })
             token_budget -= tok
             return True
+
+        # ── relative-score noise gate ──────────────────────────────────────
+        # A pack where the top hit scores 0.60 should not carry along 0.15
+        # BM25 stragglers — they read as authoritative context but are noise
+        # (observed: 6 of 10 irrelevant sections on broad queries). Keep only
+        # hits within _REL_NOISE_RATIO of the best hit in the same bucket.
+        if code_hits and best_score > 0:
+            _rel_floor = best_score * _REL_NOISE_RATIO
+            code_hits = [c for c in code_hits if c.get("final_score", 0.0) >= _rel_floor]
+        if other_hits:
+            _best_other = max((c.get("final_score", 0.0) for c in other_hits), default=0.0)
+            if _best_other > 0:
+                _rel_floor_o = _best_other * _REL_NOISE_RATIO
+                other_hits = [c for c in other_hits if c.get("final_score", 0.0) >= _rel_floor_o]
 
         for cand in code_hits:
             if not _process_candidate(cand, is_code=True):
