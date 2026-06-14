@@ -10,6 +10,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.1.2] — 2026-06-15
+
+### Added
+- **`glama.json`** — Glama MCP registry descriptor at repo root; all 32 MCP tools listed with `inputSchema` (Glama spec) instead of `parameters`; includes `$schema`, `name`, `description`, `license`, `homepage`, and `repository` fields for registry discovery at glama.ai/mcp
+
+---
+
 ## [1.1.1] — 2026-06-14
 
 ### Added

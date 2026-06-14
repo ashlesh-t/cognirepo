@@ -113,6 +113,7 @@ Run `cognirepo benchmark` on your own codebase to reproduce. See [docs/METRICS.m
 ## How it works
 
 ![alt text](cognirepo-workflow.png)
+
 ---
 
 ## Quick start
