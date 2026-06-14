@@ -11,30 +11,56 @@
 
 set -euo pipefail
 
+# --- Memory Guard: limit to 10 GiB virtual memory ---
+ulimit -v 10485760 2>/dev/null || echo "Warning: Could not set ulimit -v (non-fatal)"
+
 SKIP_SIZE_CHECK=false
 for arg in "$@"; do
     [[ "$arg" == "--skip-size-check" ]] && SKIP_SIZE_CHECK=true
 done
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-VENV_DIR="$(mktemp -d)/wheel_test_venv"
+
+# Create temp dir on the real filesystem, not /tmp (which is often a small tmpfs).
+# CogniRepo's deps (nvidia, triton, scipy…) need ~3.5 GiB and pip doubles that
+# during extraction — easily exceeding a 7–8 GiB tmpfs.
+_TMPDIR="$(mktemp -d --tmpdir="$REPO_ROOT")"
+VENV_DIR="$_TMPDIR/wheel_test_venv"
+
+# Always clean up on exit (success, error, or signal)
+trap 'rm -rf "$_TMPDIR"' EXIT
 
 echo "=== check_wheel.sh ==="
 echo "Repo:  $REPO_ROOT"
 echo "Venv:  $VENV_DIR"
 
+# Ensure we use python3
+PYTHON=$(command -v python3 || command -v python)
+echo "Python: $($PYTHON --version)"
+
 # ── Step 1: build wheel ────────────────────────────────────────────────────────
 echo
 echo "--- Building wheel ---"
 cd "$REPO_ROOT"
-python -m build --wheel --outdir dist/ 2>&1 | tail -5
 
-WHEEL=$(ls -t dist/cognirepo-*.whl 2>/dev/null | head -1)
+# Check if wheel already exists (e.g. downloaded as artifact in CI)
+# Using a glob to find the newest wheel
+WHEEL=$(ls -t dist/cognirepo-*.whl 2>/dev/null | head -1 || true)
+
+if [[ -n "$WHEEL" ]]; then
+    echo "Using existing wheel: $WHEEL"
+else
+    # Ensure 'build' is installed
+    $PYTHON -m pip install --quiet build
+    $PYTHON -m build --wheel --outdir dist/ 2>&1 | tail -5
+    WHEEL=$(ls -t dist/cognirepo-*.whl 2>/dev/null | head -1)
+fi
+
 if [[ -z "$WHEEL" ]]; then
     echo "ERROR: No wheel found in dist/" >&2
     exit 1
 fi
-echo "Built: $WHEEL"
+echo "Target wheel: $WHEEL"
 
 # ── Step 2: size check ─────────────────────────────────────────────────────────
 if [[ "$SKIP_SIZE_CHECK" == false ]]; then
@@ -48,9 +74,13 @@ if [[ "$SKIP_SIZE_CHECK" == false ]]; then
 fi
 
 # ── Step 3: install in fresh venv ─────────────────────────────────────────────
+# Point pip's own temp extraction to the same real-disk tmpdir so it never
+# touches /tmp (which may be a small tmpfs).
+export TMPDIR="$_TMPDIR"
+
 echo
 echo "--- Installing in fresh venv: $VENV_DIR ---"
-python -m venv "$VENV_DIR"
+$PYTHON -m venv "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --quiet "$WHEEL"
 
 # ── Step 4: smoke tests ────────────────────────────────────────────────────────

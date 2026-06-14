@@ -13,6 +13,8 @@ MANIFEST
 venv/
 env/
 
+.cognirepo
+.cognirepo_test/*
 # ── Environment / secrets ─────────────────────────────────────────────────────
 .env
 .envrc
@@ -44,9 +46,15 @@ coverage.xml
 .DS_Store
 Thumbs.db
 
+# ── Temp dirs (created by check_wheel.sh inside repo root) ───────────────────
+tmp.*/
+
 # ── Misc ──────────────────────────────────────────────────────────────────────
 *.log
 *.pid
+*.xlsx
+*.xls
+test_suite.md
 .claude/*
 .gemini/*
 .cognirepo/*

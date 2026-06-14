@@ -1,50 +1,85 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Utility to load and retrieve the embedding model.
+
+Uses fastembed (ONNX runtime) — no PyTorch/CUDA required.
+Model: sentence-transformers/all-MiniLM-L6-v2, dim=384.
 """
 # pylint: disable=import-error
+import concurrent.futures
 import logging
-
-from sentence_transformers import SentenceTransformer
+import os
+import sys
 
 logger = logging.getLogger(__name__)
 
-# Silence harmless "UNEXPECTED" weight loading reports from transformers
-try:
-    import transformers.utils.logging as tf_logging
-    tf_logging.set_verbosity_error()
-except ImportError:
-    pass
+# Shared executor for encode() calls — bounded to 2 workers to avoid thread exhaustion
+_ENCODE_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+_EMBED_TIMEOUT_SEC = float(os.environ.get("COGNIREPO_EMBED_TIMEOUT_SEC", "30"))
 
 MODEL = None
 
 
 def get_model():
-    """
-    Returns the SentenceTransformer model, loading it if necessary.
-    """
     global MODEL  # pylint: disable=global-statement
 
     if MODEL is None:
-        logger.debug("Loading embedding model once...")
-        import os  # pylint: disable=import-outside-toplevel
-        os.environ.setdefault("HF_HUB_OFFLINE", "1")
-        MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        logger.info("Loading embedding model (first use — ~2-5s)...")
+        # Lazy import — keeps fastembed/ONNX out of server startup path
+        try:
+            from fastembed import TextEmbedding  # pylint: disable=import-outside-toplevel
+        except ModuleNotFoundError as exc:
+            raise ImportError(
+                "fastembed is required but not installed in this Python environment.\n"
+                f"  Active Python: {sys.executable}\n\n"
+                "  Install options:\n"
+                "    pipx (recommended — global, isolated):  pipx install 'cognirepo[languages]'\n"
+                "    inside a venv:                           pip install 'cognirepo[languages]'\n"
+                "    if using pipx and fastembed is missing:  pipx inject cognirepo fastembed\n\n"
+                "  Do NOT pip install into system Python on Arch Linux / Debian 12+ / Ubuntu 24.04+."
+            ) from exc
+        MODEL = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
 
     return MODEL
+
+
+def encode_with_timeout(text: str, timeout: float | None = None):
+    """
+    Encode text using the embedding model with a timeout guard.
+    Raises concurrent.futures.TimeoutError if encoding exceeds the timeout.
+    Configurable via COGNIREPO_EMBED_TIMEOUT_SEC env var (default 30s).
+    """
+    from memory.circuit_breaker import get_breaker, CircuitOpenError  # pylint: disable=import-outside-toplevel
+    breaker = get_breaker()
+    breaker.check()
+    t = timeout if timeout is not None else _EMBED_TIMEOUT_SEC
+    model = get_model()
+    # fastembed.embed() returns a generator; consume first (and only) result
+    future = _ENCODE_EXECUTOR.submit(lambda: next(iter(model.embed([text]))))
+    try:
+        result = future.result(timeout=t)
+        breaker.record_success()
+        return result
+    except concurrent.futures.TimeoutError:
+        logger.error(
+            "Embedding encode() timed out after %.1fs for input len=%d", t, len(text)
+        )
+        raise
+    except CircuitOpenError:
+        raise
 
 
 def evict_model() -> None:
     """
     Release the in-memory embedding model to free RAM.
 
-    Called by IdleManager after the idle TTL expires.  The next call to
-    get_model() will reload the model from disk (~2 s warm-up).
+    Called by IdleManager after idle TTL expires. Next call to
+    get_model() reloads from disk (~2 s warm-up).
     """
     global MODEL  # pylint: disable=global-statement
     if MODEL is not None:

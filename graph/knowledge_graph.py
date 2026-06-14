@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Knowledge graph for CogniRepo — a directed NetworkX graph tracking relationships
@@ -24,6 +24,47 @@ import networkx as nx
 
 
 from config.paths import get_path
+from config.lock import store_lock
+
+# Python builtins + common dunder names that must never dominate the concept
+# space.  Exported so mcp_server.py can reuse the same set.
+PYTHON_BUILTINS: frozenset[str] = frozenset({
+    # built-in functions
+    "len", "str", "int", "float", "bool", "list", "dict", "set", "tuple",
+    "bytes", "bytearray", "memoryview", "complex", "type", "object",
+    "range", "enumerate", "zip", "map", "filter", "reversed", "sorted",
+    "sum", "min", "max", "abs", "round", "pow", "divmod",
+    "open", "print", "input", "repr", "hash", "id", "iter", "next",
+    "any", "all", "isinstance", "issubclass", "hasattr", "getattr",
+    "setattr", "delattr", "callable", "vars", "dir", "locals", "globals",
+    "super", "property", "classmethod", "staticmethod",
+    "format", "chr", "ord", "hex", "oct", "bin", "eval", "exec",
+    # common list/dict/str methods (added as call nodes by the indexer)
+    "append", "extend", "insert", "remove", "pop", "clear", "copy",
+    "update", "keys", "values", "items", "get", "setdefault",
+    "join", "split", "rsplit", "splitlines", "strip", "lstrip", "rstrip",
+    "replace", "startswith", "endswith", "find", "rfind", "index",
+    "encode", "decode", "upper", "lower", "capitalize", "title",
+    "read", "readline", "readlines", "write", "writelines", "close",
+    "seek", "tell", "flush", "fileno",
+    # exceptions
+    "Exception", "BaseException", "ValueError", "TypeError", "KeyError",
+    "IndexError", "AttributeError", "RuntimeError", "StopIteration",
+    "GeneratorExit", "OSError", "IOError", "FileNotFoundError",
+    "NotImplementedError", "ImportError", "ModuleNotFoundError",
+    "OverflowError", "ZeroDivisionError", "MemoryError", "RecursionError",
+    "NameError", "UnboundLocalError", "PermissionError", "TimeoutError",
+    # dunders
+    "__init__", "__new__", "__del__", "__str__", "__repr__", "__bytes__",
+    "__len__", "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__",
+    "__hash__", "__bool__", "__iter__", "__next__", "__reversed__",
+    "__contains__", "__getitem__", "__setitem__", "__delitem__",
+    "__enter__", "__exit__", "__call__", "__get__", "__set__",
+    "__add__", "__radd__", "__iadd__", "__sub__", "__mul__", "__truediv__",
+    "__class__", "__dict__", "__doc__", "__module__", "__slots__",
+    "__all__", "__name__", "__file__", "__spec__", "__path__",
+})
+
 
 def _graph_file() -> str:
     return get_path("graph/graph.pkl")
@@ -39,15 +80,22 @@ class NodeType:  # pylint: disable=too-few-public-methods
     SESSION = "SESSION"
     USER_ACTION = "USER_ACTION"
     MEMORY = "MEMORY"          # cross-agent memory nodes (synced from Claude/Gemini/etc.)
+    ERROR = "ERROR"            # error pattern nodes for tracking recurring mistakes
+    ENDPOINT = "ENDPOINT"      # exposed HTTP/gRPC endpoint (method + path pattern)
 
 
 class EdgeType:  # pylint: disable=too-few-public-methods
     """Relationship types between nodes."""
     RELATES_TO = "RELATES_TO"
     DEFINED_IN = "DEFINED_IN"
-    CALLED_BY = "CALLED_BY"
+    CALLED_BY = "CALLED_BY"   # caller → callee (forward call direction)
+    CALLS = "CALLS"            # callee → caller (reverse; enables BFS to find callers without predecessors())
     QUERIED_WITH = "QUERIED_WITH"
     CO_OCCURS = "CO_OCCURS"
+    IMPORTS = "IMPORTS"        # file A imports module/file B
+    INHERITS = "INHERITS"      # class A inherits from class B
+    EXPOSES = "EXPOSES"        # function → ENDPOINT node (this function handles this route)
+    CALLS_ENDPOINT = "CALLS_ENDPOINT"  # caller function → remote ENDPOINT stub (cross-service)
 
 
 class KnowledgeGraph:
@@ -70,7 +118,16 @@ class KnowledgeGraph:
             encrypt, project_id = get_storage_config()
             if encrypt:
                 from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
-                raw = decrypt_bytes(raw, get_or_create_key(project_id))
+                try:
+                    raw = decrypt_bytes(raw, get_or_create_key(project_id))
+                except Exception:  # pylint: disable=broad-except
+                    # The file may have been written unencrypted (e.g. by a
+                    # process that resolved the wrong config context before
+                    # the _CTX_DIR fix). Fall through and try plaintext —
+                    # it will be encrypted on the next save(). A genuinely
+                    # encrypted-with-wrong-key file still fails the pickle
+                    # load below and is handled by the outer except.
+                    pass
             self.G = pickle.loads(raw)  # nosec B301
         except Exception as exc:  # pylint: disable=broad-except
             warnings.warn(
@@ -85,7 +142,14 @@ class KnowledgeGraph:
         self._load()
 
     def save(self) -> None:
-        """Serialize the graph to a pickle file; encrypt if needed."""
+        """Serialize the graph to a pickle file; encrypt if needed.
+        Acquires a cross-process file lock to prevent concurrent writes
+        from multiple MCP server processes (e.g. Claude + Gemini) from
+        corrupting the pickle.
+        """
+        from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+        breaker = get_breaker()
+        breaker.check()
         os.makedirs(os.path.dirname(_graph_file()), exist_ok=True)
         from security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
@@ -93,8 +157,10 @@ class KnowledgeGraph:
         if encrypt:
             from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
             raw = encrypt_bytes(raw, get_or_create_key(project_id))
-        with open(_graph_file(), "wb") as f:
-            f.write(raw)
+        with store_lock():
+            with open(_graph_file(), "wb") as f:
+                f.write(raw)
+        breaker.record_success()
 
     # ── mutation ──────────────────────────────────────────────────────────────
 
@@ -172,12 +238,13 @@ class KnowledgeGraph:
         if not self.G.has_node(node_id):
             return []
 
+        from collections import deque  # pylint: disable=import-outside-toplevel
         visited: dict[str, int] = {node_id: 0}
-        queue = [node_id]
+        queue: deque[str] = deque([node_id])
         results: list[dict] = []
 
         while queue:
-            current = queue.pop(0)
+            current = queue.popleft()
             current_hops = visited[current]
             if current_hops >= depth:
                 continue
@@ -213,31 +280,78 @@ class KnowledgeGraph:
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             return None
 
-    def subgraph_around(self, node_id: str, radius: int = 2) -> dict:
+    def subgraph_around(
+        self,
+        node_id: str,
+        radius: int = 2,
+        max_nodes: int = 200,
+        max_edges: int = 500,
+        hub_degree_limit: int = 500,
+    ) -> dict:
         """
-        Returns {"nodes": [...], "edges": [...]} of the ego graph around node_id.
-        Suitable for context injection (pass to format_subgraph_for_context).
+        Returns {"nodes": [...], "edges": [...], "truncated": bool} of the
+        neighbourhood around node_id, bounded DURING expansion.
+
+        Previously this used nx.ego_graph(), which materializes the full
+        ego graph before any cap is applied — on syscall-heavy repos a
+        depth-3 call could pull 10k+ nodes and inflate RSS past the circuit
+        breaker limit. The bounded BFS stops at max_nodes and skips hub
+        nodes whose degree exceeds hub_degree_limit (e.g. errnoErr/uintptr
+        fan-out), which are connectivity noise rather than architecture.
         """
         if not self.G.has_node(node_id):
             return {"nodes": [], "edges": []}
 
-        ego = nx.ego_graph(self.G, node_id, radius=radius, undirected=True)
+        visited: set[str] = {node_id}
+        frontier: list[str] = [node_id]
+        truncated = False
+        for _ in range(max(radius, 0)):
+            if truncated or not frontier:
+                break
+            next_frontier: list[str] = []
+            for n in frontier:
+                for nb in nx.all_neighbors(self.G, n):
+                    if nb in visited:
+                        continue
+                    if self.G.degree(nb) > hub_degree_limit:
+                        continue  # hub node — skip, never expand
+                    visited.add(nb)
+                    next_frontier.append(nb)
+                    if len(visited) >= max_nodes:
+                        truncated = True
+                        break
+                if truncated:
+                    break
+            frontier = next_frontier
 
         nodes = []
-        for n, d in ego.nodes(data=True):
+        for n in visited:
+            d = self.G.nodes[n]
+            # Skip builtin names — they add noise, not signal, to neighbourhoods
+            bare = n.split("::")[-1]
+            if d.get("type") == "CONCEPT" and bare in PYTHON_BUILTINS:
+                continue
             entry = dict(d)
             entry["node_id"] = n
             nodes.append(entry)
 
         edges = []
-        for u, v, d in ego.edges(data=True):
-            edges.append({
+        for u, v, d in self.G.edges(visited, data=True):
+            if v not in visited:
+                continue
+            if len(edges) >= max_edges:
+                truncated = True
+                break
+            edge: dict = {
                 "src": u, "dst": v,
                 "rel": d.get("rel", "?"),
-                "weight": d.get("weight", 1.0)
-            })
+                "weight": d.get("weight", 1.0),
+            }
+            if "purpose" in d:
+                edge["purpose"] = d["purpose"]
+            edges.append(edge)
 
-        return {"nodes": nodes, "edges": edges}
+        return {"nodes": nodes, "edges": edges, "truncated": truncated}
 
     # ── stats ─────────────────────────────────────────────────────────────────
 

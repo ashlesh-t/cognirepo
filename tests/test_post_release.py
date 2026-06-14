@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Task 4.3 — Post-release verification.
@@ -39,17 +39,15 @@ def test_hard_dependencies_importable():
     hard_deps = {
         "faiss-cpu": "faiss",
         "numpy": "numpy",
-        "sentence-transformers": "sentence_transformers",
+        "fastembed": "fastembed",
         "mcp": "mcp",
         "fastapi": "fastapi",
-        "uvicorn": "uvicorn",
         "pydantic": "pydantic",
         "networkx": "networkx",
         "rank-bm25": "rank_bm25",
         "python-dotenv": "dotenv",
         "httpx": "httpx",
         "anthropic": "anthropic",
-        "grpcio": "grpc",
     }
     failures = []
     for pkg_name, import_name in hard_deps.items():

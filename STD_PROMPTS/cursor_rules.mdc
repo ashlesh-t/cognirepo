@@ -1,0 +1,21 @@
+---
+description: CogniRepo tool routing rules for {project_name}
+globs: ["**/*.py", "**/*.ts", "**/*.js", "**/*.go", "**/*.rs", "**/*.java"]
+alwaysApply: true
+---
+
+## CogniRepo Tool Routing
+
+Project: {project_name}
+Data: {project_path}/.cognirepo/
+
+BEFORE reading any file >100 lines:   use mcp_{project_name}_context_pack first.
+BEFORE searching for a function:      use mcp_{project_name}_lookup_symbol first.
+BEFORE tracing callers:               use mcp_{project_name}_who_calls first.
+AFTER a non-trivial decision:         use mcp_{project_name}_store_memory to record it.
+
+If context_pack returns no_confident_match → fall back to file read.
+If who_calls returns empty → the fallback field will contain string-literal hits.
+
+For file-specific context (Cursor file mode):
+  use context_pack(file="path/to/file.py") to get all indexed symbols for a file.

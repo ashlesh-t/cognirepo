@@ -1,6 +1,6 @@
 # CogniRepo MCP Tools Reference
 
-Every tool available via the MCP protocol. These are the functions Claude, Gemini, and Cursor can call.
+34 tools available via the MCP protocol. These are the functions Claude, Gemini, and Cursor can call.
 
 ---
 
@@ -19,12 +19,18 @@ Call this **before reading any source file**.
 **Output:**
 ```json
 {
-  "code_snippets": [{"file": "retrieval/hybrid.py", "lines": "1-50", "content": "..."}],
-  "episodic_hits": [{"event": "Fixed BM25 ranking bug", "timestamp": "2026-03-30"}],
-  "graph_context": "HybridRetriever → FAISSAdapter, KnowledgeGraph",
-  "tokens_used": 1840
+  "query": "how does hybrid retrieval work",
+  "status": "ok",
+  "token_count": 1840,
+  "sections": [
+    {"type": "code", "source": "retrieval/hybrid.py", "score": 0.91, "content": "...", "bucket": "HIGH"}
+  ],
+  "truncated": false
 }
 ```
+
+`status` is always one of: `"ok"` | `"no_confident_match"` | `"index_empty"`.
+When `status == "no_confident_match"` the response also includes `"best_score"` and `"suggestion"`.
 
 ---
 
@@ -50,7 +56,7 @@ Find where a function, class, or variable is defined. O(1) LRU-cached reverse in
 
 ## who_calls
 
-**Signature:** `who_calls(function_name: str) → list[dict]`
+**Signature:** `who_calls(function_name: str, repo_path: str = None) → dict`
 
 Return all callers of a function in the knowledge graph. Use before refactoring.
 
@@ -61,10 +67,14 @@ Return all callers of a function in the knowledge graph. Use before refactoring.
 
 **Output:**
 ```json
-[
-  { "caller": "api/routes/memory.py::retrieve", "line": 28 },
-  { "caller": "api/routes/graph.py::symbol_lookup", "line": 15 }
-]
+{
+  "local_callers": [
+    { "caller": "api/routes/memory.py::retrieve", "line": 28 },
+    { "caller": "api/routes/graph.py::symbol_lookup", "line": 15 }
+  ],
+  "cross_repo_callers": [],
+  "truncated": false
+}
 ```
 
 ---
@@ -175,7 +185,7 @@ Record a significant event to the append-only episodic log.
 
 **Output:**
 ```json
-{ "status": "logged", "timestamp": "2026-04-03T18:00:00Z" }
+{ "logged": true }
 ```
 
 ---
@@ -220,13 +230,13 @@ BM25-ranked keyword search in the event history.
 
 ## dependency_graph
 
-**Signature:** `dependency_graph(file_path: str) → dict`
+**Signature:** `dependency_graph(module: str, direction: str = "both", depth: int = 2) → dict`
 
-Return import/dependency graph for a specific file.
+Return import/dependency graph for a specific module.
 
 **Input:**
 ```json
-{ "file_path": "retrieval/hybrid.py" }
+{ "module": "retrieval/hybrid.py", "direction": "both", "depth": 2 }
 ```
 
 **Output:**
@@ -261,23 +271,400 @@ Semantic search over indexed code symbols.
 
 ## explain_change
 
-**Signature:** `explain_change(file_path: str, before: str, after: str) → dict`
+**Signature:** `explain_change(target: str, since: str = "7d", max_commits: int = 10) → dict`
 
-Explain what changed between two code versions.
+Explain recent git changes to a file or function using commit history and episodic memory.
 
 **Input:**
 ```json
-{
-  "file_path": "api/cache.py",
-  "before": "def cache_get(key): return None",
-  "after": "def cache_get(key): ..."
-}
+{ "target": "api/cache.py", "since": "30d" }
 ```
 
 **Output:**
 ```json
 {
-  "summary": "Added Redis lookup with graceful degradation on connection failure",
-  "impact": ["api/routes/memory.py", "api/routes/graph.py"]
+  "target": "api/cache.py",
+  "commits": [
+    {"sha": "a1b2c3d", "message": "fix: Redis cache encoding", "author": "dev", "date": "2026-04-02"}
+  ],
+  "explanation": "Recent changes added Redis cache with JSON encoding fix and graceful degradation."
 }
 ```
+
+Returns `{"target": "...", "commits": [], "explanation": "No commits found."}` if no history exists — never crashes.
+
+---
+
+## cross_repo_search
+
+**Signature:** `cross_repo_search(query: str, scope: str = "project", top_k: int = 5) → dict`
+
+Search knowledge from sibling repositories in the same org or project.
+
+`scope="project"` — only repos in same project (recommended, high relevance).
+`scope="org"` — all repos in organization (broader, use sparingly).
+
+**When to call:**
+- `lookup_symbol` returned empty and the symbol may live in a sibling repo
+- Architecture question spans multiple services in the same project
+- User asks "how does X work across the system"
+- Importing from a sibling repo and need context on its internals
+
+Call `list_org_context()` first to verify siblings exist before calling this.
+
+**Input:**
+```json
+{ "query": "authentication flow", "scope": "project", "top_k": 5 }
+```
+
+**Output:**
+```json
+{
+  "scope": "project",
+  "query": "authentication flow",
+  "results": [{"text": "...", "source": "repo_a", "importance": 0.8}],
+  "result_count": 3,
+  "repos_searched": ["auth-service", "api-gateway"]
+}
+```
+
+---
+
+## list_org_context
+
+**Signature:** `list_org_context() → dict`
+
+Returns org/project membership and sibling repos for the current repository.
+
+**When to call:** FIRST when user asks about other services, related repos, cross-service behavior, or architecture spanning multiple codebases. Use the result to decide whether `cross_repo_search()` is worthwhile.
+
+**Output:**
+```json
+{
+  "org": "my-company",
+  "project": "backend",
+  "sibling_repos": ["/abs/path/auth-service"],
+  "project_repos": ["/abs/path/api", "/abs/path/auth-service"]
+}
+```
+
+---
+
+## org_wide_search *(replaces deprecated `org_search`)*
+
+**Signature:** `org_wide_search(query: str, top_k: int = 5) → list`
+
+Search memories across ALL repositories in the organization. Prefer `cross_repo_search(scope="project")` for project-scoped queries.
+
+`org_search` is a backward-compat alias — prefer `org_wide_search` in new integrations.
+
+---
+
+## record_decision
+
+**Signature:** `record_decision(summary: str, rationale: str = "", affected_files: list = [], repo_path: str = None) → dict`
+
+**When:** Call when a non-obvious architectural or implementation decision is made — when the WHY is not evident from the code. Do NOT call for routine changes.
+
+**Input:**
+```json
+{"summary": "switched from REST to gRPC for auth service", "rationale": "latency target <5ms", "affected_files": ["auth/server.py"]}
+```
+**Output:**
+```json
+{"stored": true, "searchable_via": "episodic_search"}
+```
+
+---
+
+## link_repos
+
+**Signature:** `link_repos(src: str, dst: str, relationship: str = "imports", note: str = "", src_service_type: str = None, src_port: int = None, src_api_base_url: str = None) → dict`
+
+**When:** Call when you discover one repo imports from or calls another. relationship: `imports` | `calls_api` | `shares_schema` | `discovered` | `child_of`.
+
+**Auto-detected edges:** `IMPORTS` only — CogniRepo scans pyproject.toml, package.json, go.mod, Cargo.toml, requirements.txt and creates IMPORTS edges automatically.
+**Manual-only edges:** `CALLS_API` and `SHARES_SCHEMA` must be declared explicitly via this tool. There is no automatic HTTP-call or schema detection.
+
+**Input:**
+```json
+{"src_repo": "/projects/api", "dst_repo": "/projects/auth", "relationship": "calls_api", "service_type": "rest_api", "port": 8001}
+```
+**Output:**
+```json
+{"linked": true, "edge": {"src": "/projects/api", "dst": "/projects/auth", "kind": "CALLS_API"}}
+```
+
+---
+
+## org_dependencies
+
+**Signature:** `org_dependencies(depth: int = 2) → dict`
+
+**When:** Call to get a visual map of all registered repos and their dependency edges. Use before `cross_repo_traverse` to understand the graph shape.
+
+**Input:**
+```json
+{"depth": 2}
+```
+**Output:**
+```json
+{"repos": [...], "edges": [...], "depth": 2}
+```
+
+---
+
+## cross_repo_traverse
+
+**Signature:** `cross_repo_traverse(symbol: str = None, start_repo: str = None, direction: str = "both", depth: int = 2) → dict`
+
+**When:** Tracing a symbol, bug, or API change across service boundaries. direction: `dependencies` | `dependents` | `both`.
+
+**Input:**
+```json
+{"symbol": "authenticate", "start_repo": "/projects/api", "direction": "dependents"}
+```
+**Output:**
+```json
+{"start_repo": "...", "dependencies": [...], "dependents": [...]}
+```
+
+---
+
+## search_token
+
+**Signature:** `search_token(token: str, repo_path: str = None) → list`
+
+**When:** Exact token/string search across all indexed file names, symbol names, and docstrings. Unlike `lookup_symbol` (AST-defined symbols only), `search_token` matches any occurrence of the string.
+
+**Input:**
+```json
+{"token": "MAX_RETRIES"}
+```
+**Output:**
+```json
+[{"file": "config.py", "line": 12, "match": "MAX_RETRIES = 3"}]
+```
+
+---
+
+## get_session_brief
+
+**Signature:** `get_session_brief(repo_path: str = None) → dict`
+
+**When:** ALWAYS call at session start (step 1). Returns architecture summary, hot symbols, index health, and recent decisions.
+
+**Output:**
+```json
+{"architecture": "...", "hot_symbols": [...], "index_health": {...}, "recent_decisions": [...]}
+```
+
+---
+
+## get_last_context
+
+**Signature:** `get_last_context(repo_path: str = None) → dict`
+
+**When:** ALWAYS call at session start (step 2). Returns what the last agent (Claude/Gemini/Cursor) was looking at. Enables cross-agent handoff.
+
+**Output:**
+```json
+{"query": "last context_pack query", "sections": [...], "token_count": 1842}
+```
+
+---
+
+## get_session_history
+
+**Signature:** `get_session_history(limit: int = 20, repo_path: str = None) → list`
+
+**When:** Call to see recent session events in chronological order. Useful for understanding what happened in the last few sessions.
+
+**Output:**
+```json
+[{"session_id": "...", "timestamp": "...", "event": "..."}]
+```
+
+---
+
+## get_user_profile
+
+**Signature:** `get_user_profile(repo_path: str = None) → dict`
+
+**When:** ALWAYS call at session start (step 3). Apply `framing_hints` to ALL responses. Shows depth preference, domain vocabulary, code-focus %, and explicit stored preferences.
+
+**Output:**
+```json
+{
+  "depth_preference": "concise",
+  "framing_hints": "prefers concise responses; focuses on code/symbols",
+  "top_terminology": ["context_pack", "graph", "episodic"],
+  "explicit_preferences": {"response_style": "concise"},
+  "total_queries_tracked": 47
+}
+```
+
+---
+
+## get_error_patterns
+
+**Signature:** `get_error_patterns(min_count: int = 1, repo_path: str = None) → list`
+
+**When:** ALWAYS call at session start (step 4) and before proposing a fix. Returns recurring errors with prevention hints so Claude avoids repeating past mistakes.
+
+**Output:**
+```json
+[{"error_type": "ImportError", "count": 3, "prevention_hint": "verify package installed", "last_seen": "..."}]
+```
+
+---
+
+## record_error
+
+**Signature:** `record_error(error_type: str, message: str = "", file_path: str = "", query_context: str = "", repo_path: str = None) → dict`
+
+**When:** Call whenever Claude or the user hits an error. Builds the error pattern database that `get_error_patterns` reads.
+
+**Input:**
+```json
+{"error_type": "TypeError", "message": "expected str got int", "file_path": "api/routes.py"}
+```
+**Output:**
+```json
+{"recorded": true, "error_type": "TypeError", "prevention_hint": "Wrong type — validate inputs at function boundary."}
+```
+
+---
+
+## record_user_preference
+
+**Signature:** `record_user_preference(preference_key: str, preference_value: str, context: str = "", repo_path: str = None) → dict`
+
+**When:** Call IMMEDIATELY when user says "I prefer...", "always use...", "never do...", or states any explicit preference. Stored permanently; surfaced by `get_user_profile()` under `explicit_preferences`.
+
+**Input:**
+```json
+{"key": "response_style", "value": "concise"}
+```
+**Output:**
+```json
+{"key": "response_style", "value": "concise", "recorded": true}
+```
+
+---
+
+## get_agent_bootstrap
+
+**Signature:** `get_agent_bootstrap(repo_path: str = None) → dict`
+
+**When:** Call ONCE at session start instead of the 4-call sequence (get_session_brief → get_last_context → get_user_profile → get_error_patterns). Returns ~300 tokens vs ~900 tokens.
+
+**Input:**
+```json
+{}
+```
+**Output:**
+```json
+{
+  "repo": "cognirepo",
+  "architecture": "CogniRepo: FAISS + graph + AST + MCP. Tools in tools/, retrieval via retrieval/hybrid.py...",
+  "hot_symbols": ["hybrid_retrieve:retrieval/hybrid.py:45", "context_pack:tools/context_pack.py:12"],
+  "last_focus": {"files": ["retrieval/hybrid.py"], "query": "how does scoring work", "agent": "claude"},
+  "framing": {"depth": "detailed", "vocabulary": ["retrieval", "faiss", "hybrid"], "hints": "prefers detailed responses; often asks 'how' questions; domain vocabulary: retrieval, faiss, hybrid"},
+  "error_patterns": [{"type": "OOM", "count": 2, "prevention_hint": "Check RSS before loading large index"}],
+  "index_health": {"symbols": 1240, "files": 92, "status": "ok"}
+}
+```
+
+---
+
+## supersede_learning
+
+**Signature:** `supersede_learning(old_id: str, new_text: str, learning_type: str = "fact", repo_path: str = None) → dict`
+
+**When:** Call when `store_memory` returns a `conflicts` list with an outdated/incorrect entry. Deprecates the old entry and replaces it with corrected text. Prevents conflicting memories from co-existing.
+
+**Input:**
+```json
+{"old_id": "abc123", "new_text": "fastembed embed() returns a generator, use next(iter(...))", "learning_type": "fact"}
+```
+**Output:**
+```json
+{"found_old": true, "new_id": "def456"}
+```
+
+---
+
+## find_symbol_path
+
+**Signature:** `find_symbol_path(from_symbol: str, to_symbol: str, from_repo: str = "", to_repo: str = "") → dict`
+
+**When:** Trace the shortest call-graph path between two symbols, crossing service boundaries via the org graph when needed. Uses weighted Dijkstra (core entry-point symbols preferred over indirect hops; cross-service org edges cost more).
+
+**Input:**
+```json
+{ "from_symbol": "handleTransfer", "to_symbol": "settleNpci", "from_repo": "/projects/bank-service" }
+```
+**Output:**
+```json
+{ "path": ["bank-service::handleTransfer", "npci-service::settle"], "hops": 2, "crosses_services": true, "services_traversed": ["bank-service", "npci-service"] }
+```
+Returns `{error: ...}` when no path exists.
+
+---
+
+## get_service_endpoints
+
+**Signature:** `get_service_endpoints(repo_path: str = "") → dict`
+
+**When:** List the HTTP endpoint registry for a service (from `endpoints.json`, populated by `cognirepo index-repo`). Each entry includes method, path pattern, handler function, file, and framework.
+
+**Input:**
+```json
+{ "repo_path": "/projects/bank-service" }
+```
+**Output:**
+```json
+{ "endpoints": [{"method": "POST", "path": "/api/transfer", "handler": "handleTransfer", "framework": "spring"}], "count": 1, "repo": "bank-service" }
+```
+
+---
+
+## architecture_overview
+
+**Signature:** `architecture_overview(scope: str = "root", repo_path: str = None) → str`
+
+**When:** Call for a human-readable summary of the repo, a directory, or a specific file. Returns pre-computed summaries from `summaries.json` — fast, no embedding needed. Run `cognirepo summarize` first to populate.
+
+scope: `"root"` for full repo summary, a directory path like `"tools"`, or a file path like `"retrieval/hybrid.py"`.
+
+**Input:**
+```json
+{"scope": "root"}
+```
+**Output:**
+```
+Repository: cognirepo
+  92 source files | 1240 symbols
+  Top packages: tools, retrieval, memory, graph, indexer
+  Key classes: HybridRetriever, ASTIndexer, KnowledgeGraph, BehaviourTracker
+  Key functions: hybrid_retrieve, context_pack, lookup_symbol, store_memory
+```
+
+---
+
+## org_search
+
+**Signature:** `org_search(query: str, top_k: int = 5) → list`
+
+**⚠ DEPRECATED** — use `org_wide_search` instead. Text-match fallback search across org repos. Only call when `org_wide_search` returns empty results.
+
+**Input:**
+```json
+{"query": "authentication flow"}
+```
+**Output:**
+```json
+[{"text": "...", "source_repo": "auth-service", "score": 0.72}]
+```
+

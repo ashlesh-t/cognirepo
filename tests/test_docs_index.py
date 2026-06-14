@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """Tests for cli/docs_index.py — chunk, build, query, staleness, heuristic."""
 from __future__ import annotations
@@ -148,7 +148,7 @@ def test_docs_index_answer_returns_results(tmp_path):
     )
 
     fake_model = MagicMock()
-    fake_model.encode.return_value = np.zeros((1, 384), dtype="float32")
+    fake_model.embed.side_effect = lambda texts: iter([np.zeros(384, dtype="float32") for _ in texts])
 
     mock_faiss = MagicMock()
     mock_faiss.read_index.return_value = fake_faiss_index

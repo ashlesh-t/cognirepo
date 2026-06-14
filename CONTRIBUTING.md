@@ -1,23 +1,32 @@
 # Contributing to CogniRepo
 
-Thank you for contributing. This guide covers everything you need in 5 minutes.
+Thank you for contributing! This guide covers the basics to get you started. For detailed technical guides, see the [Developer Guide](docs/DEVELOPER_GUIDE.md).
 
 ---
 
-## Dev setup
+## Dev Setup
 
 ```bash
 git clone https://github.com/ashlesh-t/cognirepo
 cd cognirepo
+
+# Option A — pipx (global binary, isolated venv, works on Arch/Debian/Ubuntu):
+pipx install -e ".[dev,languages,security]"
+
+# Option B — inside a local venv:
 python -m venv venv && source venv/bin/activate
-pip install -e ".[dev,languages]"
+pip install -e ".[dev,languages,security]"
+
 pre-commit install
 pytest tests/ -v   # should all be green
 ```
 
+> **Arch Linux / Debian 12+ / Ubuntu 24.04+:** Do not `pip install` into system Python.
+> Use pipx (Option A) or activate a venv first (Option B).
+
 ---
 
-## Running tests
+## Running Tests
 
 ```bash
 pytest tests/                                         # all tests
@@ -31,59 +40,49 @@ so tests never touch your real config or OS keychain.
 
 ---
 
-## The one rule
+## The Core Rule: `tools/` is the Entry Point
 
-**All paths to the memory engine go through `tools/`.** This is non-negotiable.
+**All paths to the memory engine MUST go through `tools/`.**
 
-If you are adding logic in `server/mcp_server.py`, `api/routes/`, or `rpc/server.py` —
-stop, move it to a function in `tools/`, and call that function from the adapter.
-MCP, REST, and gRPC are thin wrappers. Nothing else.
-
-PRs that put logic directly in adapters will not be merged.
+If you are adding logic in `server/mcp_server.py`, `api/routes/`, or `rpc/server.py` — stop. Move it to a function in `tools/`, and call that function from the adapter. MCP, REST, and gRPC are thin transport wrappers only.
 
 ---
 
-## Adding a model adapter
+## v1.1.0 Feature Highlights
 
-1. Create `orchestrator/model_adapters/<name>_adapter.py`
-2. Implement:
-   - `call(prompt, system, tools, max_tokens) → ModelResponse`
-   - `stream_call(prompt, system, tools) → Iterator[str]`
-3. Add the provider to the fallback chain in `orchestrator/router.py`
-   and document it in the provider table in `USAGE.md`
+**`get_agent_bootstrap()`** — call this at the start of every session instead of the 4-call sequence (`get_session_brief` → `get_last_context` → `get_user_profile` → `get_error_patterns`). It returns architecture summary, hot symbols, last context, user profile framing hints, and error patterns in a single ~300-token response.
 
----
+**`behaviour_tracking`** — opt-in flag in `.cognirepo/config.json`. When enabled, CogniRepo records query patterns, terminology, interaction depth, and symbol access frequency. `get_user_profile()` returns framing hints that adjust response depth and vocabulary. Enable via `cognirepo setup` (prompts during wizard) or set `"behaviour_tracking": true` in config manually.
 
-## Adding a CLI tool
-
-1. Create `tools/<name>.py` — wraps existing `memory/` or `graph/` methods,
-   no direct FAISS calls
-2. Add `@mcp.tool()` decorated function in `server/mcp_server.py`
-3. Add REST route in `api/routes/` — run `cognirepo export-spec` to regenerate
-   `server/manifest.json`
+All 34 MCP tools are documented in [`docs/MCP_TOOLS.md`](docs/MCP_TOOLS.md).
 
 ---
 
-## Adding language support
+## Technical Guides
 
-See [LANGUAGES.md](LANGUAGES.md) — 5 steps, ~30 minutes.
+For step-by-step instructions on extending CogniRepo, refer to the [Developer Guide](docs/DEVELOPER_GUIDE.md):
 
----
-
-## PR checklist
-
-Before opening a PR, confirm:
-
-- [ ] `pytest tests/` passes with no new failures
-- [ ] `bandit -r . -ll --exclude venv,tests` reports no new HIGH or CRITICAL findings
-- [ ] Architecture rule followed — no logic added directly to adapters
-- [ ] `USAGE.md` updated if any command, flag, or endpoint changed
-- [ ] `CHANGELOG.md` `[Unreleased]` section updated with your change
-- [ ] SPDX header present in any new `.py` files you added
+*   [How to Add a New MCP Tool](docs/DEVELOPER_GUIDE.md#how-to-add-a-new-mcp-tool)
+*   [How to Add a New Language](docs/DEVELOPER_GUIDE.md#how-to-add-a-new-language)
+*   [How to Add a New Model Adapter](docs/DEVELOPER_GUIDE.md#adding-a-model-adapter)
+*   [How to Add a New CLI Command](docs/DEVELOPER_GUIDE.md#how-to-add-a-new-cli-command)
 
 ---
 
-## Commit format
+## PR Checklist
+
+Before opening a PR to the `development` branch, confirm:
+
+- [ ] `pytest tests/` passes with no new failures.
+- [ ] `bandit -r . -ll --exclude venv,tests` reports no new HIGH or CRITICAL findings.
+- [ ] Architecture rule followed — no logic added directly to adapters.
+- [ ] Documentation updated in `docs/` if any command, flag, or endpoint changed.
+- [ ] `CHANGELOG.md` `[Unreleased]` section updated.
+- [ ] SPDX header present in any new `.py` files.
+
+---
+
+## Commit Format
 
 Use [Conventional Commits](https://www.conventionalcommits.org/):
 
@@ -96,27 +95,14 @@ Use [Conventional Commits](https://www.conventionalcommits.org/):
 
 ---
 
-## License
+## Environment Variables
 
-By contributing, you agree that your contributions are licensed under
-**AGPL-3.0-or-later**. See [LICENSE](LICENSE).
+| Variable | Purpose |
+|---|---|
+| `COGNIREPO_JWT_SECRET` | Signs JWT tokens for MCP auth. Set a long random string. Never commit it. |
 
 ---
 
-## Note for maintainers
+## License
 
-The following GitHub Actions secrets must be set in **Settings → Secrets → Actions**:
-
-| Secret | Purpose |
-|---|---|
-| `SNYK_TOKEN` | Snyk dependency vulnerability scanning |
-| `COGNIREPO_JWT_SECRET` | JWT signing key for the REST API (used in CI adapter tests) |
-| `COGNIREPO_PASSWORD_HASH` | Bcrypt hash of the API password (used in CI integration tests) |
-
-Without `SNYK_TOKEN`, the Snyk step will be skipped. Without `COGNIREPO_JWT_SECRET`,
-adapter tests that require authentication will be skipped (they are mocked in CI).
-
-To generate a JWT secret locally:
-```bash
-python -c "import secrets; print(secrets.token_hex(32))"
-```
+By contributing, you agree your contributions are licensed under **MIT**. See [LICENSE](LICENSE).

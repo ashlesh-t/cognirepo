@@ -1,15 +1,18 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 tests/test_context_pack.py — unit tests for the context_pack tool.
 """
 from __future__ import annotations
 
+import pytest
 from unittest.mock import patch
+
+_tiktoken_available = pytest.importorskip("tiktoken", reason="tiktoken not installed")
 
 
 class TestContextPack:
@@ -122,3 +125,32 @@ class TestContextPack:
         reported = result["token_count"]
         if actual > 0:
             assert abs(reported - actual) / actual <= 0.05
+
+
+class TestContextPackRepoPaths:
+    def test_context_pack_with_repo_path_returns_valid_shape(self, isolated_cognirepo, tmp_path):
+        """MCP context_pack(repo_path=...) must return structured result, not crash."""
+        from server.mcp_server import context_pack
+        with patch("tools.context_pack.hybrid_retrieve", return_value=[]):
+            with patch("tools.context_pack.episodic_bm25_filter", return_value=[]):
+                result = context_pack("authentication", repo_path=str(tmp_path))
+        assert "query" in result
+        assert "sections" in result
+        assert "token_count" in result
+
+    def test_context_pack_nonexistent_repo_path_returns_gracefully(self, isolated_cognirepo, tmp_path):
+        """MCP context_pack with a non-initialized repo_path returns empty sections, not a crash."""
+        from server.mcp_server import context_pack
+        with patch("tools.context_pack.hybrid_retrieve", return_value=[]):
+            with patch("tools.context_pack.episodic_bm25_filter", return_value=[]):
+                result = context_pack("anything", repo_path=str(tmp_path / "no_such_dir"))
+        assert isinstance(result, dict)
+        assert "sections" in result
+
+    def test_context_pack_repo_path_preserves_query(self, isolated_cognirepo, tmp_path):
+        """Query string must survive the repo_path scoping."""
+        from server.mcp_server import context_pack
+        with patch("tools.context_pack.hybrid_retrieve", return_value=[]):
+            with patch("tools.context_pack.episodic_bm25_filter", return_value=[]):
+                result = context_pack("my test query", repo_path=str(tmp_path))
+        assert result["query"] == "my test query"

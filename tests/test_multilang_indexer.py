@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 tests/test_multilang_indexer.py — Sprint 2 acceptance tests.
@@ -28,12 +28,16 @@ import pytest
 
 @pytest.fixture()
 def fresh_indexer(isolated_cognirepo):
-    from graph.knowledge_graph import KnowledgeGraph
-    from indexer.ast_indexer import ASTIndexer
-    from indexer.language_registry import clear_cache
-    clear_cache()
-    kg = KnowledgeGraph()
-    return ASTIndexer(graph=kg)
+    import numpy as np
+    fake_model = MagicMock()
+    fake_model.embed.side_effect = lambda texts: iter([np.zeros(384, dtype="float32") for _ in texts])
+    with patch("indexer.ast_indexer.get_model", return_value=fake_model):
+        from graph.knowledge_graph import KnowledgeGraph
+        from indexer.ast_indexer import ASTIndexer
+        from indexer.language_registry import clear_cache
+        clear_cache()
+        kg = KnowledgeGraph()
+        return ASTIndexer(graph=kg)
 
 
 def _write(tmp: Path, name: str, content: str) -> Path:

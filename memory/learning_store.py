@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Dual-scope learning store for CogniRepo.
@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -136,8 +137,23 @@ class _LearningBackend:
         )
 
     def store(self, learning_type: str, text: str, metadata: dict, scope: str) -> str:
-        """Persist a learning record; returns its ID."""
+        """Persist a learning record; returns its ID.
+
+        Identical text (whitespace-normalized) already stored and not
+        deprecated is NOT duplicated — the existing record's ID is returned.
+        Observed without this: the same memory stored 3× across retries,
+        which then multiplies conflict/supersede churn.
+        """
         records = self._load()
+        norm = " ".join(text.lower().split())
+        for r in records:
+            if (
+                not r.get("deprecated", False)
+                and r.get("type") == learning_type
+                and " ".join(r.get("text", "").lower().split()) == norm
+            ):
+                logger.debug("Dedup: learning text already stored as %s", r.get("id"))
+                return r["id"]
         record_id = uuid.uuid4().hex
         record = {
             "id": record_id,
@@ -169,6 +185,14 @@ class _LearningBackend:
             self._save(records)
         return updated
 
+    @staticmethod
+    def _is_numeric_token(tok: str) -> bool:
+        """Return True if a token looks like a number or time unit."""
+        _TIME_UNITS = {"second", "seconds", "minute", "minutes", "hour", "hours",
+                       "day", "days", "week", "weeks", "month", "months", "year", "years",
+                       "ms", "millisecond", "milliseconds"}
+        return tok.isdigit() or tok in _TIME_UNITS
+
     def detect_conflicts(self, text: str, top_k: int = 3) -> list[dict]:
         """
         Return existing non-deprecated learnings with significant word overlap to
@@ -176,6 +200,11 @@ class _LearningBackend:
         stored — the caller decides whether a real conflict exists.
 
         A record is returned when its word-overlap ratio with *text* exceeds 0.3.
+
+        Special case: if the ONLY differing tokens between two texts are numeric or
+        time-unit tokens (e.g. "1 hour" vs "30 minutes"), that is always flagged as
+        a conflict regardless of the overlap ratio — these are value contradictions
+        that the word-overlap heuristic otherwise misses.
         """
         records = self._load()
         records = [r for r in records if not r.get("deprecated", False)]
@@ -184,9 +213,18 @@ class _LearningBackend:
         scored: list[tuple[float, dict]] = []
         for r in records:
             existing_words = set(r.get("text", "").lower().split())
-            overlap = len(words & existing_words) / max(len(words), 1)
+            common = words & existing_words
+            overlap = len(common) / max(len(words), 1)
+
             if overlap > 0.3:
-                scored.append((overlap, r))
+                # Value-change heuristic: if all differing tokens are numbers/time
+                # units, classify as value_contradiction and bump score.
+                diff = (words | existing_words) - common
+                if diff and all(self._is_numeric_token(t) for t in diff):
+                    scored.append((overlap + 0.3, {**r, "type": "value_contradiction"}))
+                else:
+                    scored.append((overlap, r))
+
         scored.sort(key=lambda x: x[0], reverse=True)
         return [r for _, r in scored[:top_k]]
 
@@ -467,11 +505,14 @@ class CompositeLearningStore:
 # ── module-level singleton ────────────────────────────────────────────────────
 
 _STORE: Optional[CompositeLearningStore] = None
+_STORE_LOCK = threading.Lock()
 
 
 def get_learning_store() -> CompositeLearningStore:
-    """Return the process-wide composite learning store."""
+    """Return the process-wide composite learning store (double-checked locking)."""
     global _STORE  # pylint: disable=global-statement
     if _STORE is None:
-        _STORE = CompositeLearningStore()
+        with _STORE_LOCK:
+            if _STORE is None:
+                _STORE = CompositeLearningStore()
     return _STORE

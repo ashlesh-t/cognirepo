@@ -1,10 +1,10 @@
 # pylint: disable=missing-docstring, unnecessary-lambda, import-outside-toplevel, too-few-public-methods, duplicate-code
 # pylint: disable=redefined-outer-name, unused-argument, broad-exception-caught, protected-access
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 tests/test_context_builder.py — B3.3: token budget and trim logic.
@@ -17,7 +17,7 @@ import sys
 from unittest.mock import MagicMock
 
 # Stub heavy deps only when the real package is not installed.
-for _dep in ("networkx", "faiss", "sentence_transformers"):
+for _dep in ("networkx", "faiss", "fastembed"):
     try:
         __import__(_dep)
     except ImportError:

@@ -1,10 +1,10 @@
 # pylint: disable=missing-docstring, unnecessary-lambda, import-outside-toplevel, too-few-public-methods, duplicate-code
 # pylint: disable=redefined-outer-name, unused-argument, broad-exception-caught, protected-access
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 tests/test_encryption.py — Sprint 1.1 acceptance criteria.
@@ -61,6 +61,7 @@ class TestFernetHelpers:
 
     def test_encrypt_decrypt_round_trip(self):
         pytest.importorskip("cryptography")
+        pytest.importorskip("keyring")
         from security.encryption import get_or_create_key, encrypt_bytes, decrypt_bytes
 
         with mock.patch("keyring.get_password", return_value=None), \
@@ -75,6 +76,7 @@ class TestFernetHelpers:
     def test_key_persistence_returns_same_key(self):
         """Second call with same project_id returns the same key."""
         pytest.importorskip("cryptography")
+        pytest.importorskip("keyring")
         from security.encryption import get_or_create_key
 
         stored_key = None
@@ -113,6 +115,7 @@ class TestFernetHelpers:
 class TestEpisodicEncryption:
     def test_encrypt_write_not_plaintext(self, isolated_cognirepo):
         pytest.importorskip("cryptography")
+        pytest.importorskip("keyring")
         _enable_encryption(isolated_cognirepo)
 
         key_store: dict = {}
@@ -136,6 +139,7 @@ class TestEpisodicEncryption:
     def test_encrypt_round_trip(self, isolated_cognirepo):
         """Write encrypted → read decrypted = original event."""
         pytest.importorskip("cryptography")
+        pytest.importorskip("keyring")
         _enable_encryption(isolated_cognirepo)
 
         key_store: dict = {}
@@ -174,6 +178,7 @@ class TestEpisodicEncryption:
 class TestGraphEncryption:
     def test_graph_pkl_encrypted(self, isolated_cognirepo):
         pytest.importorskip("cryptography")
+        pytest.importorskip("keyring")
         _enable_encryption(isolated_cognirepo)
 
         key_store: dict = {}
@@ -215,8 +220,8 @@ class TestGitignoreBlanket:
     def test_gitignore_blanket_pattern(self, isolated_cognirepo):
         """cognirepo init must write * as the primary gitignore pattern."""
         from cli.init_project import init_project
-        with mock.patch("builtins.input", return_value="n"):
-            init_project(no_index=True)
+        # Ensure it doesn't try to run the wizard or ask questions
+        init_project(no_index=True, interactive=False, non_interactive=True)
 
         with open(".cognirepo/.gitignore", encoding="utf-8") as f:
             content = f.read()

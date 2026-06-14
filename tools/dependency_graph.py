@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 tools/dependency_graph.py — expose import/dependency relationships in a
@@ -136,6 +136,19 @@ def dependency_graph(
 
     indexer = _load_indexer()
     files = indexer.index_data.get("files", {})
+
+    if module not in files:
+        # Bare module/package name → file resolution. Lets callers pass
+        # "celery" instead of having to know it maps to "celery/__init__.py".
+        for _cand in (
+            f"{module}.py",
+            f"{module}/__init__.py",
+            f"src/{module}.py",
+            f"src/{module}/__init__.py",
+        ):
+            if _cand in files:
+                module = _cand
+                break
 
     if module not in files:
         # try partial match (filename without path)

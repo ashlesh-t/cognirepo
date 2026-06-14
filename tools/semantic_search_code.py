@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 tools/semantic_search_code.py — semantic vector search over code symbols only.
@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from memory.embeddings import get_model
+from memory.embeddings import encode_with_timeout
 from indexer.ast_indexer import ASTIndexer
 from graph.knowledge_graph import KnowledgeGraph
 
@@ -58,7 +58,8 @@ def semantic_search_code(
     -------
     List of dicts: [{name, type, file, line, score, language, docstring}]
     """
-    model = get_model()
+    import numpy as np  # pylint: disable=import-outside-toplevel
+
     graph = KnowledgeGraph()
     indexer = ASTIndexer(graph=graph)
     indexer.load()
@@ -66,13 +67,11 @@ def semantic_search_code(
     if indexer.faiss_index is None or indexer.faiss_index.ntotal == 0:
         return []
 
-    query_vec = model.encode(query).astype("float32")
+    query_vec = encode_with_timeout(query).astype("float32")
 
     # Over-fetch to allow for language filtering
     fetch_k = top_k * 5 if language else top_k * 2
     fetch_k = min(fetch_k, indexer.faiss_index.ntotal)
-
-    import numpy as np  # pylint: disable=import-outside-toplevel
 
     distances, ids = indexer.faiss_index.search(
         np.array([query_vec], dtype="float32"), fetch_k

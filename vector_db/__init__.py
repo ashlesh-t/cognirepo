@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 vector_db package — vector storage adapters.
@@ -45,5 +45,5 @@ def get_storage_adapter() -> "VectorStorageAdapter":
         from vector_db.chroma_adapter import ChromaDBAdapter  # pylint: disable=import-outside-toplevel
         return ChromaDBAdapter()
 
-    from vector_db.faiss_adapter import FAISSAdapter  # pylint: disable=import-outside-toplevel
-    return FAISSAdapter()
+    from vector_db.local_vector_db import LocalVectorDB  # pylint: disable=import-outside-toplevel
+    return LocalVectorDB()

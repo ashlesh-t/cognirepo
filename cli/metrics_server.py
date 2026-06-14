@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Standalone Prometheus metrics HTTP server for pure-MCP deployments.
@@ -32,7 +32,7 @@ class _MetricsHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        from api.metrics import metrics_available, get_metrics_output  # pylint: disable=import-outside-toplevel
+        from server.metrics import metrics_available, get_metrics_output  # pylint: disable=import-outside-toplevel
         if not metrics_available():
             body = b"prometheus_client not installed\n"
             self.send_response(501)

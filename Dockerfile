@@ -2,12 +2,17 @@
 FROM python:3.11-slim AS builder
 
 WORKDIR /build
-COPY pyproject.toml .
-COPY . .
 
+# Copy metadata first so the dep-install layer is cached independently of source changes.
+COPY pyproject.toml README.md* ./
+
+# Install all dependencies (setuptools finds no packages yet — that's fine; deps still resolve).
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -e ".[dev]" && \
-    pip install --no-cache-dir grpcio grpcio-tools
+    pip install --no-cache-dir ".[dev,security]"
+
+# Copy source and link the editable install without re-downloading deps.
+COPY . .
+RUN pip install --no-cache-dir --no-deps -e .
 
 # ─── Stage 2: runtime ────────────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
@@ -34,18 +39,12 @@ RUN useradd -m -u 1001 cognirepo && chown -R cognirepo:cognirepo /app
 USER cognirepo
 
 # Environment defaults (override via docker-compose or -e flags)
-ENV COGNIREPO_MULTI_AGENT_ENABLED=false \
-    COGNIREPO_GRPC_ENABLED=false \
-    PYTHONUNBUFFERED=1 \
+ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Ports: 8080 = FastAPI REST, 50051 = gRPC
-EXPOSE 8080 50051
+# Default: run init then start MCP server
+CMD ["sh", "-c", "cognirepo init --non-interactive && cognirepo serve"]
 
-# Default: run init then start REST API + MCP server
-# Use CMD override for specific services (see docker-compose.yml)
-CMD ["sh", "-c", "cognirepo init --password ${COGNIREPO_PASSWORD:-changeme} && uvicorn api.main:app --host 0.0.0.0 --port 8080"]
-
-# Health check
+# Health check (simplified: check if process is alive via status)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD curl -f http://localhost:8080/health || exit 1
+  CMD pgrep -f "cognirepo serve" || exit 1

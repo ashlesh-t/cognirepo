@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Centralized path management for CogniRepo storage.
@@ -11,6 +11,7 @@ Two storage scopes:
   - Project scope : .cognirepo/ in the project root (FAISS, graph, AST, project config)
   - Global scope  : ~/.cognirepo/ (user behaviour, preferences, cross-project settings)
 """
+import contextvars
 import hashlib
 import os
 from pathlib import Path
@@ -22,6 +23,12 @@ def get_project_hash(project_path: str) -> str:
 
 _OVERRIDE_DIR = None
 _OVERRIDE_GLOBAL_DIR = None
+
+# Per-task/thread context override — used by CrossRepoRouter to safely switch
+# directory context without mutating the process-wide _OVERRIDE_DIR global.
+_CTX_DIR: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "cognirepo_ctx_dir", default=None
+)
 
 
 def set_cognirepo_dir(path: str):
@@ -66,16 +73,25 @@ def get_global_path(subpath: str) -> str:
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     return full_path
 
+def get_orgs_path() -> str:
+    """Return the absolute path to the global organizations registry."""
+    return get_global_path("orgs.json")
+
 def get_cognirepo_dir() -> str:
     """
     Determine the base directory for .cognirepo storage.
-    
+
     Priority:
-    1. Explicit override via set_cognirepo_dir()
-    2. COGNIREPO_DIR environment variable
-    3. Local .cognirepo/ directory in CWD (if it exists)
-    4. Global ~/.cognirepo/storage/<hash_of_cwd>/
+    1. Per-task context override via _CTX_DIR (used by CrossRepoRouter for thread safety)
+    2. Explicit process-wide override via set_cognirepo_dir()
+    3. COGNIREPO_DIR environment variable
+    4. Local .cognirepo/ directory in CWD (if it exists)
+    5. Global ~/.cognirepo/storage/<hash_of_cwd>/
     """
+    ctx = _CTX_DIR.get()
+    if ctx is not None:
+        return ctx
+
     if _OVERRIDE_DIR:
         return _OVERRIDE_DIR
 
@@ -99,6 +115,26 @@ def get_cognirepo_dir() -> str:
     project_storage = os.path.join(global_base, f"{project_name}_{project_hash}")
     return project_storage
 
+def get_cognirepo_dir_for_repo(repo_path: str) -> str:
+    """
+    Resolve the .cognirepo storage directory for an arbitrary repo path.
+    Mirrors get_cognirepo_dir() priority but accepts an explicit path instead
+    of using CWD.  Used by CrossRepoRouter and run_server().
+
+    Priority:
+    1. Local .cognirepo/ inside repo_path (if it exists)
+    2. Global ~/.cognirepo/storage/<name>_<hash>/  (fallback)
+    """
+    abs_path = os.path.abspath(repo_path)
+    local_dir = os.path.join(abs_path, ".cognirepo")
+    if os.path.isdir(local_dir):
+        return local_dir
+    project_name = os.path.basename(abs_path)
+    project_hash = get_project_hash(abs_path)
+    global_base = os.path.join(str(Path.home()), ".cognirepo", "storage")
+    return os.path.join(global_base, f"{project_name}_{project_hash}")
+
+
 def get_path(subpath: str) -> str:
     """
     Get the absolute path for a file or directory under .cognirepo.
@@ -114,3 +150,22 @@ def get_path(subpath: str) -> str:
     # Ensure directory exists for files
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     return full_path
+
+
+# ── Convenience helpers for tiered indexing + service scanning ────────────────
+
+def pending_tier2_path() -> str:
+    """Queue of w<0.75 files not yet indexed in the Tier 2 background pass."""
+    return get_path("index/pending_tier2.json")
+
+def tier2_progress_path() -> str:
+    """Progress tracker for the background Tier 2 indexing pass."""
+    return get_path("index/tier2_progress.json")
+
+def endpoints_path() -> str:
+    """HTTP endpoint registry built by the endpoint scanner."""
+    return get_path("index/endpoints.json")
+
+def http_calls_path() -> str:
+    """Outbound HTTP call registry built by the HTTP call scanner."""
+    return get_path("index/http_calls.json")

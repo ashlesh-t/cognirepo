@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in recovery root.
+# Licensed under MIT. See LICENSE file in recovery root.
 
 """
 Task 3.2 — Isolate memory/user_memory.py from real ~/.cognirepo during tests.

@@ -1,15 +1,15 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 server/idle_manager.py — TTL-based resource eviction for the MCP server.
 
 After `idle_ttl_seconds` of inactivity (no MCP tool calls), registered
 evict callbacks are fired to release heavy in-process resources:
-  - SentenceTransformer embedding model (~400 MB)
+  - fastembed embedding model (~50 MB ONNX)
   - KnowledgeGraph object
   - ASTIndexer object
 

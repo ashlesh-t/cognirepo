@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 File watcher — uses watchdog to detect changes to any indexed file type
@@ -97,8 +97,9 @@ class RepoFileHandler(FileSystemEventHandler):
                     self.indexer.faiss_index.remove_ids(
                         np.array(old_ids, dtype=np.int64)
                     )
-                except Exception:  # pylint: disable=broad-except
-                    pass
+                except Exception as _exc:  # pylint: disable=broad-except
+                    import logging as _logging  # pylint: disable=import-outside-toplevel
+                    _logging.getLogger(__name__).warning("FAISS remove_ids failed for %s: %s", abs_path, _exc)
 
             # 2. Remove graph nodes (symbols + FILE node) — edges removed automatically
             self.graph.remove_file_nodes(rel_path)
@@ -113,15 +114,17 @@ class RepoFileHandler(FileSystemEventHandler):
             try:
                 from memory.episodic_memory import mark_stale  # pylint: disable=import-outside-toplevel
                 mark_stale(rel_path)
-            except Exception:  # pylint: disable=broad-except
-                pass
+            except Exception as _exc:  # pylint: disable=broad-except
+                import logging as _logging  # pylint: disable=import-outside-toplevel
+                _logging.getLogger(__name__).warning("episodic mark_stale failed for %s: %s", abs_path, _exc)
 
             # 5. Invalidate retrieval cache so stale results are not served
             try:
                 from retrieval.hybrid import invalidate_hybrid_cache  # pylint: disable=import-outside-toplevel
                 invalidate_hybrid_cache()
-            except Exception:  # pylint: disable=broad-except
-                pass
+            except Exception as _exc:  # pylint: disable=broad-except
+                import logging as _logging  # pylint: disable=import-outside-toplevel
+                _logging.getLogger(__name__).warning("cache invalidation failed: %s", _exc)
 
             print(f"[watcher] removed {rel_path} from index")
         except Exception as exc:  # pylint: disable=broad-except

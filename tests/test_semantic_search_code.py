@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 tests/test_semantic_search_code.py — unit tests for semantic_search_code tool.
@@ -81,8 +81,8 @@ class TestSemanticSearchCode:
 
         with patch("tools.semantic_search_code.ASTIndexer") as mock_cls:
             with patch("tools.semantic_search_code.KnowledgeGraph"):
-                with patch("tools.semantic_search_code.get_model") as mock_model:
-                    mock_model.return_value.encode.return_value = np.zeros(384, dtype="float32")
+                with patch("tools.semantic_search_code.encode_with_timeout",
+                           return_value=np.zeros(384, dtype="float32")):
                     mock_cls.return_value = indexer
                     result = semantic_search_code("token verification", top_k=2)
 
@@ -105,8 +105,8 @@ class TestSemanticSearchCode:
 
         with patch("tools.semantic_search_code.ASTIndexer") as mock_cls:
             with patch("tools.semantic_search_code.KnowledgeGraph"):
-                with patch("tools.semantic_search_code.get_model") as mock_model:
-                    mock_model.return_value.encode.return_value = np.zeros(384, dtype="float32")
+                with patch("tools.semantic_search_code.encode_with_timeout",
+                           return_value=np.zeros(384, dtype="float32")):
                     mock_cls.return_value = indexer
                     result = semantic_search_code("func", language="python")
 
@@ -123,8 +123,8 @@ class TestSemanticSearchCode:
 
         with patch("tools.semantic_search_code.ASTIndexer") as mock_cls:
             with patch("tools.semantic_search_code.KnowledgeGraph"):
-                with patch("tools.semantic_search_code.get_model") as mock_model:
-                    mock_model.return_value.encode.return_value = np.zeros(384, dtype="float32")
+                with patch("tools.semantic_search_code.encode_with_timeout",
+                           return_value=np.zeros(384, dtype="float32")):
                     mock_cls.return_value = indexer
                     result = semantic_search_code("func", language="typescript")
 
@@ -157,8 +157,7 @@ class TestSemanticSearchCode:
 
         with patch("tools.semantic_search_code.ASTIndexer") as mock_cls:
             with patch("tools.semantic_search_code.KnowledgeGraph"):
-                with patch("tools.semantic_search_code.get_model") as mock_model:
-                    mock_model.return_value.encode.return_value = vec
+                with patch("tools.semantic_search_code.encode_with_timeout", return_value=vec):
                     mock_cls.return_value = indexer
                     result = semantic_search_code("anything")
 

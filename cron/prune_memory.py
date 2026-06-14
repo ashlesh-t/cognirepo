@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Memory pruner — scores every memory by importance × recency_decay, archives
@@ -116,11 +116,12 @@ def _rebuild_faiss(kept: list[dict[str, Any]], dry_run: bool) -> int:
         return len(kept)
     try:
         import faiss  # pylint: disable=import-outside-toplevel
+        import numpy as np  # pylint: disable=import-outside-toplevel
         from memory.embeddings import get_model  # pylint: disable=import-outside-toplevel
 
         model = get_model()
         texts = [e.get("text", "") for e in kept]
-        vectors = model.encode(texts, normalize_embeddings=True).astype("float32")
+        vectors = np.array(list(model.embed(texts))).astype("float32")
         dim = vectors.shape[1]
         index = faiss.IndexFlatL2(dim)
         index.add(vectors)  # pylint: disable=no-value-for-parameter
@@ -227,6 +228,10 @@ def prune(
             archive_path = _archive_entries(pruned)
             print(f"[prune] archived {len(pruned)} entries → {archive_path}")
         faiss_count = _rebuild_faiss(kept, dry_run=False)
+        if faiss_count < 0:
+            print("[prune] FAISS rebuild failed — index may be corrupt", file=sys.stderr)
+            return {"status": "error", "message": "FAISS rebuild failed",
+                    "total": total, "kept": len(kept), "pruned": len(pruned)}
     else:
         faiss_count = len(kept)
 
@@ -247,12 +252,98 @@ def prune(
     return summary
 
 
+# ── suppression cleanup ───────────────────────────────────────────────────────
+
+def cleanup_suppressed(
+    batch_size: int = 50,
+    rebuild_threshold: float = 0.20,
+    dry_run: bool = False,
+) -> dict:
+    """
+    Drain the CleanupQueue and hard-delete auto-suppressed entries.
+
+    Algorithm:
+    1. Pop `batch_size` highest-priority items from CleanupQueue.
+    2. For each semantic-store item, promote suppressed→deprecated in metadata
+       (so it stays excluded from search even if rebuild doesn't happen yet).
+    3. If the fraction of dead rows (suppressed or deprecated) exceeds
+       `rebuild_threshold`, rebuild the FAISS index from scratch using only
+       the surviving rows.
+
+    Returns a summary dict with counts and whether a rebuild was triggered.
+    """
+    if not _check_memory_pressure():
+        return {"skipped": True, "reason": "circuit_open"}
+
+    try:
+        from memory.cleanup_queue import CleanupQueue          # pylint: disable=import-outside-toplevel
+        from vector_db.local_vector_db import LocalVectorDB    # pylint: disable=import-outside-toplevel
+    except ImportError as exc:
+        return {"error": str(exc)}
+
+    queue = CleanupQueue()
+    queue_len = len(queue)
+    if queue_len == 0:
+        return {"deleted": 0, "rebuilt": False, "queue_was_empty": True}
+
+    batch = queue.pop_batch(batch_size)
+    semantic_rows = [
+        int(item["entry_id"])
+        for item in batch
+        if item.get("store") == "semantic"
+    ]
+
+    if not semantic_rows or dry_run:
+        return {"deleted": len(batch), "rebuilt": False, "dry_run": dry_run}
+
+    db = LocalVectorDB()
+    for row in semantic_rows:
+        if 0 <= row < len(db.metadata):
+            # Promote to deprecated so _rebuild_faiss keeps filter consistent
+            db.metadata[row]["deprecated"] = True
+
+    # Persist promoted flags immediately (without a full rebuild)
+    with open(_semantic_meta(), "wb") as f:
+        import json as _json  # pylint: disable=import-outside-toplevel,redefined-outer-name
+        from security import get_storage_config  # pylint: disable=import-outside-toplevel
+        encrypt, project_id = get_storage_config()
+        content = _json.dumps(db.metadata, indent=2).encode()
+        if encrypt:
+            from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+            content = encrypt_bytes(content, get_or_create_key(project_id))
+        f.write(content)
+
+    # Check rebuild threshold
+    total = len(db.metadata)
+    dead = sum(
+        1 for m in db.metadata
+        if m.get("deprecated") or m.get("suppressed")
+    )
+    rebuilt = False
+    if total > 0 and dead / total >= rebuild_threshold:
+        kept = [
+            m for m in db.metadata
+            if not m.get("deprecated") and not m.get("suppressed")
+        ]
+        rebuild_result = _rebuild_faiss(kept, dry_run=False)
+        rebuilt = rebuild_result >= 0
+
+    return {
+        "deleted": len(batch),
+        "semantic_rows_cleaned": len(semantic_rows),
+        "rebuilt": rebuilt,
+        "dead_fraction": round(dead / total, 3) if total else 0.0,
+        "queue_remaining": max(0, queue_len - len(batch)),
+    }
+
+
 # ── CLI entry ─────────────────────────────────────────────────────────────────
 
 def main() -> None:
     """CLI entry point for pruning semantic memory."""
-    from dotenv import load_dotenv  # pylint: disable=import-outside-toplevel
-    load_dotenv()
+    from dotenv import load_dotenv, find_dotenv  # pylint: disable=import-outside-toplevel
+    # usecwd=True: resolve .env from the project directory, not this source file
+    load_dotenv(find_dotenv(usecwd=True))
     parser = argparse.ArgumentParser(description="Prune CogniRepo semantic memory")
     parser.add_argument("--dry-run", action="store_true",
                         help="Report only — do not modify any files")

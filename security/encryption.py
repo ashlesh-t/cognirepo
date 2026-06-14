@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: MIT
 #
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
-# Licensed under AGPL v3. See LICENSE file in repository root.
+# Licensed under MIT. See LICENSE file in repository root.
 
 """
 Fernet-based encryption helpers for CogniRepo at-rest storage.
@@ -26,8 +26,9 @@ def _require_deps():
         return Fernet, keyring
     except ImportError as exc:
         raise ImportError(
-            "Encryption requires additional packages. "
-            "Run: pip install 'cognirepo[security]'"
+            "Encryption requires additional packages.\n"
+            "  pipx (recommended):  pipx inject cognirepo keyring cryptography\n"
+            "  venv/pip:            pip install 'cognirepo[security]'"
         ) from exc
 
 
