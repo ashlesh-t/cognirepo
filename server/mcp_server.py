@@ -52,6 +52,45 @@ _GRAPH = None  # pylint: disable=invalid-name
 _INDEXER = None  # pylint: disable=invalid-name
 _SINGLETON_LOCK = threading.Lock()
 
+# ── MCP session tracking ──────────────────────────────────────────────────────
+# One session is created per server process; tool calls are appended as
+# user/assistant exchange pairs so get_session_history() reflects MCP usage.
+_MCP_SESSION: dict | None = None  # pylint: disable=invalid-name
+_SESSION_LOCK = threading.Lock()
+
+
+def _get_mcp_session() -> dict | None:
+    return _MCP_SESSION
+
+
+def _init_mcp_session() -> None:
+    """Create a new session for this server process (called once at startup)."""
+    global _MCP_SESSION  # pylint: disable=global-statement
+    try:
+        from orchestrator.session import create_session  # pylint: disable=import-outside-toplevel
+        with _SESSION_LOCK:
+            _MCP_SESSION = create_session(model="mcp-server")
+        logger.debug("MCP session created: %s", _MCP_SESSION["session_id"])
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("MCP session init failed (non-fatal): %s", exc)
+
+
+def _record_mcp_tool_call(tool_name: str, query_summary: str, result_summary: str) -> None:
+    """Append a tool call as an exchange to the MCP session (best-effort)."""
+    global _MCP_SESSION  # pylint: disable=global-statement
+    if _MCP_SESSION is None:
+        return
+    try:
+        from orchestrator.session import append_exchange  # pylint: disable=import-outside-toplevel
+        with _SESSION_LOCK:
+            _MCP_SESSION = append_exchange(
+                _MCP_SESSION,
+                user_msg=f"[tool:{tool_name}] {query_summary}"[:500],
+                assistant_msg=result_summary[:500],
+            )
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.debug("MCP session append failed (non-fatal): %s", exc)
+
 
 def _get_graph():
     """Lazily load KnowledgeGraph (double-checked locking for thread safety)."""
@@ -101,8 +140,14 @@ def _behaviour_enabled() -> bool:
         return False
 
 
-def _index_is_stale() -> bool:
-    """Return True if git HEAD has advanced past the last-indexed commit SHA."""
+def _index_is_stale() -> bool | None:
+    """Return True if git HEAD has advanced past the last-indexed commit SHA.
+
+    Returns None when the comparison is inconclusive (not a git repo, or no
+    SHA recorded yet). Callers should fall back to age-based staleness in
+    that case — previously the False return silently suppressed the
+    auto-reindex trigger even when the index was hours old.
+    """
     try:
         import subprocess as _sp  # pylint: disable=import-outside-toplevel
         from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
@@ -111,10 +156,65 @@ def _index_is_stale() -> bool:
         ).strip()
         last_indexed_path = _gp("index/last_indexed.json")
         if not os.path.exists(last_indexed_path):
-            return False  # no SHA stored yet — treat as up-to-date (can't determine)
+            return None  # no SHA stored yet — inconclusive
         with open(last_indexed_path, encoding="utf-8") as _f:
             import json as _j  # pylint: disable=import-outside-toplevel
             return _j.load(_f).get("commit_sha") != head
+    except Exception:  # pylint: disable=broad-except
+        return None
+
+
+def _watcher_alive() -> bool:
+    """True only if watcher.pid exists AND the process is actually running.
+
+    A dead watcher's leftover PID file used to permanently suppress
+    staleness detection.
+    """
+    try:
+        from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
+        pid_file = _gp("watcher.pid")
+        if not os.path.exists(pid_file):
+            return False
+        with open(pid_file, encoding="utf-8") as _f:
+            pid = int(_f.read().strip())
+        os.kill(pid, 0)  # signal 0 = existence check
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+_REINDEX_LOCK_ORPHAN_S = 30 * 60  # locks older than 30 min are considered orphaned
+
+
+def _spawn_background_reindex(lock_path: str) -> bool:
+    """Atomically acquire the reindex lock and spawn a background reindex.
+
+    Returns True if the reindex subprocess was launched. Uses open(..., "x")
+    so two concurrent tool calls cannot both acquire the lock, and clears
+    orphaned locks left behind by a crashed reindex.
+    """
+    try:
+        import subprocess as _sp  # pylint: disable=import-outside-toplevel
+        os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+        if os.path.exists(lock_path):
+            try:
+                if time.time() - os.path.getmtime(lock_path) > _REINDEX_LOCK_ORPHAN_S:
+                    os.remove(lock_path)  # orphaned lock — a reindex never takes 30 min lock-held
+                else:
+                    return False  # reindex already in flight
+            except OSError:
+                return False
+        try:
+            with open(lock_path, "x", encoding="utf-8"):
+                pass
+        except FileExistsError:
+            return False  # lost the race to another caller
+        _sp.Popen(
+            ["cognirepo", "index-repo", "--changed-only", "--no-watch",
+             "--remove-lock", lock_path],
+            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL, close_fds=True,
+        )
+        return True
     except Exception:  # pylint: disable=broad-except
         return False
 
@@ -343,6 +443,15 @@ def _traced(tool_name: str, fn, *args, **kwargs):
         result = fn(*args, **kwargs)
         logger.info("mcp.tool.end", extra={"tool": tool_name, "status": "ok"})
         get_breaker().record_success()
+        # Record tool call in the MCP session for get_session_history() visibility
+        _query = kwargs.get("query") or kwargs.get("name") or kwargs.get("text") or kwargs.get("function_name") or ""
+        _result_summary = (
+            f"status={result.get('status','ok')} tokens={result.get('token_count','')} "
+            f"sections={len(result.get('sections', []))}"
+            if isinstance(result, dict) else f"{len(result)} results"
+            if isinstance(result, list) else "done"
+        )
+        _record_mcp_tool_call(tool_name, str(_query)[:200], _result_summary)
         return result
     except Exception:
         logger.exception("mcp.tool.error", extra={"tool": tool_name})
@@ -367,10 +476,16 @@ def store_memory(text: str, source: str = "", repo_path: str | None = None) -> d
     with _repo_ctx(repo_path):
         result = _traced("store_memory", _store_memory, text, source)
         intercept_after_store(text, source=source)
-        conflicts = get_learning_store().detect_conflicts(text, top_k=3)
+        # conflicts are already detected against the vector DB in _store_memory and
+        # include the ChromaDB document id needed by supersede_learning.
+        # Normalise field name (conflict_type → type) for API consistency.
         result["conflicts"] = [
-            {"id": c.get("id"), "text": c.get("text"), "type": c.get("type")}
-            for c in conflicts
+            {
+                "id": c.get("id", ""),
+                "text": c.get("text", ""),
+                "type": c.get("conflict_type", c.get("type", "semantic_overlap")),
+            }
+            for c in result.get("conflicts", [])
         ]
     return result
 
@@ -383,18 +498,46 @@ def supersede_learning(
     repo_path: str | None = None,
 ) -> dict:
     """
-    Deprecate an existing learning (by ID from store_memory conflicts list) and
+    Deprecate an existing memory (by ID from store_memory conflicts list) and
     replace it with corrected text.  Use when store_memory returns a conflict
     that contains incorrect or outdated information.
 
+    old_id is the ChromaDB document ID returned in the conflicts list.
     Returns: {found_old: bool, new_id: str}
 
     repo_path: optional absolute path to the target repository.
     """
     with _repo_ctx(repo_path):
-        from memory.learning_store import get_learning_store as _gls  # pylint: disable=import-outside-toplevel
-        result = _gls().supersede_learning(old_id, new_text, learning_type)
-    return result
+        # ChromaDB IDs are numeric strings ("0", "42", …).  Remove the old
+        # entry from the vector DB, then store the replacement.
+        found_old = False
+        new_chroma_id = ""
+        try:
+            from vector_db.factory import get_vector_adapter as _gva  # pylint: disable=import-outside-toplevel
+            from memory.semantic_memory import SemanticMemory as _SM  # pylint: disable=import-outside-toplevel
+            _db = _gva()
+            _db.remove([int(old_id)])
+            found_old = True
+        except Exception:  # pylint: disable=broad-except
+            # Not a ChromaDB id, or entry already removed — fall through to
+            # learning-store path so the API remains backward-compatible.
+            pass
+
+        # Store replacement in the vector DB regardless (new memory either way).
+        try:
+            _sm = _SM()
+            _sm.store(new_text)
+            new_chroma_id = str(_sm.db._next_id - 1)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        if not found_old:
+            # Fallback: try learning-store supersede (for structured learnings).
+            from memory.learning_store import get_learning_store as _gls  # pylint: disable=import-outside-toplevel
+            ls_result = _gls().supersede_learning(old_id, new_text, learning_type)
+            return ls_result
+
+    return {"found_old": found_old, "new_id": new_chroma_id}
 
 
 @mcp.tool()
@@ -417,6 +560,11 @@ def retrieve_memory(query: str, top_k: int = 5, include_org: bool = False, repo_
             results.sort(key=lambda x: x.get("final_score", x.get("score", 0.0)), reverse=True)
             results = results[:top_k]
 
+    try:
+        from tools.context_pack import save_query_context  # pylint: disable=import-outside-toplevel
+        save_query_context(query, tool="retrieve_memory")
+    except Exception:  # pylint: disable=broad-except
+        pass
     return results
 
 
@@ -464,7 +612,7 @@ def org_search(query: str, top_k: int = 5) -> list:
 
 
 @mcp.tool()
-def org_wide_search(query: str, top_k: int = 5) -> list:
+def org_wide_search(query: str, top_k: int = 5) -> dict:
     """
     PRIMARY tool for cross-repo queries. Searches memories across ALL registered repos.
     Use this by default when a query spans multiple services or the answer may live
@@ -473,11 +621,20 @@ def org_wide_search(query: str, top_k: int = 5) -> list:
     Use cross_repo_search when you need explicit scope control (project vs org).
     Use org_search only as a fallback when this returns empty.
 
+    Returns {results, count, repos_searched, repos_skipped} — check repos_skipped
+    if an expected service is missing from results.
+
     Claude: use this as the default cross-repo search.
     """
     from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
     router = CrossRepoRouter()
-    return router.query_all_org_repos(query, top_k=top_k)
+    results, meta = router.query_all_org_repos(query, top_k=top_k, return_meta=True)
+    return {
+        "results": results,
+        "count": len(results),
+        "repos_searched": meta.get("repos_searched", []),
+        "repos_skipped": meta.get("repos_skipped", []),
+    }
 
 
 @mcp.tool()
@@ -539,6 +696,20 @@ def list_org_context() -> dict:
                     entry[key] = node_data[key]
             enriched.append(entry)
         summary["sibling_repos"] = enriched
+
+        # Add child services (only populated when this is an orchestrator/parent repo)
+        _SERVICE_KEYS = ("service_type", "port", "api_base_url", "name")
+        child_paths = og.get_children(os.path.abspath("."))
+        child_repos = []
+        for cp in child_paths:
+            nd = og.G.nodes.get(cp, {})
+            entry = {"path": cp, "name": os.path.basename(cp)}
+            for k in _SERVICE_KEYS:
+                if k in nd:
+                    entry[k] = nd[k]
+            child_repos.append(entry)
+        if child_repos:
+            summary["child_repos"] = child_repos
     except Exception:  # pylint: disable=broad-except
         pass  # fall back to plain list if org graph unavailable
 
@@ -569,7 +740,7 @@ def org_dependencies(depth: int = 2) -> dict:
     deps = og.get_dependencies(current, depth=depth)
     dependents = og.get_dependents(current, depth=depth)
 
-    return {
+    result = {
         "current_repo": current,
         "current_repo_name": os.path.basename(current),
         "organization": router.org_name,
@@ -578,6 +749,35 @@ def org_dependencies(depth: int = 2) -> dict:
         "direct_dependents": [d for d in dependents if d["depth"] == 1],
         "transitive_dependents": [d for d in dependents if d["depth"] > 1],
     }
+
+    # ── parent rollup ─────────────────────────────────────────────────────
+    # When called from an org parent, the parent's own edges are only
+    # CHILD_OF — the CALLS_API topology lives on the children. Roll those
+    # edges up so the parent view shows the actual service call chain
+    # (e.g. client → npci-service → bank-service) instead of a flat list.
+    try:
+        service_topology: list[dict] = []
+        for child in og.get_children(current):
+            for nb in og.G.successors(child):
+                ed = og.G[child][nb]
+                if ed.get("kind") != "CALLS_API" or ed.get("direction") != "forward":
+                    continue
+                entry = {
+                    "src": os.path.basename(child),
+                    "dst": os.path.basename(nb),
+                    "kind": "CALLS_API",
+                    "auto": ed.get("auto", False),
+                }
+                for _k in ("caller_fn", "caller_file", "endpoint_pattern", "endpoint_fn"):
+                    if _k in ed:
+                        entry[_k] = ed[_k]
+                service_topology.append(entry)
+        if service_topology:
+            result["service_topology"] = service_topology
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+    return result
 
 
 @mcp.tool()
@@ -631,6 +831,51 @@ def link_repos(
     return {"linked": True, "edge": {"src": src_repo, "dst": dst_repo, "kind": kind}}
 
 
+def _resolve_repo_for_symbol(symbol: str, og) -> str | None:
+    """Return the repo path that contains `symbol`, by searching each registered repo's
+    AST index.
+
+    Search order: leaf (child) repos first, then orchestrators.  This prevents an
+    orchestrator whose FAISS index was built from the root directory (and thus contains
+    all children's symbols) from shadowing the real owner.
+    """
+    from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+    from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+
+    sym_lower = symbol.lower()
+
+    all_repos = og.list_repos()
+    # Separate orchestrators (role="orchestrator") from leaf repos so children are checked first.
+    def _is_orchestrator(rp: str) -> bool:
+        return og.G.nodes.get(rp, {}).get("role") == "orchestrator"
+
+    ordered = [r for r in all_repos if not _is_orchestrator(r)] + \
+              [r for r in all_repos if     _is_orchestrator(r)]
+
+    for repo_path in ordered:
+        if not os.path.isdir(repo_path):
+            continue
+        cognirepo_dir = get_cognirepo_dir_for_repo(repo_path)
+        if not os.path.isdir(cognirepo_dir):
+            continue
+        tok = _CTX_DIR.set(cognirepo_dir)
+        try:
+            kg = KnowledgeGraph()
+            idx = ASTIndexer(graph=kg)
+            idx.load()
+            for entry in (idx.faiss_meta or []):
+                name = entry.get("name", "")
+                fp   = entry.get("file", "")
+                if sym_lower in name.lower() or sym_lower in fp.lower():
+                    return repo_path
+        except Exception:  # pylint: disable=broad-except
+            pass
+        finally:
+            _CTX_DIR.reset(tok)
+    return None
+
+
 @mcp.tool()
 def cross_repo_traverse(
     symbol: str | None = None,
@@ -656,7 +901,15 @@ def cross_repo_traverse(
     from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
 
     og = get_org_graph()
-    current = os.path.abspath(start_repo) if start_repo else os.path.abspath(".")
+    if start_repo:
+        current = os.path.abspath(start_repo)
+    elif symbol:
+        # Auto-resolve: find which registered repo owns this symbol.
+        # Avoids always defaulting to CWD (parent orchestrator) when the symbol
+        # lives in a child service.
+        current = _resolve_repo_for_symbol(symbol, og) or os.path.abspath(".")
+    else:
+        current = os.path.abspath(".")
 
     result: dict = {
         "start_repo": current,
@@ -713,6 +966,13 @@ def lookup_symbol(name: str, include_org: bool = False, repo_path: str | None = 
                 return []
 
         locations = idx.lookup_symbol(name)
+        if not locations:
+            try:
+                from indexer.on_demand import expand_on_access_for_symbol  # pylint: disable=import-outside-toplevel
+                if expand_on_access_for_symbol(name, _root, idx):
+                    locations = idx.lookup_symbol(name)
+            except Exception:  # pylint: disable=broad-except
+                pass
         result = []
         for loc in locations:
             file_path = loc["file"]
@@ -782,17 +1042,39 @@ def search_token(word: str, repo_path: str | None = None) -> dict:
 
 def _who_calls_dynamic_fallback(function_name: str, repo_root: str | None = None) -> list[dict]:
     """
-    String-literal grep fallback for dynamic dispatch patterns.
-    Finds function_name as a string argument to add_job(), connect(), app.route(), etc.
-    Returns hits labelled found_via=dynamic_dispatch_fallback.
+    Grep fallback for callers not captured in the call graph.
+
+    Three search patterns:
+    1. String-literal dynamic dispatch: "fn_name" / 'fn_name' next to scheduler/signal keywords
+    2. Go receiver method calls: .fn_name( in .go files
+    3. General function calls: fn_name( in any source file (broader net)
     """
     import subprocess  # pylint: disable=import-outside-toplevel
     import re as _re  # pylint: disable=import-outside-toplevel
 
     repo_root = repo_root or os.environ.get("COGNIREPO_ROOT", os.getcwd())
     results = []
+    seen_locs: set[str] = set()
+
+    def _add_result(fpath: str, lineno_s: str, code: str, found_via: str) -> None:
+        loc_key = f"{fpath}:{lineno_s}"
+        if loc_key in seen_locs:
+            return
+        seen_locs.add(loc_key)
+        try:
+            rel_path = os.path.relpath(fpath, repo_root)
+        except ValueError:
+            rel_path = fpath
+        results.append({
+            "caller": f"{found_via}::{rel_path}:{lineno_s}",
+            "file": rel_path,
+            "line": int(lineno_s),
+            "code_snippet": code.strip()[:120],
+            "found_via": found_via,
+        })
+
     try:
-        # Search for function_name as a string argument in source files
+        # ── Pattern 1: dynamic dispatch (Python/JS/TS string argument patterns) ─
         proc = subprocess.run(  # nosec B603
             ["grep", "-rn", "--include=*.py", "--include=*.js", "--include=*.ts",
              function_name, repo_root],
@@ -803,25 +1085,43 @@ def _who_calls_dynamic_fallback(function_name: str, repo_root: str | None = None
             if len(parts) < 3:
                 continue
             fpath, lineno_s, code = parts
-            # Only include lines that look like dynamic registration (not definitions)
             if (f"def {function_name}" in code or f"class {function_name}" in code):
                 continue
-            # Check for string argument or scheduler/signal patterns
             if (function_name in code and
                     (f'"{function_name}"' in code or f"'{function_name}'" in code or
                      any(kw in code for kw in ["add_job", "connect", "route", "task",
                                                "signal", "register", "handler", "callback"]))):
-                try:
-                    rel_path = os.path.relpath(fpath, repo_root)
-                except ValueError:
-                    rel_path = fpath
-                results.append({
-                    "caller": f"dynamic_dispatch::{rel_path}:{lineno_s}",
-                    "file": rel_path,
-                    "line": int(lineno_s),
-                    "code_snippet": code.strip()[:120],
-                    "found_via": "dynamic_dispatch_fallback",
-                })
+                _add_result(fpath, lineno_s, code, "dynamic_dispatch_fallback")
+
+        # ── Pattern 2: Go receiver method calls — .fn_name( ────────────────────
+        go_pattern = rf"\.{_re.escape(function_name)}\s*\("
+        proc_go = subprocess.run(  # nosec B603
+            ["grep", "-rn", "-E", "--include=*.go", go_pattern, repo_root],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in proc_go.stdout.splitlines():
+            parts = line.split(":", 2)
+            if len(parts) < 3:
+                continue
+            fpath, lineno_s, code = parts
+            # Skip the definition line itself
+            if f"func " in code and function_name in code:
+                continue
+            _add_result(fpath, lineno_s, code, "go_receiver_fallback")
+
+        # ── Pattern 3: Java/Kotlin method calls — .fn_name( ────────────────────
+        proc_jvm = subprocess.run(  # nosec B603
+            ["grep", "-rn", "-E", "--include=*.java", "--include=*.kt",
+             rf"\.{_re.escape(function_name)}\s*\(", repo_root],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in proc_jvm.stdout.splitlines():
+            parts = line.split(":", 2)
+            if len(parts) < 3:
+                continue
+            fpath, lineno_s, code = parts
+            _add_result(fpath, lineno_s, code, "jvm_method_fallback")
+
     except Exception as _exc:  # pylint: disable=broad-except
         import logging as _logging  # pylint: disable=import-outside-toplevel
         _logging.getLogger(__name__).warning("who_calls grep fallback failed: %s", _exc)
@@ -853,29 +1153,60 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
                 return {"local_callers": [], "cross_repo_callers": [], "truncated": False}
 
         from graph.knowledge_graph import EdgeType  # pylint: disable=import-outside-toplevel
+
+        # After stub resolution, callers may have been moved to real file-qualified
+        # nodes (e.g. "utils/auth.py::verify_token") or remain as "symbol::verify_token".
+        # Search both to catch either case.
         callee_node = f"symbol::{function_name}"
+        _real_callee: str | None = None
         if not g.node_exists(callee_node):
-            fallback = _who_calls_dynamic_fallback(function_name, repo_root)
-            _auto_store_hook("who_calls", fallback)
-            return {
-                "local_callers": fallback[:50],
-                "cross_repo_callers": [],
-                "truncated": len(fallback) > 50,
-            }
-        result = []
-        for caller in g.G.successors(callee_node):
-            edge_data = g.G[callee_node][caller]
-            if edge_data.get("rel") == EdgeType.CALLS:
-                node_data = dict(g.G.nodes[caller])
-                result.append({
-                    "caller": caller,
-                    "file": node_data.get("file", ""),
-                    "line": node_data.get("line", -1),
-                    "source": "graph",
-                })
+            # Try resolved real nodes: any node whose last segment matches function_name
+            _candidates = [
+                n for n in g.G.nodes()
+                if n.endswith(f"::{function_name}") and not n.startswith("symbol::")
+            ]
+            if _candidates:
+                _real_callee = _candidates[0]
+            else:
+                fallback = _who_calls_dynamic_fallback(function_name, repo_root)
+                _auto_store_hook("who_calls", fallback)
+                return {
+                    "local_callers": fallback[:50],
+                    "cross_repo_callers": [],
+                    "truncated": len(fallback) > 50,
+                }
+
+        def _collect_callers(node: str, found_via: str) -> list[dict]:
+            callers: list[dict] = []
+            for caller in g.G.successors(node):
+                edge_data = g.G[node][caller]
+                if edge_data.get("rel") == EdgeType.CALLS:
+                    node_data = dict(g.G.nodes[caller])
+                    callers.append({
+                        "caller": caller,
+                        "file": node_data.get("file", ""),
+                        "line": node_data.get("line", -1),
+                        "source": found_via,
+                    })
+            return callers
+
+        result: list[dict] = []
+        _search_node = _real_callee or callee_node
+        result = _collect_callers(_search_node, "graph")
+
+        if not result and _real_callee is None:
+            # Check if stub is tagged as resolved/ambiguous and search real nodes too
+            stub_data = dict(g.G.nodes.get(callee_node, {}))
+            if stub_data.get("ambiguous") and stub_data.get("candidates"):
+                for cand_file in stub_data["candidates"][:3]:
+                    real_node = f"{cand_file}::{function_name}"
+                    result.extend(_collect_callers(real_node, "graph_resolved_ambiguous"))
+
         if not result:
-            for caller in g.G.predecessors(callee_node):
-                edge_data = g.G[caller][callee_node]
+            # Legacy direction: predecessors with CALLED_BY
+            _search_node2 = _real_callee or callee_node
+            for caller in g.G.predecessors(_search_node2):
+                edge_data = g.G[caller][_search_node2]
                 if edge_data.get("rel") == EdgeType.CALLED_BY:
                     node_data = dict(g.G.nodes[caller])
                     result.append({
@@ -888,6 +1219,50 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
             fallback = _who_calls_dynamic_fallback(function_name, repo_root)
             if fallback:
                 result = fallback
+            else:
+                # Check if stub exists but is unresolved (function defined but never called)
+                _stub_data = dict(g.G.nodes.get(callee_node, {}))
+                _note = (
+                    f"No callers found for '{function_name}' in graph or via grep fallback. "
+                    "For Go receiver methods, ensure the repo is indexed: "
+                    "cognirepo index-repo . — then retry."
+                )
+                if _stub_data.get("unresolved"):
+                    _note = (
+                        f"'{function_name}' is called in some files but the definition "
+                        "was not found in the index. Re-run 'cognirepo index-repo .' to resolve."
+                    )
+                return {
+                    "local_callers": [],
+                    "cross_repo_callers": [],
+                    "truncated": False,
+                    "note": _note,
+                    "found_via": "stub_unresolved" if _stub_data.get("unresolved") else "not_found",
+                }
+
+        # ── coverage honesty ──────────────────────────────────────────────
+        # Static call graphs miss interface/dynamic dispatch (observed on
+        # moby: who_calls("NewDaemon") returned only the test-harness caller
+        # and missed cmd/dockerd). When the graph yields very few callers,
+        # augment with the grep fallback and say so, instead of presenting
+        # a possibly-incomplete list with full confidence.
+        coverage_note: str | None = None
+        if 0 < len(result) <= 2:
+            try:
+                _extra = _who_calls_dynamic_fallback(function_name, repo_root)
+                _seen = {(c.get("file"), c.get("line")) for c in result}
+                for _c in _extra:
+                    _key = (_c.get("file"), _c.get("line"))
+                    if _key not in _seen:
+                        _seen.add(_key)
+                        result.append(_c)
+            except Exception:  # pylint: disable=broad-except
+                pass
+            coverage_note = (
+                "Static call graph returned few callers; results were augmented "
+                "with a text-scan fallback (see found_via tags). Dynamic/interface "
+                "dispatch call sites may still be missing — verify critical callers."
+            )
 
         # Cross-repo: check dependent services for callers of this function
         cross_repo_callers: list[dict] = []
@@ -932,8 +1307,69 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
         "cross_repo_callers": cross_repo_callers[:_MAX_CALLERS],
         "truncated": len(result) > _MAX_CALLERS or len(cross_repo_callers) > _MAX_CALLERS,
     }
+    if coverage_note:
+        final["coverage_note"] = coverage_note
     _behaviour_record_query(function_name, final)
     return final
+
+
+@mcp.tool()
+def find_symbol_path(
+    from_symbol: str,
+    to_symbol: str,
+    from_repo: str = "",
+    to_repo: str = "",
+) -> dict:
+    """
+    Find the shortest call-graph path between two symbols, crossing service
+    boundaries via the org graph when needed.
+
+    Uses weighted Dijkstra (w=1.0→cost 1, w=0.75→1.3, w=0.5→2.0,
+    cross-service org edge→5) to prefer traversal through core entry-point
+    symbols over indirect paths.
+
+    from_symbol : Name of the source symbol.
+    to_symbol   : Name of the destination symbol.
+    from_repo   : Absolute path to source repo (auto-detected if omitted).
+    to_repo     : Absolute path to destination repo (auto-detected if omitted).
+
+    Returns {path, hops, crosses_services, services_traversed} or {error}.
+    """
+    from graph.cross_service_path import find_symbol_path as _find_path  # pylint: disable=import-outside-toplevel
+    return _find_path(
+        from_symbol=from_symbol,
+        to_symbol=to_symbol,
+        from_repo=from_repo or None,
+        to_repo=to_repo or None,
+    )
+
+
+@mcp.tool()
+def get_service_endpoints(repo_path: str = "") -> dict:
+    """
+    Return the HTTP endpoint registry for a service (from endpoints.json).
+
+    Endpoints are populated by cognirepo index-repo and include method,
+    path pattern, handler function name, file, and framework.
+
+    repo_path: absolute path to the target repo (defaults to current project).
+
+    Returns {endpoints, count, scanned_at} or {endpoints: [], count: 0}.
+    """
+    from indexer.endpoint_scanner import load_endpoints  # pylint: disable=import-outside-toplevel
+    from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+
+    _target = os.path.abspath(repo_path) if repo_path else os.getcwd()
+    try:
+        _sib_dir = get_cognirepo_dir_for_repo(_target)
+        _token = _CTX_DIR.set(_sib_dir)
+        try:
+            eps = load_endpoints(_target)
+        finally:
+            _CTX_DIR.reset(_token)
+    except Exception:  # pylint: disable=broad-except
+        eps = []
+    return {"endpoints": eps, "count": len(eps), "repo": os.path.basename(_target)}
 
 
 @mcp.tool()
@@ -952,24 +1388,56 @@ def subgraph(entity: str, depth: int = 2, repo_path: str | None = None) -> dict:
             if g.G.number_of_nodes() == 0:
                 return _EMPTY_GRAPH_WARNING
         _MAX_NODES, _MAX_EDGES = 200, 500
+        _MAX_RESPONSE_CHARS = 30_000
         candidates = [entity, f"symbol::{entity}", f"concept::{entity.lower()}"]
-        for candidate in candidates:
+        # Case-insensitive suffix scan: collect ALL '::<entity>' matches and rank
+        # by degree so file-qualified keys like 'pkg/server/handler.go::GenericAPIServer'
+        # resolve even when the bare/symbol:: forms don't exist.
+        entity_lower = entity.lower()
+        fuzzy_candidates = sorted(
+            (
+                n for n in g.G.nodes
+                if n.lower().endswith(f"::{entity_lower}") or n.lower() == entity_lower
+            ),
+            key=g.G.degree,
+            reverse=True,
+        )
+        for candidate in candidates + fuzzy_candidates:
             if g.node_exists(candidate):
-                result = g.subgraph_around(candidate, radius=depth)
-                nodes = result.get("nodes", [])
-                edges = result.get("edges", [])
-                truncated = len(nodes) > _MAX_NODES or len(edges) > _MAX_EDGES
-                if truncated:
-                    result = {
-                        "nodes": nodes[:_MAX_NODES],
-                        "edges": edges[:_MAX_EDGES],
-                        "truncated": True,
-                        "total_nodes": len(nodes),
-                        "total_edges": len(edges),
-                    }
+                result = g.subgraph_around(
+                    candidate, radius=depth,
+                    max_nodes=_MAX_NODES, max_edges=_MAX_EDGES,
+                )
+                if candidate != entity:
+                    result["resolved_to"] = candidate
+                # Serialized-size cap: trim node/edge lists until the JSON
+                # payload is reasonable for an MCP response (~30k chars).
+                try:
+                    while (
+                        len(json.dumps(result, default=str)) > _MAX_RESPONSE_CHARS
+                        and (result.get("nodes") or result.get("edges"))
+                    ):
+                        if result.get("edges"):
+                            result["edges"] = result["edges"][: max(len(result["edges"]) // 2, 0) ]
+                        if result.get("nodes") and len(json.dumps(result, default=str)) > _MAX_RESPONSE_CHARS:
+                            result["nodes"] = result["nodes"][: max(len(result["nodes"]) // 2, 0) ]
+                        result["truncated"] = True
+                        if not result.get("nodes") and not result.get("edges"):
+                            break
+                except (TypeError, ValueError):
+                    pass
                 _auto_store_hook("subgraph", result)
                 return result
-    return {"nodes": [], "edges": []}
+    return {
+        "nodes": [], "edges": [],
+        "status": "not_found",
+        "hint": (
+            f"Symbol '{entity}' not found in the knowledge graph. "
+            f"Try lookup_symbol('{entity}') first to find the exact indexed name. "
+            f"The graph uses 'symbol::name' prefixes internally — "
+            f"e.g. subgraph('symbol::{entity}') or subgraph('concept::{entity.lower()}')."
+        ),
+    }
 
 
 @mcp.tool()
@@ -982,6 +1450,11 @@ def episodic_search(query: str, limit: int = 10, repo_path: str | None = None) -
     with _repo_ctx(repo_path):
         result = search_episodes(query, limit)
     _behaviour_record_query(query, result)
+    try:
+        from tools.context_pack import save_query_context  # pylint: disable=import-outside-toplevel
+        save_query_context(query, tool="episodic_search")
+    except Exception:  # pylint: disable=broad-except
+        pass
     return result
 
 
@@ -1033,12 +1506,26 @@ def graph_stats(repo_path: str | None = None) -> dict:
                 mtime = os.path.getmtime(ast_index_path)
                 age_s = time.time() - mtime
                 index_age_minutes = int(age_s // 60)
-                # Stale if >60 min old; check for running watcher via PID file
-                _pid_file = get_path("watcher.pid")
-                watcher_running = os.path.exists(_pid_file)
-                index_stale = index_age_minutes > 60 and not watcher_running
+                # Stale if >60 min old; only a LIVE watcher suppresses staleness
+                index_stale = index_age_minutes > 60 and not _watcher_alive()
+                # Age says stale, but if git HEAD still matches the last
+                # indexed SHA the CONTENT is current — reporting stale + not
+                # triggering a reindex read as contradictory to agents.
+                if index_stale and _index_is_stale() is False:
+                    index_stale = False
             except Exception:  # pylint: disable=broad-except
                 pass
+    stale_reindexing_triggered = False
+    if index_stale:
+        try:
+            # SHA moved (True) or comparison inconclusive (None) → reindex.
+            # (index_stale is already False when HEAD matches the last SHA.)
+            if _index_is_stale() is not False:
+                stale_reindexing_triggered = _spawn_background_reindex(
+                    get_path("index/reindex.lock")
+                )
+        except Exception:  # pylint: disable=broad-except
+            pass
     return {
         "node_count": stats["nodes"],
         "edge_count": stats["edges"],
@@ -1046,6 +1533,7 @@ def graph_stats(repo_path: str | None = None) -> dict:
         "last_indexed": last_indexed,
         "index_age_minutes": index_age_minutes,
         "index_stale": index_stale,
+        "stale_reindexing_triggered": stale_reindexing_triggered,
     }
 
 
@@ -1084,7 +1572,21 @@ def search_docs(query: str, top_k: int = 5, repo_path: str | None = None) -> dic
         result = _traced("search_docs", _search_docs, query=query)
         if isinstance(result, list):
             result = result[:top_k]
-    return result if isinstance(result, dict) else {"results": result, "count": len(result)}
+    try:
+        from tools.context_pack import save_query_context  # pylint: disable=import-outside-toplevel
+        save_query_context(query, tool="search_docs")
+    except Exception:  # pylint: disable=broad-except
+        pass
+    if isinstance(result, dict):
+        return result
+    out: dict = {"results": result, "count": len(result)}
+    if not result:
+        out["status"] = "no_doc_matches"
+        out["hint"] = (
+            "No documentation matched. If this repo has docs, the doc index may "
+            "be empty — run `cognirepo index-repo .` to populate it."
+        )
+    return out
 
 
 @mcp.tool()
@@ -1276,21 +1778,19 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         if index_status in ("ok", "empty"):
             try:
                 from config.paths import get_path as _gp_lock  # pylint: disable=import-outside-toplevel
-                _lock_path = _gp_lock("index/reindex.lock")
-                if _index_is_stale() and not os.path.exists(_lock_path):
-                    import subprocess as _sp_ri  # pylint: disable=import-outside-toplevel
-                    os.makedirs(os.path.dirname(_lock_path), exist_ok=True)
-                    open(_lock_path, "w").close()  # noqa: WPS515
-                    _sp_ri.Popen(
-                        [
-                            "cognirepo", "index-repo",
-                            "--changed-only", "--no-watch",
-                            "--remove-lock", _lock_path,
-                        ],
-                        stdout=_sp_ri.DEVNULL,
-                        stderr=_sp_ri.DEVNULL,
-                        close_fds=True,
-                    )
+                _sha_stale = _index_is_stale()
+                if _sha_stale is None:
+                    # SHA comparison inconclusive — fall back to mtime age
+                    try:
+                        _ast_p = _gp_lock("index/ast_index.json")
+                        _sha_stale = (
+                            os.path.exists(_ast_p)
+                            and (time.time() - os.path.getmtime(_ast_p)) > 3600
+                            and not _watcher_alive()
+                        )
+                    except OSError:
+                        _sha_stale = False
+                if _sha_stale and _spawn_background_reindex(_gp_lock("index/reindex.lock")):
                     index_status = "reindexing"
             except Exception:  # pylint: disable=broad-except
                 pass
@@ -1355,7 +1855,33 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         except Exception:  # pylint: disable=broad-except
             pass
 
-    return {
+    # ── child services (orchestrator repos only) ──────────────────────────────
+    child_services: list[dict] = []
+    try:
+        from graph.org_graph import get_org_graph as _gog  # pylint: disable=import-outside-toplevel
+        _og = _gog()
+        _children = _og.get_children(os.path.abspath("."))
+        for _cp in _children:
+            _nd = _og.G.nodes.get(_cp, {})
+            _entry: dict = {"name": os.path.basename(_cp), "path": _cp}
+            for _k in ("service_type", "port", "api_base_url"):
+                if _k in _nd:
+                    _entry[_k] = _nd[_k]
+            # Check if this child has been indexed
+            try:
+                from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo as _gcdr  # pylint: disable=import-outside-toplevel
+                _ctok = _CTX_DIR.set(_gcdr(_cp))
+                try:
+                    _entry["indexed"] = os.path.exists(get_path("index/ast_index.json"))
+                finally:
+                    _CTX_DIR.reset(_ctok)
+            except Exception:  # pylint: disable=broad-except
+                pass
+            child_services.append(_entry)
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+    result: dict = {
         "repo": repo_name,
         "architecture": architecture,
         "hot_symbols": hot_symbols,
@@ -1364,6 +1890,9 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         "error_patterns": error_patterns,
         "index_health": {"symbols": symbol_count, "files": file_count, "status": index_status},
     }
+    if child_services:
+        result["child_services"] = child_services
+    return result
 
 
 @mcp.tool()
@@ -2064,6 +2593,7 @@ _REGISTERED_TOOLS: set[str] = {
     "cross_repo_traverse", "episodic_search", "org_wide_search", "list_org_context",
     "get_user_profile", "record_error", "get_error_patterns", "link_repos",
     "record_user_preference", "supersede_learning", "get_agent_bootstrap",
+    "find_symbol_path", "get_service_endpoints",
 }
 
 
@@ -2084,8 +2614,9 @@ def run_server(project_dir: str | None = None) -> None:
     Storage defaults to ``~/.cognirepo/storage/<project_hash>/`` to ensure
     isolation between projects even when started without flags.
     """
-    from dotenv import load_dotenv  # pylint: disable=import-outside-toplevel
-    load_dotenv()
+    from dotenv import load_dotenv, find_dotenv  # pylint: disable=import-outside-toplevel
+    # usecwd=True: resolve .env from the project directory, not this source file
+    load_dotenv(find_dotenv(usecwd=True))
     if project_dir:
         from config.paths import (  # pylint: disable=import-outside-toplevel
             set_cognirepo_dir, get_cognirepo_dir_for_repo,
@@ -2114,6 +2645,7 @@ def run_server(project_dir: str | None = None) -> None:
         pass  # watcher is best-effort — never block server startup
 
     _write_manifest()
+    _init_mcp_session()
 
     # Pre-warm embedding model in background — reduces first-query latency from ~6s to ~0s
     import threading as _threading  # pylint: disable=import-outside-toplevel

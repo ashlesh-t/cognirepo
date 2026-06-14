@@ -245,11 +245,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. In brief:
 
 ## Diagrams
 
-Rendered architecture diagrams are in `docs/architecture/diagrams/`. These are placeholders
-for v0.1.0 — they will be replaced with proper diagrams before v0.3.0.
-
-| File | Description |
-|------|-------------|
-| `system-overview.png` | Full component map |
-| `data-flow.png` | Request path from tool call to model response |
-| `retrieval-pipeline.png` | Hybrid 3-signal retrieval pipeline (AST pre-scorer → vector+graph+behaviour merge) |
+The component map and the hybrid 3-signal retrieval pipeline (AST pre-scorer →
+vector + graph + behaviour merge) are documented as ASCII diagrams in
+[README.md](../../README.md) ("How it works") and [docs/ARCHITECTURE.md](../ARCHITECTURE.md).
+The earlier placeholder PNGs under `docs/architecture/diagrams/` were removed in v1.1.0.

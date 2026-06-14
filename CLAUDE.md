@@ -11,7 +11,8 @@ Goal: cut token overhead and context loss between AI sessions, not add complexit
 - Model names only in `orchestrator/classifier.py`. No hardcoding elsewhere.
 - `retrieval/hybrid.py` owns all retrieval. Never call FAISS or the graph directly from tools.
 - Tools in `tools/` are the single entry point. Stateless, no cross-tool calls.
-
+- When ever any code parts get updated and if the document existing ones dont cover or needs changes ,then update the docs accordingly.
+ 
 ## Session start sequence (run in this order)
 
 1. `get_session_brief()` — architecture + hot symbols + index health
@@ -92,12 +93,19 @@ cognirepo search-docs <q>       # search indexed docs
 cognirepo doctor                # health check
 cognirepo benchmark             # measure token reduction
 cognirepo prime                 # bootstrap session context (CLI version of get_session_brief)
+cognirepo org rewire            # repair cross-service CALLS_API edges (run after indexing all services)
 ```
 
 ## Stack
 
 Python 3.11+ · FAISS · fastembed/ONNX (all-MiniLM-L6-v2, dim 384) · NetworkX ·
 tree-sitter · FastMCP · argparse (CLI) · tiktoken
+
+## Microservice detection
+
+`cli/service_detect.py::_SERVICE_MARKERS` maps project marker filenames → service type.
+This list **MUST stay in sync** with `indexer/language_registry.py::_GRAMMAR_MAP`.
+Whenever a new language is added to `language_registry`, add its build file marker here too.
 
 ## Dev detail
 

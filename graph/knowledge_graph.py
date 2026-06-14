@@ -81,6 +81,7 @@ class NodeType:  # pylint: disable=too-few-public-methods
     USER_ACTION = "USER_ACTION"
     MEMORY = "MEMORY"          # cross-agent memory nodes (synced from Claude/Gemini/etc.)
     ERROR = "ERROR"            # error pattern nodes for tracking recurring mistakes
+    ENDPOINT = "ENDPOINT"      # exposed HTTP/gRPC endpoint (method + path pattern)
 
 
 class EdgeType:  # pylint: disable=too-few-public-methods
@@ -93,6 +94,8 @@ class EdgeType:  # pylint: disable=too-few-public-methods
     CO_OCCURS = "CO_OCCURS"
     IMPORTS = "IMPORTS"        # file A imports module/file B
     INHERITS = "INHERITS"      # class A inherits from class B
+    EXPOSES = "EXPOSES"        # function → ENDPOINT node (this function handles this route)
+    CALLS_ENDPOINT = "CALLS_ENDPOINT"  # caller function → remote ENDPOINT stub (cross-service)
 
 
 class KnowledgeGraph:
@@ -115,7 +118,16 @@ class KnowledgeGraph:
             encrypt, project_id = get_storage_config()
             if encrypt:
                 from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
-                raw = decrypt_bytes(raw, get_or_create_key(project_id))
+                try:
+                    raw = decrypt_bytes(raw, get_or_create_key(project_id))
+                except Exception:  # pylint: disable=broad-except
+                    # The file may have been written unencrypted (e.g. by a
+                    # process that resolved the wrong config context before
+                    # the _CTX_DIR fix). Fall through and try plaintext —
+                    # it will be encrypted on the next save(). A genuinely
+                    # encrypted-with-wrong-key file still fails the pickle
+                    # load below and is handled by the outer except.
+                    pass
             self.G = pickle.loads(raw)  # nosec B301
         except Exception as exc:  # pylint: disable=broad-except
             warnings.warn(
@@ -268,18 +280,53 @@ class KnowledgeGraph:
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             return None
 
-    def subgraph_around(self, node_id: str, radius: int = 2) -> dict:
+    def subgraph_around(
+        self,
+        node_id: str,
+        radius: int = 2,
+        max_nodes: int = 200,
+        max_edges: int = 500,
+        hub_degree_limit: int = 500,
+    ) -> dict:
         """
-        Returns {"nodes": [...], "edges": [...]} of the ego graph around node_id.
-        Suitable for context injection (pass to format_subgraph_for_context).
+        Returns {"nodes": [...], "edges": [...], "truncated": bool} of the
+        neighbourhood around node_id, bounded DURING expansion.
+
+        Previously this used nx.ego_graph(), which materializes the full
+        ego graph before any cap is applied — on syscall-heavy repos a
+        depth-3 call could pull 10k+ nodes and inflate RSS past the circuit
+        breaker limit. The bounded BFS stops at max_nodes and skips hub
+        nodes whose degree exceeds hub_degree_limit (e.g. errnoErr/uintptr
+        fan-out), which are connectivity noise rather than architecture.
         """
         if not self.G.has_node(node_id):
             return {"nodes": [], "edges": []}
 
-        ego = nx.ego_graph(self.G, node_id, radius=radius, undirected=True)
+        visited: set[str] = {node_id}
+        frontier: list[str] = [node_id]
+        truncated = False
+        for _ in range(max(radius, 0)):
+            if truncated or not frontier:
+                break
+            next_frontier: list[str] = []
+            for n in frontier:
+                for nb in nx.all_neighbors(self.G, n):
+                    if nb in visited:
+                        continue
+                    if self.G.degree(nb) > hub_degree_limit:
+                        continue  # hub node — skip, never expand
+                    visited.add(nb)
+                    next_frontier.append(nb)
+                    if len(visited) >= max_nodes:
+                        truncated = True
+                        break
+                if truncated:
+                    break
+            frontier = next_frontier
 
         nodes = []
-        for n, d in ego.nodes(data=True):
+        for n in visited:
+            d = self.G.nodes[n]
             # Skip builtin names — they add noise, not signal, to neighbourhoods
             bare = n.split("::")[-1]
             if d.get("type") == "CONCEPT" and bare in PYTHON_BUILTINS:
@@ -289,7 +336,12 @@ class KnowledgeGraph:
             nodes.append(entry)
 
         edges = []
-        for u, v, d in ego.edges(data=True):
+        for u, v, d in self.G.edges(visited, data=True):
+            if v not in visited:
+                continue
+            if len(edges) >= max_edges:
+                truncated = True
+                break
             edge: dict = {
                 "src": u, "dst": v,
                 "rel": d.get("rel", "?"),
@@ -299,7 +351,7 @@ class KnowledgeGraph:
                 edge["purpose"] = d["purpose"]
             edges.append(edge)
 
-        return {"nodes": nodes, "edges": edges}
+        return {"nodes": nodes, "edges": edges, "truncated": truncated}
 
     # ── stats ─────────────────────────────────────────────────────────────────
 

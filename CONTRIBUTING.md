@@ -9,11 +9,20 @@ Thank you for contributing! This guide covers the basics to get you started. For
 ```bash
 git clone https://github.com/ashlesh-t/cognirepo
 cd cognirepo
+
+# Option A — pipx (global binary, isolated venv, works on Arch/Debian/Ubuntu):
+pipx install -e ".[dev,languages,security]"
+
+# Option B — inside a local venv:
 python -m venv venv && source venv/bin/activate
 pip install -e ".[dev,languages,security]"
+
 pre-commit install
 pytest tests/ -v   # should all be green
 ```
+
+> **Arch Linux / Debian 12+ / Ubuntu 24.04+:** Do not `pip install` into system Python.
+> Use pipx (Option A) or activate a venv first (Option B).
 
 ---
 
@@ -45,7 +54,7 @@ If you are adding logic in `server/mcp_server.py`, `api/routes/`, or `rpc/server
 
 **`behaviour_tracking`** — opt-in flag in `.cognirepo/config.json`. When enabled, CogniRepo records query patterns, terminology, interaction depth, and symbol access frequency. `get_user_profile()` returns framing hints that adjust response depth and vocabulary. Enable via `cognirepo setup` (prompts during wizard) or set `"behaviour_tracking": true` in config manually.
 
-All 32 MCP tools are documented in [`docs/MCP_TOOLS.md`](docs/MCP_TOOLS.md).
+All 34 MCP tools are documented in [`docs/MCP_TOOLS.md`](docs/MCP_TOOLS.md).
 
 ---
 

@@ -57,10 +57,17 @@ def _count_tokens(text: str) -> int:
     return len(_ENC.encode(text))
 
 # ── confidence gate ────────────────────────────────────────────────────────────
-# Minimum vector_score for a code hit to be considered confident.
-# Below this threshold, context_pack returns a structured failure rather than
-# README noise.  Set lower when the embedding model is weak or the repo is small.
-_MIN_CODE_CONFIDENCE: float = float(os.environ.get("COGNIREPO_MIN_CONFIDENCE", "0.25"))
+# Minimum final_score for a code hit to be considered confident.
+# Set to 0.20 (down from 0.25) because all-MiniLM-L6-v2 scores are inherently
+# lower than larger models, and the cold-graph renormalization in hybrid.py now
+# avoids halving scores on fresh indices. 0.20 still rejects pure README noise
+# (scores ~0.10–0.15) while passing genuine code matches (scores ~0.25–0.60).
+_MIN_CODE_CONFIDENCE: float = float(os.environ.get("COGNIREPO_MIN_CONFIDENCE", "0.20"))
+
+# Relative noise gate: sections scoring below this fraction of the best hit in
+# their bucket are dropped from the pack (they're BM25/semantic stragglers, not
+# genuine matches). 0.5 keeps close runners-up while cutting tail noise.
+_REL_NOISE_RATIO: float = float(os.environ.get("COGNIREPO_REL_NOISE_RATIO", "0.5"))
 
 # Intent keywords: queries with these words get doc_index results in addition to code_index
 _DOC_INTENT_PATTERN = re.compile(
@@ -135,6 +142,58 @@ def _autosave_context(result: dict) -> None:
         pass  # autosave is always best-effort
 
 
+def save_query_context(query: str, tool: str = "search") -> None:
+    """
+    Write a minimal query snapshot to last_context.json for cross-session handoff.
+
+    Called by search_docs, retrieve_memory, and episodic_search so that any
+    meaningful query populates last_focus.query — not just context_pack() calls.
+
+    If a richer snapshot (with sections) already exists from this session's
+    context_pack() call, it is kept and only the query field is updated so
+    the file context is not lost.
+    """
+    try:
+        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        import datetime  # pylint: disable=import-outside-toplevel
+        config_path = get_path("config.json")
+        if not os.path.exists(config_path):
+            return
+        with open(config_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        if not cfg.get("autosave_context", True):
+            return
+        repo_name = cfg.get("project_name", os.path.basename(os.getcwd()))
+        save_dir = os.path.join(os.path.expanduser("~"), ".cognirepo", repo_name)
+        os.makedirs(save_dir, exist_ok=True)
+        ctx_path = os.path.join(save_dir, "last_context.json")
+
+        # Load existing snapshot; keep richer sections if already written by context_pack
+        existing: dict = {}
+        if os.path.exists(ctx_path):
+            try:
+                with open(ctx_path, encoding="utf-8") as f:
+                    existing = json.load(f)
+            except Exception:  # pylint: disable=broad-except
+                existing = {}
+
+        out = {
+            **existing,
+            "query": query,
+            "tool": tool,
+            "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "agent": existing.get("agent", "cognirepo"),
+            "repo": existing.get("repo", repo_name),
+            # Preserve sections from context_pack if present; default to empty
+            "sections": existing.get("sections", []),
+        }
+        with store_lock():
+            with open(ctx_path, "w", encoding="utf-8") as f:
+                json.dump(out, f, indent=2)
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
 def context_pack(
     query: str,
     max_tokens: int = 2000,
@@ -207,6 +266,7 @@ def context_pack(
         retrieval_query = query
 
     # ── 1. hybrid retrieval (semantic + AST) — two-bucket architecture ──────
+    _retrieval_mode = "hybrid"
     if include_symbols:
         candidates = hybrid_retrieve(retrieval_query, top_k=20)
 
@@ -223,6 +283,25 @@ def context_pack(
         # This prevents README noise from being returned for code queries.
         best_score = max((c.get("final_score", 0.0) for c in code_hits), default=0.0)
         doc_intent = _is_doc_query(query)
+
+        # ── BM25 boost: re-rank when FAISS confidence is in the low-confidence gap ──
+        # When best_score is in the 0.20–0.35 range, always attempt a BM25 re-rank
+        # and take the MAX of the BM25 and FAISS scores. Previously this only fired
+        # when BM25 beat FAISS — but BM25 scores are never stored in final_score
+        # under normal hybrid flow (BM25 is only used in bm25_fallback mode), so the
+        # condition was almost never true. Now we re-rank unconditionally in the gap.
+        _BM25_BOOST_THRESHOLD = 0.35
+        if code_hits and _MIN_CODE_CONFIDENCE <= best_score < _BM25_BOOST_THRESHOLD:
+            for c in code_hits:
+                bm25_s = c.get("bm25_score", 0.0)
+                faiss_s = c.get("vector_score", c.get("final_score", 0.0))
+                if bm25_s > 0:
+                    # Mix BM25 and FAISS, then take the max with the existing score
+                    blended = 0.7 * bm25_s + 0.3 * faiss_s
+                    c["final_score"] = max(c.get("final_score", 0.0), blended)
+            code_hits.sort(key=lambda x: x.get("final_score", 0.0), reverse=True)
+            best_score = max((c.get("final_score", 0.0) for c in code_hits), default=0.0)
+            _retrieval_mode = "bm25_boosted"
 
         if code_hits and best_score < _MIN_CODE_CONFIDENCE and not doc_intent:
             # No confident code hit — check if any semantic hit is better
@@ -306,6 +385,20 @@ def context_pack(
             token_budget -= tok
             return True
 
+        # ── relative-score noise gate ──────────────────────────────────────
+        # A pack where the top hit scores 0.60 should not carry along 0.15
+        # BM25 stragglers — they read as authoritative context but are noise
+        # (observed: 6 of 10 irrelevant sections on broad queries). Keep only
+        # hits within _REL_NOISE_RATIO of the best hit in the same bucket.
+        if code_hits and best_score > 0:
+            _rel_floor = best_score * _REL_NOISE_RATIO
+            code_hits = [c for c in code_hits if c.get("final_score", 0.0) >= _rel_floor]
+        if other_hits:
+            _best_other = max((c.get("final_score", 0.0) for c in other_hits), default=0.0)
+            if _best_other > 0:
+                _rel_floor_o = _best_other * _REL_NOISE_RATIO
+                other_hits = [c for c in other_hits if c.get("final_score", 0.0) >= _rel_floor_o]
+
         for cand in code_hits:
             if not _process_candidate(cand, is_code=True):
                 break
@@ -347,6 +440,8 @@ def context_pack(
         "sections": sections,
         "truncated": truncated,
     }
+    if _retrieval_mode != "hybrid":
+        result["retrieval_mode"] = _retrieval_mode
     if _enhanced and _enhanced.was_enhanced:
         result["enhanced_query"] = _enhanced.text
         result["enhancement_method"] = _enhanced.method

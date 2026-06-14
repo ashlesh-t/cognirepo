@@ -150,3 +150,22 @@ def get_path(subpath: str) -> str:
     # Ensure directory exists for files
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     return full_path
+
+
+# ── Convenience helpers for tiered indexing + service scanning ────────────────
+
+def pending_tier2_path() -> str:
+    """Queue of w<0.75 files not yet indexed in the Tier 2 background pass."""
+    return get_path("index/pending_tier2.json")
+
+def tier2_progress_path() -> str:
+    """Progress tracker for the background Tier 2 indexing pass."""
+    return get_path("index/tier2_progress.json")
+
+def endpoints_path() -> str:
+    """HTTP endpoint registry built by the endpoint scanner."""
+    return get_path("index/endpoints.json")
+
+def http_calls_path() -> str:
+    """Outbound HTTP call registry built by the HTTP call scanner."""
+    return get_path("index/http_calls.json")

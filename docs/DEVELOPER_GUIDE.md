@@ -7,10 +7,16 @@ Thank you for contributing! This guide covers dev setup, adding languages, addin
 ## Dev Setup
 
 ```bash
-# Clone and install in editable mode with dev dependencies
+# Clone the repo
 git clone https://github.com/ashlesh-t/cognirepo
 cd cognirepo
-pip install -e ".[dev,security]"
+
+# Option A — pipx (recommended: global binary, isolated venv, no PEP 668 issues)
+pipx install -e ".[dev,security,languages]"
+
+# Option B — local venv
+python -m venv venv && source venv/bin/activate
+pip install -e ".[dev,security,languages]"
 
 # Initialize the project
 cognirepo init
@@ -21,6 +27,9 @@ pytest tests/ -v --tb=short
 # Lint
 pylint $(git ls-files '*.py' | grep -v '_pb2') --disable=C,R,import-error --fail-under=8.0
 ```
+
+> **Arch Linux / Debian 12+ / Ubuntu 24.04+:** Do not `pip install` into system Python (PEP 668).
+> Use pipx (Option A) or activate a venv first (Option B).
 
 ---
 

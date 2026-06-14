@@ -72,6 +72,42 @@ class LocalVectorDB(VectorStorageAdapter):
                 f.write(b"[]")
             self.metadata = []
 
+        self._loaded_disk_mtime = self._disk_mtime()
+
+    # ── cross-process freshness ────────────────────────────────────────────────
+
+    @staticmethod
+    def _disk_mtime() -> float:
+        """Newest mtime of the on-disk index + metadata pair (0.0 if absent)."""
+        m = 0.0
+        for p in (_index_file(), _meta_file()):
+            try:
+                m = max(m, os.path.getmtime(p))
+            except OSError:
+                pass
+        return m
+
+    def _maybe_reload(self) -> None:
+        """Reload index + metadata if another process wrote them since load.
+
+        A long-lived MCP server otherwise serves a point-in-time snapshot:
+        memories stored via the CLI or a second agent session are invisible
+        until the server restarts. Mirrors the mtime pattern used by the
+        episodic BM25 cache in retrieval/hybrid.py.
+        """
+        disk = self._disk_mtime()
+        if disk <= self._loaded_disk_mtime:
+            return
+        try:
+            if os.path.exists(_index_file()):
+                self.index = faiss.read_index(_index_file())
+            if os.path.exists(_meta_file()):
+                self.metadata = self._load_meta()
+            self._loaded_disk_mtime = disk
+        except Exception:  # pylint: disable=broad-except
+            # Keep serving the in-memory snapshot on any reload failure.
+            pass
+
     # ── metadata persistence (with optional encryption) ───────────────────────
 
     def _load_meta(self) -> list:
@@ -84,15 +120,16 @@ class LocalVectorDB(VectorStorageAdapter):
             try:
                 raw = decrypt_bytes(raw, get_or_create_key(project_id))
             except Exception:  # pylint: disable=broad-except
-                # Key mismatch or corrupted file — start with a clean slate.
-                # The stale file will be overwritten on the next save().
+                # The file may have been written unencrypted by a process
+                # that resolved the wrong config context — try plaintext
+                # below before discarding (it gets encrypted on next save).
+                # Genuinely corrupt/wrong-key content still fails the JSON
+                # parse below and is backed up there.
                 import logging  # pylint: disable=import-outside-toplevel
                 logging.getLogger(__name__).warning(
-                    "semantic_metadata.json could not be decrypted (key mismatch or "
-                    "corruption). Starting with empty metadata — existing entries will "
-                    "be lost on next store_memory call."
+                    "semantic_metadata.json could not be decrypted — attempting "
+                    "plaintext load (file may predate the encryption setting)."
                 )
-                return []
         try:
             return json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -133,6 +170,7 @@ class LocalVectorDB(VectorStorageAdapter):
         with store_lock():
             faiss.write_index(self.index, _index_file())
             self._save_meta()
+        self._loaded_disk_mtime = self._disk_mtime()
         breaker.record_success()
 
     def add(self, vector, text, importance, source: str = "memory", behaviour_score: float = 0.0):
@@ -241,6 +279,7 @@ class LocalVectorDB(VectorStorageAdapter):
         source — optional filter: "memory" | "symbol". None means no filter.
         Deprecated entries are never returned.
         """
+        self._maybe_reload()
         k = top_k
         vector = np.array([vector]).astype("float32")
 
@@ -273,6 +312,7 @@ class LocalVectorDB(VectorStorageAdapter):
         source — optional filter: "memory" | "symbol". None means no filter.
         Deprecated entries are never returned.
         """
+        self._maybe_reload()
         k = top_k
         vector = np.array([vector]).astype("float32")
 

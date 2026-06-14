@@ -21,20 +21,20 @@ def test_summarize_file_logic(isolated_cognirepo):  # pylint: disable=unused-arg
             "files": {
                 "test.py": {
                     "symbols": [
-                        {"name": "TestClass", "type": "CLASS", "docstring": "This is a test class."},
-                        {"name": "test_func", "type": "FUNCTION", "docstring": "This is a test function."}
+                        {"name": "AuthManager", "type": "CLASS", "docstring": "Manages authentication tokens."},
+                        {"name": "verify_token", "type": "FUNCTION", "docstring": "Verify an auth token."}
                     ],
                     "language": "python"
                 }
             }
         }
         mock_indexer.load = MagicMock()
-        
+
         summary = engine.summarize_file("test.py")
         assert summary["path"] == "test.py"
-        assert "TestClass" in summary["classes"]
-        assert "test_func" in summary["functions"]
-        assert "test class" in summary["purpose"].lower()
+        assert "AuthManager" in summary["classes"]
+        assert "verify_token" in summary["functions"]
+        assert "auth" in summary["purpose"].lower()
 
 def test_run_full_summarization(isolated_cognirepo, tmp_path):  # pylint: disable=unused-argument
     engine = SummarizationEngine(project_root=str(tmp_path))

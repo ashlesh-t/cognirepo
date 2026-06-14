@@ -47,7 +47,7 @@ across sessions, across tools, across time.
 ## When to use CogniRepo
 
 **Most effective on codebases ≥ 15K LOC.** On small repos (< 10K LOC), native file reads
-are fast enough that the MCP tool schema overhead (~3,900 tokens for 32 tools) takes more
+are fast enough that the MCP tool schema overhead (~4,100 tokens for 34 tools) takes more
 than you save. Break-even is roughly 4 tool calls on a medium-sized repo.
 
 **CogniRepo vs. claude-context / similar tools:**
@@ -145,23 +145,55 @@ graph/behaviour_tracker.py                  DEFINED_IN, CO_OCCURS,
 
 ### Install
 
+#### Recommended — pipx (global, one command, works on all distros)
+
 ```bash
-# Recommended — ONNX/fastembed, no GPU/CUDA required (~50 MB install):
-pip install 'cognirepo[languages]'
+pipx install cognirepo
+```
 
-# For encryption at rest:
-pip install 'cognirepo[languages,security]'
+That's it. `cognirepo setup` handles the rest — it installs optional extras (languages,
+security, providers) via `pipx inject` automatically when you enable them in the wizard.
 
-# With model routing (cognirepo ask — needs an API key):
-pip install 'cognirepo[languages,providers]'
+> **Why pipx?** It creates an isolated venv for cognirepo automatically so `fastembed`
+> and all deps install cleanly. The `cognirepo` command is then globally available in
+> every directory — no per-repo venv needed.
+>
+> **Arch Linux / Debian 12+ / Ubuntu 24.04+:** Do NOT `pip install` into system Python.
+> These distros enforce PEP 668 and block system-wide pip installs. Use pipx.
 
-# Full development install:
-pip install -e '.[dev,security,languages]'
+#### Install pipx first (if needed)
+
+```bash
+# Arch Linux
+sudo pacman -S python-pipx
+
+# Debian / Ubuntu
+sudo apt install pipx
+
+# macOS
+brew install pipx
+
+# Any platform (fallback)
+pip install pipx --user
+```
+
+#### Inside a virtual environment (alternative)
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install cognirepo
+# extras are installed by the setup wizard automatically
+```
+
+#### Development install (from source)
+
+```bash
+pipx install -e '.[dev,security,languages]'
+# or inside a venv: pip install -e '.[dev,security,languages]'
 ```
 
 > **Note:** CPU-only embeddings are the default (fastembed/ONNX, no PyTorch/CUDA required).
-> Use `pip install 'cognirepo[gpu]'` and install torch separately for GPU acceleration:
-> `pip install torch --index-url https://download.pytorch.org/whl/cu121`
+> For GPU: `pipx inject cognirepo 'cognirepo[gpu]'` then install torch separately.
 
 ### Run
 
@@ -237,7 +269,7 @@ docker compose up mcp         # MCP stdio server
 
 ## MCP Tools — complete reference
 
-All 32 tools are available to Claude, Cursor, and any MCP-compatible client.
+All 34 tools are available to Claude, Cursor, and any MCP-compatible client.
 
 ### Core retrieval
 
@@ -298,6 +330,8 @@ All 32 tools are available to Claude, Cursor, and any MCP-compatible client.
 | `org_dependencies(depth=2)` | Bidirectional inter-repo dependency graph | "What does this service depend on?" |
 | `cross_repo_search(query, scope="project")` | Project-scoped or org-scoped search | Finding shared components |
 | `cross_repo_traverse(symbol, direction="both")` | Traverse org graph from a repo or symbol | Tracing bugs across service boundaries |
+| `find_symbol_path(from_symbol, to_symbol)` | Shortest call-graph path between two symbols, across services | Tracing a request flow end-to-end |
+| `get_service_endpoints(repo_path)` | HTTP endpoint registry for a service | Listing a microservice's API surface |
 | `list_org_context()` | Org metadata + sibling repos | Understanding repo relationships |
 | `link_repos(src_repo, dst_repo, relationship)` | Record cross-repo dependency | When you discover one repo imports another |
 

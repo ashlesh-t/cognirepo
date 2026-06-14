@@ -90,8 +90,17 @@ class OrgGraph:
             logger.debug("OrgGraph: graph file empty or corrupt at %s — starting fresh", path)
             self.G = nx.DiGraph()
         except Exception as exc:  # pylint: disable=broad-except
-            logger.warning("OrgGraph: failed to load %s: %s", path, exc)
+            # Recoverable — always start fresh. Logged at DEBUG because the graph
+            # rebuilds itself on the next save; a WARNING here is misleading noise.
+            msg = str(exc) or type(exc).__name__
+            logger.debug("OrgGraph: failed to load %s (%s) — starting fresh", path, msg)
             self.G = nx.DiGraph()
+            # Remove the corrupt file so it doesn't trigger this on every startup.
+            try:
+                os.remove(path)
+                logger.debug("OrgGraph: removed unloadable file %s", path)
+            except OSError:
+                pass
 
     def _migrate_from_orgs_json(self) -> None:
         """One-time migration: read orgs.json repo lists into the org graph."""
@@ -165,15 +174,15 @@ class OrgGraph:
         Register a repo node. If parent_path is given, adds a CHILD_OF edge
         so get_children(parent_path) returns this repo.
         """
-        abs_path = os.path.abspath(path)
+        abs_path = os.path.realpath(os.path.normpath(path))
         node_attrs = {"node_type": "REPO", "name": os.path.basename(abs_path)}
         if parent_path:
-            node_attrs["parent"] = os.path.abspath(parent_path)
+            node_attrs["parent"] = os.path.realpath(os.path.normpath(parent_path))
         if metadata:
             node_attrs.update(metadata)
         self.G.add_node(abs_path, **node_attrs)
         if parent_path:
-            abs_parent = os.path.abspath(parent_path)
+            abs_parent = os.path.realpath(os.path.normpath(parent_path))
             # Ensure parent node exists
             if not self.G.has_node(abs_parent):
                 self.G.add_node(abs_parent, node_type="REPO", name=os.path.basename(abs_parent))
@@ -197,11 +206,18 @@ class OrgGraph:
         kind: EdgeKind = "IMPORTS",
         bidirectional: bool = True,
         auto: bool = False,
+        **extra_attrs: object,
     ) -> None:
         """
         Add a dependency edge src → dst.
         If bidirectional=True, also stores the reverse edge dst → src
         with direction="reverse" so get_dependents() is O(degree).
+
+        extra_attrs: optional function-level annotations for CALLS_API edges:
+          caller_fn        — name of the calling function
+          caller_file      — relative path of the caller's file
+          endpoint_pattern — URL pattern being called (e.g. "/users/{id}")
+          endpoint_fn      — name of the handler function in the destination service
         """
         abs_src = os.path.abspath(src)
         abs_dst = os.path.abspath(dst)
@@ -209,7 +225,8 @@ class OrgGraph:
             return
         self.add_repo(abs_src)
         self.add_repo(abs_dst)
-        self.G.add_edge(abs_src, abs_dst, kind=kind, direction="forward", auto=auto)
+        fwd_attrs = {"kind": kind, "direction": "forward", "auto": auto, **extra_attrs}
+        self.G.add_edge(abs_src, abs_dst, **fwd_attrs)
         if bidirectional:
             self.G.add_edge(abs_dst, abs_src, kind=kind, direction="reverse", auto=auto)
 
@@ -256,13 +273,20 @@ class OrgGraph:
                 if neighbor in visited:
                     continue
                 visited.add(neighbor)
-                results.append({
+                entry = {
                     "repo": neighbor,
                     "name": os.path.basename(neighbor),
                     "kind": edge_data.get("kind", "IMPORTS"),
                     "depth": dist + 1,
                     "auto": edge_data.get("auto", False),
-                })
+                }
+                # Surface function-level CALLS_API metadata stored by
+                # wire_cross_service_edges() — agents previously saw the edge
+                # but not WHICH endpoint/function it represents.
+                for _k in ("caller_fn", "caller_file", "endpoint_pattern", "endpoint_fn", "note"):
+                    if _k in edge_data:
+                        entry[_k] = edge_data[_k]
+                results.append(entry)
                 queue.append((neighbor, dist + 1))
         return results
 
@@ -289,7 +313,12 @@ class OrgGraph:
                 self.G[abs_src][abs_dst]["note"] = note
 
     def get_children(self, repo_path: str) -> list[str]:
-        """Return direct children (repos linked with CHILD_OF, forward direction)."""
+        """Return direct children (repos registered with parent=repo_path).
+
+        add_repo() stores the parent→child edge with direction="reverse"
+        (the child→parent edge carries direction="forward").  We match the
+        correct stored direction here.
+        """
         abs_path = os.path.abspath(repo_path)
         if not self.G.has_node(abs_path):
             return []
@@ -298,6 +327,11 @@ class OrgGraph:
             if self.G[abs_path][n].get("kind") == "CHILD_OF"
             and self.G[abs_path][n].get("direction") == "forward"
         ]
+
+    def get_parent(self, repo_path: str) -> str | None:
+        """Return the absolute path of the parent repo, or None if not a child."""
+        abs_path = os.path.abspath(repo_path)
+        return self.G.nodes.get(abs_path, {}).get("parent")
 
     def get_siblings(self, repo_path: str) -> list[str]:
         """Return repos that share the same parent as repo_path."""

@@ -65,9 +65,25 @@ def _seed_dotenv() -> None:
     if example.exists() and example.is_file():
         shutil.copy(example, dotenv_dest)
         print(".env created from .env.example — review it to tune circuit breaker limits or add API keys.")
+    else:
+        # Not fatal — all settings have built-in defaults (RSS limit = 80% of
+        # RAM, etc.). But say so instead of silently skipping, so users know
+        # why no .env appeared and what the override mechanism is.
+        print(
+            "Note: .env template not found in this install — skipping .env creation. "
+            "All settings use built-in defaults; create a .env manually to override "
+            "(see docs/USAGE.md → Configuration Reference)."
+        )
 
 
 def _scaffold_dirs() -> None:
+    # Always create local .cognirepo/ FIRST so all subsequent get_path() calls
+    # resolve to the local dir (not the global fallback). Without this, a brand-new
+    # repo has no local .cognirepo/ and config.json lands at ~/.cognirepo/storage/<hash>/
+    # while a later get_path() call (after some other code creates the local dir)
+    # resolves locally — causing config.json missing in doctor.
+    local_dir = os.path.join(os.getcwd(), ".cognirepo")
+    os.makedirs(local_dir, exist_ok=True)
     os.makedirs(get_path("memory"), exist_ok=True)
     os.makedirs(get_path("docs"), exist_ok=True)
     os.makedirs(get_path("index"), exist_ok=True)
@@ -79,19 +95,18 @@ def _scaffold_dirs() -> None:
 
 def _init_empty_stores(vector_backend: str = "faiss") -> None:
     """
-    Create empty FAISS index and episodic log on first init so `doctor`
-    does not report false failures immediately after `cognirepo init`.
+    Create empty ChromaDB collection and episodic log on first init so `doctor`
+    shows 0 vectors immediately after `cognirepo init` instead of "not found".
+
+    FAISS is used for AST indexing (built by `cognirepo index-repo`).
+    ChromaDB is always used for semantic text memory.
     """
-    # Empty FAISS index — only for FAISS backend
-    if vector_backend == "faiss":
-        idx_file = get_path("vector_db/semantic.index")
-        if not os.path.exists(idx_file):
-            try:
-                import faiss  # pylint: disable=import-outside-toplevel
-                _idx = faiss.IndexFlatL2(384)
-                faiss.write_index(_idx, idx_file)
-            except Exception:  # pylint: disable=broad-except
-                pass  # faiss not installed — skip; doctor will show clear hint
+    # Eagerly create ChromaDB collection so doctor finds it immediately.
+    try:
+        from vector_db.chroma_adapter import ChromaDBAdapter  # pylint: disable=import-outside-toplevel
+        ChromaDBAdapter()  # triggers PersistentClient → creates the on-disk directory
+    except Exception:  # pylint: disable=broad-except
+        pass  # chromadb not installed — doctor will surface the hint
 
     # Empty episodic log
     ep_file = get_path("memory/episodic.json")
@@ -108,7 +123,7 @@ def _write_config(
     org: str | None = None,
     project: str | None = None,
     encrypt: bool = False,
-    vector_backend: str = "faiss",
+    vector_backend: str = "chroma",
     autosave_context: bool = True,
     behaviour_tracking: bool = False,
 ) -> str:
@@ -316,6 +331,13 @@ def _setup_claude_mcp(
     with open(settings_path, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
     print(f"  Wrote {settings_path}")
+
+    # ── Behaviour hooks — wired after settings.json exists ────────────────────
+    try:
+        from cli.main import _write_claude_hooks  # pylint: disable=import-outside-toplevel
+        _write_claude_hooks(claude_dir, project_path)
+    except Exception:  # pylint: disable=broad-except
+        pass  # non-fatal; doctor will warn if hooks are missing
 
     # ── ~/.claude.json — global registration (optional) ───────────────────────
     if global_scope:
@@ -697,20 +719,381 @@ def _seed_learnings_from_docs(repo_root: str) -> int:
     return stored
 
 
+# ── child repo helpers ────────────────────────────────────────────────────────
+
+def _index_with_progress(svc_path: str, svc_name: str):
+    """Run ASTIndexer in a daemon thread while showing a pulsing progress bar."""
+    import threading  # pylint: disable=import-outside-toplevel
+    from cli.wizard import _animate_indexing  # pylint: disable=import-outside-toplevel
+    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+    from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+
+    done   = threading.Event()
+    result = {}
+
+    def _worker():
+        try:
+            _kg  = KnowledgeGraph()
+            _idx = ASTIndexer(graph=_kg)
+            _sum = _idx.index_repo(svc_path)
+            _idx.free_large_objects()
+            _kg.save()
+            result["summary"] = _sum
+            result["kg"]      = _kg
+        except Exception as exc:  # pylint: disable=broad-except
+            result["error"] = str(exc)
+        finally:
+            done.set()
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    _animate_indexing(svc_name, done)
+    t.join()
+    return result.get("summary"), result.get("kg")
+
+
+def _detect_service_port(svc_path: str) -> int | None:
+    """Best-effort port detection from common service config files.
+
+    Without this, agents answering "what port does X run on?" guess from
+    summaries and get it wrong — the authoritative value lives in the
+    service's own config (e.g. Spring `server.port`, `.env` PORT).
+    """
+    import re as _re  # pylint: disable=import-outside-toplevel
+    candidates = [
+        os.path.join(svc_path, "src", "main", "resources", "application.properties"),
+        os.path.join(svc_path, "src", "main", "resources", "application.yml"),
+        os.path.join(svc_path, "src", "main", "resources", "application.yaml"),
+        os.path.join(svc_path, "application.properties"),
+        os.path.join(svc_path, ".env"),
+    ]
+    patterns = [
+        _re.compile(r"^\s*server\.port\s*[=:]\s*(\d{2,5})", _re.MULTILINE),  # Spring
+        _re.compile(r"^\s*port\s*:\s*(\d{2,5})", _re.MULTILINE),             # YAML
+        _re.compile(r"^\s*PORT\s*=\s*(\d{2,5})", _re.MULTILINE),             # .env
+    ]
+    for path in candidates:
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+        except OSError:
+            continue
+        for pat in patterns:
+            m = pat.search(content)
+            if m:
+                return int(m.group(1))
+    return None
+
+
+def _register_in_org_graph(svc, parent_path: str) -> None:
+    """Add service node + CHILD_OF edge to the org graph.
+
+    Persists service_type plus auto-detected port so org-level tools
+    (get_agent_bootstrap child_services, list_org_context) report
+    authoritative values instead of leaving agents to guess.
+    """
+    try:
+        from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+        og = get_org_graph()
+        meta: dict = {"service_type": svc.service_type}
+        port = getattr(svc, "port", None) or _detect_service_port(svc.path)
+        if port:
+            meta["port"] = port
+        api_base_url = getattr(svc, "api_base_url", None)
+        if api_base_url:
+            meta["api_base_url"] = api_base_url
+        og.add_repo(svc.path, parent_path=parent_path, metadata=meta)
+        og.save()
+    except Exception:  # pylint: disable=broad-except
+        pass  # non-fatal
+
+
+def _wire_inter_repo_edges(children: list, parent_path: str) -> None:
+    """
+    After all child repos are indexed, auto-detect IMPORTS edges from manifests
+    and AST symbol index.  Uses existing extract_dependencies() and
+    og.infer_import_edges() — no new logic, just wiring them into the setup flow.
+    """
+    try:
+        from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+        from indexer.inter_repo_indexer import extract_dependencies  # pylint: disable=import-outside-toplevel
+        import json as _json  # pylint: disable=import-outside-toplevel
+
+        og = get_org_graph()
+        sibling_paths = [svc.path for svc in children]
+        all_paths = sibling_paths + [parent_path]
+        edges_added = 0
+
+        for svc in children:
+            # Pass 1: manifest-based (pyproject.toml, package.json, go.mod, …)
+            edges = extract_dependencies(svc.path, [p for p in all_paths if p != svc.path])
+            for edge in edges:
+                og.link(edge.src_repo, edge.dst_repo, kind=edge.kind, auto=True)
+                edges_added += 1
+
+            # Pass 2: AST-symbol-based (import statements in indexed code)
+            try:
+                _ctxdir = get_path("index/ast_index.json")  # child CWD must be set
+                # Load child's ast_index via context switch
+                from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+                _child_cog = get_cognirepo_dir_for_repo(svc.path)
+                _tok = _CTX_DIR.set(_child_cog)
+                try:
+                    _ast_path = get_path("index/ast_index.json")
+                    if os.path.exists(_ast_path):
+                        with open(_ast_path, encoding="utf-8") as _f:
+                            _child_idx = _json.load(_f)
+                        edges_added += og.infer_import_edges(svc.path, _child_idx)
+                finally:
+                    _CTX_DIR.reset(_tok)
+            except Exception:  # pylint: disable=broad-except
+                pass
+
+        if edges_added:
+            og.save()
+            print(f"  ✓  Inter-repo edges: {edges_added} relationship(s) auto-detected (IMPORTS + CALLS_API).")
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"  ⚠  Inter-repo edge detection skipped: {exc}")
+
+
+def _inject_child_stubs_into_parent_kg(children: list, parent_path: str) -> None:
+    """
+    Populate the parent orchestrator's KnowledgeGraph with stub nodes for each
+    child service so graph_stats(), subgraph(), and lookup_symbol() work from
+    the parent MCP context.
+
+    For each child:
+      - Adds a REPO node for the service.
+      - Adds FILE nodes for each indexed file.
+      - Adds top exported symbols (functions/classes) as stubs with DEFINED_IN edges.
+      - All stubs carry repo=<child_name> so they're identifiable as cross-repo entries.
+    """
+    try:
+        import json as _json  # pylint: disable=import-outside-toplevel
+        from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+
+        # Load parent KG via parent context
+        _parent_cog = get_cognirepo_dir_for_repo(parent_path)
+        _tok = _CTX_DIR.set(_parent_cog)
+        try:
+            parent_kg = KnowledgeGraph()
+            total_nodes = 0
+
+            for svc in children:
+                svc_name = svc.name
+                svc_abs  = os.path.abspath(svc.path)
+
+                # REPO node for the child service
+                repo_node = f"repo::{svc_name}"
+                parent_kg.add_node(
+                    repo_node,
+                    node_type="REPO",
+                    name=svc_name,
+                    path=svc_abs,
+                    service_type=getattr(svc, "service_type", "unknown"),
+                    repo=svc_name,
+                    cross_repo=True,
+                )
+                total_nodes += 1
+
+                # Load child's AST index
+                _child_cog = get_cognirepo_dir_for_repo(svc_abs)
+                _ctok = _CTX_DIR.set(_child_cog)
+                try:
+                    _ast_path = get_path("index/ast_index.json")
+                    if not os.path.exists(_ast_path):
+                        continue
+                    with open(_ast_path, encoding="utf-8") as _f:
+                        child_idx = _json.load(_f)
+                finally:
+                    _CTX_DIR.reset(_ctok)
+
+                # FILE + SYMBOL stubs
+                for rel_file, file_data in child_idx.get("files", {}).items():
+                    file_node = f"file::{svc_name}::{rel_file}"
+                    parent_kg.add_node(
+                        file_node,
+                        node_type="FILE",
+                        name=rel_file,
+                        repo=svc_name,
+                        path=os.path.join(svc_abs, rel_file),
+                        cross_repo=True,
+                    )
+                    parent_kg.add_edge(file_node, repo_node, edge_type="DEFINED_IN")
+                    total_nodes += 1
+
+                    for sym in file_data.get("symbols", []):
+                        sym_type = sym.get("type", "SYMBOL")
+                        sym_name = sym.get("name", "")
+                        # Only stub exported functions and classes (skip imports/internals)
+                        if sym_type not in ("FUNCTION", "CLASS", "METHOD", "ENDPOINT"):
+                            continue
+                        if not sym_name or sym_name.startswith("_"):
+                            continue
+                        sym_node = f"symbol::{svc_name}::{sym_name}"
+                        parent_kg.add_node(
+                            sym_node,
+                            node_type=sym_type,
+                            name=sym_name,
+                            file=rel_file,
+                            line=sym.get("start_line", 0),
+                            repo=svc_name,
+                            docstring=sym.get("docstring", ""),
+                            cross_repo=True,
+                        )
+                        parent_kg.add_edge(sym_node, file_node, edge_type="DEFINED_IN")
+                        total_nodes += 1
+
+            parent_kg.save()
+            print(f"  ✓  Parent KG: injected {total_nodes} cross-repo stub nodes from {len(children)} service(s).")
+        finally:
+            _CTX_DIR.reset(_tok)
+
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"  ⚠  Parent KG stub injection skipped: {exc}")
+
+
+def _flush_cognirepo(path: str, name: str) -> None:
+    """Remove .cognirepo/ from a repo directory."""
+    import shutil  # pylint: disable=import-outside-toplevel
+    cr_dir = os.path.join(path, ".cognirepo")
+    if os.path.isdir(cr_dir):
+        shutil.rmtree(cr_dir)
+        print(f"  ✓  Flushed .cognirepo/ from {name}")
+    else:
+        print(f"  {name}: no .cognirepo/ to flush")
+
+
+def _write_parent_metadata_to_child(child_path: str, parent_path: str, parent_name: str) -> None:
+    """Inject parent reference into the child's config.json."""
+    cfg_path = os.path.join(child_path, ".cognirepo", "config.json")
+    if not os.path.exists(cfg_path):
+        return
+    try:
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg["parent"] = {"path": parent_path, "project_name": parent_name, "role": "child"}
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
+def _auto_setup_child_repos(
+    children: list,
+    parent_path: str,
+    org: str | None,
+    encrypt: bool,
+    mcp_targets: list[str],
+    autosave_context: bool = True,
+    behaviour_tracking: bool = False,
+    parent_name: str = "",
+    rejected: list | None = None,
+) -> None:
+    """Animate queue pop/process for each detected microservice."""
+    from cli.wizard import (  # pylint: disable=import-outside-toplevel
+        _animate_enqueue, _animate_pop, _service_header, _ask_yn,
+        _ok, _warn,
+    )
+    from cli.init_project import init_project as _init_project  # pylint: disable=import-outside-toplevel
+    from cli.main import _write_claude_hooks  # pylint: disable=import-outside-toplevel
+
+    _animate_enqueue(children)
+
+    remaining_names = [svc.name for svc in children]
+
+    for idx, svc in enumerate(children, 1):
+        remaining_names = [n for n in remaining_names if n != svc.name]
+        _animate_pop(svc.name, remaining_names)
+        _service_header(svc.name, idx, len(children))
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(svc.path)   # stay in child dir for BOTH init AND index
+            try:
+                if svc.already_init:
+                    _ans = _ask_yn(
+                        f"  {svc.name} already has .cognirepo/ — overwrite (re-initialize)?",
+                        default=False,
+                    )
+                    if not _ans:
+                        print(f"  {svc.name}: skipping init — re-indexing and updating config")
+                        # Still inject parent metadata and run index even if skipping full init
+                        _write_parent_metadata_to_child(svc.path, parent_path, parent_name)
+                        _index_with_progress(svc.path, svc.name)
+                        _register_in_org_graph(svc, parent_path)
+                        _ok(f"{svc.name} re-indexed\n")
+                        continue
+
+                _init_project(
+                    non_interactive=True,
+                    project_name=svc.name,
+                    org=org,
+                    encrypt=encrypt,
+                    vector_backend="chroma",
+                    mcp_targets=mcp_targets,
+                    autosave_context=autosave_context,
+                    behaviour_tracking=behaviour_tracking,
+                    no_index=True,   # indexing done below for live progress bar
+                )
+                # Store parent reference in child config
+                _write_parent_metadata_to_child(svc.path, parent_path, parent_name)
+                # CWD is still svc.path here → KnowledgeGraph() reads child's .cognirepo/
+                _index_with_progress(svc.path, svc.name)
+                _register_in_org_graph(svc, parent_path)
+                # Wire Claude Code / editor hooks inside child if .claude/ exists
+                _child_claude_dir = os.path.join(svc.path, ".claude")
+                if os.path.isdir(_child_claude_dir):
+                    try:
+                        _write_claude_hooks(_child_claude_dir, svc.path)
+                        print(f"  ✓  Behaviour hooks wired for {svc.name}")
+                    except Exception:  # pylint: disable=broad-except
+                        pass
+                _ok(f"{svc.name} done\n")
+            finally:
+                os.chdir(old_cwd)
+
+        except Exception as exc:  # pylint: disable=broad-except
+            if os.getcwd() != old_cwd:
+                os.chdir(old_cwd)
+            _warn(f"{svc.name} failed: {exc}")
+
+    print(f"\n  {'─'*46}")
+    print(f"  Queue empty. {chr(10004)}  All services indexed.\n")
+
+    # ── post-setup wiring (best-effort, never blocks) ─────────────────────────
+    print("  Wiring inter-repo relationships …")
+    _wire_inter_repo_edges(children, parent_path)
+    _inject_child_stubs_into_parent_kg(children, parent_path)
+
+    # ── flush rejected repos that have a stale .cognirepo/ ────────────────────
+    if rejected:
+        stale = [svc for svc in rejected if os.path.isdir(os.path.join(svc.path, ".cognirepo"))]
+        if stale:
+            print(f"\n  {len(stale)} detected-but-not-selected service(s) have an existing .cognirepo/:")
+            for svc in stale:
+                print(f"    • {svc.name}  ({svc.path})")
+            _do_flush = _ask_yn("  Remove their .cognirepo/ directories now?", default=False)
+            if _do_flush:
+                for svc in stale:
+                    _flush_cognirepo(svc.path, svc.name)
+
+
 # ── public API ────────────────────────────────────────────────────────────────
 
 def init_project(
     no_index: bool = False,
     interactive: bool = True,
     non_interactive: bool = False,
+    no_graph: bool = False,
     # wizard-supplied overrides (used when interactive=False or wizard ran)
     project_name: str = "",
     org: str | None = None,
     project: str | None = None,
     encrypt: bool = False,
-    vector_backend: str = "faiss",
+    vector_backend: str = "chroma",
     mcp_targets: list[str] | None = None,
-    mcp_global: bool = False,
     autosave_context: bool = True,
     behaviour_tracking: bool = False,
     # deprecated — accepted but ignored for backward compat
@@ -740,14 +1123,15 @@ def init_project(
     if interactive  and not non_interactive:
         try:
             from cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
-            wizard_cfg = run_wizard()
+            wizard_cfg = None
+            while wizard_cfg is None:
+                wizard_cfg = run_wizard()
             project_name   = wizard_cfg.get("project_name", project_name)
             org            = wizard_cfg.get("org", org)
             project        = wizard_cfg.get("project", project)
             encrypt        = wizard_cfg.get("encrypt", encrypt)
             vector_backend = wizard_cfg.get("vector_backend", vector_backend)
             mcp_targets    = wizard_cfg.get("mcp_targets", mcp_targets or [])
-            mcp_global     = wizard_cfg.get("mcp_global", mcp_global)
             autosave_context = wizard_cfg.get("autosave_context", autosave_context)
             behaviour_tracking = wizard_cfg.get("behaviour_tracking", behaviour_tracking)
             _wizard_ran = True
@@ -800,7 +1184,7 @@ def init_project(
     if mcp_targets:
         print("\nConfiguring MCP integration:")
         project_path = os.path.abspath(os.getcwd())
-        setup_mcp(mcp_targets, project_name, project_path, global_scope=mcp_global)
+        setup_mcp(mcp_targets, project_name, project_path, global_scope=False)
 
     # Read back encrypt flag for status display
     try:
@@ -851,11 +1235,62 @@ def init_project(
     except ImportError:
         _ctx = None
 
-    summary = indexer.index_repo(cwd)
+    summary = indexer.index_repo(cwd, skip_graph=True if no_graph else None)
     if _ctx is not None:
         _ctx.close()
 
-    kg.save()
+    # Free large in-memory objects before graph serialization to reduce RSS peak.
+    indexer.free_large_objects()
+
+    try:
+        kg.save()
+    except Exception as _kg_exc:  # pylint: disable=broad-except
+        _exc_name = type(_kg_exc).__name__
+        if "CircuitOpen" in _exc_name or "CircuitBreaker" in _exc_name:
+            print(
+                f"  ⚠  Knowledge graph not saved (memory limit hit). "
+                "AST index and embeddings are intact — cognirepo will still work. "
+                "Use --no-graph to disable graph, or set "
+                "COGNIREPO_CB_RSS_LIMIT_MB=4000 to raise the limit."
+            )
+        else:
+            raise
+
+    # ── auto-launch Tier 2 background pass if pending queue was written ──────
+    try:
+        from config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
+        import subprocess as _sp  # pylint: disable=import-outside-toplevel
+        from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
+        _t2_queue = pending_tier2_path()
+        if os.path.exists(_t2_queue):
+            import json as _json  # pylint: disable=import-outside-toplevel
+            with open(_t2_queue, encoding="utf-8") as _t2f:
+                _t2_data = _json.load(_t2f)
+            _t2_count = len(_t2_data.get("files", []))
+            _embed_pending = _t2_data.get("embed_pending", False)
+            if _t2_count > 0 or _embed_pending:
+                _bin_dir = _Path(sys.executable).parent
+                _colocated = _bin_dir / "cognirepo"
+                _cogcmd = str(_colocated) if _colocated.exists() else "cognirepo"
+                _sp.Popen(
+                    [_cogcmd, "index-repo", cwd, "--tier", "2", "--no-watch"],
+                    stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+                    start_new_session=True,
+                )
+                _what = []
+                if _t2_count > 0:
+                    _what.append(f"{_t2_count:,} files")
+                if _embed_pending:
+                    _what.append("FAISS embeddings")
+                print(f"  Tier 2: {' + '.join(_what)} queued — background indexing started.")
+                # edge: launch progress window (failure never blocks indexing)
+                try:
+                    from tools.bg_progress import launch_progress_ui as _lpui  # pylint: disable=import-outside-toplevel
+                    _lpui()
+                except Exception:  # pylint: disable=broad-except
+                    pass
+    except Exception:  # pylint: disable=broad-except
+        pass
 
     # seed behaviour weights from git history (fast — no embedding, just git log)
     try:
@@ -896,9 +1331,11 @@ def init_project(
             print("  Run 'cognirepo summarize' once an LLM API key is configured.")
 
     # ── doc ingestion: embed docs/README/git-log into semantic store ──────────
+    # Subprocess-isolated: ingestion in a process that just finished a heavy
+    # indexing pass was observed to segfault (fragmented ONNX/FAISS heaps).
     try:
-        from indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
-        _ing_result = DocIngester(cwd).ingest()
+        from indexer.doc_ingester import run_ingest_subprocess  # pylint: disable=import-outside-toplevel
+        _ing_result = run_ingest_subprocess(cwd)
         _n_chunks = _ing_result.get("chunks", 0)
         if _n_chunks > 0:
             print(f"  Semantic store: {_n_chunks} doc chunks embedded.")
@@ -906,6 +1343,5 @@ def init_project(
         pass  # best-effort — never block init
 
     print("\n✓ Done — CogniRepo is ready.")
-    print("  Watcher running in background. Press Ctrl+C to stop it anytime.")
 
     return summary, kg, indexer

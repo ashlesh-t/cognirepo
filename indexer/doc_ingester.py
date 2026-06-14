@@ -47,6 +47,22 @@ _ROOT_DOC_PATTERNS = [
 # Subdirectories to scan for additional .md files
 _DOC_SUBDIRS = ["docs", "doc", "documentation", "wiki"]
 
+# Directories to skip when walking the full repo for docs
+_SKIP_DIRS = {".git", "venv", ".venv", "__pycache__", "node_modules", ".cognirepo",
+              ".tox", ".mypy_cache", ".pytest_cache", "dist", "build", ".eggs"}
+
+# File substrings to skip (mirrors docs_search._SKIP_FILE_SUBSTRINGS)
+_SKIP_FILE_SUBSTRINGS = {
+    "MANUAL_TEST_SUITE", "TEST_SUITE", "test_suite", "MANUAL_TEST",
+    "PULL_REQUEST_TEMPLATE", "ISSUE_TEMPLATE",
+    "pull_request_template", "issue_template",
+}
+# Path fragments for boilerplate directories to skip during ingestion
+_SKIP_PATH_FRAGMENTS = {".github", ".gitlab", ".bitbucket"}
+
+# Maximum total chunks across the whole repo (prevents huge monorepos from OOM)
+_MAX_TOTAL_CHUNKS = 2000
+
 # Maximum characters per chunk (roughly 400–500 tokens for MiniLM)
 _CHUNK_MAX_CHARS = 1800
 
@@ -84,21 +100,47 @@ class DocIngester:
 
         try:
             from memory.embeddings import get_model          # pylint: disable=import-outside-toplevel
-            from vector_db.factory import get_vector_db      # pylint: disable=import-outside-toplevel
+            from vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
         except ImportError as exc:
             log.warning("DocIngester: cannot import dependencies (%s) — skipping", exc)
             return {"chunks": 0, "files": 0}
 
         model = get_model()
-        db = get_vector_db()
+        db = get_vector_adapter()
 
-        batch: list[tuple] = []
+        # Cap total chunks to avoid OOM on very large repos
+        if len(chunks) > _MAX_TOTAL_CHUNKS:
+            log.info("DocIngester: capping %d chunks to %d", len(chunks), _MAX_TOTAL_CHUNKS)
+            chunks = chunks[:_MAX_TOTAL_CHUNKS]
+
+        # Dedup by normalized text — re-running ingestion (or the historical
+        # double-invocation from inside index_repo) must not store the same
+        # chunk twice.
+        seen_norm: set[str] = set()
+        unique_chunks: list[dict] = []
         for chunk in chunks:
-            try:
-                vec = next(iter(model.embed([chunk["text"]]))).astype("float32")
-                batch.append((vec, chunk["text"], 0.6, "init_doc"))
-            except Exception as exc:  # pylint: disable=broad-except
-                log.debug("DocIngester: failed to embed chunk: %s", exc)
+            norm = " ".join(chunk["text"].split())
+            if norm in seen_norm:
+                continue
+            seen_norm.add(norm)
+            unique_chunks.append(chunk)
+        chunks = unique_chunks
+
+        # One streamed batch pass instead of N separate model.embed([one])
+        # calls — thousands of individual ONNX invocations in an already
+        # memory-heavy process were implicated in a native segfault at the
+        # end of large-repo indexing runs.
+        batch: list[tuple] = []
+        try:
+            texts = [c["text"] for c in chunks]
+            for chunk, vec in zip(chunks, model.embed(texts, batch_size=64)):
+                # Use the actual relative file path as source so search_docs can
+                # apply _should_skip_file() correctly; fall back to "init_doc" for
+                # chunks without a traceable path (e.g. git log).
+                chunk_source = chunk.get("source") or "init_doc"
+                batch.append((vec.astype("float32"), chunk["text"], 0.6, chunk_source))
+        except Exception as exc:  # pylint: disable=broad-except
+            log.warning("DocIngester: batch embed failed (%s) — storing %d chunk(s) embedded so far", exc, len(batch))
 
         stored = db.add_batch(batch)
         files_seen = len({c["source"] for c in chunks})
@@ -151,30 +193,40 @@ class DocIngester:
 
     # ── file discovery ────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _should_skip_file(path: str) -> bool:
+        basename = os.path.basename(path)
+        if any(sub in basename for sub in _SKIP_FILE_SUBSTRINGS):
+            return True
+        norm = path.replace("\\", "/")
+        return any(frag in norm for frag in _SKIP_PATH_FRAGMENTS)
+
     def _find_doc_files(self) -> list[str]:
         found: list[str] = []
 
-        # Root-level docs
+        # Root-level priority docs (always included if present)
         for pattern in _ROOT_DOC_PATTERNS:
             candidate = os.path.join(self.root, pattern)
-            if os.path.isfile(candidate):
+            if os.path.isfile(candidate) and not self._should_skip_file(candidate):
                 found.append(candidate)
-            # also check lowercase variant
             candidate_lower = os.path.join(self.root, pattern.lower())
-            if candidate_lower != candidate and os.path.isfile(candidate_lower):
+            if (candidate_lower != candidate and os.path.isfile(candidate_lower)
+                    and not self._should_skip_file(candidate_lower)):
                 found.append(candidate_lower)
 
-        # docs/ subdirectory .md files
-        for subdir in _DOC_SUBDIRS:
-            docs_dir = os.path.join(self.root, subdir)
-            if not os.path.isdir(docs_dir):
-                continue
-            for dirpath, _dirs, files in os.walk(docs_dir):
-                for fname in files:
-                    if fname.lower().endswith((".md", ".rst", ".txt")):
-                        found.append(os.path.join(dirpath, fname))
+        # Full repo walk — picks up ALL .md and .rst files (e.g. ansible's changelogs/,
+        # kubernetes' docs/, etc.) that would otherwise be missed by the subdirs-only scan.
+        # Apply the same skip filters as search_docs to avoid test-suite contamination.
+        for dirpath, dirnames, files in os.walk(self.root):
+            dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+            for fname in files:
+                if not fname.lower().endswith((".md", ".rst")):
+                    continue
+                fpath = os.path.join(dirpath, fname)
+                if not self._should_skip_file(fpath):
+                    found.append(fpath)
 
-        # deduplicate preserving order
+        # Deduplicate preserving order (priority files first)
         seen: set[str] = set()
         result: list[str] = []
         for f in found:
@@ -229,3 +281,60 @@ class DocIngester:
                 break
 
         return chunks[:_MAX_CHUNKS_PER_FILE]
+
+
+def run_ingest_subprocess(project_root: str, timeout: int = 900) -> dict:
+    """Run DocIngester in a fresh interpreter; fall back to in-process.
+
+    After a large indexing run the parent process holds fragmented native
+    heaps (ONNX + FAISS) — running ingestion there was observed to segfault.
+    A clean subprocess is immune, and a native crash becomes a contained
+    non-zero exit code instead of killing the whole index run.
+    """
+    import json as _json  # pylint: disable=import-outside-toplevel
+    import sys as _sys  # pylint: disable=import-outside-toplevel
+    root = os.path.abspath(project_root)
+    try:
+        for attempt in (1, 2):
+            proc = subprocess.run(
+                [_sys.executable, "-m", "indexer.doc_ingester", root],
+                capture_output=True, text=True, timeout=timeout,
+                cwd=root,  # so config/paths resolves the project's .cognirepo/
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                return _json.loads(proc.stdout.strip().splitlines()[-1])
+            if proc.returncode in (-11, 139) and attempt == 1:
+                # Native segfault — a poisoned chroma store crashes chromadb
+                # at open. The crashed attempt left the .opening sentinel
+                # behind; the retry triggers the factory's quarantine-and-
+                # start-fresh self-heal.
+                log.warning(
+                    "DocIngester subprocess segfaulted (likely a poisoned vector "
+                    "store) — quarantining and retrying once…"
+                )
+                continue
+            break
+        log.warning(
+            "DocIngester subprocess exited rc=%s — doc search may be incomplete. "
+            "Re-run: cognirepo index-repo . (stderr tail: %s)",
+            proc.returncode, (proc.stderr or "")[-300:],
+        )
+        return {"chunks": 0, "files": 0, "error": f"subprocess rc={proc.returncode}"}
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        log.debug("DocIngester subprocess unavailable (%s) — running in-process", exc)
+        return DocIngester(root).ingest()
+
+
+# ── subprocess entry point ────────────────────────────────────────────────────
+# `python -m indexer.doc_ingester <project_root>` — used by the CLI to run
+# ingestion in a FRESH process. After a large tier-2 indexing run the parent
+# interpreter holds fragmented native heaps (ONNX + FAISS); running ingestion
+# there was observed to segfault. A clean process is immune, and a native
+# crash becomes a contained non-zero exit instead of killing the index run.
+if __name__ == "__main__":
+    import json as _json
+    import sys as _sys
+
+    _root = _sys.argv[1] if len(_sys.argv) > 1 else "."
+    _result = DocIngester(_root).ingest()
+    print(_json.dumps(_result))

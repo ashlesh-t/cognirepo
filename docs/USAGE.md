@@ -22,20 +22,43 @@ Complete documentation for every command, MCP tool, and configuration option.
 
 ## Installation
 
-### pip (recommended)
+### pipx (recommended — one command, global, works on all distros)
 
 ```bash
-pip install cognirepo                      # core — Python only, no extras
-pip install cognirepo[languages]           # + multi-language AST indexing (JS, TS, Java, Go, Rust, C++)
-pip install cognirepo[security]            # + encryption at rest (Fernet + OS keychain)
-pip install cognirepo[dev]                 # + dev tools (pytest, bandit, etc.)
-pip install cognirepo[languages,security]  # everything
+pipx install cognirepo
+```
+
+`cognirepo setup` installs optional extras (languages, security, providers) automatically
+via `pipx inject` when you enable them in the wizard. No need to specify extras upfront.
+
+> **Arch Linux / Debian 12+ / Ubuntu 24.04+:** Do NOT `pip install` into system Python.
+> These distros enforce PEP 668. Use pipx or a virtual environment.
+
+Install pipx if needed:
+```bash
+sudo pacman -S python-pipx   # Arch
+sudo apt install pipx         # Debian/Ubuntu
+brew install pipx             # macOS
+```
+
+### pip (inside a virtual environment)
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install cognirepo
+# extras (languages, security, providers) are installed by the setup wizard
 ```
 
 ### From source
 
 ```bash
 git clone https://github.com/ashlesh-t/cognirepo && cd cognirepo
+
+# Option A — pipx (global, isolated, recommended):
+
+pipx install -e '.[dev,languages]'
+
+# Option B — inside a venv:
 python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -e ".[dev,languages]"
 
@@ -163,7 +186,7 @@ from Repo B if both are linked to the same local organization.
 
 ## MCP Server
 
-CogniRepo exposes 30 MCP tools over stdio transport:
+CogniRepo exposes 34 MCP tools over stdio transport (see [docs/MCP_TOOLS.md](MCP_TOOLS.md) for the full reference):
 
 | Tool | Parameters | Returns |
 |---|---|---|
@@ -220,6 +243,14 @@ Safe to run on already-migrated configs.
 
 ## Configuration Reference
 
+### `.env` (optional, per project)
+
+`cognirepo init` copies the packaged `.env.example` into the project root as `.env`.
+It is git-ignored and purely an **override layer** — every setting has a built-in
+default (circuit-breaker RSS limit: 80% of system RAM), so CogniRepo works fully
+without a `.env`. The CLI/server resolve `.env` from the project directory upward
+(`find_dotenv(usecwd=True)`), never from the installed package location.
+
 ### `.cognirepo/config.json`
 
 | Key | Type | Default | Description |
@@ -230,6 +261,23 @@ Safe to run on already-migrated configs.
 | `models.STANDARD.model` | string | `gemini-2.0-flash` | Model for STANDARD tier |
 | `idle_ttl_seconds` | int | `600` | Inactivity timeout for heavy resources |
 | `episodic_max_events` | int | `10000` | Max episodic events before oldest 20% are rotated to `episodic_archive.json` |
+| `indexing.skip_dirs` | list | `[]` | Extra directory names to skip during indexing, merged with the built-in defaults (e.g. `["staging"]` for repos where staging/ is a build dir) |
+| `indexing.unskip_dirs` | list | `[]` | Default-skipped directory names to index anyway (e.g. `["gen"]`) |
+
+> **Note:** `staging/` is **not** skipped by default — in Kubernetes-style repos it holds
+> real first-party source. `vendor/`, `third_party/`, `node_modules/` etc. remain skipped.
+
+### Org graph maintenance
+
+```bash
+cognirepo org rewire     # re-run cross-service CALLS_API detection for all indexed
+                         # org repos — fixes edges missed by indexing-order
+                         # (e.g. service A indexed before service B's endpoints existed)
+```
+
+Service `port` / `api_base_url` are stored on the org-graph node at `cognirepo init`
+(`--port`, `--api-base-url` flags, or auto-detected from `application.properties` /
+`application.yml` / `.env`) and surfaced by `get_agent_bootstrap()` → `child_services`.
 
 ## Prometheus Metrics
 
@@ -316,7 +364,7 @@ Or create `.vscode/mcp.json` manually:
 ### Requirements
 
 - VS Code with MCP extension support (GitHub Copilot Chat or compatible extension)
-- CogniRepo installed: `pip install 'cognirepo[cpu,languages]'`
+- CogniRepo installed: `pipx install cognirepo` (CPU embeddings are the default; add `[languages]` for non-Python parsers)
 - Repo indexed: `cognirepo index-repo .`
 
 ### `cognirepo setup` auto-configures VS Code
