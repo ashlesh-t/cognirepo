@@ -10,6 +10,22 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.1.1] — 2026-06-14
+
+### Added
+- **`version.yml`** — single source of truth for version, name, description, author, repo URL, and MCP metadata; all code and static artifacts derive from it
+- **`config/version.py`** — runtime module that reads `version.yml`; replaces hardcoded strings in `server/mcp_server.py` and `cli/__init__.py`
+- **`scripts/sync_version.py`** — propagates `version.yml` → `pyproject.toml`, `server/manifest.json`, `server.json`; supports `--check` flag for CI drift detection
+- **MCP registry entry (`server.json`)** — `$schema`, `title`, `repository`, and `packages[].packageArguments` fields added for MCP registry compatibility
+- **README** — added `mcp-name` header, GitHub Stars badge, project banner image, and streamlined architecture section to use diagram image
+
+### Changed
+- `cli/__init__.py` — falls back to `config.version` when `importlib.metadata` is unavailable (editable installs)
+- `server/mcp_server.py` — `_build_manifest()` version sourced from `config.version.__version__` (no more hardcoded string)
+- `docs/ARCHITECTURE.md` — ASCII art diagram replaced with `cognirepo-workflow.png`
+
+---
+
 ## [1.1.0] — 2026-06-11
 
 ### Added (release-readiness pass, 2026-06)

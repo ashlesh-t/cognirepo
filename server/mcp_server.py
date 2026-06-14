@@ -18,6 +18,7 @@ import time
 from mcp.server.fastmcp import FastMCP
 
 from config.logging import setup_logging, new_trace_id
+from config.version import __version__ as _APP_VERSION
 from memory.circuit_breaker import get_breaker, CircuitOpenError
 
 setup_logging()
@@ -2086,7 +2087,7 @@ def _build_manifest() -> dict:
     """Return the tool-schema manifest so non-MCP clients can read it."""
     return {
         "name": "cognirepo",
-        "version": "1.1.0",
+        "version": _APP_VERSION,
         "transport": "stdio",
         "tools": [
             {

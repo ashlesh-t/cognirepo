@@ -4,22 +4,7 @@
 
 ## System Overview
 
-```
-User / AI Tool
-    │
-    ├── MCP stdio              (Claude Desktop, Gemini CLI, Cursor)
-              │
-         tools/                ← SINGLE ENTRY POINT — all logic here
-              │
-    ┌─────────┼─────────────────────────┐
-    ▼         ▼                         ▼
-memory/    retrieval/hybrid.py       graph/
-FAISS      3-signal merge:           NetworkX
-episodic   vector + graph            KnowledgeGraph
-           + behaviour               BehaviourTracker
-           (AST pre-scorer +
-            episodic side-channel)
-```
+![alt text](cognirepo-workflow.png)
 
 ---
 

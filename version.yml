@@ -1,0 +1,26 @@
+# Single source of truth for CogniRepo release metadata.
+# Edit ONLY this file when bumping a version.
+# Then run: python scripts/sync_version.py
+# This propagates the version to pyproject.toml, server/manifest.json, and server.json.
+
+project:
+  name: cognirepo
+  version: "1.1.1"
+  description: "Local cognitive infrastructure layer for AI agents"
+  license: MIT
+  python_requires: ">=3.11,<3.15"
+
+author:
+  name: "Ashlesha T"
+  email: "ashleshat5@gmail.com"
+  github: "ashlesh-t"
+
+repository:
+  url: "https://github.com/ashlesh-t/cognirepo"
+  mcp_name: "io.github.ashlesh-t/cognirepo"
+
+mcp:
+  title: "CogniRepo"
+  transport: stdio
+  runtime_hint: uvx
+  description: "FAISS, call graph, AST, BM25 — 34 MCP tools for AI agents. 50-80% token reduction. Offline."

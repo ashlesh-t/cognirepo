@@ -1,17 +1,23 @@
 # CogniRepo
 
+mcp-name: io.github.ashlesh-t/cognirepo
 > Persistent memory and context for any AI tool. Not a chatbot — infrastructure.
 
 [![CI](https://github.com/ashlesh-t/cognirepo/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlesh-t/cognirepo/actions/workflows/ci.yml)
 [![Security](https://github.com/ashlesh-t/cognirepo/actions/workflows/security.yml/badge.svg)](https://github.com/ashlesh-t/cognirepo/actions/workflows/security.yml)
 [![PyPI version](https://badge.fury.io/py/cognirepo.svg)](https://badge.fury.io/py/cognirepo)
+[![GitHub Stars](https://img.shields.io/github/stars/ashlesh-t/cognirepo?style=social)](https://github.com/ashlesh-t/cognirepo/stargazers)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Discord](https://img.shields.io/badge/Discord-CogniRepo-5865F2?logo=discord&logoColor=white)](https://discord.com/channels/1488386981917360289/1488387271190380636)
 
+![alt text](cognirepo.png)
+
 ---
 
-![alt text](image.png)
+**`lookup_symbol` returns file:line very quickly — grep takes 2–8 seconds.** On Python repos ≥ 15K LOC, CogniRepo cuts AI coding agent token usage by **50–80%** compared to raw file reads — benchmarked on Flask, FastAPI, Celery, and Ansible (1,800+ files). Works with Claude Code, Cursor, and Gemini CLI. **Fully offline. No API keys required for indexing or any of the 34 MCP tools.**
+
+---
 
 ## What it does
 
@@ -106,32 +112,7 @@ Run `cognirepo benchmark` on your own codebase to reproduce. See [docs/METRICS.m
 
 ## How it works
 
-```
-User / AI Tool
-    │
-    ├── MCP stdio         (Claude Desktop, Gemini CLI, Cursor)
-              │
-         tools/           ← single entry point to memory engine
-              │
-    ┌─────────┼─────────────────────────────────────┐
-    ▼         ▼                                      ▼
-memory/    retrieval/hybrid.py               graph/knowledge_graph.py
-FAISS      3-signal merge:                   NetworkX DiGraph
-episodic   vector + graph + behaviour        7 node types:
-embeddings                                   FILE, FUNCTION, CLASS,
-           indexer/ast_indexer.py            CONCEPT, QUERY, SESSION,
-           tree-sitter multi-language        ERROR
-           + stdlib ast fallback             9 edge types:
-                                             CALLS, CALLED_BY,
-graph/behaviour_tracker.py                  DEFINED_IN, CO_OCCURS,
-  per-symbol hit counts                     IMPORTS, INHERITS,
-  user behavior profile                     RELATES_TO,
-  error pattern tracking                    QUERIED_WITH
-  session history
-              │
-         .cognirepo/   (Fernet encrypted if storage.encrypt: true)
-```
-
+![alt text](cognirepo-workflow.png)
 ---
 
 ## Quick start
