@@ -33,7 +33,7 @@ def _project(key: str, fallback: str = "") -> str:
     return _load().get("project", {}).get(key, fallback)
 
 
-__version__: str = _project("version", "1.1.1")
+__version__: str = _project("version", "1.1.3")
 APP_NAME: str = _project("name", "cognirepo")
 DESCRIPTION: str = _project("description", "Local cognitive infrastructure layer for AI agents")
 LICENSE: str = _project("license", "MIT")

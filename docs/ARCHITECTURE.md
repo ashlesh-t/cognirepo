@@ -27,12 +27,15 @@ forward requests to these functions. **Never duplicate logic in an adapter.**
 
 ### `retrieval/hybrid.py` — Hybrid Retrieval
 
-Combines four signals into a single ranked result list:
+Combines **3 signals** into a single weighted ranked result list:
 
-1. **FAISS vector similarity** — semantic embedding distance
-2. **Knowledge graph distance** — hop count from query entity to candidate
-3. **BM25 keyword relevance** — term frequency over the episodic corpus
-4. **Behaviour weights** — frequency of past access patterns (via `BehaviourTracker`)
+1. **FAISS vector similarity** — semantic embedding distance (weight 0.5)
+2. **Knowledge graph distance** — hop count from query entity to candidate (weight 0.3)
+3. **Behaviour weights** — frequency of past access patterns via `BehaviourTracker` (weight 0.2)
+
+Two additional components work alongside but are **not** blended into `final_score`:
+- **AST pre-scorer** — expands the candidate pool before scoring (symbol lookup via `ASTIndexer`)
+- **BM25 episodic side-channel** — searches the episodic event log separately; results are surfaced next to, not merged into, the ranked list. BM25 also acts as a full fallback retriever when FAISS embeddings are unavailable (circuit breaker open).
 
 Do not call FAISS or the graph directly from tools — always go through `HybridRetriever`.
 
@@ -52,21 +55,32 @@ Do not call FAISS or the graph directly from tools — always go through `Hybrid
 
 | Module | Responsibility |
 |--------|---------------|
-| `graph/knowledge_graph.py` | NetworkX DiGraph: FILE, FUNCTION, CLASS, CONCEPT, QUERY nodes |
+| `graph/knowledge_graph.py` | NetworkX DiGraph: FILE, FUNCTION, CLASS, CONCEPT, QUERY, SESSION, USER_ACTION, MEMORY nodes |
 | `graph/behaviour_tracker.py` | Tracks access frequency per symbol; weights retrieval signals |
 
-Node types:
+Node types (`NodeType` constants in `graph/knowledge_graph.py`):
 - `FILE` — source file
 - `FUNCTION` — function/method definition
 - `CLASS` — class/struct/interface definition
 - `CONCEPT` — abstract concept stored as memory
 - `QUERY` — past query (links to relevant symbols)
+- `SESSION` — a conversation session
+- `USER_ACTION` — a recorded user interaction
+- `MEMORY` — cross-agent memory node (synced from Claude/Gemini/etc.)
 
-Edge types:
-- `CONTAINS` — FILE → FUNCTION/CLASS
-- `CALLS` — FUNCTION → FUNCTION
-- `USES` — FUNCTION/CLASS → CLASS
-- `RELATED_TO` — CONCEPT → FUNCTION/CLASS
+Edge types (`EdgeType` constants in `graph/knowledge_graph.py`):
+- `RELATES_TO` — generic semantic relationship between two nodes
+- `DEFINED_IN` — FUNCTION/CLASS → FILE (symbol defined in file)
+- `CALLED_BY` — FUNCTION → FUNCTION (callee → caller, forward direction)
+- `CALLS` — FUNCTION → FUNCTION (internal reverse edge; enables BFS without `predecessors()`)
+- `QUERIED_WITH` — CONCEPT → QUERY (concept was mentioned in a query)
+- `CO_OCCURS` — FILE ↔ FILE (frequently edited together)
+- `IMPORTS` — FILE → FILE (file A imports file B)
+- `INHERITS` — CLASS → CLASS (class A inherits from class B)
+- `EXPOSES` — FUNCTION → ENDPOINT (function handles an HTTP route)
+- `CALLS_ENDPOINT` — FUNCTION → ENDPOINT (function calls a remote service endpoint)
+
+See `docs/architecture/graph.md` for the full schema with query examples.
 
 ---
 
@@ -104,7 +118,7 @@ Use `get_storage_adapter()` factory — do not instantiate directly.
 
 | Module | Responsibility |
 |--------|---------------|
-| `orchestrator/classifier.py` | Query complexity classifier — QUICK / DETAILED / COMPLEX |
+| `orchestrator/classifier.py` | Query complexity classifier — QUICK / STANDARD / COMPLEX / EXPERT |
 | `orchestrator/router.py` | Routes QUICK to Gemini Flash, COMPLEX to Claude Opus, etc. |
 
 Do not hardcode model names outside `classifier.py`.

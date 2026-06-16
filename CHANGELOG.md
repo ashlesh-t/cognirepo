@@ -10,10 +10,33 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.1.3] — 2026-06-16
+
+### Docs
+- **`docs/ARCHITECTURE.md`** — corrected retrieval section from "four signals" to 3-signal weighted merge (vector + graph + behaviour); BM25 role clarified as episodic side-channel and embedding-failure fallback; node types updated with SESSION, USER_ACTION, MEMORY; edge types updated to match real `EdgeType` constants (RELATES_TO, DEFINED_IN, CALLED_BY, CALLS, QUERIED_WITH, CO_OCCURS, IMPORTS, INHERITS, EXPOSES, CALLS_ENDPOINT), replacing stale CONTAINS / USES / RELATED_TO entries
+- **`docs/architecture/graph.md`** — added missing `CALLS` edge type (internal reverse edge); removed `SIMILAR_TO` (not defined in code); removed accidental trailing `CALLS` text artefact after closing code fence
+- **`docs/CONFIGURATION.md`** — rewrote model config example from flat `{fast_model, smart_model}` schema to real four-tier `QUICK/STANDARD/COMPLEX/EXPERT` registry; corrected storage layout filenames to match code (`semantic.index`, `memory/semantic_metadata.json`, `memory/episodic.json`, `index/ast_index.json`); added missing `retrieval_weights`, `idle_ttl_seconds`, `episodic_max_events`, and `indexing.skip_dirs/unskip_dirs` fields
+- **`docs/architecture/SPECIFICATION.md`** — corrected storage layout filenames (`faiss.index` → `semantic.index`, `metadata.json` → `memory/semantic_metadata.json`, `episodic/episodic.json` → `memory/episodic.json`, added `ast_metadata.json`)
+- **`docs/CONTRIBUTING.md`** (in `docs/`) — replaced stale content (wrong paths `mcp/tools/`, `mcp/registry.py`) with redirect stub pointing to root `CONTRIBUTING.md` and `docs/DEVELOPER_GUIDE.md`
+- **`docs/CLI.md`** — added cross-link to `docs/CLI_REFERENCE.md`
+- **`docs/CLI_REFERENCE.md`** — added cross-link to `docs/CLI.md`; added missing commands: `setup`, `migrate-config`, `ask`, `benchmark`, `search-docs`, `log-episode`, `history`, `seed`, `sessions`, `watch`, `user-prefs`
+- **`docs/FEATURES.md`** — corrected tool count from 32 to 34 in section 14 documentation table
+- **`docs/USAGE.md`** — marked `org_search` as deprecated in tool table; `org_wide_search` listed as preferred
+
+### Fixed
+- **`scripts/sync_version.py`** — now also syncs `server.json packages[0].version` (previously only updated top-level `version` field, leaving `packages[0].version` stale)
+- **`server.json`** — `packages[0].version` updated to `1.2.3` (was `1.1.1`, one release behind)
+- **Hardcoded fallback version strings** updated from `"1.1.1"` → `"1.2.3"` in `config/version.py` and `cli/__init__.py`
+
+### Changed
+- **`docs/assets/`** — removed three text-content placeholder files (`claude-desktop-placeholder.png`, `cursor-placeholder.png`, `demo-placeholder.png`); none were referenced in any doc
+
+---
+
 ## [1.1.2] — 2026-06-15
 
 ### Added
-- **`glama.json`** — Glama MCP registry descriptor at repo root; all 32 MCP tools listed with `inputSchema` (Glama spec) instead of `parameters`; includes `$schema`, `name`, `description`, `license`, `homepage`, and `repository` fields for registry discovery at glama.ai/mcp
+- **`glama.json`** — Glama MCP registry descriptor at repo root; all 34 MCP tools listed with `inputSchema` (Glama spec) instead of `parameters`; includes `$schema`, `name`, `description`, `license`, `homepage`, and `repository` fields for registry discovery at glama.ai/mcp
 
 ---
 
@@ -329,7 +352,10 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - README.md — complete project documentation with badges
 - USAGE.md — complete CLI, REST, MCP, Docker, and security reference
 
-[Unreleased]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.2...v1.1.3
+[1.1.2]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/ashlesh-t/cognirepo/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.6.0...v1.0.0
 [0.6.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.5.0...v0.6.0

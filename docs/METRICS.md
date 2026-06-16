@@ -2,6 +2,12 @@
 
 > Real measurements from live Claude + Gemini sessions on the CogniRepo codebase itself.
 > Automated regression numbers from `cognirepo benchmark` on the same repo (~120 files, ~1 400 symbols).
+>
+> **Validation note:** These numbers were not re-run during the v1.2.3 audit pass (benchmark
+> scripts require live external repo fixtures not available in this environment). All figures
+> below are carried forward from prior benchmark runs (last verified: inferable from git
+> history for each version block). Re-validate with `cognirepo benchmark` before citing in
+> external publications.
 
 ---
 

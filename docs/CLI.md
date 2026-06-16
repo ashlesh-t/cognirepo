@@ -2,6 +2,8 @@
 
 Full reference for the `cognirepo` interactive REPL and all slash commands.
 
+> **Shell commands** (e.g. `cognirepo init`, `cognirepo serve`, `cognirepo index-repo`) are documented in [docs/CLI_REFERENCE.md](CLI_REFERENCE.md).
+
 ---
 
 ## Starting the REPL

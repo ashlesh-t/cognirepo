@@ -192,7 +192,8 @@ CogniRepo exposes 34 MCP tools over stdio transport (see [docs/MCP_TOOLS.md](MCP
 |---|---|---|
 | `store_memory` | `text, source` | `{status, text, importance}` |
 | `retrieve_memory`| `query, top_k, include_org`| `list[{text, source_repo, ...}]` |
-| `org_search` | `query, top_k` | Semantic search across the organization |
+| `org_wide_search` | `query, top_k` | Semantic search across the organization (preferred) |
+| `org_search` | `query, top_k` | *(deprecated — use `org_wide_search`; kept as fallback when index is sparse)* |
 | `org_dependencies`| _(none)_ | List all linked repos in the org |
 | `architecture_overview`| `scope` | High-level architectural summaries |
 | `lookup_symbol` | `name, include_org` | `{file, line, type, repo}` |
