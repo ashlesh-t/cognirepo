@@ -67,15 +67,23 @@ def sync_manifest_json(version: str, *, check: bool) -> bool:
 def sync_server_json(version: str, *, check: bool) -> bool:
     path = REPO_ROOT / "server.json"
     data = json.loads(path.read_text())
-    if data.get("version") == version:
+    top_ok = data.get("version") == version
+    pkg_version = (data.get("packages") or [{}])[0].get("version")
+    pkg_ok = pkg_version == version
+    if top_ok and pkg_ok:
         print(f"  server.json — already {version}")
         return True
     if check:
-        print(f"  DRIFT  server.json — expected {version}, got {data.get('version')}")
+        if not top_ok:
+            print(f"  DRIFT  server.json version — expected {version}, got {data.get('version')}")
+        if not pkg_ok:
+            print(f"  DRIFT  server.json packages[0].version — expected {version}, got {pkg_version}")
         return False
     data["version"] = version
+    if data.get("packages"):
+        data["packages"][0]["version"] = version
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-    print(f"  UPDATED  server.json → {version}")
+    print(f"  UPDATED  server.json → {version} (top-level + packages[0])")
     return True
 
 

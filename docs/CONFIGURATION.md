@@ -15,9 +15,21 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
     "vector_backend": "faiss"
   },
   "models": {
-    "enabled": true,
-    "fast_model": "gemini-2.0-flash",
-    "smart_model": "claude-opus-4-6"
+    "QUICK":    {"provider": "local",     "model": "local-resolver"},
+    "STANDARD": {"provider": "anthropic", "model": "claude-haiku-4-5"},
+    "COMPLEX":  {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+    "EXPERT":   {"provider": "anthropic", "model": "claude-opus-4-6"}
+  },
+  "retrieval_weights": {
+    "vector":    0.5,
+    "graph":     0.3,
+    "behaviour": 0.2
+  },
+  "idle_ttl_seconds": 600,
+  "episodic_max_events": 10000,
+  "indexing": {
+    "skip_dirs": [],
+    "unskip_dirs": []
   },
   "redis": {
     "enabled": false
@@ -25,15 +37,25 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 }
 ```
 
+> **Single-model shorthand:** `cognirepo init` may write a simplified `"model": {"provider": "anthropic", "model": "claude-sonnet-4-6"}` form. This is auto-expanded to the four-tier registry at runtime. Use `cognirepo migrate-config` to canonicalise to the full form.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `project_name` | string | auto-detected | Human-readable project name |
 | `port` | int | `8000` | REST API port |
 | `storage.encrypt` | bool | `false` | Enable AES-256 encryption at rest |
 | `storage.vector_backend` | string | `"faiss"` | Vector backend: `"faiss"` or `"chroma"` |
-| `models.enabled` | bool | `true` | Enable multi-model routing |
-| `models.fast_model` | string | `"gemini-2.0-flash"` | Model for fast/simple queries |
-| `models.smart_model` | string | `"claude-opus-4-6"` | Model for complex reasoning |
+| `models.QUICK.model` | string | `"local-resolver"` | Zero-API local resolver for trivial queries |
+| `models.STANDARD.model` | string | `"claude-haiku-4-5"` | Model for quick lookups (score ≤4) |
+| `models.COMPLEX.model` | string | `"claude-sonnet-4-6"` | Model for moderate reasoning (score ≤9) |
+| `models.EXPERT.model` | string | `"claude-opus-4-6"` | Model for cross-file/architectural queries (score >9) |
+| `retrieval_weights.vector` | float | `0.5` | Weight for FAISS vector score |
+| `retrieval_weights.graph` | float | `0.3` | Weight for knowledge-graph hop score |
+| `retrieval_weights.behaviour` | float | `0.2` | Weight for behaviour access-frequency score |
+| `idle_ttl_seconds` | int | `600` | Inactivity timeout before heavy resources are released |
+| `episodic_max_events` | int | `10000` | Max episodic events before oldest 20% rotate to `episodic_archive.json` |
+| `indexing.skip_dirs` | list | `[]` | Extra directory names to skip during indexing (merged with built-in defaults) |
+| `indexing.unskip_dirs` | list | `[]` | Built-in-skipped directories to index anyway (e.g. `["gen"]`) |
 | `redis.enabled` | bool | `false` | Enable Redis caching layer |
 
 ---
@@ -58,20 +80,20 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 
 ```
 .cognirepo/
-  config.json           ← project settings (this file)
-  vector_db/            ← FAISS index files
-    index.faiss
-    metadata.json
-  graph/                ← knowledge graph
-    graph.pkl
-  index/                ← AST symbol index
-    symbols.json
-    reverse_index.json
-    sha256_cache.json
-  episodic/             ← event log
-    events.jsonl
-  sessions/             ← conversation session history
-  errors/               ← error logs (date-stamped)
+  config.json               ← project settings (this file)
+  vector_db/                ← FAISS semantic index
+    semantic.index          ← FAISS IndexFlatL2 binary (local_vector_db.py)
+  memory/                   ← embeddings metadata + episodic log
+    semantic_metadata.json  ← per-vector metadata (text, source, importance, timestamp)
+    episodic.json           ← append-only episodic event journal (JSON lines)
+    episodic_archive.json   ← rotated events when episodic_max_events is exceeded
+  graph/                    ← knowledge graph
+    graph.pkl               ← serialised NetworkX DiGraph
+  index/                    ← AST symbol index
+    ast_index.json          ← full AST index + reverse_index dict (ast_indexer.py)
+    ast_metadata.json       ← parallel FAISS metadata for AST vectors
+  sessions/                 ← conversation session history
+  errors/                   ← error logs (date-stamped)
     2026-04-03.log
 ```
 

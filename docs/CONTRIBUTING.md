@@ -1,38 +1,14 @@
 # Contributing to CogniRepo
 
-## Dev Setup
+> **This file is a redirect stub.** The canonical contributor documentation lives in two places:
+>
+> - **[Root CONTRIBUTING.md](../CONTRIBUTING.md)** — dev setup, PR checklist, commit format, the core `tools/` architecture rule
+> - **[docs/DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)** — step-by-step walkthroughs: adding an MCP tool, adding a language, adding a model adapter, adding a CLI command
 
-```bash
-git clone https://github.com/ashlesh-t/cognirepo
-cd cognirepo
-pip install -e ".[dev]"
-pre-commit install
-```
+## Why two files?
 
-## Add a New MCP Tool
+The root `CONTRIBUTING.md` is the short version (setup + rules). `DEVELOPER_GUIDE.md` is the deep reference for extending CogniRepo. Both are kept in sync — if they disagree, the root file wins on process questions and `DEVELOPER_GUIDE.md` wins on implementation details.
 
-1. Create handler in `mcp/tools/your_tool.py` implementing `async def run(params) -> dict`.
-2. Register it in `mcp/registry.py` under a unique tool name.
-3. Add schema entry in `mcp/schemas/your_tool.json`.
-4. Write tests in `tests/test_your_tool.py`.
-5. Document in `docs/MCP_TOOLS.md`.
+---
 
-## Add a New Language
-
-1. Add a tree-sitter grammar or parser in `indexing/languages/`.
-2. Register the file extension → parser mapping in `indexing/language_registry.py`.
-3. Add sample fixtures under `tests/fixtures/<language>/`.
-4. Update `docs/LANGUAGES.md` with support status.
-
-## Environment Variables
-
-| Variable | Purpose |
-|---|---|
-| `COGNIREPO_JWT_SECRET` | Signs JWT tokens for MCP auth. Set a long random string. Never commit it. |
-
-## PR Checklist
-
-- [ ] Tests pass: `python -m pytest tests/ -q`
-- [ ] SPDX header present in any new `.py` files
-- [ ] `docs/` updated if behaviour changes
-- [ ] Conventional Commits format used (`feat:`, `fix:`, `docs:`, etc.)
+> **Important — correct MCP tool path:** New tools go in `tools/your_tool.py` and are registered via `@mcp.tool()` in `server/mcp_server.py`. **Not** `mcp/tools/` or `mcp/registry.py` — those paths do not exist. See [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) for the full walkthrough.
