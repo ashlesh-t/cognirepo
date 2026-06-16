@@ -10,7 +10,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [1.2.3] — 2026-06-16
+## [1.1.3] — 2026-06-16
 
 ### Docs
 - **`docs/ARCHITECTURE.md`** — corrected retrieval section from "four signals" to 3-signal weighted merge (vector + graph + behaviour); BM25 role clarified as episodic side-channel and embedding-failure fallback; node types updated with SESSION, USER_ACTION, MEMORY; edge types updated to match real `EdgeType` constants (RELATES_TO, DEFINED_IN, CALLED_BY, CALLS, QUERIED_WITH, CO_OCCURS, IMPORTS, INHERITS, EXPOSES, CALLS_ENDPOINT), replacing stale CONTAINS / USES / RELATED_TO entries
@@ -352,8 +352,8 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - README.md — complete project documentation with badges
 - USAGE.md — complete CLI, REST, MCP, Docker, and security reference
 
-[Unreleased]: https://github.com/ashlesh-t/cognirepo/compare/v1.2.3...HEAD
-[1.2.3]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.2...v1.2.3
+[Unreleased]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/ashlesh-t/cognirepo/compare/v1.0.0...v1.1.0
