@@ -140,14 +140,16 @@ All CogniRepo data lives under `.cognirepo/` in the project root. Nothing is wri
 .cognirepo/
   config.json                  — project config (project_name, model registry, redis)
   vector_db/
-    faiss.index                — FAISS flat index (sentence-transformer embeddings)
-    metadata.json              — per-vector metadata (text, source, importance, timestamp)
+    semantic.index             — FAISS IndexFlatL2 binary (vector_db/local_vector_db.py)
+  memory/
+    semantic_metadata.json     — per-vector metadata (text, source, importance, timestamp)
+    episodic.json              — append-only episodic event journal (JSON lines)
+    episodic_archive.json      — rotated events when episodic_max_events is exceeded
   graph/
     graph.pkl                  — serialised NetworkX DiGraph
   index/
-    ast_index.json             — AST reverse index: symbol → [(file, line), ...]
-  episodic/
-    episodic.json              — append-only event journal (JSON lines)
+    ast_index.json             — full AST index + reverse_index dict (indexer/ast_indexer.py)
+    ast_metadata.json          — parallel FAISS metadata for AST symbol vectors
   sessions/
     <uuid>.json                — individual conversation session files
     current.json               — pointer to the most recent session

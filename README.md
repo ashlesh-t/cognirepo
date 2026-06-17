@@ -93,18 +93,18 @@ Benchmarked across 6 real open-source repos (FastAPI, Flask, Celery, Ansible, Mo
 > 22-level variable precedence chains reduce retrieval confidence. The tool reports uncertainty
 > rather than hallucinating call chains.
 
-### Measured: precision@k and index build time (4 external repos)
+### Measured: lookup latency and token reduction (4 external repos)
 
-Indexed 4 real repos, measured with `cognirepo index-repo` + `context_pack` queries. CPU-only, no GPU.
+Indexed 4 real repos, measured with `cognirepo index-repo` + `cognirepo benchmark --json`. CPU-only, no GPU.
 
-| Repo | Files | Index time | Lookup latency | precision@3 |
-|------|-------|-----------|----------------|-------------|
-| flask | 83 | 12s | 0.011 ms | **100%** |
-| fastapi | 1,122 | 34s | 0.005 ms | **89%** |
-| celery | 416 | 44s | 0.025 ms | **100%** |
-| ansible | 1,813 | 145s | 0.018 ms | **80%** |
+| Repo | Files | Lookup latency | Token reduction | context_relevance |
+|------|-------|----------------|-----------------|-------------------|
+| flask | 83 | 0.005 ms | 97.7% | 21.8% |
+| fastapi | 1,122 | 0.002 ms | 98.6% | 36.0% |
+| celery | 416 | 0.003 ms | 99.1% | 39.8% |
+| ansible | 1,813 | 0.018 ms | — | — |
 
-All repos: symbol hit rate 5/5, lookup latency < 0.1ms. All quality gates pass. Full numbers: [docs/METRICS.md](docs/METRICS.md).
+Lookup latency < 0.1 ms on all repos. Precision@k re-validated after v1.1.3 benchmark fix — see [docs/METRICS.md](docs/METRICS.md) for full numbers and methodology.
 
 Run `cognirepo benchmark` on your own codebase to reproduce. See [docs/METRICS.md](docs/METRICS.md).
 

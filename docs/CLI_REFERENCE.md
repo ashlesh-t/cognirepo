@@ -2,6 +2,8 @@
 
 Complete command reference for the `cognirepo` CLI.
 
+> **REPL slash commands** (e.g. `/help`, `/model`, `/clear`) are documented in [docs/CLI.md](CLI.md).
+
 ---
 
 ## Global Flags
@@ -166,3 +168,125 @@ cognirepo prune [OPTIONS]
 | `--dry-run` | `False` | Show what would be pruned without removing |
 | `--archive` | `False` | Archive pruned entries instead of deleting |
 | `--aggressive` | `False` | Use a lower threshold (0.05) |
+
+---
+
+## cognirepo setup
+
+One-command onboarding: `init` + `index-repo` + MCP config generation. Installs optional extras (languages, security, providers) interactively.
+
+```bash
+cognirepo setup
+```
+
+Detects `.cursor/`, `.vscode/`, and `.claude/` and writes the appropriate MCP connector config for each.
+
+---
+
+## cognirepo migrate-config
+
+Migrate `config.json` from legacy tier names (`FAST/BALANCED/DEEP`) to current names (`STANDARD/COMPLEX/EXPERT`).
+
+```bash
+cognirepo migrate-config           # apply in place
+cognirepo migrate-config --dry-run # preview changes without writing
+```
+
+---
+
+## cognirepo ask
+
+Send a single query through the full orchestrator pipeline (classifier → context builder → model router) without entering the REPL.
+
+```bash
+cognirepo ask "QUERY" [OPTIONS]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--model MODEL` | tier default | Override model for this query |
+| `--tier TIER` | auto-classified | Force a specific tier (QUICK/STANDARD/COMPLEX/EXPERT) |
+
+---
+
+## cognirepo benchmark
+
+Run quantitative value benchmarks and report token-reduction metrics.
+
+```bash
+cognirepo benchmark [OPTIONS]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--json` | `False` | Output results as JSON |
+
+---
+
+## cognirepo search-docs
+
+Full-text search over `.md` files in the project.
+
+```bash
+cognirepo search-docs QUERY
+```
+
+---
+
+## cognirepo log-episode
+
+Append an episodic event to the journal.
+
+```bash
+cognirepo log-episode TEXT
+```
+
+---
+
+## cognirepo history
+
+Print recent episodic events.
+
+```bash
+cognirepo history [--limit N]
+```
+
+---
+
+## cognirepo seed
+
+Seed the behaviour tracker and learning store from git log.
+
+```bash
+cognirepo seed [--days N]
+```
+
+---
+
+## cognirepo sessions
+
+List recent conversation sessions.
+
+```bash
+cognirepo sessions
+```
+
+---
+
+## cognirepo watch
+
+Manage the background file-watcher daemon.
+
+```bash
+cognirepo watch start|stop|status
+```
+
+---
+
+## cognirepo user-prefs
+
+View or set global user preferences stored in `~/.cognirepo/`.
+
+```bash
+cognirepo user-prefs [KEY [VALUE]]
+```

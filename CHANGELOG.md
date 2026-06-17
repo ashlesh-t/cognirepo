@@ -10,10 +10,41 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.1.3] — 2026-06-17
+
+### Fixed
+- **Benchmark symbol probe on external repos** — `_BENCHMARK_SYMBOLS` was hardcoded to CogniRepo's own symbols; running against flask/fastapi/celery returned `symbol_hit_rate: 0.0` because those symbols don't exist in external repos. Now samples 5 symbols from the target repo's own AST reverse index via `_sample_repo_symbols()`; falls back to the hardcoded list only if the index is empty (`tools/benchmark.py`)
+- **Benchmark precision golden set ignores repo-specific files** — `measure_precision_at_k()` and `measure_latency()` always loaded `tests/fixtures/benchmark_golden.json` (CogniRepo-specific queries/patterns), producing `precision_queries_tested: 0` for easy repos and `precision@k: 0%` for celery. Now checks for `benchmark_golden_{repo_name}.json` first; falls back to the generic file if no repo-specific set exists (`tools/benchmark.py`)
+- **`server/manifest.json` missing 2 tools** — `find_symbol_path` and `get_service_endpoints` were registered via `@mcp.tool()` in `server/mcp_server.py` (lines 1318, 1349) but absent from the manifest; tool count was 32 instead of 34. Both entries added with full parameter schemas
+
+### Changed
+- **CHANGELOG [1.1.0] duplicate section headers** — consolidated two `### Added` and two `### Fixed` headers into one each; all items preserved, no history rewritten
+
+### Docs
+- **`docs/ARCHITECTURE.md`** — corrected retrieval section from "four signals" to 3-signal weighted merge (vector + graph + behaviour); BM25 role clarified as episodic side-channel and embedding-failure fallback; node types updated with SESSION, USER_ACTION, MEMORY; edge types updated to match real `EdgeType` constants (RELATES_TO, DEFINED_IN, CALLED_BY, CALLS, QUERIED_WITH, CO_OCCURS, IMPORTS, INHERITS, EXPOSES, CALLS_ENDPOINT), replacing stale CONTAINS / USES / RELATED_TO entries
+- **`docs/architecture/graph.md`** — added missing `CALLS` edge type (internal reverse edge); removed `SIMILAR_TO` (not defined in code); removed accidental trailing `CALLS` text artefact after closing code fence
+- **`docs/CONFIGURATION.md`** — rewrote model config example from flat `{fast_model, smart_model}` schema to real four-tier `QUICK/STANDARD/COMPLEX/EXPERT` registry; corrected storage layout filenames to match code (`semantic.index`, `memory/semantic_metadata.json`, `memory/episodic.json`, `index/ast_index.json`); added missing `retrieval_weights`, `idle_ttl_seconds`, `episodic_max_events`, and `indexing.skip_dirs/unskip_dirs` fields
+- **`docs/architecture/SPECIFICATION.md`** — corrected storage layout filenames (`faiss.index` → `semantic.index`, `metadata.json` → `memory/semantic_metadata.json`, `episodic/episodic.json` → `memory/episodic.json`, added `ast_metadata.json`)
+- **`docs/CONTRIBUTING.md`** (in `docs/`) — replaced stale content (wrong paths `mcp/tools/`, `mcp/registry.py`) with redirect stub pointing to root `CONTRIBUTING.md` and `docs/DEVELOPER_GUIDE.md`
+- **`docs/CLI.md`** — added cross-link to `docs/CLI_REFERENCE.md`
+- **`docs/CLI_REFERENCE.md`** — added cross-link to `docs/CLI.md`; added missing commands: `setup`, `migrate-config`, `ask`, `benchmark`, `search-docs`, `log-episode`, `history`, `seed`, `sessions`, `watch`, `user-prefs`
+- **`docs/FEATURES.md`** — corrected tool count from 32 to 34 in section 14 documentation table
+- **`docs/USAGE.md`** — marked `org_search` as deprecated in tool table; `org_wide_search` listed as preferred
+
+### Fixed
+- **`scripts/sync_version.py`** — now also syncs `server.json packages[0].version` (previously only updated top-level `version` field, leaving `packages[0].version` stale)
+- **`server.json`** — `packages[0].version` updated to `1.2.3` (was `1.1.1`, one release behind)
+- **Hardcoded fallback version strings** updated from `"1.1.1"` → `"1.2.3"` in `config/version.py` and `cli/__init__.py`
+
+### Changed
+- **`docs/assets/`** — removed three text-content placeholder files (`claude-desktop-placeholder.png`, `cursor-placeholder.png`, `demo-placeholder.png`); none were referenced in any doc
+
+---
+
 ## [1.1.2] — 2026-06-15
 
 ### Added
-- **`glama.json`** — Glama MCP registry descriptor at repo root; all 32 MCP tools listed with `inputSchema` (Glama spec) instead of `parameters`; includes `$schema`, `name`, `description`, `license`, `homepage`, and `repository` fields for registry discovery at glama.ai/mcp
+- **`glama.json`** — Glama MCP registry descriptor at repo root; all 34 MCP tools listed with `inputSchema` (Glama spec) instead of `parameters`; includes `$schema`, `name`, `description`, `license`, `homepage`, and `repository` fields for registry discovery at glama.ai/mcp
 
 ---
 
@@ -35,7 +66,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [1.1.0] — 2026-06-11
 
-### Added (release-readiness pass, 2026-06)
+### Added
 - **`cognirepo org rewire` CLI command** — re-runs cross-service CALLS_API detection for every indexed org repo; repairs edges missed when services were indexed in the wrong order
 - **`org_dependencies` parent rollup** — called from an org parent, now returns `service_topology` with the children's CALLS_API call chain (e.g. client → npci-service → bank-service), including caller function and endpoint pattern
 - **`org_wide_search` transparency** — returns `{results, count, repos_searched, repos_skipped}` so a child repo missing from results is visible (was: silent)
@@ -45,8 +76,15 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **`queried_symbols` + `recently_modified_files`** in session brief — replaces the misleading `hot_symbols` label (kept as deprecated alias until 1.2)
 - **Doctor checks 18–20** — AST index JSON validity, doc-index populated, org CALLS_API edges present
 - **Subgraph `resolved_to`** — fuzzy name resolution now scans all `::Name` suffixed nodes ranked by degree, so `subgraph("GenericAPIServer")` resolves file-qualified keys
+- **`get_agent_bootstrap()` MCP tool** — single-call session start replacing 4-call sequence; ~300 tokens vs ~900
+- **`supersede_learning()` MCP tool** — deprecate and replace an outdated memory entry in one call
+- **Behaviour tracking opt-in** — wizard now asks during `cognirepo setup`; off by default; `behaviour.json` encrypted when encryption is enabled
+- **Behaviour query recording** — `context_pack`, `lookup_symbol`, `who_calls`, `semantic_search_code`, `episodic_search` now record to behaviour tracker (when opted in)
+- **Auto-summarize interaction style** — triggers every 10 queries automatically
+- **`autosave_context` wizard step** — cross-agent handoff now asked during setup (default: on)
+- **`DEFAULT_MODELS_BY_PROVIDER`** in `orchestrator/classifier.py` — single source for model names
 
-### Fixed (release-readiness pass, 2026-06)
+### Fixed
 - **AST index corruption on large repos** — `ast_index.json`/`ast_metadata.json` writes are now atomic (tmp + `os.replace` + fsync); corrupt files are renamed `.corrupt` and self-heal on load instead of crashing `cognirepo summarize`
 - **`context_pack` empty on Kubernetes-style repos** — `staging/` removed from default skip dirs (it holds real first-party source in k8s); re-add per repo via `indexing.skip_dirs` if needed
 - **`context_pack` BM25 noise** — relative-score gate drops sections below 0.5× the best hit's score (tunable via `COGNIREPO_REL_NOISE_RATIO`)
@@ -67,17 +105,6 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - **`graph_stats` staleness coherence** — `index_stale` no longer reports `true` when git HEAD matches the last-indexed SHA (old by age but content-current); reindex triggers verified live: new commit → `stale_reindexing_triggered: true`
 - **Segfault at end of large-repo indexing (doc ingestion)** — reproduced on moby: chromadb 1.5.8's Rust core hits infinite recursion (native stack overflow) merely *opening* a large/poisoned chroma store (`Collection.count()` at adapter init), killing the whole `index-repo` run after a 30-minute embed pass. Three-part fix: (1) doc ingestion now runs in an isolated subprocess (`python -m indexer.doc_ingester`) so a native crash can never kill the index run; (2) crash-evidence self-heal — a `.opening` sentinel left by a crashed open makes the next open quarantine the poisoned store to `chroma.corrupt-<ts>` (kept, not deleted) and start fresh, with one automatic retry; (3) the duplicate DocIngester invocation inside `index_repo()` removed (every entry point calls it explicitly after `free_large_objects()`), which also stops doc chunks being stored twice; chunk embedding is now one streamed batch pass with text-level dedup instead of thousands of individual ONNX calls
 - **`.env.example` missing from wheels** — the template lived at the repo root, which setuptools package-data cannot include, so pip/pipx installs shipped no template and `cognirepo init` silently skipped `.env` creation. The template now also lives at `cognirepo/.env.example` (shipped in the wheel, verified via scratch-venv install; a test keeps both copies in sync), and `init` prints a clear note instead of silently skipping when no template is found
-
-### Added
-- **`get_agent_bootstrap()` MCP tool** — single-call session start replacing 4-call sequence; ~300 tokens vs ~900
-- **`supersede_learning()` MCP tool** — deprecate and replace an outdated memory entry in one call
-- **Behaviour tracking opt-in** — wizard now asks during `cognirepo setup`; off by default; `behaviour.json` encrypted when encryption is enabled
-- **Behaviour query recording** — `context_pack`, `lookup_symbol`, `who_calls`, `semantic_search_code`, `episodic_search` now record to behaviour tracker (when opted in)
-- **Auto-summarize interaction style** — triggers every 10 queries automatically
-- **`autosave_context` wizard step** — cross-agent handoff now asked during setup (default: on)
-- **`DEFAULT_MODELS_BY_PROVIDER`** in `orchestrator/classifier.py` — single source for model names
-
-### Fixed
 - **fastembed migration** — removed all `model.encode()` calls across 11 files; replaced with `model.embed()` generator API; no more CUDA/nvidia packages on `pip install cognirepo`
 - **`get_children()` always returning empty** — `direction == "reverse"` → `direction == "forward"` in org_graph
 - **Episodic type bug** — `log_event` was called with dict as first arg; now correctly passes `event=str, metadata=dict`
@@ -329,7 +356,10 @@ Versioning: [Semantic Versioning](https://semver.org/)
 - README.md — complete project documentation with badges
 - USAGE.md — complete CLI, REST, MCP, Docker, and security reference
 
-[Unreleased]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.2...v1.1.3
+[1.1.2]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/ashlesh-t/cognirepo/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/ashlesh-t/cognirepo/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.6.0...v1.0.0
 [0.6.0]: https://github.com/ashlesh-t/cognirepo/compare/v0.5.0...v0.6.0
