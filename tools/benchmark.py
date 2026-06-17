@@ -275,7 +275,11 @@ def measure_precision_at_k(golden: list[dict] | None = None, k: int = 3) -> dict
     from tools.context_pack import context_pack
 
     if golden is None:
-        golden_path = REPO_ROOT / "tests" / "fixtures" / "benchmark_golden.json"
+        import os as _os
+        _fixtures = REPO_ROOT / "tests" / "fixtures"
+        _repo_name = _os.path.basename(_os.getcwd())
+        _repo_specific = _fixtures / f"benchmark_golden_{_repo_name}.json"
+        golden_path = _repo_specific if _repo_specific.exists() else _fixtures / "benchmark_golden.json"
         if not golden_path.exists():
             return {"precision_at_1": 0.0, "precision_at_3": 0.0, "queries_tested": 0,
                     "error": "golden file not found"}
@@ -322,7 +326,11 @@ def measure_latency(golden: list[dict] | None = None, repeats: int = 3) -> dict:
     import statistics
 
     if golden is None:
-        golden_path = REPO_ROOT / "tests" / "fixtures" / "benchmark_golden.json"
+        import os as _os
+        _fixtures = REPO_ROOT / "tests" / "fixtures"
+        _repo_name = _os.path.basename(_os.getcwd())
+        _repo_specific = _fixtures / f"benchmark_golden_{_repo_name}.json"
+        golden_path = _repo_specific if _repo_specific.exists() else _fixtures / "benchmark_golden.json"
         if not golden_path.exists():
             return {"latency_p50_ms": 0.0, "latency_p95_ms": 0.0, "latency_p99_ms": 0.0,
                     "error": "golden file not found"}
@@ -404,6 +412,25 @@ _BENCHMARK_SYMBOLS = [
     "lookup_symbol",
 ]
 
+def _sample_repo_symbols(n: int = 5) -> list[str]:
+    """
+    Sample n symbol names from the current repo's AST index.
+    Falls back to _BENCHMARK_SYMBOLS if the index is empty or unreadable
+    (e.g. running against CogniRepo itself).
+    """
+    try:
+        from indexer.ast_indexer import ASTIndexer
+        from graph.knowledge_graph import KnowledgeGraph
+        idx = ASTIndexer(graph=KnowledgeGraph())
+        idx.load()
+        rev = idx.index_data.get("reverse_index", {})
+        if len(rev) >= n:
+            import random
+            return random.sample(list(rev.keys()), n)
+    except Exception:  # pylint: disable=broad-except
+        pass
+    return list(_BENCHMARK_SYMBOLS)
+
 def _benchmark_memories() -> list[str]:
     """Generate unique benchmark memories using timestamp to avoid FAISS pollution."""
     ts = int(time.time())
@@ -438,8 +465,9 @@ def run_benchmark() -> dict:
     # (memory recall → store_memory) escaped as a raw traceback.
     try:
         print("  [2/7] Symbol lookup latency...", flush=True)
-        lookup_metrics = measure_symbol_lookup(_BENCHMARK_SYMBOLS)
-        grep_metrics = measure_grep_equivalent(_BENCHMARK_SYMBOLS[:2])  # grep is slow; test 2
+        _repo_symbols = _sample_repo_symbols(5)
+        lookup_metrics = measure_symbol_lookup(_repo_symbols)
+        grep_metrics = measure_grep_equivalent(_repo_symbols[:2])  # grep is slow; test 2
 
         print("  [3/7] Cache speedup...", flush=True)
         cache_metrics = measure_cache_speedup(_BENCHMARK_QUERIES[:3])
@@ -455,10 +483,15 @@ def run_benchmark() -> dict:
 
         print("  [7/7] Latency histogram...", flush=True)
         # Use first 5 golden queries × 3 repeats — enough for p50/p95 without being slow
-        golden_path = REPO_ROOT / "tests" / "fixtures" / "benchmark_golden.json"
-        if golden_path.exists():
+        import os as _os
+        _fixtures = REPO_ROOT / "tests" / "fixtures"
+        _repo_name = _os.path.basename(_os.getcwd())
+        _repo_golden = _fixtures / f"benchmark_golden_{_repo_name}.json"
+        _generic_golden = _fixtures / "benchmark_golden.json"
+        _lat_path = _repo_golden if _repo_golden.exists() else _generic_golden
+        if _lat_path.exists():
             import json as _json
-            golden_subset = _json.loads(golden_path.read_text(encoding="utf-8"))[:5]
+            golden_subset = _json.loads(_lat_path.read_text(encoding="utf-8"))[:5]
         else:
             golden_subset = None
         latency_metrics = measure_latency(golden=golden_subset, repeats=3)
