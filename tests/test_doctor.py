@@ -181,7 +181,6 @@ def _run_doctor(
         "record_user_preference", "supersede_learning", "get_agent_bootstrap",
         "find_symbol_path", "get_service_endpoints",
     }
-    monkeypatch.setitem(sys.modules, "server", types.ModuleType("server"))
     monkeypatch.setitem(sys.modules, "interface.server.mcp_server", fake_mcp_server_mod)
 
     # ── stub .cognirepo/ presence ─────────────────────────────────────────────

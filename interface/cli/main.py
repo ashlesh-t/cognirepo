@@ -697,7 +697,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
 
     # ── Check 14: MCP tool schemas valid ─────────────────────────────────────
     try:
-        from server import mcp_server as _mcp_mod  # pylint: disable=import-outside-toplevel
+        from interface.server import mcp_server as _mcp_mod  # pylint: disable=import-outside-toplevel
         _required_tools = [
             "store_memory", "retrieve_memory", "record_decision",
             "context_pack", "semantic_search_code", "search_token",
