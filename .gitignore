@@ -61,3 +61,10 @@ test_suite.md
 .cursor/*
 .vscode/*
 .mcp.json
+
+# ── Restructure build artefacts (Phase 2 scripts output) ──────────────────────
+restructure/
+
+# ── Test isolation artefacts (MagicMock dirs created by un-patched get_path) ──
+MagicMock/
+MagicMock*/
