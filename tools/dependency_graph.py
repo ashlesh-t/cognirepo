@@ -23,7 +23,7 @@ from collections import deque
 from pathlib import Path
 
 from data.graph.knowledge_graph import KnowledgeGraph
-from indexer.ast_indexer import ASTIndexer
+from intelligence.indexer.ast_indexer import ASTIndexer
 
 
 def _load_indexer() -> ASTIndexer:

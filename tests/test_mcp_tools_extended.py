@@ -232,7 +232,7 @@ def test_semantic_search_code_language_none():
 
 def test_dependency_graph_returns_dict():
     from server.mcp_server import dependency_graph
-    result = dependency_graph(module="retrieval.hybrid")
+    result = dependency_graph(module="intelligence.retrieval.hybrid")
     assert isinstance(result, dict) or isinstance(result, list)
 
 

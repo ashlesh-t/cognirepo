@@ -297,7 +297,7 @@ def run_ingest_subprocess(project_root: str, timeout: int = 900) -> dict:
     try:
         for attempt in (1, 2):
             proc = subprocess.run(
-                [_sys.executable, "-m", "indexer.doc_ingester", root],
+                [_sys.executable, "-m", "intelligence.indexer.doc_ingester", root],
                 capture_output=True, text=True, timeout=timeout,
                 cwd=root,  # so config/paths resolves the project's .cognirepo/
             )

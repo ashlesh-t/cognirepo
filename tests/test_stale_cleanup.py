@@ -158,7 +158,7 @@ class TestEpisodicMarkStale:
 
 class TestFileWatcherRemove:
     def _make_handler(self, tmp_path):
-        from indexer.file_watcher import RepoFileHandler
+        from intelligence.indexer.file_watcher import RepoFileHandler
         from data.graph.knowledge_graph import KnowledgeGraph
         import networkx as nx
 

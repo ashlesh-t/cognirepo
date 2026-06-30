@@ -17,7 +17,7 @@ from __future__ import annotations
 import os
 
 from tools.git_utils import git_log_patch, GitNotFoundError
-from retrieval.hybrid import episodic_bm25_filter
+from intelligence.retrieval.hybrid import episodic_bm25_filter
 
 
 def explain_change(

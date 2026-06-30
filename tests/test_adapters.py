@@ -58,24 +58,24 @@ def _make_gemini_response(text="pong"):
 
 class TestModelCallError:
     def test_retryable_status_codes(self):
-        from orchestrator.model_adapters.errors import ModelCallError
+        from intelligence.orchestrator.model_adapters.errors import ModelCallError
         for code in (429, 500, 503):
             exc = ModelCallError("test", code, "msg")
             assert exc.is_retryable
 
     def test_non_retryable_status_codes(self):
-        from orchestrator.model_adapters.errors import ModelCallError
+        from intelligence.orchestrator.model_adapters.errors import ModelCallError
         for code in (400, 401, 404):
             exc = ModelCallError("test", code, "msg")
             assert not exc.is_retryable
 
     def test_none_status_code_is_retryable(self):
-        from orchestrator.model_adapters.errors import ModelCallError
+        from intelligence.orchestrator.model_adapters.errors import ModelCallError
         exc = ModelCallError("test", None, "connection reset")
         assert exc.is_retryable
 
     def test_str_contains_provider_and_code(self):
-        from orchestrator.model_adapters.errors import ModelCallError
+        from intelligence.orchestrator.model_adapters.errors import ModelCallError
         exc = ModelCallError("gemini", 429, "rate limited")
         assert "gemini" in str(exc)
         assert "429" in str(exc)
@@ -85,14 +85,14 @@ class TestModelCallError:
 
 class TestRetry:
     def test_success_on_first_attempt(self, monkeypatch):
-        from orchestrator.model_adapters.retry import with_retry
+        from intelligence.orchestrator.model_adapters.retry import with_retry
         monkeypatch.setattr("time.sleep", lambda _: None)
         result = with_retry(lambda: "ok", provider="test")
         assert result == "ok"
 
     def test_retries_on_429(self, monkeypatch):
-        from orchestrator.model_adapters.errors import ModelCallError
-        from orchestrator.model_adapters.retry import with_retry
+        from intelligence.orchestrator.model_adapters.errors import ModelCallError
+        from intelligence.orchestrator.model_adapters.retry import with_retry
         monkeypatch.setattr("time.sleep", lambda _: None)
 
         attempt = {"n": 0}
@@ -108,8 +108,8 @@ class TestRetry:
         assert attempt["n"] == 3
 
     def test_retries_on_500(self, monkeypatch):
-        from orchestrator.model_adapters.errors import ModelCallError
-        from orchestrator.model_adapters.retry import with_retry
+        from intelligence.orchestrator.model_adapters.errors import ModelCallError
+        from intelligence.orchestrator.model_adapters.retry import with_retry
         monkeypatch.setattr("time.sleep", lambda _: None)
 
         attempt = {"n": 0}
@@ -124,8 +124,8 @@ class TestRetry:
         assert result == "ok"
 
     def test_no_retry_on_401(self, monkeypatch):
-        from orchestrator.model_adapters.errors import ModelCallError
-        from orchestrator.model_adapters.retry import with_retry
+        from intelligence.orchestrator.model_adapters.errors import ModelCallError
+        from intelligence.orchestrator.model_adapters.retry import with_retry
         monkeypatch.setattr("time.sleep", lambda _: None)
 
         attempt = {"n": 0}
@@ -140,8 +140,8 @@ class TestRetry:
         assert attempt["n"] == 1  # called exactly once
 
     def test_no_retry_on_400(self, monkeypatch):
-        from orchestrator.model_adapters.errors import ModelCallError
-        from orchestrator.model_adapters.retry import with_retry
+        from intelligence.orchestrator.model_adapters.errors import ModelCallError
+        from intelligence.orchestrator.model_adapters.retry import with_retry
         monkeypatch.setattr("time.sleep", lambda _: None)
 
         attempt = {"n": 0}
@@ -155,8 +155,8 @@ class TestRetry:
         assert attempt["n"] == 1
 
     def test_exhausts_all_retries_and_raises(self, monkeypatch):
-        from orchestrator.model_adapters.errors import ModelCallError
-        from orchestrator.model_adapters.retry import with_retry
+        from intelligence.orchestrator.model_adapters.errors import ModelCallError
+        from intelligence.orchestrator.model_adapters.retry import with_retry
         monkeypatch.setattr("time.sleep", lambda _: None)
 
         attempt = {"n": 0}
@@ -171,8 +171,8 @@ class TestRetry:
         assert attempt["n"] == 4  # 1 initial + 3 retries
 
     def test_sleep_durations_are_exponential(self, monkeypatch):
-        from orchestrator.model_adapters.errors import ModelCallError
-        from orchestrator.model_adapters.retry import with_retry
+        from intelligence.orchestrator.model_adapters.errors import ModelCallError
+        from intelligence.orchestrator.model_adapters.retry import with_retry
 
         slept: list[float] = []
         monkeypatch.setattr("time.sleep", lambda d: slept.append(d))
@@ -195,7 +195,7 @@ class TestAnthropicAdapter:
         mock_client.messages.create.return_value = _make_anthropic_response("hello")
 
         with patch("anthropic.Anthropic", return_value=mock_client):
-            from orchestrator.model_adapters import anthropic_adapter
+            from intelligence.orchestrator.model_adapters import anthropic_adapter
             result = anthropic_adapter.call("ping", "system", [])
 
         assert result.text == "hello"
@@ -207,7 +207,7 @@ class TestAnthropicAdapter:
         mock_client.messages.create.return_value = _make_anthropic_response()
 
         with patch("anthropic.Anthropic", return_value=mock_client):
-            from orchestrator.model_adapters import anthropic_adapter
+            from intelligence.orchestrator.model_adapters import anthropic_adapter
             result = anthropic_adapter.call("ping", "system", [])
 
         assert result.usage["input_tokens"] == 5
@@ -223,8 +223,8 @@ class TestAnthropicAdapter:
         )
 
         with patch("anthropic.Anthropic", return_value=mock_client):
-            from orchestrator.model_adapters import anthropic_adapter
-            from orchestrator.model_adapters.errors import ModelCallError
+            from intelligence.orchestrator.model_adapters import anthropic_adapter
+            from intelligence.orchestrator.model_adapters.errors import ModelCallError
             with pytest.raises(ModelCallError) as exc_info:
                 anthropic_adapter.call("ping", "system", [])
         assert exc_info.value.status_code == 429
@@ -240,8 +240,8 @@ class TestAnthropicAdapter:
         )
 
         with patch("anthropic.Anthropic", return_value=mock_client):
-            from orchestrator.model_adapters import anthropic_adapter
-            from orchestrator.model_adapters.errors import ModelCallError
+            from intelligence.orchestrator.model_adapters import anthropic_adapter
+            from intelligence.orchestrator.model_adapters.errors import ModelCallError
             with pytest.raises(ModelCallError) as exc_info:
                 anthropic_adapter.call("ping", "system", [])
         assert exc_info.value.status_code == 401
@@ -256,7 +256,7 @@ class TestOpenAIAdapter:
         mock_client.chat.completions.create.return_value = _make_openai_response("pong")
 
         with patch("openai.OpenAI", return_value=mock_client):
-            from orchestrator.model_adapters import openai_adapter
+            from intelligence.orchestrator.model_adapters import openai_adapter
             result = openai_adapter.call("ping", "system", [])
 
         assert result.text == "pong"
@@ -272,8 +272,8 @@ class TestOpenAIAdapter:
         )
 
         with patch("openai.OpenAI", return_value=mock_client):
-            from orchestrator.model_adapters import openai_adapter
-            from orchestrator.model_adapters.errors import ModelCallError
+            from intelligence.orchestrator.model_adapters import openai_adapter
+            from intelligence.orchestrator.model_adapters.errors import ModelCallError
             with pytest.raises(ModelCallError) as exc_info:
                 openai_adapter.call("ping", "system", [])
         assert exc_info.value.status_code == 429
@@ -294,8 +294,8 @@ class TestOpenAIAdapter:
         mock_client.chat.completions.create.side_effect = raise_auth
 
         with patch("openai.OpenAI", return_value=mock_client):
-            from orchestrator.model_adapters import openai_adapter
-            from orchestrator.model_adapters.errors import ModelCallError
+            from intelligence.orchestrator.model_adapters import openai_adapter
+            from intelligence.orchestrator.model_adapters.errors import ModelCallError
             with pytest.raises(ModelCallError):
                 openai_adapter.call("ping", "system", [])
         assert call_count["n"] == 1  # not retried
@@ -317,7 +317,7 @@ class TestGrokAdapter:
             return mock_client
 
         with patch("openai.OpenAI", side_effect=capture_openai):
-            from orchestrator.model_adapters import grok_adapter
+            from intelligence.orchestrator.model_adapters import grok_adapter
             result = grok_adapter.call("ping", "system", [])
 
         assert captured.get("base_url") == "https://api.x.ai/v1"
@@ -332,7 +332,7 @@ class TestGrokAdapter:
         mock_client.chat.completions.create.return_value = _make_openai_response("grok-response")
 
         with patch("openai.OpenAI", return_value=mock_client):
-            from orchestrator.model_adapters import grok_adapter
+            from intelligence.orchestrator.model_adapters import grok_adapter
             result = grok_adapter.call("ping", "system", [])
 
         assert result.text == "grok-response"
@@ -357,7 +357,7 @@ class TestGeminiAdapter:
                                          "google.genai.errors": MagicMock()}):
             # Re-import to pick up patched modules
             import importlib
-            import orchestrator.model_adapters.gemini_adapter as ga
+            import intelligence.orchestrator.model_adapters.gemini_adapter as ga
             importlib.reload(ga)
             try:
                 result = ga.call("ping", "system", [])
@@ -369,7 +369,7 @@ class TestGeminiAdapter:
     def test_server_error_raises_model_call_error(self, monkeypatch):
         """A mocked ServerError from google.genai is converted to ModelCallError."""
         monkeypatch.setattr("time.sleep", lambda _: None)
-        from orchestrator.model_adapters.errors import ModelCallError
+        from intelligence.orchestrator.model_adapters.errors import ModelCallError
 
         class FakeServerError(Exception):
             code = 503
@@ -400,7 +400,7 @@ class TestGeminiAdapter:
             "google.genai.errors": FakeErrors,
         }):
             import importlib
-            import orchestrator.model_adapters.gemini_adapter as ga
+            import intelligence.orchestrator.model_adapters.gemini_adapter as ga
             try:
                 importlib.reload(ga)
                 with pytest.raises((ModelCallError, Exception)):
@@ -418,7 +418,7 @@ class TestProviderFallback:
         monkeypatch.delenv("GROK_API_KEY", raising=False)
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-        from orchestrator.router import _available_providers
+        from intelligence.orchestrator.router import _available_providers
         providers = _available_providers()
         assert "gemini" in providers
         assert "anthropic" not in providers
@@ -428,7 +428,7 @@ class TestProviderFallback:
                     "GOOGLE_API_KEY", "OPENAI_API_KEY"):
             monkeypatch.delenv(key, raising=False)
 
-        from orchestrator.router import _available_providers
+        from intelligence.orchestrator.router import _available_providers
         assert not _available_providers()
 
     def test_fallback_skips_failed_provider(self, monkeypatch):
@@ -439,8 +439,8 @@ class TestProviderFallback:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-        from orchestrator.model_adapters.errors import ModelCallError
-        from orchestrator.model_adapters.anthropic_adapter import ModelResponse
+        from intelligence.orchestrator.model_adapters.errors import ModelCallError
+        from intelligence.orchestrator.model_adapters.anthropic_adapter import ModelResponse
 
         calls: list[str] = []
 
@@ -453,10 +453,10 @@ class TestProviderFallback:
             return ModelResponse(text="fallback-ok", model="grok-beta", provider="grok")
 
         p_gem = patch(
-            "orchestrator.model_adapters.gemini_adapter.call",
+            "intelligence.orchestrator.model_adapters.gemini_adapter.call",
             side_effect=fake_gemini_call
         )
-        p_grk = patch("orchestrator.model_adapters.grok_adapter.call", side_effect=fake_grok_call)
+        p_grk = patch("intelligence.orchestrator.model_adapters.grok_adapter.call", side_effect=fake_grok_call)
 
         with p_gem, p_grk:
             from orchestrator import router
@@ -522,7 +522,7 @@ class TestAnthropicStreaming:
             ["hello", " world"]
         )
         with patch("anthropic.Anthropic", return_value=mock_client):
-            from orchestrator.model_adapters import anthropic_adapter
+            from intelligence.orchestrator.model_adapters import anthropic_adapter
             gen = anthropic_adapter.call("ping", "system", [], stream=True)
             chunks, _ = _consume(gen)
         assert chunks == ["hello", " world"]
@@ -534,7 +534,7 @@ class TestAnthropicStreaming:
             ["token1", " token2", " token3"]
         )
         with patch("anthropic.Anthropic", return_value=mock_client):
-            from orchestrator.model_adapters import anthropic_adapter
+            from intelligence.orchestrator.model_adapters import anthropic_adapter
             gen = anthropic_adapter.call("ping", "system", [], stream=True)
             chunks, _ = _consume(gen)
         assert "".join(chunks) == "token1 token2 token3"
@@ -546,7 +546,7 @@ class TestAnthropicStreaming:
             ["hi"], input_tokens=10, output_tokens=4
         )
         with patch("anthropic.Anthropic", return_value=mock_client):
-            from orchestrator.model_adapters import anthropic_adapter
+            from intelligence.orchestrator.model_adapters import anthropic_adapter
             gen = anthropic_adapter.call("ping", "system", [], stream=True)
             _, usage = _consume(gen)
         assert usage.get("input_tokens") == 10
@@ -557,7 +557,7 @@ class TestAnthropicStreaming:
         mock_client = MagicMock()
         mock_client.messages.stream.return_value = _make_anthropic_stream_ctx(["x"])
         with patch("anthropic.Anthropic", return_value=mock_client):
-            from orchestrator.model_adapters import anthropic_adapter
+            from intelligence.orchestrator.model_adapters import anthropic_adapter
             result = anthropic_adapter.call("ping", "system", [], stream=True)
         import inspect
         assert inspect.isgenerator(result)
@@ -570,8 +570,8 @@ class TestAnthropicStreaming:
             message="rate limit", response=MagicMock(status_code=429), body={}
         )
         with patch("anthropic.Anthropic", return_value=mock_client):
-            from orchestrator.model_adapters import anthropic_adapter
-            from orchestrator.model_adapters.errors import ModelCallError
+            from intelligence.orchestrator.model_adapters import anthropic_adapter
+            from intelligence.orchestrator.model_adapters.errors import ModelCallError
             gen = anthropic_adapter.call("ping", "system", [], stream=True)
             with pytest.raises(ModelCallError) as exc_info:
                 _consume(gen)
@@ -583,8 +583,8 @@ class TestAnthropicStreaming:
         mock_client = MagicMock()
         mock_client.messages.create.return_value = _make_anthropic_response("pong")
         with patch("anthropic.Anthropic", return_value=mock_client):
-            from orchestrator.model_adapters import anthropic_adapter
-            from orchestrator.model_adapters.anthropic_adapter import ModelResponse
+            from intelligence.orchestrator.model_adapters import anthropic_adapter
+            from intelligence.orchestrator.model_adapters.anthropic_adapter import ModelResponse
             result = anthropic_adapter.call("ping", "system", [], stream=False)
         assert isinstance(result, ModelResponse)
         assert result.text == "pong"
@@ -600,7 +600,7 @@ class TestOpenAIStreaming:
             _make_openai_stream_chunks(["hello", " stream"])
         )
         with patch("openai.OpenAI", return_value=mock_client):
-            from orchestrator.model_adapters import openai_adapter
+            from intelligence.orchestrator.model_adapters import openai_adapter
             gen = openai_adapter.call("ping", "system", [], stream=True)
             chunks, _ = _consume(gen)
         assert chunks == ["hello", " stream"]
@@ -612,7 +612,7 @@ class TestOpenAIStreaming:
             _make_openai_stream_chunks(["a", "b", "c"])
         )
         with patch("openai.OpenAI", return_value=mock_client):
-            from orchestrator.model_adapters import openai_adapter
+            from intelligence.orchestrator.model_adapters import openai_adapter
             gen = openai_adapter.call("ping", "system", [], stream=True)
             chunks, _ = _consume(gen)
         assert "".join(chunks) == "abc"
@@ -624,7 +624,7 @@ class TestOpenAIStreaming:
             _make_openai_stream_chunks(["ok"], include_usage=True)
         )
         with patch("openai.OpenAI", return_value=mock_client):
-            from orchestrator.model_adapters import openai_adapter
+            from intelligence.orchestrator.model_adapters import openai_adapter
             gen = openai_adapter.call("ping", "system", [], stream=True)
             _, usage = _consume(gen)
         assert usage.get("input_tokens") == 3
@@ -635,7 +635,7 @@ class TestOpenAIStreaming:
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = iter([])
         with patch("openai.OpenAI", return_value=mock_client):
-            from orchestrator.model_adapters import openai_adapter
+            from intelligence.orchestrator.model_adapters import openai_adapter
             result = openai_adapter.call("ping", "system", [], stream=True)
         import inspect
         assert inspect.isgenerator(result)
@@ -648,8 +648,8 @@ class TestOpenAIStreaming:
             message="rate limit", response=MagicMock(status_code=429), body={}
         )
         with patch("openai.OpenAI", return_value=mock_client):
-            from orchestrator.model_adapters import openai_adapter
-            from orchestrator.model_adapters.errors import ModelCallError
+            from intelligence.orchestrator.model_adapters import openai_adapter
+            from intelligence.orchestrator.model_adapters.errors import ModelCallError
             gen = openai_adapter.call("ping", "system", [], stream=True)
             with pytest.raises(ModelCallError) as exc_info:
                 _consume(gen)
@@ -668,7 +668,7 @@ class TestOpenAIStreaming:
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = iter(chunks_with_empty)
         with patch("openai.OpenAI", return_value=mock_client):
-            from orchestrator.model_adapters import openai_adapter
+            from intelligence.orchestrator.model_adapters import openai_adapter
             gen = openai_adapter.call("ping", "system", [], stream=True)
             result, _ = _consume(gen)
         assert result == ["real"]
@@ -692,7 +692,7 @@ class TestGrokStreaming:
             return mock_client
 
         with patch("openai.OpenAI", side_effect=capture_openai):
-            from orchestrator.model_adapters import grok_adapter
+            from intelligence.orchestrator.model_adapters import grok_adapter
             gen = grok_adapter.call("ping", "system", [], stream=True)
             chunks, _ = _consume(gen)
 
@@ -710,8 +710,8 @@ class TestGrokStreaming:
             message="bad key", response=MagicMock(status_code=401), body={}
         )
         with patch("openai.OpenAI", return_value=mock_client):
-            from orchestrator.model_adapters import grok_adapter
-            from orchestrator.model_adapters.errors import ModelCallError
+            from intelligence.orchestrator.model_adapters import grok_adapter
+            from intelligence.orchestrator.model_adapters.errors import ModelCallError
             gen = grok_adapter.call("ping", "system", [], stream=True)
             with pytest.raises(ModelCallError) as exc_info:
                 _consume(gen)
@@ -723,8 +723,8 @@ class TestGrokStreaming:
 class TestStreamRoute:
     def _patch_router_sources(self, monkeypatch):
         """Stub out classify, build_context, and _post_process."""
-        from orchestrator.classifier import ClassifierResult
-        from orchestrator.context_builder import ContextBundle
+        from intelligence.orchestrator.classifier import ClassifierResult
+        from intelligence.orchestrator.context_builder import ContextBundle
 
         fake_clf = ClassifierResult(
             tier="STANDARD", score=0.0, model="gemini-2.0-flash",
@@ -732,9 +732,9 @@ class TestStreamRoute:
         )
         fake_bundle = ContextBundle(query="test", system_prompt="sys")
 
-        monkeypatch.setattr("orchestrator.router.classify", lambda *a, **kw: fake_clf)
-        monkeypatch.setattr("orchestrator.router.build_context", lambda *a, **kw: fake_bundle)
-        monkeypatch.setattr("orchestrator.router._post_process", lambda **kw: None)
+        monkeypatch.setattr("intelligence.orchestrator.router.classify", lambda *a, **kw: fake_clf)
+        monkeypatch.setattr("intelligence.orchestrator.router.build_context", lambda *a, **kw: fake_bundle)
+        monkeypatch.setattr("intelligence.orchestrator.router._post_process", lambda **kw: None)
 
     def test_stream_route_yields_chunks(self, monkeypatch):
         self._patch_router_sources(monkeypatch)
@@ -744,9 +744,9 @@ class TestStreamRoute:
             yield "chunk2"
             return {}
 
-        with patch("orchestrator.model_adapters.gemini_adapter.call",
+        with patch("intelligence.orchestrator.model_adapters.gemini_adapter.call",
                    return_value=fake_gemini_stream()):
-            from orchestrator.router import stream_route
+            from intelligence.orchestrator.router import stream_route
             chunks = list(stream_route("test query"))
 
         assert chunks == ["chunk1", "chunk2"]
@@ -760,15 +760,15 @@ class TestStreamRoute:
         def fake_post_process(**kwargs):
             captured_response.update(kwargs.get("response").usage)
 
-        monkeypatch.setattr("orchestrator.router._post_process", fake_post_process)
+        monkeypatch.setattr("intelligence.orchestrator.router._post_process", fake_post_process)
 
         def fake_stream(**kwargs):
             yield "ok"
             return {"input_tokens": 7, "output_tokens": 3}
 
-        with patch("orchestrator.model_adapters.gemini_adapter.call",
+        with patch("intelligence.orchestrator.model_adapters.gemini_adapter.call",
                    return_value=fake_stream()):
-            from orchestrator.router import stream_route
+            from intelligence.orchestrator.router import stream_route
             list(stream_route("test"))
 
         assert captured_response.get("input_tokens") == 7
@@ -781,9 +781,9 @@ class TestStreamRoute:
             yield "x"
             return {}
 
-        with patch("orchestrator.model_adapters.gemini_adapter.call",
+        with patch("intelligence.orchestrator.model_adapters.gemini_adapter.call",
                    return_value=fake_stream()):
-            from orchestrator.router import stream_route
+            from intelligence.orchestrator.router import stream_route
             import inspect
             result = stream_route("test")
             assert inspect.isgenerator(result)

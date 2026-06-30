@@ -110,7 +110,7 @@ def test_chroma_adapter_basic_mocked():
 # ── 5. indexer/doc_ingester.py (basic coverage) ──────────────────────────────
 
 def test_doc_ingester_basic(tmp_path):
-    from indexer.doc_ingester import DocIngester
+    from intelligence.indexer.doc_ingester import DocIngester
     
     # Create dummy README
     readme = tmp_path / "README.md"
@@ -154,7 +154,7 @@ def test_behaviour_hook_main_noop(capsys):
 # ── 8. retrieval/docs_search.py (logic coverage) ─────────────────────────────
 
 def test_docs_search_basic(tmp_path, monkeypatch):
-    from retrieval.docs_search import search_docs
+    from intelligence.retrieval.docs_search import search_docs
     monkeypatch.chdir(tmp_path)
     # Create dummy md
     (tmp_path / "doc.md").write_text("The secret word is pineapple.", encoding="utf-8")
@@ -169,17 +169,17 @@ def test_docs_search_basic(tmp_path, monkeypatch):
 # ── 9. retrieval/cross_repo.py (logic coverage) ──────────────────────────────
 
 def test_cross_repo_router_basic(tmp_path, monkeypatch):
-    from retrieval.cross_repo import CrossRepoRouter
+    from intelligence.retrieval.cross_repo import CrossRepoRouter
     monkeypatch.chdir(tmp_path)
     
-    with patch("retrieval.cross_repo.get_repo_org", return_value="my-org"), \
-         patch("retrieval.cross_repo.get_repo_project", return_value=("my-org", "my-proj")):
+    with patch("intelligence.retrieval.cross_repo.get_repo_org", return_value="my-org"), \
+         patch("intelligence.retrieval.cross_repo.get_repo_project", return_value=("my-org", "my-proj")):
         router = CrossRepoRouter()
         assert router.org_name == "my-org"
         assert router._project_name == "my-proj"
         
         # Test sibling fallback
-        with patch("retrieval.cross_repo.list_orgs", return_value={"my-org": {"repos": ["/other/repo"]}}), \
-             patch("retrieval.cross_repo.purge_stale_repos"):
+        with patch("intelligence.retrieval.cross_repo.list_orgs", return_value={"my-org": {"repos": ["/other/repo"]}}), \
+             patch("intelligence.retrieval.cross_repo.purge_stale_repos"):
             siblings = router.get_sibling_repos()
             assert "/other/repo" in siblings

@@ -34,7 +34,7 @@ from core._bm25 import BM25 as _BM25, Document as _Document
 from data.graph.behaviour_tracker import BehaviourTracker
 from data.graph.graph_utils import extract_entities_from_text, make_node_id
 from data.graph.knowledge_graph import KnowledgeGraph
-from indexer.ast_indexer import ASTIndexer
+from intelligence.indexer.ast_indexer import ASTIndexer
 from data.memory.circuit_breaker import CircuitOpenError
 from data.memory.embeddings import encode_with_timeout
 from data.memory.episodic_memory import get_history

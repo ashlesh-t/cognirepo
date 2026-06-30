@@ -32,9 +32,9 @@ import json
 import os
 from typing import Any, Generator, Union
 
-from orchestrator.model_adapters.anthropic_adapter import ModelResponse
-from orchestrator.model_adapters.errors import ModelCallError
-from orchestrator.model_adapters.retry import with_retry
+from intelligence.orchestrator.model_adapters.anthropic_adapter import ModelResponse
+from intelligence.orchestrator.model_adapters.errors import ModelCallError
+from intelligence.orchestrator.model_adapters.retry import with_retry
 
 
 def call(

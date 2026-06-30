@@ -11,7 +11,7 @@ import pytest
 import json
 from unittest.mock import MagicMock, patch
 
-from cli.docs_index import (
+from intelligence.indexer.docs_index import (
     _CONFIDENCE_THRESHOLD,
     _chunk_markdown,
     _index_is_stale,
@@ -122,7 +122,7 @@ def test_ensure_docs_index_returns_none_on_build_failure(monkeypatch, tmp_path):
     """If build_docs_index raises, ensure_docs_index must return None."""
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path))
 
-    with patch("cli.docs_index.build_docs_index", side_effect=RuntimeError("no faiss")):
+    with patch("intelligence.indexer.docs_index.build_docs_index", side_effect=RuntimeError("no faiss")):
         result = ensure_docs_index(doc_roots=[tmp_path])
     assert result is None
 

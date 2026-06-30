@@ -122,8 +122,8 @@ def _reset_singletons():
         ("data.memory.episodic_memory",   "_BM25_CORPUS", None),
         ("data.memory.episodic_memory",   "_BM25_INDEX",  None),
         ("data.memory.learning_store",    "_STORE",      None),
-        ("retrieval.hybrid",         "_HYBRID_CACHE", {}),
-        ("retrieval.hybrid",         "_IN_FLIGHT",   {}),
+        ("intelligence.retrieval.hybrid",         "_HYBRID_CACHE", {}),
+        ("intelligence.retrieval.hybrid",         "_IN_FLIGHT",   {}),
         # Reset MCP server singletons so tests don't share state across execution order
         ("server.mcp_server",        "_GRAPH",      None),
         ("server.mcp_server",        "_INDEXER",    None),

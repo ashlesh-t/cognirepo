@@ -35,10 +35,10 @@ import traceback
 from dataclasses import dataclass
 from typing import Generator
 
-from orchestrator.classifier import ClassifierResult, classify, DEFAULT_MODELS_BY_PROVIDER
-from orchestrator.context_builder import ContextBundle, build as build_context
-from orchestrator.model_adapters.anthropic_adapter import ModelResponse
-from orchestrator.model_adapters.errors import ModelCallError
+from intelligence.orchestrator.classifier import ClassifierResult, classify, DEFAULT_MODELS_BY_PROVIDER
+from intelligence.orchestrator.context_builder import ContextBundle, build as build_context
+from intelligence.orchestrator.model_adapters.anthropic_adapter import ModelResponse
+from intelligence.orchestrator.model_adapters.errors import ModelCallError
 
 logger = logging.getLogger(__name__)
 
@@ -366,8 +366,8 @@ def _call_adapter(
         "messages_history": messages_history,
     }
     if provider == "local":
-        from orchestrator.model_adapters import local_adapter  # pylint: disable=import-outside-toplevel
-        from orchestrator.model_adapters.local_adapter import NoLocalAnswer  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.model_adapters import local_adapter  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.model_adapters.local_adapter import NoLocalAnswer  # pylint: disable=import-outside-toplevel
         try:
             return local_adapter.call(**kwargs)
         except NoLocalAnswer:
@@ -384,16 +384,16 @@ def _call_adapter(
                 return _promoted
             raise  # re-raise if no providers available
     if provider == "anthropic":
-        from orchestrator.model_adapters import anthropic_adapter  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.model_adapters import anthropic_adapter  # pylint: disable=import-outside-toplevel
         return anthropic_adapter.call(**kwargs)
     if provider == "gemini":
-        from orchestrator.model_adapters import gemini_adapter  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.model_adapters import gemini_adapter  # pylint: disable=import-outside-toplevel
         return gemini_adapter.call(**kwargs)
     if provider == "grok":
-        from orchestrator.model_adapters import grok_adapter  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.model_adapters import grok_adapter  # pylint: disable=import-outside-toplevel
         return grok_adapter.call(**kwargs)
     if provider in ("openai", "azure", "ollama", "lmstudio"):
-        from orchestrator.model_adapters import openai_adapter  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.model_adapters import openai_adapter  # pylint: disable=import-outside-toplevel
         return openai_adapter.call(**kwargs)
     raise ValueError(f"Unknown provider: {provider!r}")
 
@@ -448,7 +448,7 @@ def try_local_resolve(query: str, context_bundle) -> str | None:
     # ── Tier-1: embedded docs index (CogniRepo usage questions) ─────────────
     # Relegated to catch-all because "graph" is a docs keyword and would swallow "graph stats"
     try:
-        from cli.docs_index import ensure_docs_index, _CONFIDENCE_THRESHOLD  # pylint: disable=import-outside-toplevel
+        from intelligence.indexer.docs_index import ensure_docs_index, _CONFIDENCE_THRESHOLD  # pylint: disable=import-outside-toplevel
         _docs_idx = ensure_docs_index()
         if _docs_idx is not None and _docs_idx.is_docs_query(query):
             results = _docs_idx.answer(query, top_k=3)
@@ -467,7 +467,7 @@ def _lookup_symbol(symbol: str, _bundle) -> str | None:
     """Reverse-index lookup for a symbol name."""
     try:
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-        from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+        from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
 
         if not os.path.exists(".cognirepo/index/ast_index.json"):
             return None
@@ -678,8 +678,8 @@ def _stream_dispatch(
         "messages_history": messages_history,
     }
     if provider == "local":
-        from orchestrator.model_adapters import local_adapter  # pylint: disable=import-outside-toplevel
-        from orchestrator.model_adapters.local_adapter import NoLocalAnswer  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.model_adapters import local_adapter  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.model_adapters.local_adapter import NoLocalAnswer  # pylint: disable=import-outside-toplevel
         try:
             return (yield from local_adapter.call(**kwargs))
         except NoLocalAnswer:
@@ -701,16 +701,16 @@ def _stream_dispatch(
                 ))
             return {}
     if provider == "anthropic":
-        from orchestrator.model_adapters import anthropic_adapter  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.model_adapters import anthropic_adapter  # pylint: disable=import-outside-toplevel
         return (yield from anthropic_adapter.call(**kwargs))
     if provider == "gemini":
-        from orchestrator.model_adapters import gemini_adapter  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.model_adapters import gemini_adapter  # pylint: disable=import-outside-toplevel
         return (yield from gemini_adapter.call(**kwargs))
     if provider == "grok":
-        from orchestrator.model_adapters import grok_adapter  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.model_adapters import grok_adapter  # pylint: disable=import-outside-toplevel
         return (yield from grok_adapter.call(**kwargs))
     if provider in ("openai", "azure", "ollama", "lmstudio"):
-        from orchestrator.model_adapters import openai_adapter  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.model_adapters import openai_adapter  # pylint: disable=import-outside-toplevel
         return (yield from openai_adapter.call(**kwargs))
     raise ValueError(f"Unknown provider: {provider!r}")
 

@@ -43,8 +43,8 @@ import warnings
 
 from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
 from data.graph.graph_utils import make_node_id, node_id_from_symbol_record
-from indexer.index_utils import SymbolTable, build_symbol_table_from_index
-from indexer.language_registry import (
+from intelligence.indexer.index_utils import SymbolTable, build_symbol_table_from_index
+from intelligence.indexer.language_registry import (
     _get_language,
     is_supported,
     lang_label,

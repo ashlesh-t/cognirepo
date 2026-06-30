@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 from cli.migrate_config import migrate_config, _TIER_RENAMES
-from orchestrator.classifier import ConfigMigrationError, _load_model_registry
+from intelligence.orchestrator.classifier import ConfigMigrationError, _load_model_registry
 
 
 # ── migrate_config() ──────────────────────────────────────────────────────────

@@ -17,7 +17,7 @@ import os
 
 import pytest
 from core.config.orgs import create_org, link_repo_to_org
-from retrieval.cross_repo import CrossRepoRouter
+from intelligence.retrieval.cross_repo import CrossRepoRouter
 from core.config.paths import set_cognirepo_dir
 
 
@@ -94,7 +94,7 @@ class TestOrgWideSearch:
     def test_empty_org_returns_empty_results(self, isolated_cognirepo, monkeypatch):
         # The global ~/.cognirepo/org_graph.pkl leaks into tests; force an
         # actually-empty org so the empty-path contract is what's tested.
-        from retrieval.cross_repo import CrossRepoRouter
+        from intelligence.retrieval.cross_repo import CrossRepoRouter
         monkeypatch.setattr(CrossRepoRouter, "get_all_org_repos", lambda self: [])
         from server.mcp_server import org_wide_search
         result = org_wide_search("something_nonexistent_zzz")

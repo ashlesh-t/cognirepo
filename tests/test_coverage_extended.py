@@ -20,7 +20,7 @@ import numpy as np
 
 def test_docs_search_fast_path(tmp_path, monkeypatch):
     """Test that docs_search uses the ast_index.json fast path if available."""
-    from retrieval.docs_search import search_docs
+    from intelligence.retrieval.docs_search import search_docs
     monkeypatch.chdir(tmp_path)
     
     # Create fake index with a .md entry
@@ -44,11 +44,11 @@ def test_docs_search_fast_path(tmp_path, monkeypatch):
 
 def test_cross_repo_all_org_repos(tmp_path):
     """Test get_all_org_repos correctly merges top-level and project-level repos."""
-    from retrieval.cross_repo import CrossRepoRouter
+    from intelligence.retrieval.cross_repo import CrossRepoRouter
     
-    with patch("retrieval.cross_repo.get_repo_org", return_value="my-org"), \
-         patch("retrieval.cross_repo.purge_stale_repos"), \
-         patch("retrieval.cross_repo.list_orgs") as mock_orgs:
+    with patch("intelligence.retrieval.cross_repo.get_repo_org", return_value="my-org"), \
+         patch("intelligence.retrieval.cross_repo.purge_stale_repos"), \
+         patch("intelligence.retrieval.cross_repo.list_orgs") as mock_orgs:
         
         mock_orgs.return_value = {
             "my-org": {
@@ -92,7 +92,7 @@ def test_auto_store_basic():
 
 def test_router_available_providers():
     """Test _available_providers logic based on env vars."""
-    from orchestrator.router import _available_providers
+    from intelligence.orchestrator.router import _available_providers
     
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test", "GEMINI_API_KEY": ""}, clear=True):
         providers = _available_providers()
@@ -116,7 +116,7 @@ def test_env_wizard_status(tmp_path):
 
 def test_ast_indexer_unsupported_ext(tmp_path):
     """Ensure indexer handles unsupported extensions gracefully."""
-    from indexer.ast_indexer import ASTIndexer
+    from intelligence.indexer.ast_indexer import ASTIndexer
     from data.graph.knowledge_graph import KnowledgeGraph
     
     # Create the file first to avoid FileNotFoundError

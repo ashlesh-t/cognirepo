@@ -322,7 +322,7 @@ def seed_from_git_log(
     # ── 4. resolve symbols from AST index ────────────────────────────────────
     if indexer is None:
         from data.graph.knowledge_graph import KnowledgeGraph    # pylint: disable=import-outside-toplevel
-        from indexer.ast_indexer import ASTIndexer          # pylint: disable=import-outside-toplevel
+        from intelligence.indexer.ast_indexer import ASTIndexer          # pylint: disable=import-outside-toplevel
         indexer = ASTIndexer(graph=tracker.graph if hasattr(tracker, "graph") else KnowledgeGraph())
         indexer.load()
 

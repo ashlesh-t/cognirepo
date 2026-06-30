@@ -13,7 +13,7 @@ All retrieval goes through retrieval/hybrid.py.
 """
 import sys
 
-from retrieval.hybrid import hybrid_retrieve, MAX_QUERY_LEN
+from intelligence.retrieval.hybrid import hybrid_retrieve, MAX_QUERY_LEN
 from core.metrics import MEMORY_OPS_TOTAL
 
 

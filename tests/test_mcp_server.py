@@ -405,7 +405,7 @@ class TestSearchToken:
 
     def test_result_items_have_file_and_line(self, isolated_cognirepo, tmp_path):
         from server.mcp_server import search_token
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         from data.graph.knowledge_graph import KnowledgeGraph
         # Build a minimal index with a known symbol
         g = KnowledgeGraph()

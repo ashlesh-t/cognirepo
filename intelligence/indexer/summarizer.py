@@ -259,7 +259,7 @@ class SummarizationEngine:
         If None, loads the indexer from disk (standalone use only).
         """
         if file_data is None:
-            from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
             from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
             kg = KnowledgeGraph()
             indexer = ASTIndexer(graph=kg)
@@ -289,7 +289,7 @@ class SummarizationEngine:
 
         Stores result in .cognirepo/index/summaries.json.
         """
-        from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+        from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
 
         # Load once — shared across all files

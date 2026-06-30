@@ -35,21 +35,21 @@ _stub_heavy_deps()
 # ── classifier: docs_query override ──────────────────────────────────────────
 
 def test_classifier_routes_cognirepo_question_to_quick():
-    from orchestrator.classifier import classify
+    from intelligence.orchestrator.classifier import classify
     result = classify("how do I install cognirepo")
     assert result.tier == "QUICK"
     assert "docs_query" in result.overrides
 
 
 def test_classifier_routes_mcp_question_to_quick():
-    from orchestrator.classifier import classify
+    from intelligence.orchestrator.classifier import classify
     result = classify("what is MCP in cognirepo")
     assert result.tier == "QUICK"
     assert "docs_query" in result.overrides
 
 
 def test_classifier_docs_override_does_not_fire_for_unrelated():
-    from orchestrator.classifier import classify
+    from intelligence.orchestrator.classifier import classify
     result = classify("fix the merge sort algorithm")
     assert "docs_query" not in result.overrides
 
@@ -68,9 +68,9 @@ def _import_try_local_resolve():
     # Stub the graph + context builder imports that router pulls in
     for mod in (
         "data.graph.knowledge_graph", "data.graph.behaviour_tracker",
-        "orchestrator.context_builder",
-        "orchestrator.model_adapters.anthropic_adapter",
-        "orchestrator.model_adapters.errors",
+        "intelligence.orchestrator.context_builder",
+        "intelligence.orchestrator.model_adapters.anthropic_adapter",
+        "intelligence.orchestrator.model_adapters.errors",
         "data.memory.episodic_memory",
     ):
         if mod not in sys.modules:
@@ -78,7 +78,7 @@ def _import_try_local_resolve():
 
     # Ensure ModelCallError is patchable
     err_mod = sys.modules.setdefault(
-        "orchestrator.model_adapters.errors", MagicMock()
+        "intelligence.orchestrator.model_adapters.errors", MagicMock()
     )
     if not hasattr(err_mod, "ModelCallError"):
         err_mod.ModelCallError = type("ModelCallError", (Exception,), {"NON_RETRYABLE_CODES": set(), "message": ""})
@@ -89,7 +89,7 @@ def _import_try_local_resolve():
         m.get_path = lambda *a, **kw: ".cognirepo"
         sys.modules["config.paths"] = m
 
-    from orchestrator.router import try_local_resolve
+    from intelligence.orchestrator.router import try_local_resolve
     return try_local_resolve
 
 
@@ -97,7 +97,7 @@ def test_try_local_resolve_returns_docs_answer_above_threshold():
     try_local_resolve = _import_try_local_resolve()
     mock_idx = _make_mock_docs_index(score=0.85)
 
-    with patch("cli.docs_index.ensure_docs_index", return_value=mock_idx):
+    with patch("intelligence.indexer.docs_index.ensure_docs_index", return_value=mock_idx):
         result = try_local_resolve("how do I install cognirepo", None)
 
     assert result is not None
@@ -109,7 +109,7 @@ def test_try_local_resolve_ignores_low_confidence_docs():
     try_local_resolve = _import_try_local_resolve()
     mock_idx = _make_mock_docs_index(score=0.4)
 
-    with patch("cli.docs_index.ensure_docs_index", return_value=mock_idx):
+    with patch("intelligence.indexer.docs_index.ensure_docs_index", return_value=mock_idx):
         result = try_local_resolve("how do I install cognirepo", None)
 
     if result is not None:
@@ -121,7 +121,7 @@ def test_try_local_resolve_skips_docs_when_not_docs_query():
     mock_idx = MagicMock()
     mock_idx.is_docs_query.return_value = False
 
-    with patch("cli.docs_index.ensure_docs_index", return_value=mock_idx):
+    with patch("intelligence.indexer.docs_index.ensure_docs_index", return_value=mock_idx):
         try_local_resolve("list files", None)
 
     mock_idx.answer.assert_not_called()
@@ -130,7 +130,7 @@ def test_try_local_resolve_skips_docs_when_not_docs_query():
 def test_try_local_resolve_handles_docs_index_none():
     """If ensure_docs_index returns None, routing must not crash."""
     try_local_resolve = _import_try_local_resolve()
-    with patch("cli.docs_index.ensure_docs_index", return_value=None):
+    with patch("intelligence.indexer.docs_index.ensure_docs_index", return_value=None):
         # Must not raise
         try_local_resolve("how does cognirepo work", None)
 
@@ -138,5 +138,5 @@ def test_try_local_resolve_handles_docs_index_none():
 def test_try_local_resolve_handles_docs_index_exception():
     """If docs index raises, routing must not crash."""
     try_local_resolve = _import_try_local_resolve()
-    with patch("cli.docs_index.ensure_docs_index", side_effect=RuntimeError("boom")):
+    with patch("intelligence.indexer.docs_index.ensure_docs_index", side_effect=RuntimeError("boom")):
         try_local_resolve("how does cognirepo work", None)

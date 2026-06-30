@@ -36,9 +36,9 @@ from dataclasses import dataclass, field
 
 from data.graph.graph_utils import extract_entities_from_text, format_subgraph_for_context
 from data.graph.knowledge_graph import KnowledgeGraph
-from indexer.ast_indexer import ASTIndexer
+from intelligence.indexer.ast_indexer import ASTIndexer
 from data.memory.episodic_memory import get_history
-from retrieval.hybrid import HybridRetriever
+from intelligence.retrieval.hybrid import HybridRetriever
 
 logger = logging.getLogger(__name__)
 

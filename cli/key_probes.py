@@ -19,7 +19,7 @@ from typing import TypedDict
 
 def _anthropic_default_model() -> str:
     try:
-        from orchestrator.classifier import DEFAULT_MODELS_BY_PROVIDER  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.classifier import DEFAULT_MODELS_BY_PROVIDER  # pylint: disable=import-outside-toplevel
         return DEFAULT_MODELS_BY_PROVIDER.get("anthropic", "claude-haiku-4-5")
     except ImportError:
         return "claude-haiku-4-5"

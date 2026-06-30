@@ -138,7 +138,7 @@ class CrossRepoRouter:
                 # Use hybrid retrieval (AST symbols + semantic memories) so code-level
                 # results are included — SemanticMemory alone only returns user-stored
                 # memories and misses all indexed code symbols.
-                from retrieval.hybrid import hybrid_retrieve  # pylint: disable=import-outside-toplevel
+                from intelligence.retrieval.hybrid import hybrid_retrieve  # pylint: disable=import-outside-toplevel
                 results = hybrid_retrieve(query, top_k=top_k)
                 repo_name = os.path.basename(repo_norm)
                 meta["repos_searched"].append(repo_name)

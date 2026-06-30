@@ -25,7 +25,7 @@ def test_classifier_thresholds_match_docs():
     docs/architecture/SPECIFICATION.md. Any drift here means users get a wrong mental model of
     routing behaviour.
     """
-    from orchestrator.classifier import _TIER_QUICK, _TIER_STANDARD, _TIER_COMPLEX
+    from intelligence.orchestrator.classifier import _TIER_QUICK, _TIER_STANDARD, _TIER_COMPLEX
 
     arch_text = (ROOT / "docs" / "architecture" / "SPECIFICATION.md").read_text(encoding="utf-8")
 
@@ -67,7 +67,7 @@ def test_classifier_imperative_weight_matches_docs():
     doc_weight = float(m.group(1))
 
     # Read the code value directly
-    classifier_src = (ROOT / "orchestrator" / "classifier.py").read_text(encoding="utf-8")
+    classifier_src = (ROOT / "intelligence" / "orchestrator" / "classifier.py").read_text(encoding="utf-8")
     m2 = re.search(r'signals\["imperative_abstract"\]\s*=\s*([\d.]+)', classifier_src)
     assert m2 is not None, "Could not find imperative_abstract weight assignment in classifier.py"
     code_weight = float(m2.group(1))

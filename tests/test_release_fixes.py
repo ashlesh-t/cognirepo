@@ -20,7 +20,7 @@ import pytest
 
 class TestAtomicIndexPersistence:
     def test_atomic_json_dump_replaces_file(self, tmp_path):
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         target = str(tmp_path / "out.json")
         ASTIndexer._atomic_json_dump({"a": 1}, target)
         with open(target, encoding="utf-8") as f:
@@ -28,7 +28,7 @@ class TestAtomicIndexPersistence:
         assert not os.path.exists(target + ".tmp")
 
     def test_load_json_self_heal_returns_default_on_corruption(self, tmp_path):
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         target = str(tmp_path / "ast_index.json")
         # Simulate the truncated-mid-write corruption observed on kubernetes
         with open(target, "w", encoding="utf-8") as f:
@@ -40,7 +40,7 @@ class TestAtomicIndexPersistence:
         assert os.path.exists(target + ".corrupt")
 
     def test_load_json_self_heal_reads_valid_file(self, tmp_path):
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         target = str(tmp_path / "ok.json")
         with open(target, "w", encoding="utf-8") as f:
             json.dump([1, 2, 3], f)
@@ -51,14 +51,14 @@ class TestAtomicIndexPersistence:
 
 class TestSkipDirs:
     def test_staging_not_skipped_by_default(self):
-        from indexer.ast_indexer import _SKIP_DIRS
+        from intelligence.indexer.ast_indexer import _SKIP_DIRS
         # staging/ holds real source in Kubernetes-style repos
         assert "staging" not in _SKIP_DIRS
         assert "vendor" in _SKIP_DIRS
         assert "third_party" in _SKIP_DIRS
 
     def test_go_type_spec_indexed_as_class(self):
-        from indexer.ast_indexer import _TS_CLASS_TYPES
+        from intelligence.indexer.ast_indexer import _TS_CLASS_TYPES
         assert "type_spec" in _TS_CLASS_TYPES
 
 

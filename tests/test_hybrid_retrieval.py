@@ -23,7 +23,7 @@ class TestHybridRetriever:
         sm.store("fixed JWT expiry in verify_token")
         sm.store("refactored session handling")
 
-        from retrieval.hybrid import HybridRetriever
+        from intelligence.retrieval.hybrid import HybridRetriever
         r = HybridRetriever()
         results = r.retrieve("auth JWT", top_k=2)
         assert isinstance(results, list)
@@ -33,7 +33,7 @@ class TestHybridRetriever:
         sm = SemanticMemory()
         sm.store("authentication token verification logic")
 
-        from retrieval.hybrid import HybridRetriever
+        from intelligence.retrieval.hybrid import HybridRetriever
         r = HybridRetriever()
         results = r.retrieve("token auth", top_k=1)
         if results:
@@ -46,20 +46,20 @@ class TestHybridRetriever:
         for i in range(8):
             sm.store(f"memory item {i} about code and functions")
 
-        from retrieval.hybrid import HybridRetriever
+        from intelligence.retrieval.hybrid import HybridRetriever
         r = HybridRetriever()
         results = r.retrieve("code functions", top_k=3)
         assert len(results) <= 3
 
     def test_cold_start_no_crash(self):
         """Empty graph + no behaviour data → falls back to vector only."""
-        from retrieval.hybrid import HybridRetriever
+        from intelligence.retrieval.hybrid import HybridRetriever
         r = HybridRetriever()
         results = r.retrieve("anything at all", top_k=5)
         assert isinstance(results, list)
 
     def test_empty_store_returns_empty(self):
-        from retrieval.hybrid import HybridRetriever
+        from intelligence.retrieval.hybrid import HybridRetriever
         r = HybridRetriever()
         results = r.retrieve("query with no memories stored", top_k=5)
         assert isinstance(results, list)
@@ -69,7 +69,7 @@ class TestHybridRetriever:
         sm = SemanticMemory()
         sm.store("debug the login flow for oauth")
 
-        from retrieval.hybrid import hybrid_retrieve
+        from intelligence.retrieval.hybrid import hybrid_retrieve
         results = hybrid_retrieve("oauth login", top_k=1)
         assert isinstance(results, list)
 
@@ -80,7 +80,7 @@ class TestHybridRetriever:
         sm.store("unrelated topic about cooking recipes")
         sm.store("authentication middleware checks bearer token")
 
-        from retrieval.hybrid import HybridRetriever
+        from intelligence.retrieval.hybrid import HybridRetriever
         r = HybridRetriever()
         results = r.retrieve("JWT authentication token", top_k=3)
         scores = [res["final_score"] for res in results if "final_score" in res]
@@ -91,7 +91,7 @@ class TestConcurrentCacheMiss:
     def test_concurrent_misses_call_retriever_once(self, monkeypatch):
         """N concurrent cache misses for same key → HybridRetriever.retrieve called once."""
         import threading
-        import retrieval.hybrid as rh
+        import intelligence.retrieval.hybrid as rh
 
         rh.invalidate_hybrid_cache()
         call_count = {"n": 0}
@@ -134,7 +134,7 @@ class TestEpisodicBM25:
         log_event("fixed bug in payment module", {"module": "payments"})
         log_event("updated JWT expiry to 24 hours", {"service": "auth"})
 
-        from retrieval.hybrid import episodic_bm25_filter
+        from intelligence.retrieval.hybrid import episodic_bm25_filter
         results = episodic_bm25_filter("JWT auth", top_k=2)
         assert isinstance(results, list)
         # JWT-related event should appear
@@ -144,7 +144,7 @@ class TestEpisodicBM25:
 
     def test_time_range_excludes_out_of_range_events(self, monkeypatch):
         """time_range filter must only return events within the window."""
-        import retrieval.hybrid as rh
+        import intelligence.retrieval.hybrid as rh
         # Seed three events at different timestamps
         events = [
             {"id": "e0", "event": "authentication token bug", "metadata": {}, "time": "2026-01-01T10:00:00Z"},

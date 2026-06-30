@@ -23,7 +23,7 @@ from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
 from data.graph.graph_utils import make_node_id
 
 if TYPE_CHECKING:
-    from indexer.ast_indexer import ASTIndexer
+    from intelligence.indexer.ast_indexer import ASTIndexer
 
 from core.config.paths import get_path
 
@@ -510,7 +510,7 @@ class BehaviourTracker:
         indexer: "ASTIndexer",
     ) -> None:
         """Start a watchdog Observer for the given repo path."""
-        from indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
+        from intelligence.indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
 
         self._observer = create_watcher(path, indexer, self.graph, self, session_id)
 

@@ -57,7 +57,7 @@ def test_retrieve_memory_include_org_false():
 
 def test_retrieve_memory_include_org_true():
     from server.mcp_server import retrieve_memory
-    with patch("retrieval.cross_repo.CrossRepoRouter") as mock_router_cls:
+    with patch("intelligence.retrieval.cross_repo.CrossRepoRouter") as mock_router_cls:
         mock_router = MagicMock()
         mock_router.query_org_memories.return_value = []
         mock_router_cls.return_value = mock_router
@@ -69,7 +69,7 @@ def test_retrieve_memory_include_org_true():
 
 def test_org_search_returns_list():
     from server.mcp_server import org_search
-    with patch("retrieval.cross_repo.CrossRepoRouter") as mock_router_cls:
+    with patch("intelligence.retrieval.cross_repo.CrossRepoRouter") as mock_router_cls:
         mock_router = MagicMock()
         mock_router.query_org_memories.return_value = []
         mock_router_cls.return_value = mock_router

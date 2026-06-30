@@ -215,13 +215,13 @@ def test_scheduler_has_schedule_fn():
 # ── indexer/index_utils.py (45% → 80%) ───────────────────────────────────────
 
 def test_index_utils_import():
-    import indexer.index_utils
-    assert indexer.index_utils is not None
+    import intelligence.indexer.index_utils
+    assert intelligence.indexer.index_utils is not None
 
 
 def test_token_budget_trim():
     try:
-        from indexer.index_utils import trim_to_token_budget
+        from intelligence.indexer.index_utils import trim_to_token_budget
         result = trim_to_token_budget("hello world " * 100, max_tokens=10)
         assert len(result) < len("hello world " * 100)
     except (ImportError, AttributeError):
@@ -258,18 +258,18 @@ def test_local_vector_db_search_empty():
 # ── retrieval/cross_repo.py (45%) ────────────────────────────────────────────
 
 def test_cross_repo_router_import():
-    from retrieval.cross_repo import CrossRepoRouter
+    from intelligence.retrieval.cross_repo import CrossRepoRouter
     assert CrossRepoRouter is not None
 
 
 def test_cross_repo_router_instantiation():
-    from retrieval.cross_repo import CrossRepoRouter
+    from intelligence.retrieval.cross_repo import CrossRepoRouter
     router = CrossRepoRouter()
     assert router is not None
 
 
 def test_cross_repo_router_get_sibling_repos():
-    from retrieval.cross_repo import CrossRepoRouter
+    from intelligence.retrieval.cross_repo import CrossRepoRouter
     router = CrossRepoRouter()
     result = router.get_sibling_repos()
     assert isinstance(result, list)
@@ -278,12 +278,12 @@ def test_cross_repo_router_get_sibling_repos():
 # ── indexer/doc_ingester.py (57%) ────────────────────────────────────────────
 
 def test_doc_ingester_import():
-    from indexer.doc_ingester import DocIngester
+    from intelligence.indexer.doc_ingester import DocIngester
     assert DocIngester is not None
 
 
 def test_doc_ingester_import(tmp_path):
-    from indexer.doc_ingester import DocIngester
+    from intelligence.indexer.doc_ingester import DocIngester
     di = DocIngester(str(tmp_path))
     assert di is not None
 
@@ -292,7 +292,7 @@ def test_doc_ingester_import(tmp_path):
 
 def test_gemini_adapter_module_exists():
     try:
-        import orchestrator.model_adapters.gemini_adapter as gmod
+        import intelligence.orchestrator.model_adapters.gemini_adapter as gmod
         assert gmod is not None
     except ImportError:
         pytest.skip("gemini_adapter not importable in this environment")

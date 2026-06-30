@@ -147,7 +147,7 @@ class TestSeedFromGitLog:
 
         from data.graph.knowledge_graph import KnowledgeGraph
         from data.graph.behaviour_tracker import BehaviourTracker
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         from cli.seed import seed_from_git_log
 
         # Use the real cognirepo root

@@ -135,7 +135,7 @@ def _direct_retrieve(query, top_k, global_scope=False):
 
 def _direct_search(query):
     """Call search_docs tool directly."""
-    from retrieval.docs_search import search_docs  # pylint: disable=import-outside-toplevel
+    from intelligence.retrieval.docs_search import search_docs  # pylint: disable=import-outside-toplevel
     return search_docs(query)
 
 
@@ -149,7 +149,7 @@ def _cmd_verify_index() -> int:
       2 — manifest not found (run `cognirepo index-repo .` first)
     """
     # pylint: disable=import-outside-toplevel
-    from indexer.ast_indexer import (
+    from intelligence.indexer.ast_indexer import (
         _manifest_file, _ast_index_file, _ast_faiss_file, _ast_meta_file,
         _sha256_file, _check_platform_compat,
     )
@@ -289,7 +289,7 @@ def _cmd_coverage() -> int:
 
     # Language-agnostic scan: find top-level dirs with source files not yet in index
     from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
-    from indexer.language_registry import supported_extensions as _supported_exts  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.language_registry import supported_extensions as _supported_exts  # pylint: disable=import-outside-toplevel
     _src_exts = set(_supported_exts())
     _skip = {"venv", ".venv", "env", "node_modules", "dist", "build", "target",
              "bin", ".gradle", "vendor", ".tox", ".eggs", "__pycache__", "coverage"}
@@ -541,7 +541,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
 
     # ── Check 6: Language support matrix ─────────────────────────────────────
     try:
-        from indexer.language_registry import _GRAMMAR_MAP, _get_language, clear_cache  # pylint: disable=import-outside-toplevel
+        from intelligence.indexer.language_registry import _GRAMMAR_MAP, _get_language, clear_cache  # pylint: disable=import-outside-toplevel
         clear_cache()
         # canonical per-language check: one representative ext per language
         _lang_checks = [
@@ -950,7 +950,7 @@ def _cmd_status() -> None:
     try:
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
-        from retrieval.hybrid import _load_weights  # pylint: disable=import-outside-toplevel
+        from intelligence.retrieval.hybrid import _load_weights  # pylint: disable=import-outside-toplevel
 
         weights = _load_weights()
         kg = KnowledgeGraph()
@@ -1277,7 +1277,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     if orchestrator_mode:
         from cli.init_project import _seed_learnings_from_docs  # pylint: disable=import-outside-toplevel
         try:
-            from indexer.doc_ingester import run_ingest_subprocess  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.doc_ingester import run_ingest_subprocess  # pylint: disable=import-outside-toplevel
             run_ingest_subprocess(parent_path)
         except Exception:  # pylint: disable=broad-except
             pass
@@ -1329,7 +1329,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
         if _ans1 not in ("n", "no"):
             print("  Indexing … (this may take 30–120 s for large repos)\n")
             try:
-                from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+                from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
                 from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
                 _kg = KnowledgeGraph()
                 _idx = ASTIndexer(graph=_kg)
@@ -1564,9 +1564,9 @@ def _cmd_ask_local(query: str, verbose: bool = False, top_k: int = 5) -> None:
         return
 
     try:
-        from orchestrator.classifier import classify  # pylint: disable=import-outside-toplevel
-        from orchestrator.context_builder import build as build_context  # pylint: disable=import-outside-toplevel
-        from orchestrator.router import try_local_resolve  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.classifier import classify  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.context_builder import build as build_context  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.router import try_local_resolve  # pylint: disable=import-outside-toplevel
     except ImportError:
         # Fallback when orchestrator is unavailable: use context_pack directly
         from tools.context_pack import context_pack  # pylint: disable=import-outside-toplevel
@@ -1793,7 +1793,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
         )
         sys.exit(1)
     from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-    from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
     kg = KnowledgeGraph()
     indexer = ASTIndexer(graph=kg)
 
@@ -1824,7 +1824,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
     # ── Stage 2: file-summary vectors (summarizer → FAISS) ───────────────────
     if embed:
         try:
-            from indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
             _engine = SummarizationEngine()
             _sum_result = _engine.run_full_summarization()
             _n_sum = len(_sum_result.get("files", {}))
@@ -1838,7 +1838,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
     # native heaps (ONNX/FAISS) are fragmented enough that in-process ingestion
     # was observed to segfault at the very end of the run.
     try:
-        from indexer.doc_ingester import run_ingest_subprocess  # pylint: disable=import-outside-toplevel
+        from intelligence.indexer.doc_ingester import run_ingest_subprocess  # pylint: disable=import-outside-toplevel
         _ing_result = run_ingest_subprocess(abs_path)
         _n_chunks = _ing_result.get("chunks", 0)
         if _n_chunks > 0:
@@ -1862,7 +1862,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
         from core.config.orgs import get_repo_org  # pylint: disable=import-outside-toplevel
         _org_name = get_repo_org(abs_path)
         if _org_name:
-            from indexer.inter_repo_indexer import build_org_graph_for_org  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.inter_repo_indexer import build_org_graph_for_org  # pylint: disable=import-outside-toplevel
             _n_edges = build_org_graph_for_org(_org_name)
             if _n_edges > 0:
                 print(f"  Inter-repo: {_n_edges} dependency edge(s) added to OrgGraph")
@@ -1872,7 +1872,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
     # ── Stage 6: endpoint registry + HTTP call scanner ───────────────────────
     if tier != 2:  # skip during background Tier 2 pass
         try:
-            from indexer.endpoint_scanner import scan_endpoints  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.endpoint_scanner import scan_endpoints  # pylint: disable=import-outside-toplevel
             from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
             _sib_dir = get_cognirepo_dir_for_repo(abs_path)
             _ep_token = _CTX_DIR.set(_sib_dir)
@@ -1887,8 +1887,8 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
             pass
 
         try:
-            from indexer.http_call_scanner import scan_http_calls, wire_cross_service_edges  # pylint: disable=import-outside-toplevel
-            from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.http_call_scanner import scan_http_calls, wire_cross_service_edges  # pylint: disable=import-outside-toplevel
+            from intelligence.retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
             from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
             _sib_dir = get_cognirepo_dir_for_repo(abs_path)
             _hc_token = _CTX_DIR.set(_sib_dir)
@@ -1911,8 +1911,8 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
         # CALLS_API edges were silently dropped. Now that this repo's endpoints
         # are written, re-wire each already-indexed sibling against it.
         try:
-            from indexer.http_call_scanner import wire_cross_service_edges as _wire_sib  # pylint: disable=import-outside-toplevel
-            from retrieval.cross_repo import CrossRepoRouter as _CRR  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.http_call_scanner import wire_cross_service_edges as _wire_sib  # pylint: disable=import-outside-toplevel
+            from intelligence.retrieval.cross_repo import CrossRepoRouter as _CRR  # pylint: disable=import-outside-toplevel
             from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
             _rev_edges = 0
             for _sib in _CRR().get_sibling_repos():
@@ -2028,7 +2028,7 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
     """Start the file watcher, optionally forking into the background."""
     import os  # pylint: disable=import-outside-toplevel
     from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
-    from indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
 
     abs_path = os.path.abspath(path)
 
@@ -2114,9 +2114,9 @@ def _start_watcher_bg(path: str) -> None:
     def _run():
         try:
             from data.graph.knowledge_graph import KnowledgeGraph as _KG    # pylint: disable=import-outside-toplevel
-            from indexer.ast_indexer import ASTIndexer as _AI          # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.ast_indexer import ASTIndexer as _AI          # pylint: disable=import-outside-toplevel
             from data.graph.behaviour_tracker import BehaviourTracker as _BT # pylint: disable=import-outside-toplevel
-            from indexer.file_watcher import create_watcher             # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.file_watcher import create_watcher             # pylint: disable=import-outside-toplevel
             from cli.daemon import run_watcher_with_crash_guard         # pylint: disable=import-outside-toplevel
             import time as _time                                         # pylint: disable=import-outside-toplevel
             _kg = _KG()
@@ -2148,23 +2148,23 @@ def _start_watcher_bg(path: str) -> None:
 
 def _test_connection(provider: str) -> dict:
     """Make a minimal API call to verify connectivity and credentials."""
-    from orchestrator.model_adapters.errors import ModelCallError  # pylint: disable=import-outside-toplevel
+    from intelligence.orchestrator.model_adapters.errors import ModelCallError  # pylint: disable=import-outside-toplevel
     query = "ping"
     system = "Reply with one word."
     manifest: list = []
 
     try:
         if provider == "anthropic":
-            from orchestrator.model_adapters import anthropic_adapter  # pylint: disable=import-outside-toplevel
+            from intelligence.orchestrator.model_adapters import anthropic_adapter  # pylint: disable=import-outside-toplevel
             resp = anthropic_adapter.call(query, system, manifest, max_tokens=10)
         elif provider == "gemini":
-            from orchestrator.model_adapters import gemini_adapter  # pylint: disable=import-outside-toplevel
+            from intelligence.orchestrator.model_adapters import gemini_adapter  # pylint: disable=import-outside-toplevel
             resp = gemini_adapter.call(query, system, manifest, max_tokens=10)
         elif provider == "grok":
-            from orchestrator.model_adapters import grok_adapter  # pylint: disable=import-outside-toplevel
+            from intelligence.orchestrator.model_adapters import grok_adapter  # pylint: disable=import-outside-toplevel
             resp = grok_adapter.call(query, system, manifest, max_tokens=10)
         elif provider == "openai":
-            from orchestrator.model_adapters import openai_adapter as oa  # pylint: disable=import-outside-toplevel
+            from intelligence.orchestrator.model_adapters import openai_adapter as oa  # pylint: disable=import-outside-toplevel
             resp = oa.call(query, system, manifest, max_tokens=10)
         else:
             return {
@@ -2190,7 +2190,7 @@ def _test_connection(provider: str) -> dict:
 
 def _resolve_session(continue_session: bool, session_id: str | None) -> dict | None:
     """Return the session to continue, or None if starting fresh."""
-    from orchestrator.session import load_current_session, find_session  # pylint: disable=import-outside-toplevel
+    from intelligence.orchestrator.session import load_current_session, find_session  # pylint: disable=import-outside-toplevel
     if session_id:
         sess = find_session(session_id)
         if sess is None:
@@ -2207,7 +2207,7 @@ def _resolve_session(continue_session: bool, session_id: str | None) -> dict | N
 
 def _save_exchange(session, query: str, response_text: str, model: str = "") -> None:
     """Create or append to the session file, enforcing the history cap."""
-    from orchestrator.session import (  # pylint: disable=import-outside-toplevel
+    from intelligence.orchestrator.session import (  # pylint: disable=import-outside-toplevel
         create_session, append_exchange, load_max_exchanges,
     )
     if session is None:
@@ -2233,7 +2233,7 @@ def _direct_ask(
 
     if no_stream:
         # Blocking mode: collect full response, then print
-        from orchestrator.router import route  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.router import route  # pylint: disable=import-outside-toplevel
         result = route(
             query, force_model=force_model, top_k=top_k,
             messages_history=messages_history,
@@ -2277,7 +2277,7 @@ def _direct_ask(
         resolved_model = result.classifier.model
     else:
         # Streaming mode (default): print each chunk as it arrives
-        from orchestrator.router import stream_route  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.router import stream_route  # pylint: disable=import-outside-toplevel
         full_text: list[str] = []
         try:
             for chunk in stream_route(
@@ -2301,7 +2301,7 @@ def _direct_ask(
 
 def _cmd_sessions(limit: int = 20) -> None:
     """Print a table of recent sessions."""
-    from orchestrator.session import list_sessions, current_session_id  # pylint: disable=import-outside-toplevel
+    from intelligence.orchestrator.session import list_sessions, current_session_id  # pylint: disable=import-outside-toplevel
     sessions = list_sessions(limit=limit)
     if not sessions:
         print("No sessions found. Run 'cognirepo ask' to start one.")
@@ -3603,7 +3603,7 @@ def _main():
         if getattr(args, "changed_only", False):
             import subprocess as _sp  # pylint: disable=import-outside-toplevel
             from data.graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
-            from indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
             _supported_exts = {
                 ".py", ".js", ".ts", ".tsx", ".jsx", ".java",
                 ".cpp", ".c", ".h", ".go", ".rs", ".rb",
@@ -3656,7 +3656,7 @@ def _main():
         # ── selective reindex (--files) ──────────────────────────────────────
         if getattr(args, "files", None):
             from data.graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
-            from indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
             _kg = _KG()
             _indexer = _AI(graph=_kg)
             _indexed = 0
@@ -3795,7 +3795,7 @@ def _main():
         sys.exit(_cmd_verify_index())
 
     if args.command == "summarize":
-        from indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
+        from intelligence.indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
         engine = SummarizationEngine()
         scope = getattr(args, "scope", None)
         embed_only = getattr(args, "embed_only", False)
@@ -3809,7 +3809,7 @@ def _main():
                     _existing = _json.load(_sf)
                 _file_sums = _existing.get("_structured", {}).get("files", {})
                 if _file_sums:
-                    from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+                    from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
                     from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
                     _kg = KnowledgeGraph()
                     _idx = ASTIndexer(graph=_kg)
@@ -3901,7 +3901,7 @@ def _main():
             )
         elif args.org_command == "rewire":
             from data.graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
-            from indexer.http_call_scanner import wire_cross_service_edges  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.http_call_scanner import wire_cross_service_edges  # pylint: disable=import-outside-toplevel
             from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
             invalidate_org_graph()
             og = get_org_graph()
@@ -4016,7 +4016,7 @@ def _main():
                 return
             print("[cognirepo] Starting watcher (--ensure-running)...")
             from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-            from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
             kg = KnowledgeGraph()
             indexer = ASTIndexer(graph=kg)
             indexer.load()

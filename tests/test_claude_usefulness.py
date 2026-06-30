@@ -27,7 +27,7 @@ def setup_test_index(isolated_cognirepo, monkeypatch):
     Build a small test index in the isolated directory so tests have data to query.
     """
     from cli.init_project import init_project
-    from indexer.ast_indexer import ASTIndexer
+    from intelligence.indexer.ast_indexer import ASTIndexer
     from data.graph.knowledge_graph import KnowledgeGraph
     
     # Initialize the project in the tmp directory
@@ -91,7 +91,7 @@ class TestTokenReduction:
 
 class TestSymbolLookupEfficiency:
     def test_lookup_returns_in_under_100ms(self):
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()
@@ -104,7 +104,7 @@ class TestSymbolLookupEfficiency:
         assert len(result) > 0
 
     def test_lookup_returns_file_and_line(self):
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()
@@ -113,7 +113,7 @@ class TestSymbolLookupEfficiency:
         assert all("file" in r and "line" in r for r in results)
 
     def test_lookup_vs_grep_equivalent(self):
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()
@@ -127,7 +127,7 @@ class TestSymbolLookupEfficiency:
 
 class TestCacheEfficiency:
     def test_hybrid_cache_hit_is_faster(self):
-        from retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache
+        from intelligence.retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache
         invalidate_hybrid_cache()
 
         t0 = time.perf_counter()
@@ -141,7 +141,7 @@ class TestCacheEfficiency:
         assert warm_ms < cold_ms or warm_ms < 5
 
     def test_cache_stats_record_hits(self):
-        from retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache, cache_stats
+        from intelligence.retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache, cache_stats
         invalidate_hybrid_cache()
         hybrid_retrieve("test cache hit query", top_k=3)
         hybrid_retrieve("test cache hit query", top_k=3)
@@ -164,7 +164,7 @@ class TestMemoryRecall:
         assert any("usefulness" in t for t in texts)
 
     def test_retrieval_returns_most_relevant_first(self):
-        from retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache
+        from intelligence.retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache
         invalidate_hybrid_cache()
         results = hybrid_retrieve("hybrid", top_k=5)
         if results:
@@ -214,7 +214,7 @@ class TestGlobalUserMemory:
 
 class TestHybridSignalMix:
     def test_vector_score_present(self):
-        from retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache
+        from intelligence.retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache
         invalidate_hybrid_cache()
         results = hybrid_retrieve("memory", top_k=5)
         if results:
@@ -226,7 +226,7 @@ class TestHybridSignalMix:
 
 class TestRealProjectPortability:
     def test_index_data_structure_stable(self):
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()

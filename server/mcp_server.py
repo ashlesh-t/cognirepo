@@ -30,7 +30,7 @@ from tools.context_pack import context_pack as _context_pack
 from tools.semantic_search_code import semantic_search_code as _semantic_search_code
 from tools.dependency_graph import dependency_graph as _dependency_graph
 from tools.explain_change import explain_change as _explain_change
-from retrieval.docs_search import search_docs as _search_docs
+from intelligence.retrieval.docs_search import search_docs as _search_docs
 from data.memory.episodic_memory import log_event, search_episodes
 from data.memory.learning_store import get_learning_store
 from data.memory.embeddings import evict_model
@@ -68,7 +68,7 @@ def _init_mcp_session() -> None:
     """Create a new session for this server process (called once at startup)."""
     global _MCP_SESSION  # pylint: disable=global-statement
     try:
-        from orchestrator.session import create_session  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.session import create_session  # pylint: disable=import-outside-toplevel
         with _SESSION_LOCK:
             _MCP_SESSION = create_session(model="mcp-server")
         logger.debug("MCP session created: %s", _MCP_SESSION["session_id"])
@@ -82,7 +82,7 @@ def _record_mcp_tool_call(tool_name: str, query_summary: str, result_summary: st
     if _MCP_SESSION is None:
         return
     try:
-        from orchestrator.session import append_exchange  # pylint: disable=import-outside-toplevel
+        from intelligence.orchestrator.session import append_exchange  # pylint: disable=import-outside-toplevel
         with _SESSION_LOCK:
             _MCP_SESSION = append_exchange(
                 _MCP_SESSION,
@@ -114,7 +114,7 @@ def _get_indexer():
         graph = _get_graph()
         with _SINGLETON_LOCK:
             if _INDEXER is None:
-                from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+                from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
                 _INDEXER = ASTIndexer(graph)
                 _INDEXER.load()
     return _INDEXER
@@ -242,7 +242,7 @@ def _repo_ctx(repo_path: str | None):
     token = _CTX_DIR.set(target_dir)
     try:
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-        from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+        from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
         g = KnowledgeGraph()
         idx = ASTIndexer(g)
         idx.load()
@@ -392,7 +392,7 @@ def _annotate_with_symbol(repo_list: list[dict], symbol: str) -> list[dict]:
             continue
         token = _CTX_DIR.set(cognirepo_dir)
         try:
-            from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
             from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
             idx = ASTIndexer(KnowledgeGraph())
             idx.load()
@@ -554,7 +554,7 @@ def retrieve_memory(query: str, top_k: int = 5, include_org: bool = False, repo_
         results = _traced("retrieve_memory", _retrieve_memory, query, top_k)
 
         if include_org:
-            from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+            from intelligence.retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
             router = CrossRepoRouter()
             org_results = router.query_org_memories(query, top_k=top_k)
             results.extend(org_results)
@@ -607,7 +607,7 @@ def org_search(query: str, top_k: int = 5) -> list:
     Use when: org_wide_search returned 0 results, or the index is sparse.
     Returns a list of results annotated with source repository.
     """
-    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    from intelligence.retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
     router = CrossRepoRouter()
     return router.query_org_memories(query, top_k=top_k)
 
@@ -627,7 +627,7 @@ def org_wide_search(query: str, top_k: int = 5) -> dict:
 
     Claude: use this as the default cross-repo search.
     """
-    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    from intelligence.retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
     router = CrossRepoRouter()
     results, meta = router.query_all_org_repos(query, top_k=top_k, return_meta=True)
     return {
@@ -655,7 +655,7 @@ def cross_repo_search(query: str, scope: str = "project", top_k: int = 5) -> dic
     - User asks "how does X work across the system" or "what does repo Y do"
     - Importing from a sibling repo and need context on its internals
     """
-    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    from intelligence.retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
     router = CrossRepoRouter()
     if scope == "project":
         results = router.query_project_memories(query, top_k=top_k)
@@ -679,7 +679,7 @@ def list_org_context() -> dict:
     Use the returned context to decide whether to call cross_repo_search,
     and which scope (project vs org) is appropriate.
     """
-    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    from intelligence.retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
     from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
     router = CrossRepoRouter()
     summary = router.get_context_summary()
@@ -731,7 +731,7 @@ def org_dependencies(depth: int = 2) -> dict:
     Claude: call this when the user asks about service dependencies,
     "what depends on X", or when investigating cross-service call chains.
     """
-    from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+    from intelligence.retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
     from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
 
     router = CrossRepoRouter()
@@ -841,7 +841,7 @@ def _resolve_repo_for_symbol(symbol: str, og) -> str | None:
     all children's symbols) from shadowing the real owner.
     """
     from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
-    from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
     from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
 
     sym_lower = symbol.lower()
@@ -969,7 +969,7 @@ def lookup_symbol(name: str, include_org: bool = False, repo_path: str | None = 
         locations = idx.lookup_symbol(name)
         if not locations:
             try:
-                from indexer.on_demand import expand_on_access_for_symbol  # pylint: disable=import-outside-toplevel
+                from intelligence.indexer.on_demand import expand_on_access_for_symbol  # pylint: disable=import-outside-toplevel
                 if expand_on_access_for_symbol(name, _root, idx):
                     locations = idx.lookup_symbol(name)
             except Exception:  # pylint: disable=broad-except
@@ -987,8 +987,8 @@ def lookup_symbol(name: str, include_org: bool = False, repo_path: str | None = 
             result.append({"file": file_path, "line": line, "type": sym_type, "repo": "local"})
 
         if include_org:
-            from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
-            from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+            from intelligence.retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
             from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
 
             router = CrossRepoRouter()
@@ -1280,7 +1280,7 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
                     continue
                 token = _CTX_DIR.set(cog_dir)
                 try:
-                    from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+                    from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
                     from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
                     sib_idx = ASTIndexer(KnowledgeGraph())
                     sib_idx.load()
@@ -1357,7 +1357,7 @@ def get_service_endpoints(repo_path: str = "") -> dict:
 
     Returns {endpoints, count, scanned_at} or {endpoints: [], count: 0}.
     """
-    from indexer.endpoint_scanner import load_endpoints  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.endpoint_scanner import load_endpoints  # pylint: disable=import-outside-toplevel
     from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
 
     _target = os.path.abspath(repo_path) if repo_path else os.getcwd()

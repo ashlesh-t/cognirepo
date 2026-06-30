@@ -155,7 +155,7 @@ def measure_symbol_lookup(symbols: list[str]) -> dict:
     Time ASTIndexer.lookup_symbol for known symbols.
     Returns mean latency in ms.
     """
-    from indexer.ast_indexer import ASTIndexer
+    from intelligence.indexer.ast_indexer import ASTIndexer
     from data.graph.knowledge_graph import KnowledgeGraph
 
     idx = ASTIndexer(graph=KnowledgeGraph())
@@ -205,7 +205,7 @@ def measure_cache_speedup(queries: list[str]) -> dict:
     """
     Cold vs warm hybrid_retrieve — cache speedup factor.
     """
-    from retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache
+    from intelligence.retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache
 
     speedups = []
     for q in queries:
@@ -234,7 +234,7 @@ def measure_memory_recall(test_memories: list[str]) -> dict:
     """
     from tools.store_memory import store_memory
     from tools.retrieve_memory import retrieve_memory
-    from retrieval.hybrid import invalidate_hybrid_cache
+    from intelligence.retrieval.hybrid import invalidate_hybrid_cache
 
     stored = []
     for text in test_memories:
@@ -419,7 +419,7 @@ def _sample_repo_symbols(n: int = 5) -> list[str]:
     (e.g. running against CogniRepo itself).
     """
     try:
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()

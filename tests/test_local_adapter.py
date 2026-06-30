@@ -35,14 +35,14 @@ def _cleanup_local_adapter_stubs():
     for _mod in _LOCAL_ADAPTER_STUBS:
         sys.modules.pop(_mod, None)
 
-from orchestrator.model_adapters.local_adapter import call, NoLocalAnswer, _resolve_locally
+from intelligence.orchestrator.model_adapters.local_adapter import call, NoLocalAnswer, _resolve_locally
 
 
 # ── _resolve_locally ──────────────────────────────────────────────────────────
 
 def test_resolve_locally_returns_pattern_answer():
     """Pattern matcher (try_local_resolve) provides an answer."""
-    with patch("orchestrator.router.try_local_resolve", return_value="Found at auth.py:10"):
+    with patch("intelligence.orchestrator.router.try_local_resolve", return_value="Found at auth.py:10"):
         result = _resolve_locally("where is verify_token")
     assert result == "Found at auth.py:10"
 
@@ -54,8 +54,8 @@ def test_resolve_locally_falls_through_to_docs():
     mock_idx.answer.return_value = [{"score": 0.9, "text": "Install with pip.", "file": "USAGE.md", "section": "Install"}]
 
     with (
-        patch("orchestrator.router.try_local_resolve", return_value=None),
-        patch("cli.docs_index.ensure_docs_index", return_value=mock_idx),
+        patch("intelligence.orchestrator.router.try_local_resolve", return_value=None),
+        patch("intelligence.indexer.docs_index.ensure_docs_index", return_value=mock_idx),
     ):
         result = _resolve_locally("how do I install cognirepo")
 
@@ -69,8 +69,8 @@ def test_resolve_locally_returns_none_when_all_fail():
     mock_idx.is_docs_query.return_value = False
 
     with (
-        patch("orchestrator.router.try_local_resolve", return_value=None),
-        patch("cli.docs_index.ensure_docs_index", return_value=mock_idx),
+        patch("intelligence.orchestrator.router.try_local_resolve", return_value=None),
+        patch("intelligence.indexer.docs_index.ensure_docs_index", return_value=mock_idx),
     ):
         result = _resolve_locally("design a distributed system")
 
@@ -79,8 +79,8 @@ def test_resolve_locally_returns_none_when_all_fail():
 
 def test_resolve_locally_handles_exception_gracefully():
     with (
-        patch("orchestrator.router.try_local_resolve", side_effect=RuntimeError("boom")),
-        patch("cli.docs_index.ensure_docs_index", side_effect=RuntimeError("boom2")),
+        patch("intelligence.orchestrator.router.try_local_resolve", side_effect=RuntimeError("boom")),
+        patch("intelligence.indexer.docs_index.ensure_docs_index", side_effect=RuntimeError("boom2")),
     ):
         result = _resolve_locally("any query")
     assert result is None
@@ -90,7 +90,7 @@ def test_resolve_locally_handles_exception_gracefully():
 
 def test_call_returns_model_response_when_answer_found():
     with patch(
-        "orchestrator.model_adapters.local_adapter._resolve_locally",
+        "intelligence.orchestrator.model_adapters.local_adapter._resolve_locally",
         return_value="This is the answer.",
     ):
         resp = call("test query")
@@ -101,7 +101,7 @@ def test_call_returns_model_response_when_answer_found():
 
 def test_call_raises_no_local_answer_when_nothing_found():
     with patch(
-        "orchestrator.model_adapters.local_adapter._resolve_locally",
+        "intelligence.orchestrator.model_adapters.local_adapter._resolve_locally",
         return_value=None,
     ):
         with pytest.raises(NoLocalAnswer):
@@ -112,7 +112,7 @@ def test_call_raises_no_local_answer_when_nothing_found():
 
 def test_call_stream_yields_answer():
     with patch(
-        "orchestrator.model_adapters.local_adapter._resolve_locally",
+        "intelligence.orchestrator.model_adapters.local_adapter._resolve_locally",
         return_value="Streaming answer.",
     ):
         chunks = list(call("test query", stream=True))
@@ -121,7 +121,7 @@ def test_call_stream_yields_answer():
 
 def test_call_stream_raises_no_local_answer():
     with patch(
-        "orchestrator.model_adapters.local_adapter._resolve_locally",
+        "intelligence.orchestrator.model_adapters.local_adapter._resolve_locally",
         return_value=None,
     ):
         with pytest.raises(NoLocalAnswer):
@@ -132,7 +132,7 @@ def test_call_stream_raises_no_local_answer():
 
 def test_call_provider_is_local():
     with patch(
-        "orchestrator.model_adapters.local_adapter._resolve_locally",
+        "intelligence.orchestrator.model_adapters.local_adapter._resolve_locally",
         return_value="answer",
     ):
         resp = call("q")

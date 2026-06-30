@@ -17,13 +17,13 @@ def _make_indexer_with_symbols(symbols: list[dict]):
     """Build a mock ASTIndexer with a FAISS index populated from symbols."""
     import faiss
     from data.graph.knowledge_graph import KnowledgeGraph
-    from indexer.ast_indexer import ASTIndexer
+    from intelligence.indexer.ast_indexer import ASTIndexer
 
     ASTIndexer.lookup_symbol.cache_clear()
 
     kg = MagicMock(spec=KnowledgeGraph)
     kg.G = MagicMock()
-    with patch("indexer.ast_indexer.get_model", return_value=MagicMock()):
+    with patch("intelligence.indexer.ast_indexer.get_model", return_value=MagicMock()):
         indexer = ASTIndexer(graph=kg)
 
     # Build a real FAISS index
@@ -136,12 +136,12 @@ class TestSemanticSearchCode:
         from tools.semantic_search_code import semantic_search_code
         import faiss as _faiss
         from data.graph.knowledge_graph import KnowledgeGraph
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
 
         ASTIndexer.lookup_symbol.cache_clear()
         kg = MagicMock(spec=KnowledgeGraph)
         kg.G = MagicMock()
-        with patch("indexer.ast_indexer.get_model", return_value=MagicMock()):
+        with patch("intelligence.indexer.ast_indexer.get_model", return_value=MagicMock()):
             indexer = ASTIndexer(graph=kg)
 
         dim = 384

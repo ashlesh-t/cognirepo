@@ -28,8 +28,8 @@ from pathlib import Path
 from typing import Optional
 
 from core.config.lock import store_lock
-from retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter, is_index_cold, MAX_QUERY_LEN
-from retrieval.query_enhancer import enhance_query
+from intelligence.retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter, is_index_cold, MAX_QUERY_LEN
+from intelligence.retrieval.query_enhancer import enhance_query
 
 _logger = logging.getLogger(__name__)
 
@@ -454,7 +454,7 @@ def context_pack(
 
 def _file_mode_context(file_path: str, max_tokens: int, window_lines: int, repo_root: str | None = None) -> dict:
     """Return all indexed context for a specific file (Cursor-style file mode)."""
-    from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
     from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
 
     sections = []

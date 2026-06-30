@@ -30,12 +30,12 @@ from watchdog.events import (
 )
 from watchdog.observers import Observer
 
-from indexer.language_registry import is_supported
+from intelligence.indexer.language_registry import is_supported
 
 if TYPE_CHECKING:
     from data.graph.behaviour_tracker import BehaviourTracker
     from data.graph.knowledge_graph import KnowledgeGraph
-    from indexer.ast_indexer import ASTIndexer
+    from intelligence.indexer.ast_indexer import ASTIndexer
 
 
 class RepoFileHandler(FileSystemEventHandler):
@@ -120,7 +120,7 @@ class RepoFileHandler(FileSystemEventHandler):
 
             # 5. Invalidate retrieval cache so stale results are not served
             try:
-                from retrieval.hybrid import invalidate_hybrid_cache  # pylint: disable=import-outside-toplevel
+                from intelligence.retrieval.hybrid import invalidate_hybrid_cache  # pylint: disable=import-outside-toplevel
                 invalidate_hybrid_cache()
             except Exception as _exc:  # pylint: disable=broad-except
                 import logging as _logging  # pylint: disable=import-outside-toplevel
@@ -159,7 +159,7 @@ class RepoFileHandler(FileSystemEventHandler):
 
             # invalidate retrieval cache so fresh symbols are served
             try:
-                from retrieval.hybrid import invalidate_hybrid_cache  # pylint: disable=import-outside-toplevel
+                from intelligence.retrieval.hybrid import invalidate_hybrid_cache  # pylint: disable=import-outside-toplevel
                 invalidate_hybrid_cache()
             except Exception:  # pylint: disable=broad-except
                 pass

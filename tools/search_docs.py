@@ -9,7 +9,7 @@ Tool to search for a query in the markdown documentation.
 Returns file paths with context snippets (grep -C 2 style).
 """
 import sys
-from retrieval.docs_search import search_docs as ds
+from intelligence.retrieval.docs_search import search_docs as ds
 
 
 def search_docs(query: str) -> list[dict]:

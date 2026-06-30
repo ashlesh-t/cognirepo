@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 
-from orchestrator.model_adapters import openai_adapter
+from intelligence.orchestrator.model_adapters import openai_adapter
 
 _GROK_BASE_URL = "https://api.x.ai/v1"
 _DEFAULT_MODEL = "grok-beta"

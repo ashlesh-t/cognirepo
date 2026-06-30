@@ -16,7 +16,7 @@ import pytest
 
 @pytest.fixture
 def classify():
-    from orchestrator.classifier import classify as _classify
+    from intelligence.orchestrator.classifier import classify as _classify
     return _classify
 
 

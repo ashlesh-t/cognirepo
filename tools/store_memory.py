@@ -86,7 +86,7 @@ def store_memory(text: str, source: str = "") -> dict:
     # on the next retrieve_memory call (cache TTL is 5 min — without this, a store
     # followed immediately by retrieve would return the pre-store snapshot).
     try:
-        from retrieval.hybrid import invalidate_hybrid_cache  # pylint: disable=import-outside-toplevel
+        from intelligence.retrieval.hybrid import invalidate_hybrid_cache  # pylint: disable=import-outside-toplevel
         invalidate_hybrid_cache()
     except Exception:  # pylint: disable=broad-except
         pass

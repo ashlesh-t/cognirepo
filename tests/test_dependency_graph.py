@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 def _make_indexer(files: dict) -> MagicMock:
     """Build a mock ASTIndexer with given files dict."""
     from data.graph.knowledge_graph import KnowledgeGraph
-    from indexer.ast_indexer import ASTIndexer
+    from intelligence.indexer.ast_indexer import ASTIndexer
 
     ASTIndexer.lookup_symbol.cache_clear()
 
@@ -28,7 +28,7 @@ def _make_indexer(files: dict) -> MagicMock:
 
     kg = MagicMock(spec=KnowledgeGraph)
     kg.G = MagicMock()
-    with patch("indexer.ast_indexer.get_model", return_value=MagicMock()):
+    with patch("intelligence.indexer.ast_indexer.get_model", return_value=MagicMock()):
         indexer = ASTIndexer(graph=kg)
     indexer.index_data["files"] = files
     indexer.index_data["reverse_index"] = rev

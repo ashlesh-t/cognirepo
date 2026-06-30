@@ -29,7 +29,7 @@ def setup_benchmark_index(isolated_cognirepo, monkeypatch):
     Build a test index in the isolated directory so benchmarks have data.
     """
     from cli.init_project import init_project
-    from indexer.ast_indexer import ASTIndexer
+    from intelligence.indexer.ast_indexer import ASTIndexer
     from data.graph.knowledge_graph import KnowledgeGraph
     
     # Initialize
@@ -53,7 +53,7 @@ def setup_benchmark_index(isolated_cognirepo, monkeypatch):
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _index_has_data() -> bool:
-    from indexer.ast_indexer import ASTIndexer
+    from intelligence.indexer.ast_indexer import ASTIndexer
     from data.graph.knowledge_graph import KnowledgeGraph
     idx = ASTIndexer(graph=KnowledgeGraph())
     idx.load()
@@ -90,7 +90,7 @@ class TestTokenReductionMetric:
 
 class TestSymbolLookupLatency:
     def test_lookup_under_10ms(self):
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()
@@ -101,7 +101,7 @@ class TestSymbolLookupLatency:
         assert elapsed_ms < 50  # increased from 10ms to be safe for CI
 
     def test_hit_rate_for_known_symbols(self):
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()
@@ -112,7 +112,7 @@ class TestSymbolLookupLatency:
 
 class TestCacheSpeedup:
     def test_warm_retrieve_is_faster_than_cold(self):
-        from retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache
+        from intelligence.retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache
         invalidate_hybrid_cache()
 
         t0 = time.perf_counter()
@@ -126,7 +126,7 @@ class TestCacheSpeedup:
         assert warm_ms <= cold_ms
 
     def test_cache_stats_show_hit(self):
-        from retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache, cache_stats
+        from intelligence.retrieval.hybrid import hybrid_retrieve, invalidate_hybrid_cache, cache_stats
         invalidate_hybrid_cache()
         hybrid_retrieve("cache test", top_k=3)
         hybrid_retrieve("cache test", top_k=3)
@@ -166,7 +166,7 @@ class TestMemoryRecall:
 
 class TestGraphScore:
     def test_ast_candidate_gets_nonzero_graph_score(self):
-        from retrieval.hybrid import HybridRetriever, invalidate_hybrid_cache
+        from intelligence.retrieval.hybrid import HybridRetriever, invalidate_hybrid_cache
         invalidate_hybrid_cache()
         hr = HybridRetriever()
         results = hr.retrieve("store_memory", top_k=10)

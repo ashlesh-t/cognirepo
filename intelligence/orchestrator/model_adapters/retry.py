@@ -21,7 +21,7 @@ import logging
 import time
 from typing import Callable, TypeVar
 
-from orchestrator.model_adapters.errors import ModelCallError
+from intelligence.orchestrator.model_adapters.errors import ModelCallError
 
 logger = logging.getLogger(__name__)
 

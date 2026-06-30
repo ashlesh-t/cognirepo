@@ -59,7 +59,7 @@ def _find_symbol_in_repo(symbol: str, repo_abs: str) -> "str | None":
     """Return the KG node ID for symbol in repo_abs, or None."""
     try:
         from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
-        from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+        from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         sib_dir = get_cognirepo_dir_for_repo(repo_abs)
         token = _CTX_DIR.set(sib_dir)
@@ -125,7 +125,7 @@ def find_symbol_path(
 
     # If repos not specified, search across org
     if not from_repo or not to_repo:
-        from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
+        from intelligence.retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
         router = CrossRepoRouter()
         all_repos = [cwd] + router.get_sibling_repos()
         for repo in all_repos:

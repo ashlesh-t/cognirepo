@@ -96,22 +96,22 @@ def _run_doctor(
     monkeypatch.setitem(sys.modules, "data.memory.episodic_memory", fake_ep_mod)
 
     # ── stub AST indexer ──────────────────────────────────────────────────────
-    fake_idx_mod = types.ModuleType("indexer.ast_indexer")
+    fake_idx_mod = types.ModuleType("intelligence.indexer.ast_indexer")
     class _FakeASTIndexer:
         def __init__(self, **_kw):
             self.index_data = {}
         def load(self):
             pass
     fake_idx_mod.ASTIndexer = _FakeASTIndexer
-    monkeypatch.setitem(sys.modules, "indexer.ast_indexer", fake_idx_mod)
+    monkeypatch.setitem(sys.modules, "intelligence.indexer.ast_indexer", fake_idx_mod)
 
     # ── stub language registry ────────────────────────────────────────────────
-    fake_lang_mod = types.ModuleType("indexer.language_registry")
+    fake_lang_mod = types.ModuleType("intelligence.indexer.language_registry")
     fake_lang_mod.supported_extensions = lambda: {".py", ".js", ".ts"}
     fake_lang_mod._GRAMMAR_MAP = {".py": "tree-sitter-python"}
     fake_lang_mod._get_language = lambda ext: None
     fake_lang_mod.clear_cache = lambda: None
-    monkeypatch.setitem(sys.modules, "indexer.language_registry", fake_lang_mod)
+    monkeypatch.setitem(sys.modules, "intelligence.indexer.language_registry", fake_lang_mod)
 
     # ── stub circuit breaker ──────────────────────────────────────────────────
     fake_cb_mod = types.ModuleType("data.memory.circuit_breaker")

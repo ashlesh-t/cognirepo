@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 
 from data.memory.embeddings import encode_with_timeout
-from indexer.ast_indexer import ASTIndexer
+from intelligence.indexer.ast_indexer import ASTIndexer
 from data.graph.knowledge_graph import KnowledgeGraph
 
 # language label → file extensions mapping (for the optional language filter)

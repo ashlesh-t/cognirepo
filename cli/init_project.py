@@ -726,7 +726,7 @@ def _index_with_progress(svc_path: str, svc_name: str):
     import threading  # pylint: disable=import-outside-toplevel
     from cli.wizard import _animate_indexing  # pylint: disable=import-outside-toplevel
     from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-    from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
 
     done   = threading.Event()
     result = {}
@@ -816,7 +816,7 @@ def _wire_inter_repo_edges(children: list, parent_path: str) -> None:
     """
     try:
         from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
-        from indexer.inter_repo_indexer import extract_dependencies  # pylint: disable=import-outside-toplevel
+        from intelligence.indexer.inter_repo_indexer import extract_dependencies  # pylint: disable=import-outside-toplevel
         import json as _json  # pylint: disable=import-outside-toplevel
 
         og = get_org_graph()
@@ -1222,7 +1222,7 @@ def init_project(
     print(f"\n{_verb} repo …  (use --no-index to skip)")
 
     from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-    from indexer.ast_indexer import ASTIndexer        # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.ast_indexer import ASTIndexer        # pylint: disable=import-outside-toplevel
 
     cwd = os.getcwd()
     kg = KnowledgeGraph()
@@ -1319,7 +1319,7 @@ def init_project(
     if _should_summarize:
         print("\nGenerating architectural summaries …")
         try:
-            from indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
             _engine = SummarizationEngine()
             _sum_result = _engine.run_full_summarization()
             print("  Summaries saved to .cognirepo/index/summaries.json")
@@ -1334,7 +1334,7 @@ def init_project(
     # Subprocess-isolated: ingestion in a process that just finished a heavy
     # indexing pass was observed to segfault (fragmented ONNX/FAISS heaps).
     try:
-        from indexer.doc_ingester import run_ingest_subprocess  # pylint: disable=import-outside-toplevel
+        from intelligence.indexer.doc_ingester import run_ingest_subprocess  # pylint: disable=import-outside-toplevel
         _ing_result = run_ingest_subprocess(cwd)
         _n_chunks = _ing_result.get("chunks", 0)
         if _n_chunks > 0:

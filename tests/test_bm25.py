@@ -192,7 +192,7 @@ class TestEpisodicBM25Filter:
         log_event("fixed bug in payment module", {"module": "payments"})
         log_event("updated JWT expiry to 24 hours", {"service": "auth"})
 
-        from retrieval.hybrid import episodic_bm25_filter
+        from intelligence.retrieval.hybrid import episodic_bm25_filter
         results = episodic_bm25_filter("JWT auth", top_k=2)
         assert isinstance(results, list)
 
@@ -202,13 +202,13 @@ class TestEpisodicBM25Filter:
         log_event("unrelated cooking recipe discussion")
         log_event("another unrelated topic about databases")
 
-        from retrieval.hybrid import episodic_bm25_filter
+        from intelligence.retrieval.hybrid import episodic_bm25_filter
         results = episodic_bm25_filter("JWT token", top_k=3)
         if results:
             assert "jwt" in results[0]["event"].lower() or "token" in results[0]["event"].lower()
 
     def test_empty_log_returns_empty(self, isolated_cognirepo):
-        from retrieval.hybrid import episodic_bm25_filter
+        from intelligence.retrieval.hybrid import episodic_bm25_filter
         results = episodic_bm25_filter("anything", top_k=5)
         assert results == []
 
@@ -217,7 +217,7 @@ class TestEpisodicBM25Filter:
         for i in range(10):
             log_event(f"test event number {i} with some content")
 
-        from retrieval.hybrid import episodic_bm25_filter
+        from intelligence.retrieval.hybrid import episodic_bm25_filter
         results = episodic_bm25_filter("test event", top_k=3)
         assert len(results) <= 3
 
@@ -231,7 +231,7 @@ class TestEpisodicBM25Filter:
         if len(events) >= 2:
             t_start = events[1]["time"]
             t_end   = events[-1]["time"]
-            from retrieval.hybrid import episodic_bm25_filter
+            from intelligence.retrieval.hybrid import episodic_bm25_filter
             results = episodic_bm25_filter("event", time_range=(t_start, t_end), top_k=10)
             for r in results:
                 assert t_start <= r["time"] <= t_end
