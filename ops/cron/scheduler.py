@@ -166,14 +166,14 @@ _CLEANUP_SCHEDULER: BackgroundScheduler | None = None
 
 def _run_auto_prune() -> None:
     """Thin wrapper that calls the prune function."""
-    from cron.prune_memory import prune  # pylint: disable=import-outside-toplevel
+    from ops.cron.prune_memory import prune  # pylint: disable=import-outside-toplevel
     result = prune(verbose=False)
     logger.info("[auto-prune] result: %s", result)
 
 
 def _run_cleanup_suppressed() -> None:
     """Thin wrapper that drains the suppression cleanup queue."""
-    from cron.prune_memory import cleanup_suppressed  # pylint: disable=import-outside-toplevel
+    from ops.cron.prune_memory import cleanup_suppressed  # pylint: disable=import-outside-toplevel
     result = cleanup_suppressed()
     logger.info("[cleanup-suppressed] result: %s", result)
 

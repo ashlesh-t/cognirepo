@@ -179,26 +179,26 @@ def test_daemon_non_linux_watch_exits_2(monkeypatch):
 # ── cron/scheduler.py ────────────────────────────────────────────────────────
 
 def test_schedule_interval_hours_default():
-    from cron.scheduler import _schedule_interval_hours
+    from ops.cron.scheduler import _schedule_interval_hours
     result = _schedule_interval_hours()
     assert isinstance(result, int)
     assert result > 0
 
 
 def test_auto_prune_enabled_default():
-    from cron.scheduler import _auto_prune_enabled
+    from ops.cron.scheduler import _auto_prune_enabled
     result = _auto_prune_enabled()
     assert isinstance(result, bool)
 
 
 def test_background_scheduler_instantiation():
-    from cron.scheduler import BackgroundScheduler
+    from ops.cron.scheduler import BackgroundScheduler
     sched = BackgroundScheduler(fn=lambda: None, interval_sec=3600)
     assert sched is not None
 
 
 def test_background_scheduler_start_stop():
-    from cron.scheduler import BackgroundScheduler
+    from ops.cron.scheduler import BackgroundScheduler
     sched = BackgroundScheduler(fn=lambda: None, interval_sec=3600)
     try:
         sched.start()
@@ -208,8 +208,8 @@ def test_background_scheduler_start_stop():
 
 
 def test_write_prune_schedule(tmp_path, monkeypatch):
-    from cron.scheduler import write_prune_schedule
-    import cron.scheduler as sched_mod
+    from ops.cron.scheduler import write_prune_schedule
+    import ops.cron.scheduler as sched_mod
     monkeypatch.setattr(sched_mod, "_schedule_interval_hours", lambda: 24)
     try:
         result = write_prune_schedule(24)
@@ -219,7 +219,7 @@ def test_write_prune_schedule(tmp_path, monkeypatch):
 
 
 def test_run_auto_prune_no_crash():
-    from cron.scheduler import _run_auto_prune
+    from ops.cron.scheduler import _run_auto_prune
     try:
         _run_auto_prune()
     except Exception:
@@ -227,7 +227,7 @@ def test_run_auto_prune_no_crash():
 
 
 def test_run_cleanup_suppressed_no_crash():
-    from cron.scheduler import _run_cleanup_suppressed
+    from ops.cron.scheduler import _run_cleanup_suppressed
     try:
         _run_cleanup_suppressed()
     except Exception:
@@ -235,7 +235,7 @@ def test_run_cleanup_suppressed_no_crash():
 
 
 def test_start_auto_prune_scheduler_disabled():
-    from cron.scheduler import start_auto_prune_scheduler
-    with patch("cron.scheduler._auto_prune_enabled", return_value=False):
+    from ops.cron.scheduler import start_auto_prune_scheduler
+    with patch("ops.cron.scheduler._auto_prune_enabled", return_value=False):
         result = start_auto_prune_scheduler()
         assert result is None

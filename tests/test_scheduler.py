@@ -8,7 +8,7 @@
 import threading
 import time
 
-from cron.scheduler import BackgroundScheduler
+from ops.cron.scheduler import BackgroundScheduler
 
 
 def test_scheduler_fires_task():

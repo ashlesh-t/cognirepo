@@ -3730,8 +3730,8 @@ def _main():
         return
 
     if args.command == "prune":
-        from cron.prune_memory import prune  # pylint: disable=import-outside-toplevel
-        from cron.prune_memory import DEFAULT_THRESHOLD  # pylint: disable=import-outside-toplevel
+        from ops.cron.prune_memory import prune  # pylint: disable=import-outside-toplevel
+        from ops.cron.prune_memory import DEFAULT_THRESHOLD  # pylint: disable=import-outside-toplevel
         threshold = args.threshold if args.threshold is not None else DEFAULT_THRESHOLD
         result = prune(
             threshold=threshold,
@@ -3740,7 +3740,7 @@ def _main():
             verbose=args.verbose or args.dry_run,
         )
         if args.aggressive and args.threshold is None:
-            from cron.prune_memory import AGGRESSIVE_THRESHOLD  # pylint: disable=import-outside-toplevel
+            from ops.cron.prune_memory import AGGRESSIVE_THRESHOLD  # pylint: disable=import-outside-toplevel
             result = prune(threshold=AGGRESSIVE_THRESHOLD, dry_run=args.dry_run,
                            archive=args.archive, verbose=args.verbose or args.dry_run)
         _print_results(result)

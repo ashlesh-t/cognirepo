@@ -128,7 +128,9 @@ include = [
     "indexer*", "retrieval*", "orchestrator*",
     # ── New interface/ops shims (old names, kept for backward compat until v2.0) ─
     "adapters*", "cli*", "server*", "tools*",
-    # ── Not yet restructured layers (migrated in subsequent steps) ────────────
+    # ── ops layer ─────────────────────────────────────────────────────────────
+    "ops*",
+    # ── ops shim (old name, kept for backward compat until v2.0) ─────────────
     "cron*",
 ]
 exclude = ["venv*", "*.egg-info*"]

@@ -58,19 +58,19 @@ def test_auto_store_short_text():
 # ── cron/prune_memory.py (47% → 70%) ─────────────────────────────────────────
 
 def test_prune_memory_dry_run():
-    from cron.prune_memory import prune
+    from ops.cron.prune_memory import prune
     result = prune(dry_run=True, threshold=0.5)
     assert isinstance(result, dict) or result is None
 
 
 def test_prune_memory_returns_stats():
-    from cron.prune_memory import prune
+    from ops.cron.prune_memory import prune
     result = prune(dry_run=True)
     assert result is None or isinstance(result, dict)
 
 
 def test_prune_memory_archive_flag():
-    from cron.prune_memory import prune
+    from ops.cron.prune_memory import prune
     result = prune(dry_run=True, archive=True)
     assert result is None or isinstance(result, dict)
 
@@ -203,12 +203,12 @@ def test_behaviour_tracker_auto_summarize_fires_at_10(monkeypatch, tmp_path):
 # ── cron/scheduler.py (52% → 75%) ────────────────────────────────────────────
 
 def test_scheduler_import():
-    import cron.scheduler
-    assert cron.scheduler is not None
+    import ops.cron.scheduler
+    assert ops.cron.scheduler is not None
 
 
 def test_scheduler_has_schedule_fn():
-    import cron.scheduler as sched
+    import ops.cron.scheduler as sched
     assert hasattr(sched, "schedule_job") or hasattr(sched, "Scheduler") or True
 
 
