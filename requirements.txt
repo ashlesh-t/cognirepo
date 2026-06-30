@@ -12,7 +12,7 @@ charset-normalizer==3.4.6
 chromadb==1.5.8
 click==8.3.3
 coverage==7.13.5
-cryptography==47.0.0
+cryptography==48.0.1
 distro==1.9.0
 docstring_parser==0.17.0
 durationpy==0.10
