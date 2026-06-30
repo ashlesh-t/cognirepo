@@ -49,7 +49,7 @@ dependencies = [
     # system metrics + connectivity
     "psutil>=6.0",
     "requests>=2.33",
-    "python-multipart>=0.0.26",
+    "python-multipart>=0.0.30",
 ]
 
 [project.urls]
