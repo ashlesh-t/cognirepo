@@ -2,6 +2,49 @@
 
 ---
 
+## Package Layer Hierarchy (v1.2.0+)
+
+Six dependency-ordered layers with downward-only coupling enforced by `scripts/check_circular_deps.py`:
+
+```
+Layer 0 — core/
+    core/config/        configuration, paths, locking, org registry, versioning
+    core/security/      encryption, storage config, project IDs
+    core/vector_db/     FAISS/Chroma adapter factory (no business logic)
+    core/_bm25/         BM25 pure-Python fallback + C++ extension
+    core/probes.py      RSS + storage size probes (moved from cron/)
+    core/metrics.py     Prometheus counters (moved from server/)
+
+Layer 1 — data/
+    data/memory/        semantic store, episodic journal, embeddings, circuit breaker
+    data/graph/         knowledge graph, behaviour tracker, org graph
+
+Layer 2 — intelligence/
+    intelligence/indexer/     AST indexer, doc ingester, summarizer, file watcher
+    intelligence/retrieval/   hybrid retriever, cross-repo router, docs search
+    intelligence/orchestrator/ request classifier, context builder, model adapters
+
+Layer 3 — interface/
+    interface/tools/    MCP tool handlers (single entry point, stateless)
+    interface/server/   FastMCP server, session listener, learning middleware
+    interface/adapters/ OpenAI spec export, cursor MCP config
+
+Layer 4 — ops/
+    ops/cron/           scheduler, memory pruner
+
+Layer 5 — interface/cli/  (top-level consumer, depends on all layers)
+    cognirepo/          package stub enabling `python -m cognirepo`
+```
+
+**Dependency rule:** a module in layer N may only import from layers 0…N.
+Upward imports (lower layer → higher layer) are forbidden at toplevel.
+Lazy upward imports inside function bodies are permitted but logged by the checker.
+
+**Backward-compat shims** at old package names (`config/`, `memory/`, `tools/`, etc.)
+re-export from new paths with `DeprecationWarning`. All shims are removed in v2.0.
+
+---
+
 ## System Overview
 
 ![alt text](cognirepo-workflow.png)
@@ -10,7 +53,7 @@
 
 ## Component Responsibilities
 
-### `tools/` — Single Source of Truth
+### `interface/tools/` — Single Source of Truth
 
 forward requests to these functions. **Never duplicate logic in an adapter.**
 
@@ -25,7 +68,7 @@ forward requests to these functions. **Never duplicate logic in an adapter.**
 
 ---
 
-### `retrieval/hybrid.py` — Hybrid Retrieval
+### `intelligence/retrieval/hybrid.py` — Hybrid Retrieval
 
 Combines **3 signals** into a single weighted ranked result list:
 
@@ -41,24 +84,24 @@ Do not call FAISS or the graph directly from tools — always go through `Hybrid
 
 ---
 
-### `memory/` — Storage Layer
+### `data/memory/` — Storage Layer
 
 | Module | Responsibility |
 |--------|---------------|
-| `memory/vector_memory.py` | FAISS semantic store + sentence-transformer embeddings |
-| `memory/episodic_memory.py` | Append-only event journal with BM25 search and stale marking |
-| `memory/circuit_breaker.py` | RSS memory limit — opens circuit at threshold to prevent OOM |
+| `data/memory/semantic_memory.py` | FAISS semantic store + sentence-transformer embeddings |
+| `data/memory/episodic_memory.py` | Append-only event journal with BM25 search and stale marking |
+| `data/memory/circuit_breaker.py` | RSS memory limit — opens circuit at threshold to prevent OOM |
 
 ---
 
-### `graph/` — Knowledge Graph
+### `data/graph/` — Knowledge Graph
 
 | Module | Responsibility |
 |--------|---------------|
-| `graph/knowledge_graph.py` | NetworkX DiGraph: FILE, FUNCTION, CLASS, CONCEPT, QUERY, SESSION, USER_ACTION, MEMORY nodes |
-| `graph/behaviour_tracker.py` | Tracks access frequency per symbol; weights retrieval signals |
+| `data/graph/knowledge_graph.py` | NetworkX DiGraph: FILE, FUNCTION, CLASS, CONCEPT, QUERY, SESSION, USER_ACTION, MEMORY nodes |
+| `data/graph/behaviour_tracker.py` | Tracks access frequency per symbol; weights retrieval signals |
 
-Node types (`NodeType` constants in `graph/knowledge_graph.py`):
+Node types (`NodeType` constants in `data/graph/knowledge_graph.py`):
 - `FILE` — source file
 - `FUNCTION` — function/method definition
 - `CLASS` — class/struct/interface definition

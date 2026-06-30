@@ -2857,7 +2857,7 @@ def _main():
         default=False,
         help="Show help and exit.",
     )
-    from cli import __version__ as _cli_version  # pylint: disable=import-outside-toplevel
+    from interface.cli import __version__ as _cli_version  # pylint: disable=import-outside-toplevel
     parser.add_argument(
         "-V", "--version",
         action="version",

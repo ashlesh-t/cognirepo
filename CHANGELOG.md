@@ -10,6 +10,41 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [1.2.0] — 2026-07-01
+
+### Changed
+- **Depth-oriented package restructure** — flat 14-package layout replaced with a
+  6-layer dependency hierarchy enforced by `scripts/check_circular_deps.py`:
+  `core/ → data/ → intelligence/ → interface/ → ops/ → (cli top-level consumer)`.
+  Eliminates accidental upward coupling; hard circular-dep violations drop from 16
+  (pre-refactor) to 0.
+- **Import namespace**: all packages now live under their layer prefix
+  (`from core.config import ...`, `from data.memory import ...`, etc.).
+- **Entry point updated**: `cognirepo` CLI now resolves to `interface.cli.main:main`.
+- **Bandit scan paths** updated to new layer structure in `.github/workflows/security.yml`.
+- **`intelligence/indexer/docs_index.py`** moved from `cli/` to `intelligence/indexer/`
+  to break the orchestrator→cli upward import.
+- **`core/probes.py`** (was `cron/probes.py`) and **`core/metrics.py`** (was
+  `server/metrics.py`) moved to `core/` to break data→ops and data→interface upward deps.
+- **`docs_index.DocsIndex.answer()`** early-exits before loading the embedding model
+  when the index is empty — fixes ImportError when fastembed is not installed.
+
+### Added
+- `IMPROVEMENTS.md` — documents two deferred items: behaviour_tracker upward callback
+  extraction and four MCP tools missing from `_build_manifest()`.
+- `scripts/build_import_graph.py` — AST-based import graph builder with
+  toplevel/lazy/type_check classification.
+- `scripts/rewrite_imports.py` — AST-guided import rewriter (no false positives on
+  comments or string literals).
+- `scripts/check_circular_deps.py` — layer cycle verifier; only flags toplevel imports.
+
+### Backward Compatibility
+All old import paths (`from memory import ...`, `from tools import ...`, etc.) continue
+to work via `sys.modules` shim packages that emit `DeprecationWarning`. Shims are
+removed in v2.0. MCP tool surface (34 tools, signatures) is unchanged.
+
+---
+
 ## [1.1.3] — 2026-06-17
 
 ### Fixed

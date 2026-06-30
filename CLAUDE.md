@@ -8,9 +8,9 @@ Goal: cut token overhead and context loss between AI sessions, not add complexit
 
 - All storage lives under `.cognirepo/` in the project root, with one exception: cross-agent handoff snapshots are written to `~/.cognirepo/<repo>/last_context.json` so multiple agent processes (Claude, Gemini, Cursor) can share context across sessions. The org-level dependency graph lives at `~/.cognirepo/org_graph.pkl` for the same reason.
 - Org graph model: main repo = hub/parent. Sub-repos/microservices are registered as children via `cognirepo init --parent-repo <path>`. Edges are IMPORTS/CALLS_API/SHARES_SCHEMA/CHILD_OF/DISCOVERED. AI agents add DISCOVERED edges dynamically via `link_repos()`. Children can be interconnected.
-- Model names only in `orchestrator/classifier.py`. No hardcoding elsewhere.
-- `retrieval/hybrid.py` owns all retrieval. Never call FAISS or the graph directly from tools.
-- Tools in `tools/` are the single entry point. Stateless, no cross-tool calls.
+- Model names only in `intelligence/orchestrator/classifier.py`. No hardcoding elsewhere.
+- `intelligence/retrieval/hybrid.py` owns all retrieval. Never call FAISS or the graph directly from tools.
+- Tools in `interface/tools/` are the single entry point. Stateless, no cross-tool calls.
 - When ever any code parts get updated and if the document existing ones dont cover or needs changes ,then update the docs accordingly.
  
 ## Session start sequence (run in this order)
@@ -103,8 +103,8 @@ tree-sitter · FastMCP · argparse (CLI) · tiktoken
 
 ## Microservice detection
 
-`cli/service_detect.py::_SERVICE_MARKERS` maps project marker filenames → service type.
-This list **MUST stay in sync** with `indexer/language_registry.py::_GRAMMAR_MAP`.
+`interface/cli/service_detect.py::_SERVICE_MARKERS` maps project marker filenames → service type.
+This list **MUST stay in sync** with `intelligence/indexer/language_registry.py::_GRAMMAR_MAP`.
 Whenever a new language is added to `language_registry`, add its build file marker here too.
 
 ## Dev detail
