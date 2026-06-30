@@ -161,7 +161,7 @@ def scan_http_calls(repo_root: str) -> dict:
     Scan repo_root for outbound HTTP calls. Writes http_calls.json.
     Returns the calls dict.
     """
-    from config.paths import http_calls_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import http_calls_path  # pylint: disable=import-outside-toplevel
 
     all_calls: list[dict] = []
     repo_root = os.path.abspath(repo_root)
@@ -216,7 +216,7 @@ def wire_cross_service_edges(
 
     Returns number of edges added.
     """
-    from config.paths import http_calls_path, endpoints_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import http_calls_path, endpoints_path  # pylint: disable=import-outside-toplevel
     from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
 
     caller_repo = os.path.abspath(caller_repo)
@@ -238,7 +238,7 @@ def wire_cross_service_edges(
             continue
 
         # Load sibling's endpoints.json
-        from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+        from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
         sib_cognirepo = get_cognirepo_dir_for_repo(sib_repo_abs)
         sib_endpoints_file = os.path.join(sib_cognirepo, "index", "endpoints.json")
         if not os.path.exists(sib_endpoints_file):

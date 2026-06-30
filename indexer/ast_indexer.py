@@ -54,7 +54,7 @@ from memory.embeddings import get_model
 
 log = logging.getLogger(__name__)
 
-from config.paths import get_path
+from core.config.paths import get_path
 
 def _ast_index_file() -> str:
     return get_path("index/ast_index.json")
@@ -1811,7 +1811,7 @@ class ASTIndexer:
     ) -> None:
         """Write the Tier 2 pending queue to disk (thread-safe via filelock)."""
         import json as _json  # pylint: disable=import-outside-toplevel
-        from config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
         try:
             import filelock as _fl  # pylint: disable=import-outside-toplevel
             _lock = _fl.FileLock(pending_tier2_path() + ".lock", timeout=10)
@@ -1860,7 +1860,7 @@ class ASTIndexer:
         self.load()
 
         import json as _json  # pylint: disable=import-outside-toplevel
-        from config.paths import pending_tier2_path, tier2_progress_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import pending_tier2_path, tier2_progress_path  # pylint: disable=import-outside-toplevel
         from tqdm import tqdm  # pylint: disable=import-outside-toplevel
 
         _queue_path = pending_tier2_path()

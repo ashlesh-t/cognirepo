@@ -25,7 +25,7 @@ from graph.graph_utils import make_node_id
 if TYPE_CHECKING:
     from indexer.ast_indexer import ASTIndexer
 
-from config.paths import get_path
+from core.config.paths import get_path
 
 def _behaviour_file() -> str:
     return get_path("graph/behaviour.json")
@@ -127,10 +127,10 @@ class BehaviourTracker:
         try:
             raw = open(path, "rb").read()
             try:
-                from security.storage import get_storage_config  # pylint: disable=import-outside-toplevel
+                from core.security.storage import get_storage_config  # pylint: disable=import-outside-toplevel
                 encrypt, project_id = get_storage_config()
                 if encrypt:
-                    from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
+                    from core.security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
                     raw = decrypt_bytes(raw, get_or_create_key(project_id))
             except Exception:  # pylint: disable=broad-except
                 pass  # encryption not configured — treat as plaintext
@@ -144,10 +144,10 @@ class BehaviourTracker:
         self.data["updated_at"] = _now()
         raw = json.dumps(self.data, indent=2).encode()
         try:
-            from security.storage import get_storage_config  # pylint: disable=import-outside-toplevel
+            from core.security.storage import get_storage_config  # pylint: disable=import-outside-toplevel
             encrypt, project_id = get_storage_config()
             if encrypt:
-                from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+                from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
                 raw = encrypt_bytes(raw, get_or_create_key(project_id))
         except Exception:  # pylint: disable=broad-except
             pass  # best-effort encryption

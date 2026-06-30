@@ -46,7 +46,7 @@ def expand_on_access(rel_path: str, repo_root: str, indexer: "object") -> bool:
     Returns True if anything was newly indexed and the caller should retry.
     Thread-safe via filelock on pending_tier2.json.
     """
-    from config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
 
     queue_path = pending_tier2_path()
     if not os.path.exists(queue_path):
@@ -113,7 +113,7 @@ def expand_on_access_for_symbol(symbol_name: str, repo_root: str, indexer: "obje
 
     Returns True if any file was indexed.
     """
-    from config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
     import subprocess  # pylint: disable=import-outside-toplevel
 
     queue_path = pending_tier2_path()

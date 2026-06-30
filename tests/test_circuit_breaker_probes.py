@@ -7,7 +7,7 @@
 """Tests for generalized circuit breaker + cron/probes.py."""
 import pytest
 
-from cron.probes import ProbeResult, RSSProbe, DiskFreeProbe, StorageSizeProbe
+from core.probes import ProbeResult, RSSProbe, DiskFreeProbe, StorageSizeProbe
 from memory.circuit_breaker import CircuitBreaker, CircuitOpenError, State
 
 

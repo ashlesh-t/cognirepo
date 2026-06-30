@@ -198,7 +198,7 @@ class TestAnswerGrounding:
 class TestGlobalUserMemory:
     def test_global_dir_accessible_from_any_cwd(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        from config.paths import get_global_dir
+        from core.config.paths import get_global_dir
         global_dir = get_global_dir()
         assert "cognirepo" in global_dir
 

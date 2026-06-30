@@ -61,7 +61,7 @@ def _index_has_data() -> bool:
 
 
 def _faiss_has_data() -> bool:
-    from vector_db.local_vector_db import LocalVectorDB
+    from core.vector_db.local_vector_db import LocalVectorDB
     db = LocalVectorDB()
     return db.index.ntotal > 0
 
@@ -139,7 +139,7 @@ class TestCacheSpeedup:
 class TestMemoryRecall:
     def test_stored_memory_recall_at_3(self):
         from tools.store_memory import store_memory
-        from vector_db.factory import get_vector_adapter
+        from core.vector_db.factory import get_vector_adapter
 
         marker = f"BENCHMARK_MARKER_{uuid.uuid4().hex}"
         store_memory(marker, source="test")

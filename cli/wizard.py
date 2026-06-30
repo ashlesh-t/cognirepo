@@ -631,7 +631,7 @@ def run_wizard() -> dict:
     # ── 7. Organization + Project ─────────────────────────────────────────────
     _section(7, STEPS, "Organisation & Project",
              "Group repos for cross-repo knowledge sharing.")
-    from config.orgs import list_orgs, list_projects, create_project  # pylint: disable=import-outside-toplevel
+    from core.config.orgs import list_orgs, list_projects, create_project  # pylint: disable=import-outside-toplevel
     orgs = list_orgs()
     org_choices = ["None / Personal project"]
     org_choices.extend(list(orgs.keys()))

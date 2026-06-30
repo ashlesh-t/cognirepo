@@ -31,8 +31,8 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from config.paths import get_path
-from config.lock import store_lock
+from core.config.paths import get_path
+from core.config.lock import store_lock
 
 log = logging.getLogger(__name__)
 

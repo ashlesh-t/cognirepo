@@ -155,7 +155,7 @@ def isolated_cognirepo(tmp_path, monkeypatch):
 
     Secrets are injected as env vars — no keychain access required in tests.
     """
-    from config.paths import set_cognirepo_dir, set_global_dir
+    from core.config.paths import set_cognirepo_dir, set_global_dir
     set_cognirepo_dir(str(tmp_path / ".cognirepo"))
     set_global_dir(str(tmp_path / ".cognirepo-global"))
 

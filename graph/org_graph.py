@@ -77,10 +77,10 @@ class OrgGraph:
             with _org_lock():
                 with open(path, "rb") as f:
                     raw = f.read()
-            from security import get_storage_config  # pylint: disable=import-outside-toplevel
+            from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
             encrypt, project_id = get_storage_config()
             if encrypt and project_id:
-                from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
+                from core.security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
                 raw = decrypt_bytes(raw, get_or_create_key(project_id))
             self.G = pickle.loads(raw)  # nosec B301
         except FileNotFoundError:
@@ -137,7 +137,7 @@ class OrgGraph:
         path = _graph_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         try:
-            from security import get_storage_config  # pylint: disable=import-outside-toplevel
+            from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
             encrypt, project_id = get_storage_config()
             with _org_lock():
                 # Re-read current on-disk state and compose with ours so concurrent
@@ -147,7 +147,7 @@ class OrgGraph:
                         with open(path, "rb") as f:
                             raw_disk = f.read()
                         if encrypt and project_id:
-                            from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
+                            from core.security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
                             raw_disk = decrypt_bytes(raw_disk, get_or_create_key(project_id))
                         disk_graph = pickle.loads(raw_disk)  # nosec B301 — local file we wrote; optionally decrypted above
                         self.G = nx.compose(disk_graph, self.G)
@@ -155,7 +155,7 @@ class OrgGraph:
                         pass  # disk state unreadable — our in-memory state wins
                 raw = pickle.dumps(self.G, protocol=pickle.HIGHEST_PROTOCOL)
                 if encrypt and project_id:
-                    from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+                    from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
                     raw = encrypt_bytes(raw, get_or_create_key(project_id))
                 with open(path, "wb") as f:
                     f.write(raw)

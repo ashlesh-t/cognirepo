@@ -13,8 +13,8 @@ from Repo B if both are members of the same local organization.
 import json
 import os
 import logging
-from config.orgs import get_repo_org, get_repo_project, get_project_repos, list_orgs, purge_stale_repos
-from config.paths import get_cognirepo_dir_for_repo
+from core.config.orgs import get_repo_org, get_repo_project, get_project_repos, list_orgs, purge_stale_repos
+from core.config.paths import get_cognirepo_dir_for_repo
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ class CrossRepoRouter:
             return ([], meta) if return_meta else []
         all_results: list[dict] = []
         seen_hashes: set[int] = set()
-        from config.paths import _CTX_DIR  # pylint: disable=import-outside-toplevel
+        from core.config.paths import _CTX_DIR  # pylint: disable=import-outside-toplevel
         for repo in all_repos:
             repo_norm = os.path.realpath(os.path.normpath(repo))
             cognirepo_dir = get_cognirepo_dir_for_repo(repo_norm)
@@ -174,7 +174,7 @@ class CrossRepoRouter:
 
         all_results = []
         from memory.semantic_memory import SemanticMemory  # pylint: disable=import-outside-toplevel
-        from config.paths import _CTX_DIR  # pylint: disable=import-outside-toplevel
+        from core.config.paths import _CTX_DIR  # pylint: disable=import-outside-toplevel
 
         for repo in siblings:
             cognirepo_dir = get_cognirepo_dir_for_repo(repo)

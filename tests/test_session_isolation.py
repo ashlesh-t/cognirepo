@@ -20,7 +20,7 @@ def test_project_dir_isolates_sessions(tmp_path):
     dir_a.mkdir(parents=True)
     dir_b.mkdir(parents=True)
 
-    from config.paths import set_cognirepo_dir
+    from core.config.paths import set_cognirepo_dir
 
     # ── project A ────────────────────────────────────────────────────────────
     set_cognirepo_dir(str(dir_a))

@@ -26,7 +26,7 @@ try:
 except ImportError:
     _KEYRING_AVAILABLE = False
 
-from config.paths import get_path
+from core.config.paths import get_path
 
 _KEYCHAIN_SERVICE = "cognirepo"
 
@@ -103,7 +103,7 @@ def _init_empty_stores(vector_backend: str = "faiss") -> None:
     """
     # Eagerly create ChromaDB collection so doctor finds it immediately.
     try:
-        from vector_db.chroma_adapter import ChromaDBAdapter  # pylint: disable=import-outside-toplevel
+        from core.vector_db.chroma_adapter import ChromaDBAdapter  # pylint: disable=import-outside-toplevel
         ChromaDBAdapter()  # triggers PersistentClient → creates the on-disk directory
     except Exception:  # pylint: disable=broad-except
         pass  # chromadb not installed — doctor will surface the hint
@@ -545,7 +545,7 @@ def _setup_vscode_mcp(project_name: str, project_path: str) -> None:
             tasks_cfg = {}
     tasks_cfg.setdefault("version", "2.0.0")
     existing_tasks = [t for t in tasks_cfg.get("tasks", []) if t.get("label") != "CogniRepo: Refresh Context"]
-    from config.paths import get_project_hash  # pylint: disable=import-outside-toplevel
+    from core.config.paths import get_project_hash  # pylint: disable=import-outside-toplevel
     _cwd = os.path.abspath(os.getcwd())
     _pname = project_name or os.path.basename(_cwd)
     _storage_subdir = f"{_pname}_{get_project_hash(_cwd)}"
@@ -835,7 +835,7 @@ def _wire_inter_repo_edges(children: list, parent_path: str) -> None:
             try:
                 _ctxdir = get_path("index/ast_index.json")  # child CWD must be set
                 # Load child's ast_index via context switch
-                from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+                from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
                 _child_cog = get_cognirepo_dir_for_repo(svc.path)
                 _tok = _CTX_DIR.set(_child_cog)
                 try:
@@ -870,7 +870,7 @@ def _inject_child_stubs_into_parent_kg(children: list, parent_path: str) -> None
     """
     try:
         import json as _json  # pylint: disable=import-outside-toplevel
-        from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+        from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
         from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
 
         # Load parent KG via parent context
@@ -1169,7 +1169,7 @@ def init_project(
 
     # ── link to org ───────────────────────────────────────────────────────────
     if org:
-        from config.orgs import (  # pylint: disable=import-outside-toplevel
+        from core.config.orgs import (  # pylint: disable=import-outside-toplevel
             create_org, link_repo_to_org, create_project, link_repo_to_project,
         )
         create_org(org)  # Ensure it exists
@@ -1258,7 +1258,7 @@ def init_project(
 
     # ── auto-launch Tier 2 background pass if pending queue was written ──────
     try:
-        from config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
         import subprocess as _sp  # pylint: disable=import-outside-toplevel
         from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
         _t2_queue = pending_tier2_path()

@@ -220,7 +220,7 @@ def scan_endpoints(repo_root: str) -> dict:
     Scan repo_root for HTTP route registrations. Writes endpoints.json.
     Returns the endpoints dict.
     """
-    from config.paths import endpoints_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import endpoints_path  # pylint: disable=import-outside-toplevel
 
     all_endpoints: list[dict] = []
     repo_root = os.path.abspath(repo_root)
@@ -270,7 +270,7 @@ def scan_endpoints(repo_root: str) -> dict:
 
 def load_endpoints(repo_root: str | None = None) -> list[dict]:
     """Load endpoint registry from disk. Returns empty list if not found."""
-    from config.paths import endpoints_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import endpoints_path  # pylint: disable=import-outside-toplevel
     path = endpoints_path()
     if not os.path.exists(path):
         return []

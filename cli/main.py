@@ -30,13 +30,13 @@ import traceback
 logger = logging.getLogger(__name__)
 log = logger  # legacy alias — some handlers reference `log`
 
-from config.logging import setup_logging
+from core.config.logging import setup_logging
 setup_logging()
 
 from cli.init_project import init_project
 
 
-from config.paths import get_path
+from core.config.paths import get_path
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -259,7 +259,7 @@ def _cmd_coverage() -> int:
       0 — all top-level source directories have at least one symbol
       1 — one or more source directories have 0 symbols (likely missed)
     """
-    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
 
     ast_index_path = get_path("index/ast_index.json")
     if not os.path.exists(ast_index_path):
@@ -645,7 +645,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
 
     # ── Check 10: BM25 backend (always shown) ────────────────────────────────
     try:
-        from _bm25 import BACKEND  # pylint: disable=import-outside-toplevel
+        from core._bm25 import BACKEND  # pylint: disable=import-outside-toplevel
         _ok(f"BM25 backend — {BACKEND}")
     except Exception as exc:  # pylint: disable=broad-except
         _fail(f"BM25 backend — {exc}")
@@ -728,7 +728,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         _warn(f"MCP tools — could not verify schemas ({exc})")
 
     # ── Check 15: summaries.json exists (prime_session / architecture_overview) ─
-    from config.paths import get_path as _get_path  # pylint: disable=import-outside-toplevel,redefined-outer-name
+    from core.config.paths import get_path as _get_path  # pylint: disable=import-outside-toplevel,redefined-outer-name
     _summaries_file = _get_path("index/summaries.json")
     if os.path.exists(_summaries_file):
         _ok(f"summaries.json — found")
@@ -772,7 +772,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     # ── Check 17: org member repos have valid indexes ────────────────────────
     try:
         from graph.org_graph import get_org_graph as _get_og  # pylint: disable=import-outside-toplevel
-        from config.paths import get_cognirepo_dir_for_repo as _gcdr  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_cognirepo_dir_for_repo as _gcdr  # pylint: disable=import-outside-toplevel
         _og2 = _get_og()
         _org_repos = _og2.list_repos() if _og2 else []
         _current_repo = os.path.realpath(os.getcwd())
@@ -1052,7 +1052,7 @@ def _cmd_status() -> None:
                     with open(_cfg_path2, encoding="utf-8") as _cfg2f:
                         _cfg2 = json.load(_cfg2f)
                     if _cfg2.get("storage", {}).get("encrypt"):
-                        from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
+                        from core.security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
                         _project_id = _cfg2.get("project_id", "")
                         _sm_raw = decrypt_bytes(_sm_raw, get_or_create_key(_project_id))
                 except Exception:  # pylint: disable=broad-except
@@ -1083,7 +1083,7 @@ def _cmd_index_progress(interval: float = 1.0, once: bool = False) -> None:
     from pathlib import Path  # pylint: disable=import-outside-toplevel
 
     try:
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         bg_dir = Path(get_path("bg_tasks"))
         t2_path = Path(get_path("index/pending_tier2.json"))
         t2_prog = Path(get_path("index/tier2_progress.json"))
@@ -1859,7 +1859,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
 
     # ── Stage 5: inter-repo dependency edges (only if org is configured) ─────
     try:
-        from config.orgs import get_repo_org  # pylint: disable=import-outside-toplevel
+        from core.config.orgs import get_repo_org  # pylint: disable=import-outside-toplevel
         _org_name = get_repo_org(abs_path)
         if _org_name:
             from indexer.inter_repo_indexer import build_org_graph_for_org  # pylint: disable=import-outside-toplevel
@@ -1873,7 +1873,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
     if tier != 2:  # skip during background Tier 2 pass
         try:
             from indexer.endpoint_scanner import scan_endpoints  # pylint: disable=import-outside-toplevel
-            from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+            from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
             _sib_dir = get_cognirepo_dir_for_repo(abs_path)
             _ep_token = _CTX_DIR.set(_sib_dir)
             try:
@@ -1889,7 +1889,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
         try:
             from indexer.http_call_scanner import scan_http_calls, wire_cross_service_edges  # pylint: disable=import-outside-toplevel
             from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
-            from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+            from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
             _sib_dir = get_cognirepo_dir_for_repo(abs_path)
             _hc_token = _CTX_DIR.set(_sib_dir)
             try:
@@ -1913,7 +1913,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
         try:
             from indexer.http_call_scanner import wire_cross_service_edges as _wire_sib  # pylint: disable=import-outside-toplevel
             from retrieval.cross_repo import CrossRepoRouter as _CRR  # pylint: disable=import-outside-toplevel
-            from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+            from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
             _rev_edges = 0
             for _sib in _CRR().get_sibling_repos():
                 _sib_abs = os.path.abspath(_sib)
@@ -2542,7 +2542,7 @@ def _cmd_update_directives() -> int:
     import shutil  # pylint: disable=import-outside-toplevel
     from pathlib import Path  # pylint: disable=import-outside-toplevel
     from cli.init_project import setup_mcp  # pylint: disable=import-outside-toplevel
-    from config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
+    from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
 
     cwd = os.getcwd()
 
@@ -2614,7 +2614,7 @@ def _cmd_list_mcp() -> None:
 
 def _cmd_list_orgs() -> None:
     """Show all orgs with repos and projects, flagging missing paths."""
-    from config.orgs import list_orgs  # pylint: disable=import-outside-toplevel
+    from core.config.orgs import list_orgs  # pylint: disable=import-outside-toplevel
     orgs = list_orgs()
     if not orgs:
         print("No organizations found. Run: cognirepo org create <name>")
@@ -2672,8 +2672,8 @@ def _cmd_delete(args) -> None:
     """Handle the `cognirepo delete` command in all its modes."""
     import shutil  # pylint: disable=import-outside-toplevel
     import pathlib  # pylint: disable=import-outside-toplevel
-    from config.orgs import _load_orgs, _save_orgs, list_orgs  # pylint: disable=import-outside-toplevel
-    from config.paths import get_global_dir  # pylint: disable=import-outside-toplevel
+    from core.config.orgs import _load_orgs, _save_orgs, list_orgs  # pylint: disable=import-outside-toplevel
+    from core.config.paths import get_global_dir  # pylint: disable=import-outside-toplevel
 
     def _confirm(msg: str) -> bool:
         if args.yes:
@@ -2705,7 +2705,7 @@ def _cmd_delete(args) -> None:
                 if d not in _SKIP_DIRS and d != ".cognirepo"
             ]
 
-        from config.paths import get_global_dir  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_global_dir  # pylint: disable=import-outside-toplevel
         global_dir = get_global_dir()
         if os.path.isdir(global_dir) and global_dir not in found_dirs:
             found_dirs.append(global_dir)
@@ -3429,7 +3429,7 @@ def _main():
                     "list", "delete", None}
     if args.command not in _INIT_EXEMPT:
         import pathlib  # pylint: disable=import-outside-toplevel
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         _cfg = pathlib.Path(get_path("config.json"))
         if not _cfg.exists():
             # Interactive TTY: ask user if they want to use global cognirepo.
@@ -3802,7 +3802,7 @@ def _main():
         if embed_only:
             # Background pass: load existing summaries.json and embed into FAISS only.
             import json as _json  # pylint: disable=import-outside-toplevel
-            from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
+            from core.config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
             _sum_path = _gp("index/summaries.json")
             if os.path.exists(_sum_path):
                 with open(_sum_path, encoding="utf-8") as _sf:
@@ -3854,7 +3854,7 @@ def _main():
         return
 
     if args.command == "org":
-        from config.orgs import (  # pylint: disable=import-outside-toplevel
+        from core.config.orgs import (  # pylint: disable=import-outside-toplevel
             create_org, list_orgs, link_repo_to_org, unlink_repo_from_org,
             create_project, list_projects, link_repo_to_project, unlink_repo_from_project,
         )
@@ -3902,7 +3902,7 @@ def _main():
         elif args.org_command == "rewire":
             from graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
             from indexer.http_call_scanner import wire_cross_service_edges  # pylint: disable=import-outside-toplevel
-            from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+            from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
             invalidate_org_graph()
             og = get_org_graph()
             all_repos = [os.path.abspath(r) for r in og.list_repos()]

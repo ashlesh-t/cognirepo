@@ -166,7 +166,7 @@ class TestSemanticSearchCode:
 
     def test_retrieve_memory_unaffected(self):
         """retrieve_memory() must still return mixed results (backward compat)."""
-        from vector_db.local_vector_db import LocalVectorDB
+        from core.vector_db.local_vector_db import LocalVectorDB
         db = LocalVectorDB()
         # the search() with no source filter returns all entries
         # just verify the method accepts and ignores the source=None param

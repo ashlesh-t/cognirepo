@@ -33,7 +33,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
-from config.paths import get_path
+from core.config.paths import get_path
 
 def _config_file() -> str:
     return get_path("config.json")

@@ -28,7 +28,7 @@ from pathlib import Path
 
 def _tasks_dir() -> Path:
     """Return the bg_tasks directory, creating it if needed."""
-    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
     d = Path(get_path("bg_tasks"))
     d.mkdir(parents=True, exist_ok=True)
     return d

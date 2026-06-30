@@ -45,7 +45,7 @@ def test_scheduler_stop_prevents_future_runs():
 
 def test_scheduler_skips_when_breaker_open(monkeypatch):
     """When the circuit breaker is OPEN the scheduled task must be skipped."""
-    from cron.probes import ProbeResult
+    from core.probes import ProbeResult
     from memory.circuit_breaker import get_breaker, CircuitBreaker
 
     # Replace the singleton with a tripped breaker

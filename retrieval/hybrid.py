@@ -30,7 +30,7 @@ import time
 
 import numpy as np
 
-from _bm25 import BM25 as _BM25, Document as _Document
+from core._bm25 import BM25 as _BM25, Document as _Document
 from graph.behaviour_tracker import BehaviourTracker
 from graph.graph_utils import extract_entities_from_text, make_node_id
 from graph.knowledge_graph import KnowledgeGraph
@@ -38,9 +38,9 @@ from indexer.ast_indexer import ASTIndexer
 from memory.circuit_breaker import CircuitOpenError
 from memory.embeddings import encode_with_timeout
 from memory.episodic_memory import get_history
-from vector_db.local_vector_db import LocalVectorDB
+from core.vector_db.local_vector_db import LocalVectorDB
 
-from config.paths import get_path
+from core.config.paths import get_path
 
 def _config_file() -> str:
     return get_path("config.json")
@@ -69,7 +69,7 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
     """
 
     def __init__(self) -> None:
-        from vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
+        from core.vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
         self.weights = _load_weights()
         self.db = get_vector_adapter()
         self.graph = KnowledgeGraph()
@@ -451,7 +451,7 @@ def hybrid_retrieve(query: str, top_k: int = 5, min_score: float | None = None) 
     global _CACHE_HITS, _CACHE_MISSES  # pylint: disable=global-statement
     # Include the active cognirepo dir in the cache key so that org_wide_search
     # switching _CTX_DIR across repos doesn't serve one repo's results to another.
-    from config.paths import _CTX_DIR as _ctx  # pylint: disable=import-outside-toplevel
+    from core.config.paths import _CTX_DIR as _ctx  # pylint: disable=import-outside-toplevel
     cache_key = (query, top_k, _ctx.get(""))
     now = time.monotonic()
 
@@ -462,14 +462,14 @@ def hybrid_retrieve(query: str, top_k: int = 5, min_score: float | None = None) 
             if now - ts < _HYBRID_CACHE_TTL:
                 _CACHE_HITS += 1
                 try:
-                    from server.metrics import CACHE_HITS as _CH  # pylint: disable=import-outside-toplevel
+                    from core.metrics import CACHE_HITS as _CH  # pylint: disable=import-outside-toplevel
                     _CH.set(_CACHE_HITS)
                 except Exception:  # pylint: disable=broad-except
                     pass
                 return _apply_min_score(result, min_score)
         _CACHE_MISSES += 1
         try:
-            from server.metrics import CACHE_MISSES as _CM  # pylint: disable=import-outside-toplevel
+            from core.metrics import CACHE_MISSES as _CM  # pylint: disable=import-outside-toplevel
             _CM.set(_CACHE_MISSES)
         except Exception:  # pylint: disable=broad-except
             pass
@@ -550,7 +550,7 @@ def cache_stats() -> dict:
 def is_index_cold() -> bool:
     """Return True when the configured vector backend has no vectors."""
     try:
-        from vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
+        from core.vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
         return get_vector_adapter().count() == 0
     except Exception:  # pylint: disable=broad-except
         return False
@@ -569,7 +569,7 @@ _BM25_LOCK = threading.Lock()
 
 def _get_cached_bm25() -> tuple:
     """Return (bm25, events, id_to_event) rebuilding only when episodic file changes."""
-    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
     ep_file = get_path("episodic/episodic.json")
     try:
         mtime = os.path.getmtime(ep_file)

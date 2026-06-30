@@ -14,7 +14,7 @@ All retrieval goes through retrieval/hybrid.py.
 import sys
 
 from retrieval.hybrid import hybrid_retrieve, MAX_QUERY_LEN
-from server.metrics import MEMORY_OPS_TOTAL
+from core.metrics import MEMORY_OPS_TOTAL
 
 
 def _dedup(results: list) -> list:

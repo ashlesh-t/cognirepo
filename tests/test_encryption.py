@@ -62,7 +62,7 @@ class TestFernetHelpers:
     def test_encrypt_decrypt_round_trip(self):
         pytest.importorskip("cryptography")
         pytest.importorskip("keyring")
-        from security.encryption import get_or_create_key, encrypt_bytes, decrypt_bytes
+        from core.security.encryption import get_or_create_key, encrypt_bytes, decrypt_bytes
 
         with mock.patch("keyring.get_password", return_value=None), \
              mock.patch("keyring.set_password"):
@@ -77,7 +77,7 @@ class TestFernetHelpers:
         """Second call with same project_id returns the same key."""
         pytest.importorskip("cryptography")
         pytest.importorskip("keyring")
-        from security.encryption import get_or_create_key
+        from core.security.encryption import get_or_create_key
 
         stored_key = None
 
@@ -105,7 +105,7 @@ class TestFernetHelpers:
         if "security.encryption" in sys.modules:
             del sys.modules["security.encryption"]
 
-        from security import encryption  # re-import
+        from core.security import encryption  # re-import
         with pytest.raises(ImportError, match="pip install 'cognirepo\\[security\\]'"):
             encryption._require_deps()
 

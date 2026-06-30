@@ -41,7 +41,7 @@ def _weight_cost(w: float) -> float:
 def _load_kg(repo_abs: str) -> "nx.DiGraph | None":
     """Load the KnowledgeGraph for a given repo directory."""
     try:
-        from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+        from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
         from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         sib_dir = get_cognirepo_dir_for_repo(repo_abs)
         token = _CTX_DIR.set(sib_dir)
@@ -58,7 +58,7 @@ def _load_kg(repo_abs: str) -> "nx.DiGraph | None":
 def _find_symbol_in_repo(symbol: str, repo_abs: str) -> "str | None":
     """Return the KG node ID for symbol in repo_abs, or None."""
     try:
-        from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+        from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
         from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
         from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         sib_dir = get_cognirepo_dir_for_repo(repo_abs)

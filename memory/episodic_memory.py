@@ -17,7 +17,7 @@ import re
 import threading
 from datetime import datetime
 
-from config.paths import get_path
+from core.config.paths import get_path
 
 # ── episodic memory size cap ──────────────────────────────────────────────────
 _MAX_EVENTS_DEFAULT = 10_000
@@ -84,10 +84,10 @@ def _load() -> list:
         return []
     with open(path, "rb") as f:
         raw = f.read()
-    from security import get_storage_config  # pylint: disable=import-outside-toplevel
+    from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
     encrypt, project_id = get_storage_config()
     if encrypt:
-        from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
+        from core.security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
         try:
             raw = decrypt_bytes(raw, get_or_create_key(project_id))
         except Exception:  # InvalidToken — file predates encryption; migrate on next save
@@ -100,11 +100,11 @@ def _load() -> list:
 
 def _save(data: list) -> None:
     global _BM25_CORPUS, _BM25_INDEX  # pylint: disable=global-statement
-    from security import get_storage_config  # pylint: disable=import-outside-toplevel
+    from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
     encrypt, project_id = get_storage_config()
     content = json.dumps(data, indent=2).encode()
     if encrypt:
-        from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+        from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
         content = encrypt_bytes(content, get_or_create_key(project_id))
     path = _file_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)

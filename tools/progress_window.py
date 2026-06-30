@@ -42,7 +42,7 @@ def _resolve_tasks_dir(cognirepo_dir: str | None) -> Path | None:
             return candidate
     # Try via config.paths (works when cognirepo is on sys.path)
     try:
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         d = Path(get_path("bg_tasks"))
         d.mkdir(parents=True, exist_ok=True)
         return d

@@ -21,7 +21,7 @@ from typing import Optional
 
 import numpy as np
 
-from vector_db.adapter import VectorStorageAdapter
+from core.vector_db.adapter import VectorStorageAdapter
 
 log = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class ChromaDBAdapter(VectorStorageAdapter):
                 "Run: pip install chromadb  (or pip install 'cognirepo[chroma]')"
             )
         if path is None:
-            from config.paths import get_path  # pylint: disable=import-outside-toplevel
+            from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
             path = get_path("vector_db/chroma")
 
         self._client = chromadb.PersistentClient(path=path)

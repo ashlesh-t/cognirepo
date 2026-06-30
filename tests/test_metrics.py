@@ -15,7 +15,7 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not _FASTAPI, reason="fastapi not installed")
 
-from server.metrics import metrics_available
+from core.metrics import metrics_available
 
 # REST API removed — HTTP endpoint tests are skipped until a web server is re-added.
 _NO_APP = pytest.mark.skip(reason="REST API removed; no HTTP app available")
@@ -47,7 +47,7 @@ def test_metrics_content_when_available(client):
 @_NO_APP
 def test_metrics_501_when_unavailable(client, monkeypatch):
     """Without prometheus_client, /metrics returns 501 with an informative message."""
-    import server.metrics as m
+    import core.metrics as m
     monkeypatch.setattr(m, "_PROM_AVAILABLE", False)
     resp = client.get("/metrics")
     assert resp.status_code == 501
@@ -59,7 +59,7 @@ def test_memory_ops_counter_increments():
     if not metrics_available():
         pytest.skip("prometheus_client not installed")
 
-    from server.metrics import MEMORY_OPS_TOTAL
+    from core.metrics import MEMORY_OPS_TOTAL
     from prometheus_client import REGISTRY
 
     # Read current value — Counter family name is without _total in some prom versions;
@@ -84,7 +84,7 @@ def test_circuit_breaker_gauge_updates():
     if not metrics_available():
         pytest.skip("prometheus_client not installed")
 
-    from server.metrics import CB_STATE
+    from core.metrics import CB_STATE
     from prometheus_client import REGISTRY
 
     def _get_gauge():

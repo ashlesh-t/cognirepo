@@ -27,7 +27,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from config.lock import store_lock
+from core.config.lock import store_lock
 from retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter, is_index_cold, MAX_QUERY_LEN
 from retrieval.query_enhancer import enhance_query
 
@@ -109,7 +109,7 @@ def _is_doc_query(query: str) -> bool:
 def _autosave_context(result: dict) -> None:
     """Write context_pack result to ~/.cognirepo/<repo>/last_context.json (best-effort)."""
     try:
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         import datetime  # pylint: disable=import-outside-toplevel
         config_path = get_path("config.json")
         if not os.path.exists(config_path):
@@ -154,7 +154,7 @@ def save_query_context(query: str, tool: str = "search") -> None:
     the file context is not lost.
     """
     try:
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         import datetime  # pylint: disable=import-outside-toplevel
         config_path = get_path("config.json")
         if not os.path.exists(config_path):

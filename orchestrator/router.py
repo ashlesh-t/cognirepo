@@ -42,7 +42,7 @@ from orchestrator.model_adapters.errors import ModelCallError
 
 logger = logging.getLogger(__name__)
 
-from config.paths import get_path
+from core.config.paths import get_path
 
 def _config_file() -> str:
     return get_path("config.json")

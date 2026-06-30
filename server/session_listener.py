@@ -33,7 +33,7 @@ _CORRECTION_SIGNALS = {"mistake", "fix", "correction", "fixed", "wrong", "don't 
 
 def _session_path(session_id: str) -> Optional[Path]:
     try:
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         return Path(get_path("sessions")) / f"{session_id}.json"
     except Exception:  # pylint: disable=broad-except
         return None
@@ -143,7 +143,7 @@ def recover_unclosed_sessions() -> int:
     runs on_session_end() for each.  Returns count of recovered sessions.
     """
     try:
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         sessions_dir = Path(get_path("sessions"))
     except Exception:  # pylint: disable=broad-except
         return 0

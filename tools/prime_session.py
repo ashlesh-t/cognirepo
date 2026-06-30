@@ -16,7 +16,7 @@ import datetime
 import json
 import os
 
-from config.paths import get_path
+from core.config.paths import get_path
 
 
 def _detect_blind_spots(index_health: dict) -> list[str]:
@@ -78,7 +78,7 @@ def _detect_blind_spots(index_health: dict) -> list[str]:
 
     # ── 4. Semantic store empty ───────────────────────────────────────────────
     try:
-        from vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
+        from core.vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
         if get_vector_adapter().count() == 0:
             spots.append(
                 "Semantic memory empty — retrieve_memory() and context_pack() will "
@@ -89,7 +89,7 @@ def _detect_blind_spots(index_health: dict) -> list[str]:
 
     # ── 5. Tier 2 indexing still pending ─────────────────────────────────────
     try:
-        from config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
         t2_path = pending_tier2_path()
         if _os.path.exists(t2_path):
             with open(t2_path, encoding="utf-8") as _f:
@@ -142,7 +142,7 @@ def _detect_blind_spots(index_health: dict) -> list[str]:
             _unindexed = []
             for _cp in _children:
                 try:
-                    from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo as _gcdr2  # pylint: disable=import-outside-toplevel
+                    from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo as _gcdr2  # pylint: disable=import-outside-toplevel
                     _ctok2 = _CTX_DIR.set(_gcdr2(_cp))
                     try:
                         if not _os2.path.exists(get_path("index/ast_index.json")):

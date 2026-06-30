@@ -21,7 +21,7 @@ import logging
 import shutil
 from pathlib import Path
 
-from config.paths import get_path
+from core.config.paths import get_path
 
 logger = logging.getLogger(__name__)
 

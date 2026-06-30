@@ -132,7 +132,7 @@ def test_ast_indexer_unsupported_ext(tmp_path):
 
 def test_config_lock_context(tmp_path, monkeypatch):
     """Exercise store_lock context manager."""
-    from config.lock import store_lock
+    from core.config.lock import store_lock
     from config import paths
     
     # Redirect config path to tmp
@@ -148,7 +148,7 @@ def test_config_lock_context(tmp_path, monkeypatch):
 
 def test_setup_logging_no_crash():
     """Ensure setup_logging can be called multiple times."""
-    from config.logging import setup_logging
+    from core.config.logging import setup_logging
     setup_logging()
     setup_logging(level="DEBUG")
     assert True

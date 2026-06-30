@@ -48,7 +48,7 @@ DEFAULT_MAX_EXCHANGES = 10
 
 def _sessions_dir() -> Path:
     """Resolve sessions directory lazily from the active project config."""
-    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
     return Path(get_path("sessions"))
 
 
@@ -192,7 +192,7 @@ def current_session_id() -> str | None:
 def load_max_exchanges() -> int:
     """Read max_exchanges from config.json, falling back to DEFAULT_MAX_EXCHANGES."""
     try:
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         with open(get_path("config.json"), encoding="utf-8") as f:
             cfg = json.load(f)
         return int(cfg.get("session", {}).get("max_exchanges", DEFAULT_MAX_EXCHANGES))

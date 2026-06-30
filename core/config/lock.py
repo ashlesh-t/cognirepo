@@ -22,7 +22,7 @@ Usage:
 
 import os
 
-from config.paths import get_path
+from core.config.paths import get_path
 
 _LOCK_FILENAME = "cognirepo.lock"
 

@@ -42,19 +42,19 @@ from typing import Any
 # NOTE: resolved lazily via get_path() to respect --project-dir / COGNIREPO_DIR
 
 def _semantic_meta() -> str:
-    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
     return get_path("memory/semantic_metadata.json")
 
 def _semantic_index() -> str:
-    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
     return get_path("vector_db/semantic.index")
 
 def _archive_dir() -> str:
-    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
     return get_path("archive")
 
 def _graph_pkl() -> str:
-    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
     return get_path("graph/graph.pkl")
 
 # Keep module-level names for backward compat (point at legacy hardcoded values only as fallback)
@@ -277,7 +277,7 @@ def cleanup_suppressed(
 
     try:
         from memory.cleanup_queue import CleanupQueue          # pylint: disable=import-outside-toplevel
-        from vector_db.local_vector_db import LocalVectorDB    # pylint: disable=import-outside-toplevel
+        from core.vector_db.local_vector_db import LocalVectorDB    # pylint: disable=import-outside-toplevel
     except ImportError as exc:
         return {"error": str(exc)}
 
@@ -305,11 +305,11 @@ def cleanup_suppressed(
     # Persist promoted flags immediately (without a full rebuild)
     with open(_semantic_meta(), "wb") as f:
         import json as _json  # pylint: disable=import-outside-toplevel,redefined-outer-name
-        from security import get_storage_config  # pylint: disable=import-outside-toplevel
+        from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
         content = _json.dumps(db.metadata, indent=2).encode()
         if encrypt:
-            from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+            from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
             content = encrypt_bytes(content, get_or_create_key(project_id))
         f.write(content)
 

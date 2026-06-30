@@ -40,7 +40,7 @@ def _load_ttl_from_config() -> int:
     """Read idle_ttl_seconds from .cognirepo/config.json, falling back to default."""
     try:
         import json  # pylint: disable=import-outside-toplevel
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         path = get_path("config.json")
         with open(path, encoding="utf-8") as fh:
             cfg = json.load(fh)

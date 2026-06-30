@@ -231,12 +231,12 @@ def test_token_budget_trim():
 # ── vector_db/local_vector_db.py (69% → 85%) ─────────────────────────────────
 
 def test_local_vector_db_import():
-    from vector_db.local_vector_db import LocalVectorDB
+    from core.vector_db.local_vector_db import LocalVectorDB
     assert LocalVectorDB is not None
 
 
 def test_local_vector_db_add_and_search():
-    from vector_db.local_vector_db import LocalVectorDB
+    from core.vector_db.local_vector_db import LocalVectorDB
     import numpy as np
     db = LocalVectorDB(dim=384)
     vec = np.random.rand(384).astype("float32")
@@ -247,7 +247,7 @@ def test_local_vector_db_add_and_search():
 
 
 def test_local_vector_db_search_empty():
-    from vector_db.local_vector_db import LocalVectorDB
+    from core.vector_db.local_vector_db import LocalVectorDB
     import numpy as np
     db = LocalVectorDB(dim=384)
     vec = np.random.rand(384).astype("float32")

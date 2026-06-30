@@ -87,10 +87,10 @@ def test_chroma_adapter_basic_mocked():
 
     # Force reimport of chroma_adapter so it picks up the mocked chromadb,
     # regardless of what previous tests left in sys.modules.
-    sys.modules.pop("vector_db.chroma_adapter", None)
+    sys.modules.pop("core.vector_db.chroma_adapter", None)
 
     with patch.dict(sys.modules, {"chromadb": MagicMock()}):
-        from vector_db.chroma_adapter import ChromaDBAdapter
+        from core.vector_db.chroma_adapter import ChromaDBAdapter
         # We need to mock the client and collection
         with patch("chromadb.PersistentClient") as mock_client:
             mock_col = MagicMock()
@@ -119,7 +119,7 @@ def test_doc_ingester_basic(tmp_path):
     ingester = DocIngester(str(tmp_path))
     # Mock model and DB to avoid heavy lifting
     with patch("memory.embeddings.get_model"), \
-         patch("vector_db.local_vector_db.LocalVectorDB"):
+         patch("core.vector_db.local_vector_db.LocalVectorDB"):
         summary = ingester.ingest()
         assert "chunks" in summary
         assert "files" in summary

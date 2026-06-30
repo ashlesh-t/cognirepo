@@ -27,12 +27,12 @@ import pytest
 
 class TestAdapterABC:
     def test_cannot_instantiate_abc(self):
-        from vector_db.adapter import VectorStorageAdapter
+        from core.vector_db.adapter import VectorStorageAdapter
         with pytest.raises(TypeError):
             VectorStorageAdapter()  # type: ignore[abstract]
 
     def test_all_abstract_methods_declared(self):
-        from vector_db.adapter import VectorStorageAdapter
+        from core.vector_db.adapter import VectorStorageAdapter
         import inspect
         abstract_methods = {
             name for name, method in inspect.getmembers(VectorStorageAdapter)
@@ -58,12 +58,12 @@ class TestLocalVectorDB:
             lambda: str(tmp_path / "semantic_metadata.json"),
         )
         monkeypatch.setattr("vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
-        from vector_db.local_vector_db import LocalVectorDB
+        from core.vector_db.local_vector_db import LocalVectorDB
         return LocalVectorDB(dim=4)
 
     def test_implements_adapter_interface(self):
-        from vector_db.adapter import VectorStorageAdapter
-        from vector_db.local_vector_db import LocalVectorDB
+        from core.vector_db.adapter import VectorStorageAdapter
+        from core.vector_db.local_vector_db import LocalVectorDB
         assert issubclass(LocalVectorDB, VectorStorageAdapter)
 
     def test_add_and_search(self, tmp_path, monkeypatch):
@@ -137,15 +137,15 @@ class TestChromaDBAdapter:
         import sys
         with patch.dict(sys.modules, {"chromadb": None}):
             import importlib
-            import vector_db.chroma_adapter as mod
+            import core.vector_db.chroma_adapter as mod
             importlib.reload(mod)
             with pytest.raises(ImportError, match="chromadb is not installed"):
                 mod.ChromaDBAdapter()
             importlib.reload(mod)
 
     def test_implements_adapter_interface(self):
-        from vector_db.adapter import VectorStorageAdapter
-        from vector_db.chroma_adapter import ChromaDBAdapter
+        from core.vector_db.adapter import VectorStorageAdapter
+        from core.vector_db.chroma_adapter import ChromaDBAdapter
         assert issubclass(ChromaDBAdapter, VectorStorageAdapter)
 
 
@@ -154,12 +154,12 @@ class TestChromaDBAdapter:
 class TestGetVectorAdapter:
     def test_default_returns_local_vector_db(self, tmp_path, monkeypatch):
         """When config.json is absent (or has no vector_backend), return LocalVectorDB."""
-        from vector_db.local_vector_db import LocalVectorDB
+        from core.vector_db.local_vector_db import LocalVectorDB
         monkeypatch.setattr(
             "vector_db.factory._find_config",
             lambda: None,
         )
-        from vector_db.factory import get_vector_adapter
+        from core.vector_db.factory import get_vector_adapter
         monkeypatch.setattr(
             "vector_db.local_vector_db._index_file",
             lambda: str(tmp_path / "semantic.index"),
@@ -182,8 +182,8 @@ class TestGetVectorAdapter:
             lambda: config,
         )
 
-        from vector_db.chroma_adapter import ChromaDBAdapter, _CHROMA_AVAILABLE
-        from vector_db.factory import get_vector_adapter
+        from core.vector_db.chroma_adapter import ChromaDBAdapter, _CHROMA_AVAILABLE
+        from core.vector_db.factory import get_vector_adapter
         if not _CHROMA_AVAILABLE:
             # Falls back to LocalVectorDB when chromadb not installed
             monkeypatch.setattr(
@@ -195,7 +195,7 @@ class TestGetVectorAdapter:
                 lambda: str(tmp_path / "semantic_metadata.json"),
             )
             monkeypatch.setattr("vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
-            from vector_db.local_vector_db import LocalVectorDB
+            from core.vector_db.local_vector_db import LocalVectorDB
             adapter = get_vector_adapter()
             assert isinstance(adapter, LocalVectorDB)
         else:

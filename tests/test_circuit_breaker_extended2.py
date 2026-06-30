@@ -14,9 +14,9 @@ import pytest
 
 def _make_breaker(always_ok=True, rss_mb=100.0):
     from memory.circuit_breaker import CircuitBreaker
-    from cron.probes import RSSProbe, StorageSizeProbe
+    from core.probes import RSSProbe, StorageSizeProbe
     if always_ok:
-        from cron.probes import ProbeResult
+        from core.probes import ProbeResult
         ok_probe = MagicMock(return_value=ProbeResult(ok=True, reason=""))
         return CircuitBreaker(probes=[ok_probe])
     return CircuitBreaker(rss_limit_mb=rss_mb)
@@ -44,7 +44,7 @@ def test_record_success_stays_closed():
 
 def test_reset_closes_breaker():
     from memory.circuit_breaker import State, CircuitBreaker
-    from cron.probes import ProbeResult
+    from core.probes import ProbeResult
     fail_probe = MagicMock(return_value=ProbeResult(ok=False, reason="too much ram"))
     cb = CircuitBreaker(probes=[fail_probe])
     try:
@@ -59,7 +59,7 @@ def test_reset_closes_breaker():
 
 def test_check_trips_open_on_probe_failure():
     from memory.circuit_breaker import CircuitBreaker, CircuitOpenError, State
-    from cron.probes import ProbeResult
+    from core.probes import ProbeResult
     fail_probe = MagicMock(return_value=ProbeResult(ok=False, reason="ram pressure"))
     cb = CircuitBreaker(probes=[fail_probe], cooldown_sec=300)
     with pytest.raises(CircuitOpenError):
@@ -76,7 +76,7 @@ def test_record_failure_trips_open():
 
 def test_check_open_raises_before_cooldown():
     from memory.circuit_breaker import CircuitBreaker, CircuitOpenError, State
-    from cron.probes import ProbeResult
+    from core.probes import ProbeResult
     fail_probe = MagicMock(return_value=ProbeResult(ok=False, reason="oom"))
     cb = CircuitBreaker(probes=[fail_probe], cooldown_sec=300)
     try:
@@ -91,7 +91,7 @@ def test_check_open_raises_before_cooldown():
 
 def test_open_transitions_to_half_open_after_cooldown():
     from memory.circuit_breaker import CircuitBreaker, CircuitOpenError, State
-    from cron.probes import ProbeResult
+    from core.probes import ProbeResult
     fail_probe = MagicMock(return_value=ProbeResult(ok=False, reason="oom"))
     ok_probe = MagicMock(return_value=ProbeResult(ok=True, reason=""))
     cb = CircuitBreaker(probes=[fail_probe], cooldown_sec=0.01)
@@ -107,7 +107,7 @@ def test_open_transitions_to_half_open_after_cooldown():
 
 def test_half_open_re_trips_on_probe_failure():
     from memory.circuit_breaker import CircuitBreaker, CircuitOpenError, State
-    from cron.probes import ProbeResult
+    from core.probes import ProbeResult
     fail_probe = MagicMock(return_value=ProbeResult(ok=False, reason="oom"))
     cb = CircuitBreaker(probes=[fail_probe], cooldown_sec=0.01)
     try:
@@ -138,7 +138,7 @@ def test_guard_decorator_closed():
 
 def test_guard_decorator_open_returns_none():
     from memory.circuit_breaker import CircuitBreaker
-    from cron.probes import ProbeResult
+    from core.probes import ProbeResult
     fail_probe = MagicMock(return_value=ProbeResult(ok=False, reason="oom"))
     cb = CircuitBreaker(probes=[fail_probe], cooldown_sec=300)
 

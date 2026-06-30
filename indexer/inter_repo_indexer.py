@@ -200,7 +200,7 @@ def build_org_graph_for_org(org_name: str) -> int:
     Build/update OrgGraph for all repos in the given org.
     Returns count of edges added.
     """
-    from config.orgs import list_orgs  # pylint: disable=import-outside-toplevel
+    from core.config.orgs import list_orgs  # pylint: disable=import-outside-toplevel
     from graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
 
     orgs = list_orgs()

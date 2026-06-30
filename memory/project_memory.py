@@ -18,8 +18,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from config.lock import store_lock
-from config.orgs import get_shared_memory_path
+from core.config.lock import store_lock
+from core.config.orgs import get_shared_memory_path
 from memory.embeddings import encode_with_timeout
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class ProjectMemory:
         self._db = self._open_db()
 
     def _open_db(self):
-        from vector_db.local_vector_db import LocalVectorDB  # pylint: disable=import-outside-toplevel
+        from core.vector_db.local_vector_db import LocalVectorDB  # pylint: disable=import-outside-toplevel
         import os  # pylint: disable=import-outside-toplevel
         # point LocalVectorDB at project-scoped paths
         idx_path = self._base / "vector_db" / "semantic.index"

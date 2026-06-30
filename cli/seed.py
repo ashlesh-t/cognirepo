@@ -387,7 +387,7 @@ def seed_from_session(session_id: str | None = None) -> dict:
     try:
         import json as _json   # pylint: disable=import-outside-toplevel
         from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         from tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
 
         sessions_dir = _Path(get_path("sessions"))

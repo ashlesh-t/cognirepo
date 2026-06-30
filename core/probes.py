@@ -125,7 +125,7 @@ class StorageSizeProbe:
         if self._path:
             return self._path
         try:
-            from config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
+            from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
             return get_cognirepo_dir()
         except Exception:  # pylint: disable=broad-except
             return ".cognirepo"
@@ -149,7 +149,7 @@ class FAISSHealthProbe:
 
     def __call__(self) -> ProbeResult:
         try:
-            from config.paths import get_path  # pylint: disable=import-outside-toplevel
+            from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
             index_path = get_path("vector_db/semantic.index")
             if not os.path.exists(index_path):
                 return ProbeResult(ok=True, reason="FAISS index not yet created (normal cold start)")

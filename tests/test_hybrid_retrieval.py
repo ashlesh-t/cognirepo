@@ -151,7 +151,7 @@ class TestEpisodicBM25:
             {"id": "e1", "event": "authentication token bug refactor", "metadata": {}, "time": "2026-02-01T10:00:00Z"},
             {"id": "e2", "event": "authentication token cache miss", "metadata": {}, "time": "2026-03-01T10:00:00Z"},
         ]
-        from _bm25 import BM25 as _BM25, Document as _Document
+        from core._bm25 import BM25 as _BM25, Document as _Document
         docs = [_Document(id=e["id"], text=e["event"]) for e in events]
         bm25_full = _BM25()
         bm25_full.index(docs)

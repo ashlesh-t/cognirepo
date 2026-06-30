@@ -18,7 +18,7 @@ import json
 import os
 from datetime import datetime
 
-from config.paths import get_global_path
+from core.config.paths import get_global_path
 
 _BEHAVIOUR_FILE = "user/behaviour.json"
 _PATTERNS_FILE  = "user/patterns.json"

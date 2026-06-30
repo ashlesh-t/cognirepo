@@ -16,9 +16,9 @@ from __future__ import annotations
 import os
 
 import pytest
-from config.orgs import create_org, link_repo_to_org
+from core.config.orgs import create_org, link_repo_to_org
 from retrieval.cross_repo import CrossRepoRouter
-from config.paths import set_cognirepo_dir
+from core.config.paths import set_cognirepo_dir
 
 
 # ── CrossRepoRouter basics ────────────────────────────────────────────────────

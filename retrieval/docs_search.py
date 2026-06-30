@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 import os
 
-from config.paths import get_path
+from core.config.paths import get_path
 
 def _ast_index_file() -> str:
     return get_path("index/ast_index.json")

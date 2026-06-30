@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from config.paths import get_orgs_path
+from core.config.paths import get_orgs_path
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ import logging
 import sys
 from memory.semantic_memory import SemanticMemory
 from memory.episodic_memory import log_event
-from server.metrics import MEMORY_OPS_TOTAL
+from core.metrics import MEMORY_OPS_TOTAL
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ def store_memory(text: str, source: str = "") -> dict:
 
     # Mirror to shared project memory when autosave_context enabled
     try:
-        from config.orgs import get_repo_project  # pylint: disable=import-outside-toplevel
+        from core.config.orgs import get_repo_project  # pylint: disable=import-outside-toplevel
         import os  # pylint: disable=import-outside-toplevel
         result = get_repo_project(os.getcwd())
         if result:

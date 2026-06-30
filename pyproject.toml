@@ -118,7 +118,16 @@ cognirepo = "cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["cognirepo*", "_bm25*", "adapters*", "cli*", "config*", "cron*", "graph*", "indexer*", "memory*", "orchestrator*", "retrieval*", "security*", "server*", "tools*", "vector_db*"]
+include = [
+    "cognirepo*",
+    # ── New layered packages ───────────────────────────────────────────────────
+    "core*",
+    # ── Shim packages (old names, kept for backward compat until v2.0) ────────
+    "_bm25*", "config*", "security*", "vector_db*",
+    # ── Not yet restructured layers (migrated in subsequent steps) ────────────
+    "adapters*", "cli*", "cron*", "graph*", "indexer*", "memory*",
+    "orchestrator*", "retrieval*", "server*", "tools*",
+]
 exclude = ["venv*", "*.egg-info*"]
 
 [tool.setuptools.package-data]

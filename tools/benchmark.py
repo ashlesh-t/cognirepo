@@ -544,7 +544,7 @@ def run_benchmark() -> dict:
 def _save_to_history(metrics: dict) -> None:
     """Append metrics to .cognirepo/benchmark_history.jsonl."""
     try:
-        from config.paths import get_path
+        from core.config.paths import get_path
         hist_path = get_path("benchmark_history.jsonl")
         with open(hist_path, "a", encoding="utf-8") as f:
             f.write(json.dumps({k: v for k, v in metrics.items() if k != "_details"}) + "\n")
@@ -555,7 +555,7 @@ def _save_to_history(metrics: dict) -> None:
 def load_last_run() -> dict | None:
     """Load the most recent benchmark result from history."""
     try:
-        from config.paths import get_path
+        from core.config.paths import get_path
         hist_path = get_path("benchmark_history.jsonl")
         if not os.path.exists(hist_path):
             return None

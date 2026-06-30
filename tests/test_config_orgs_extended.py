@@ -15,7 +15,7 @@ import pytest
 @pytest.fixture
 def orgs_path(tmp_path):
     orgs_file = tmp_path / "orgs.json"
-    import config.orgs as orgs_mod
+    import core.config.orgs as orgs_mod
     with patch.object(orgs_mod, "get_orgs_path", return_value=str(orgs_file)):
         yield str(orgs_file), orgs_mod
 

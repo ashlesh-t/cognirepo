@@ -23,7 +23,7 @@ def test_init_creates_index(tmp_path, monkeypatch):
     After init_project() runs, the AST index must exist and contain symbols.
     This is the core 'first-run experience' check — no second command needed.
     """
-    from config.paths import set_cognirepo_dir, get_path
+    from core.config.paths import set_cognirepo_dir, get_path
     set_cognirepo_dir(str(tmp_path / ".cognirepo"))
     monkeypatch.chdir(tmp_path)
 
@@ -58,7 +58,7 @@ def test_init_creates_index(tmp_path, monkeypatch):
 
 def test_no_index_flag_skips_indexing(tmp_path, monkeypatch):
     """--no-index must skip indexing and return (None, None, None)."""
-    from config.paths import set_cognirepo_dir
+    from core.config.paths import set_cognirepo_dir
     set_cognirepo_dir(str(tmp_path / ".cognirepo"))
     monkeypatch.chdir(tmp_path)
 

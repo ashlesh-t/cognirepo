@@ -15,7 +15,7 @@ import os
 import time
 from pathlib import Path
 
-from vector_db.adapter import VectorStorageAdapter
+from core.vector_db.adapter import VectorStorageAdapter
 
 _log = logging.getLogger(__name__)
 
@@ -73,7 +73,7 @@ def get_vector_adapter(dim: int = 384) -> VectorStorageAdapter:
     backend = _read_backend()
     if backend == "chroma":
         try:
-            from vector_db.chroma_adapter import ChromaDBAdapter  # pylint: disable=import-outside-toplevel
+            from core.vector_db.chroma_adapter import ChromaDBAdapter  # pylint: disable=import-outside-toplevel
             path = _get_vector_db_path()
             _log.debug("vector backend: chroma at %s", path)
             _heal_crashed_chroma(path)
@@ -95,7 +95,7 @@ def get_vector_adapter(dim: int = 384) -> VectorStorageAdapter:
                 "Run: pip install chromadb"
             )
     _log.debug("vector backend: faiss")
-    from vector_db.local_vector_db import LocalVectorDB  # pylint: disable=import-outside-toplevel
+    from core.vector_db.local_vector_db import LocalVectorDB  # pylint: disable=import-outside-toplevel
     return LocalVectorDB(dim=dim)
 
 

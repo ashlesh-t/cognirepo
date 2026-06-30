@@ -274,7 +274,7 @@ class ProjectLearningStore:
         if project_dir:
             root = Path(project_dir) / ".cognirepo" / "learnings"
         else:
-            from config.paths import get_path  # pylint: disable=import-outside-toplevel
+            from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
             root = Path(get_path("learnings"))
         self._backend = _LearningBackend(root)
 

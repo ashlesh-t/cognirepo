@@ -98,7 +98,7 @@ def _default_limit_mb() -> float:
             pass
     # Try config.json
     try:
-        from config.paths import get_path
+        from core.config.paths import get_path
         with open(get_path("config.json"), encoding="utf-8") as f:
             cfg = json.load(f)
         limit = cfg.get("circuit_breaker", {}).get("rss_limit_mb")
@@ -147,7 +147,7 @@ class CircuitBreaker:
         if probes is not None:
             self._probes = probes
         else:
-            from cron.probes import RSSProbe, StorageSizeProbe  # pylint: disable=import-outside-toplevel
+            from core.probes import RSSProbe, StorageSizeProbe  # pylint: disable=import-outside-toplevel
             limit = rss_limit_mb if rss_limit_mb is not None else _default_limit_mb()
             self._probes = [RSSProbe(limit), StorageSizeProbe()]
 
@@ -266,7 +266,7 @@ class CircuitBreaker:
     def _update_metric(self) -> None:
         """Update the Prometheus CB_STATE gauge (no-op if prometheus not installed)."""
         try:
-            from server.metrics import CB_STATE  # pylint: disable=import-outside-toplevel
+            from core.metrics import CB_STATE  # pylint: disable=import-outside-toplevel
             _state_value = {"CLOSED": 0, "HALF_OPEN": 1, "OPEN": 2}
             CB_STATE.set(_state_value.get(self._state.value, 0))
         except Exception:  # pylint: disable=broad-except

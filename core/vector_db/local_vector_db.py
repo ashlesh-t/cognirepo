@@ -16,9 +16,9 @@ from datetime import datetime, timezone
 import faiss
 import numpy as np
 
-from config.paths import get_path
-from config.lock import store_lock
-from vector_db.adapter import VectorStorageAdapter
+from core.config.paths import get_path
+from core.config.lock import store_lock
+from core.vector_db.adapter import VectorStorageAdapter
 
 
 def _now_iso() -> str:
@@ -113,10 +113,10 @@ class LocalVectorDB(VectorStorageAdapter):
     def _load_meta(self) -> list:
         with open(_meta_file(), "rb") as f:
             raw = f.read()
-        from security import get_storage_config  # pylint: disable=import-outside-toplevel
+        from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
         if encrypt:
-            from security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
+            from core.security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
             try:
                 raw = decrypt_bytes(raw, get_or_create_key(project_id))
             except Exception:  # pylint: disable=broad-except
@@ -147,11 +147,11 @@ class LocalVectorDB(VectorStorageAdapter):
             return []
 
     def _save_meta(self) -> None:
-        from security import get_storage_config  # pylint: disable=import-outside-toplevel
+        from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
         content = json.dumps(self.metadata, indent=2).encode()
         if encrypt:
-            from security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+            from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
             content = encrypt_bytes(content, get_or_create_key(project_id))
         os.makedirs(os.path.dirname(_meta_file()), exist_ok=True)
         with open(_meta_file(), "wb") as f:

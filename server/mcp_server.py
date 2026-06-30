@@ -17,8 +17,8 @@ import threading
 import time
 from mcp.server.fastmcp import FastMCP
 
-from config.logging import setup_logging, new_trace_id
-from config.version import __version__ as _APP_VERSION
+from core.config.logging import setup_logging, new_trace_id
+from core.config.version import __version__ as _APP_VERSION
 from memory.circuit_breaker import get_breaker, CircuitOpenError
 
 setup_logging()
@@ -133,7 +133,7 @@ def _evict_singletons() -> None:
 def _behaviour_enabled() -> bool:
     """Return True only if user opted in to behaviour tracking in config.json."""
     try:
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         import json as _json  # pylint: disable=import-outside-toplevel
         with open(get_path("config.json"), encoding="utf-8") as _f:
             return bool(_json.load(_f).get("behaviour_tracking", False))
@@ -151,7 +151,7 @@ def _index_is_stale() -> bool | None:
     """
     try:
         import subprocess as _sp  # pylint: disable=import-outside-toplevel
-        from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
         head = _sp.check_output(
             ["git", "rev-parse", "HEAD"], text=True, stderr=_sp.DEVNULL
         ).strip()
@@ -172,7 +172,7 @@ def _watcher_alive() -> bool:
     staleness detection.
     """
     try:
-        from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
         pid_file = _gp("watcher.pid")
         if not os.path.exists(pid_file):
             return False
@@ -236,7 +236,7 @@ def _repo_ctx(repo_path: str | None):
         yield None, None, None
         return
 
-    from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+    from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
     abs_path = os.path.abspath(repo_path)
     target_dir = get_cognirepo_dir_for_repo(abs_path)
     token = _CTX_DIR.set(target_dir)
@@ -337,7 +337,7 @@ def _behaviour_record_query(query: str, result) -> None:
     try:
         import uuid as _uuid  # pylint: disable=import-outside-toplevel
         from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
-        from vector_db.local_vector_db import LocalVectorDB as _LVDB  # pylint: disable=import-outside-toplevel
+        from core.vector_db.local_vector_db import LocalVectorDB as _LVDB  # pylint: disable=import-outside-toplevel
         g = _get_graph()
         bt = BehaviourTracker(g, db_adapter=_LVDB())
         symbols: list[str] = []
@@ -382,7 +382,7 @@ def _graph_is_empty() -> bool:
 
 def _annotate_with_symbol(repo_list: list[dict], symbol: str) -> list[dict]:
     """For each repo entry, add symbol_locations if the symbol exists there."""
-    from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+    from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
     for entry in repo_list:
         repo_path = entry.get("repo", "")
         if not repo_path or not os.path.isdir(repo_path):
@@ -514,7 +514,7 @@ def supersede_learning(
         found_old = False
         new_chroma_id = ""
         try:
-            from vector_db.factory import get_vector_adapter as _gva  # pylint: disable=import-outside-toplevel
+            from core.vector_db.factory import get_vector_adapter as _gva  # pylint: disable=import-outside-toplevel
             from memory.semantic_memory import SemanticMemory as _SM  # pylint: disable=import-outside-toplevel
             _db = _gva()
             _db.remove([int(old_id)])
@@ -840,7 +840,7 @@ def _resolve_repo_for_symbol(symbol: str, og) -> str | None:
     orchestrator whose FAISS index was built from the root directory (and thus contains
     all children's symbols) from shadowing the real owner.
     """
-    from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+    from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
     from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
     from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
 
@@ -989,7 +989,7 @@ def lookup_symbol(name: str, include_org: bool = False, repo_path: str | None = 
         if include_org:
             from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
             from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-            from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+            from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
 
             router = CrossRepoRouter()
             for repo in router.get_sibling_repos():
@@ -1269,7 +1269,7 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
         cross_repo_callers: list[dict] = []
         try:
             from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
-            from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+            from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
             og = get_org_graph()
             current = os.path.abspath(repo_root or ".")
             dependents = og.get_dependents(current, depth=1)
@@ -1358,7 +1358,7 @@ def get_service_endpoints(repo_path: str = "") -> dict:
     Returns {endpoints, count, scanned_at} or {endpoints: [], count: 0}.
     """
     from indexer.endpoint_scanner import load_endpoints  # pylint: disable=import-outside-toplevel
-    from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+    from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
 
     _target = os.path.abspath(repo_path) if repo_path else os.getcwd()
     try:
@@ -1497,7 +1497,7 @@ def graph_stats(repo_path: str | None = None) -> dict:
         last_indexed = None
         index_age_minutes = None
         index_stale = None
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         ast_index_path = get_path("index/ast_index.json")
         if os.path.exists(ast_index_path):
             with open(ast_index_path, encoding="utf-8") as f:
@@ -1638,7 +1638,7 @@ def architecture_overview(scope: str = "root", repo_path: str | None = None) -> 
     repo_path: optional absolute path to the target repository.
     """
     with _repo_ctx(repo_path):
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         summary_path = get_path("index/summaries.json")
         if not os.path.exists(summary_path):
             return "Summaries not found. Ask the user to run 'cognirepo summarize' first."
@@ -1705,7 +1705,7 @@ def get_session_history(limit: int = 10, repo_path: str | None = None) -> list:
     repo_path: optional absolute path to the target repository.
     """
     with _repo_ctx(repo_path):
-        from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
         import glob  # pylint: disable=import-outside-toplevel
         sessions_dir = _gp("sessions")
         if not os.path.isdir(sessions_dir):
@@ -1778,7 +1778,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         # ── staleness check: spawn background reindex if HEAD has moved ───────
         if index_status in ("ok", "empty"):
             try:
-                from config.paths import get_path as _gp_lock  # pylint: disable=import-outside-toplevel
+                from core.config.paths import get_path as _gp_lock  # pylint: disable=import-outside-toplevel
                 _sha_stale = _index_is_stale()
                 if _sha_stale is None:
                     # SHA comparison inconclusive — fall back to mtime age
@@ -1799,7 +1799,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         # ── architecture summary ──────────────────────────────────────────────
         architecture = ""
         try:
-            from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
+            from core.config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
             summary_path = _gp("index/summaries.json")
             if os.path.exists(summary_path):
                 with open(summary_path, encoding="utf-8") as _f:
@@ -1809,7 +1809,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
 
         # ── repo name ─────────────────────────────────────────────────────────
         try:
-            from config.paths import get_path as _gp2  # pylint: disable=import-outside-toplevel
+            from core.config.paths import get_path as _gp2  # pylint: disable=import-outside-toplevel
             cfg_path = _gp2("config.json")
             with open(cfg_path, encoding="utf-8") as _f:
                 repo_name = json.load(_f).get("project_name", os.path.basename(os.getcwd()))
@@ -1870,7 +1870,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
                     _entry[_k] = _nd[_k]
             # Check if this child has been indexed
             try:
-                from config.paths import _CTX_DIR, get_cognirepo_dir_for_repo as _gcdr  # pylint: disable=import-outside-toplevel
+                from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo as _gcdr  # pylint: disable=import-outside-toplevel
                 _ctok = _CTX_DIR.set(_gcdr(_cp))
                 try:
                     _entry["indexed"] = os.path.exists(get_path("index/ast_index.json"))
@@ -1915,7 +1915,7 @@ def get_last_context(repo_path: str | None = None) -> dict:
     """
     with _repo_ctx(repo_path):
         try:
-            from config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
+            from core.config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
             config_path = _gp("config.json")
             if not os.path.exists(config_path):
                 return {"status": "no_context", "reason": "repo not initialized"}
@@ -2619,7 +2619,7 @@ def run_server(project_dir: str | None = None) -> None:
     # usecwd=True: resolve .env from the project directory, not this source file
     load_dotenv(find_dotenv(usecwd=True))
     if project_dir:
-        from config.paths import (  # pylint: disable=import-outside-toplevel
+        from core.config.paths import (  # pylint: disable=import-outside-toplevel
             set_cognirepo_dir, get_cognirepo_dir_for_repo,
         )
         abs_dir = os.path.abspath(project_dir)
@@ -2634,7 +2634,7 @@ def run_server(project_dir: str | None = None) -> None:
     # ── auto-start file watcher (background daemon, keeps index fresh) ────────
     try:
         _watch_cfg: dict = {}
-        from config.paths import get_path as _get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path as _get_path  # pylint: disable=import-outside-toplevel
         _cfg_path = _get_path("config.json")
         if os.path.exists(_cfg_path):
             with open(_cfg_path, encoding="utf-8") as _wf:

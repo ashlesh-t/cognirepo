@@ -35,7 +35,7 @@ _SCHEDULE_FILE_NAME = "prune_schedule.json"
 def _schedule_interval_hours() -> int:
     """Resolve interval_hours from schedule JSON or config.json."""
     try:
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         sched_path = get_path(_SCHEDULE_FILE_NAME)
         if os.path.exists(sched_path):
             with open(sched_path, encoding="utf-8") as f:
@@ -47,7 +47,7 @@ def _schedule_interval_hours() -> int:
         pass
 
     try:
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         with open(get_path("config.json"), encoding="utf-8") as f:
             cfg = json.load(f)
         hours = int(cfg.get("prune", {}).get("every_hours", _DEFAULT_EVERY_HOURS))
@@ -61,7 +61,7 @@ def _schedule_interval_hours() -> int:
 
 def _auto_prune_enabled() -> bool:
     try:
-        from config.paths import get_path  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         with open(get_path("config.json"), encoding="utf-8") as f:
             cfg = json.load(f)
         return bool(cfg.get("prune", {}).get("auto_enabled", False))
@@ -222,7 +222,7 @@ def write_prune_schedule(every_hours: int) -> str:
     Write .cognirepo/prune_schedule.json with the given interval.
     Returns the path written.
     """
-    from config.paths import get_path  # pylint: disable=import-outside-toplevel
+    from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
     path = get_path(_SCHEDULE_FILE_NAME)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
