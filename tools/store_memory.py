@@ -9,8 +9,8 @@ Tool to store a text memory into semantic memory.
 """
 import logging
 import sys
-from memory.semantic_memory import SemanticMemory
-from memory.episodic_memory import log_event
+from data.memory.semantic_memory import SemanticMemory
+from data.memory.episodic_memory import log_event
 from core.metrics import MEMORY_OPS_TOTAL
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ def store_memory(text: str, source: str = "") -> dict:
         import os  # pylint: disable=import-outside-toplevel
         result = get_repo_project(os.getcwd())
         if result:
-            from memory.project_memory import ProjectMemory  # pylint: disable=import-outside-toplevel
+            from data.memory.project_memory import ProjectMemory  # pylint: disable=import-outside-toplevel
             org, project = result
             ProjectMemory(org, project).store(
                 text,

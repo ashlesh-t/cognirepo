@@ -32,7 +32,7 @@ def test_on_session_end_marks_closed(tmp_path, monkeypatch):
 
     monkeypatch.setattr("config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
-    import memory.learning_store as ls
+    import data.memory.learning_store as ls
     ls._STORE = ls.CompositeLearningStore(project_dir=str(tmp_path))
 
     messages = [
@@ -53,7 +53,7 @@ def test_on_session_end_idempotent(tmp_path, monkeypatch):
 
     monkeypatch.setattr("config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
-    import memory.learning_store as ls
+    import data.memory.learning_store as ls
     ls._STORE = ls.CompositeLearningStore(project_dir=str(tmp_path))
 
     sid = _make_session(sessions_dir, [], closed=True)
@@ -67,7 +67,7 @@ def test_recover_unclosed_sessions(tmp_path, monkeypatch):
 
     monkeypatch.setattr("config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
-    import memory.learning_store as ls
+    import data.memory.learning_store as ls
     ls._STORE = ls.CompositeLearningStore(project_dir=str(tmp_path))
 
     # Create 2 unclosed + 1 already closed

@@ -37,8 +37,8 @@ def _load_profile(project_dir: str) -> dict | None:
         with open(get_path("config.json"), encoding="utf-8") as _f:
             if not _json.load(_f).get("behaviour_tracking", False):
                 return None
-        from graph.knowledge_graph import KnowledgeGraph
-        from graph.behaviour_tracker import BehaviourTracker
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from data.graph.behaviour_tracker import BehaviourTracker
         bt = BehaviourTracker(KnowledgeGraph())
         return bt.get_user_profile()
     except Exception:  # pylint: disable=broad-except
@@ -55,8 +55,8 @@ def _record_query(project_dir: str, query_text: str) -> None:
         with open(get_path("config.json"), encoding="utf-8") as _f:
             if not _json.load(_f).get("behaviour_tracking", False):
                 return
-        from graph.knowledge_graph import KnowledgeGraph
-        from graph.behaviour_tracker import BehaviourTracker
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from data.graph.behaviour_tracker import BehaviourTracker
         bt = BehaviourTracker(KnowledgeGraph())
         bt.record_query(
             query_id=str(abs(hash(query_text + str(os.getpid())))),

@@ -7,7 +7,7 @@
 """Tests for memory/learning_store.py — dual-scope learning store."""
 import pytest
 
-from memory.learning_store import (
+from data.memory.learning_store import (
     auto_tag,
     CompositeLearningStore,
     GlobalLearningStore,

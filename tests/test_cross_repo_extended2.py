@@ -39,7 +39,7 @@ def test_get_sibling_repos_with_org_graph(tmp_path):
     mock_og = MagicMock()
     mock_og.get_dependencies.return_value = [{"repo": str(tmp_path), "depth": 1}]
     mock_og.get_dependents.return_value = []
-    with patch("graph.org_graph.get_org_graph", return_value=mock_og):
+    with patch("data.graph.org_graph.get_org_graph", return_value=mock_og):
         router = CrossRepoRouter(current_repo_path=str(tmp_path))
         result = router.get_sibling_repos()
     assert isinstance(result, list)
@@ -63,7 +63,7 @@ def test_query_all_org_repos_with_sibling(tmp_path):
     (sibling / ".cognirepo").mkdir(exist_ok=True)
     router = CrossRepoRouter(current_repo_path=str(tmp_path))
     with patch.object(router, "get_all_org_repos", return_value=[str(sibling)]):
-        with patch("memory.semantic_memory.SemanticMemory") as mock_sm_cls:
+        with patch("data.memory.semantic_memory.SemanticMemory") as mock_sm_cls:
             mock_sm = MagicMock()
             mock_sm.search.return_value = [{"text": "found code", "score": 0.8}]
             mock_sm_cls.return_value = mock_sm

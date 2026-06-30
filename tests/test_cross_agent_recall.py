@@ -10,7 +10,7 @@ Tests for cross-agent persistent learning recall.
 Simulates: Claude session stores a correction → session ends →
 Gemini session starts → retrieve_learnings returns the correction.
 """
-from memory.learning_store import CompositeLearningStore
+from data.memory.learning_store import CompositeLearningStore
 
 
 def test_cross_agent_correction_recall(tmp_path, monkeypatch):

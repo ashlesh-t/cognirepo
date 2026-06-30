@@ -134,7 +134,7 @@ class BackgroundScheduler:
             return
         # Check circuit breaker
         try:
-            from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+            from data.memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
             breaker = get_breaker()
             breaker.check()
         except Exception as exc:  # pylint: disable=broad-except

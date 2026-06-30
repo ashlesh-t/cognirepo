@@ -67,11 +67,11 @@ def _import_try_local_resolve():
     """Import try_local_resolve with all heavy deps stubbed."""
     # Stub the graph + context builder imports that router pulls in
     for mod in (
-        "graph.knowledge_graph", "graph.behaviour_tracker",
+        "data.graph.knowledge_graph", "data.graph.behaviour_tracker",
         "orchestrator.context_builder",
         "orchestrator.model_adapters.anthropic_adapter",
         "orchestrator.model_adapters.errors",
-        "memory.episodic_memory",
+        "data.memory.episodic_memory",
     ):
         if mod not in sys.modules:
             sys.modules[mod] = MagicMock()

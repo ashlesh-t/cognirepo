@@ -28,7 +28,7 @@ def setup_test_index(isolated_cognirepo, monkeypatch):
     """
     from cli.init_project import init_project
     from indexer.ast_indexer import ASTIndexer
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.knowledge_graph import KnowledgeGraph
     
     # Initialize the project in the tmp directory
     init_project(no_index=True, interactive=False, non_interactive=True)
@@ -92,7 +92,7 @@ class TestTokenReduction:
 class TestSymbolLookupEfficiency:
     def test_lookup_returns_in_under_100ms(self):
         from indexer.ast_indexer import ASTIndexer
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()
 
@@ -105,7 +105,7 @@ class TestSymbolLookupEfficiency:
 
     def test_lookup_returns_file_and_line(self):
         from indexer.ast_indexer import ASTIndexer
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()
         results = idx.lookup_symbol("context_pack")
@@ -114,7 +114,7 @@ class TestSymbolLookupEfficiency:
 
     def test_lookup_vs_grep_equivalent(self):
         from indexer.ast_indexer import ASTIndexer
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()
 
@@ -203,7 +203,7 @@ class TestGlobalUserMemory:
         assert "cognirepo" in global_dir
 
     def test_user_preference_survives_cwd_change(self, tmp_path, monkeypatch):
-        from memory.user_memory import set_preference, get_preference
+        from data.memory.user_memory import set_preference, get_preference
         set_preference("test_pref_xyz", "test_value_123")
         monkeypatch.chdir(tmp_path)
         val = get_preference("test_pref_xyz")
@@ -227,7 +227,7 @@ class TestHybridSignalMix:
 class TestRealProjectPortability:
     def test_index_data_structure_stable(self):
         from indexer.ast_indexer import ASTIndexer
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()
         required_keys = {"files", "reverse_index"}

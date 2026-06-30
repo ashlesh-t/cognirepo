@@ -60,7 +60,7 @@ def test_run_full_summarization(isolated_cognirepo, tmp_path):  # pylint: disabl
         mock_indexer._ensure_faiss = MagicMock()
         
         # Mock embeddings to avoid real model load
-        with patch("memory.embeddings.get_model") as mock_get_model:
+        with patch("data.memory.embeddings.get_model") as mock_get_model:
             mock_model = mock_get_model.return_value
             mock_model.encode.return_value = MagicMock(astype=lambda x: MagicMock())
             

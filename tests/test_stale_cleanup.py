@@ -47,7 +47,7 @@ def _make_file_record(rel_path: str, symbol_name: str) -> dict:
 class TestGraphRemoveFileNodes:
     def test_removes_symbol_nodes_and_file_node(self):
         """remove_file_nodes() deletes both symbol nodes and the FILE node."""
-        from graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
+        from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
 
         kg = KnowledgeGraph.__new__(KnowledgeGraph)
         import networkx as nx
@@ -69,7 +69,7 @@ class TestGraphRemoveFileNodes:
         assert sym_node in removed
 
     def test_returns_empty_for_unknown_file(self):
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         import networkx as nx
 
         kg = KnowledgeGraph.__new__(KnowledgeGraph)
@@ -80,7 +80,7 @@ class TestGraphRemoveFileNodes:
 
     def test_edges_removed_with_nodes(self):
         """NetworkX removes incident edges automatically on node removal."""
-        from graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
+        from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
         import networkx as nx
 
         kg = KnowledgeGraph.__new__(KnowledgeGraph)
@@ -105,7 +105,7 @@ class TestEpisodicMarkStale:
         """Entries that reference file_path are tagged stale."""
         from memory import episodic_memory as em
         monkeypatch.setattr(
-            "memory.episodic_memory._file_path",
+            "data.memory.episodic_memory._file_path",
             lambda: str(tmp_path / "episodic.json"),
         )
         # Patch _save to avoid security/encryption calls
@@ -159,7 +159,7 @@ class TestEpisodicMarkStale:
 class TestFileWatcherRemove:
     def _make_handler(self, tmp_path):
         from indexer.file_watcher import RepoFileHandler
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         import networkx as nx
 
         kg = KnowledgeGraph.__new__(KnowledgeGraph)

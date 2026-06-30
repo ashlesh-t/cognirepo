@@ -56,18 +56,18 @@ for _mod in (
     "orchestrator.model_adapters.gemini_adapter",
     "orchestrator.model_adapters.grok_adapter",
     "orchestrator.model_adapters.openai_adapter",
-    "graph.behaviour_tracker",
-    "memory.episodic_memory",
+    "data.graph.behaviour_tracker",
+    "data.memory.episodic_memory",
 ):
     if _mod not in sys.modules and not _try_real_import(_mod):
         sys.modules[_mod] = MagicMock()
         _STUBBED_BY_THIS_FILE.append(_mod)
 
 # graph.knowledge_graph needs networkx — never stub it if networkx is real
-_need_graph_stub = not _try_real_import("graph.knowledge_graph")
-if _need_graph_stub and "graph.knowledge_graph" not in sys.modules:
-    sys.modules["graph.knowledge_graph"] = MagicMock()
-    _STUBBED_BY_THIS_FILE.append("graph.knowledge_graph")
+_need_graph_stub = not _try_real_import("data.graph.knowledge_graph")
+if _need_graph_stub and "data.graph.knowledge_graph" not in sys.modules:
+    sys.modules["data.graph.knowledge_graph"] = MagicMock()
+    _STUBBED_BY_THIS_FILE.append("data.graph.knowledge_graph")
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -80,7 +80,7 @@ def _restore_stubs():
     # Evict the router so later tests re-import it cleanly
     sys.modules.pop("orchestrator.router", None)
     for _mod in list(sys.modules):
-        if "graph.knowledge_graph" in _mod or "retrieval" in _mod:
+        if "data.graph.knowledge_graph" in _mod or "retrieval" in _mod:
             sys.modules.pop(_mod, None)
 
 # ── Router Fixture (Guards against sys.modules pollution) ─────────────────────

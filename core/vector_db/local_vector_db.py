@@ -164,7 +164,7 @@ class LocalVectorDB(VectorStorageAdapter):
         (e.g. Claude + Gemini both calling store_memory at the same time)
         do not corrupt the FAISS binary or metadata JSON.
         """
-        from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+        from data.memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
         breaker = get_breaker()
         breaker.check()
         with store_lock():
@@ -262,7 +262,7 @@ class LocalVectorDB(VectorStorageAdapter):
         self._save_meta()
         # Enqueue for priority-queue cleanup
         try:
-            from memory.cleanup_queue import CleanupQueue  # pylint: disable=import-outside-toplevel
+            from data.memory.cleanup_queue import CleanupQueue  # pylint: disable=import-outside-toplevel
             CleanupQueue().push(
                 entry_id=faiss_row,
                 store="semantic",

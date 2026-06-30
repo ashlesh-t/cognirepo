@@ -100,7 +100,7 @@ def measure_token_reduction(queries: list[str]) -> dict:
     Returns average savings %.
     """
     from tools.context_pack import context_pack
-    from memory.circuit_breaker import CircuitOpenError
+    from data.memory.circuit_breaker import CircuitOpenError
 
     savings_naive = []
     savings_targeted = []
@@ -156,7 +156,7 @@ def measure_symbol_lookup(symbols: list[str]) -> dict:
     Returns mean latency in ms.
     """
     from indexer.ast_indexer import ASTIndexer
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.knowledge_graph import KnowledgeGraph
 
     idx = ASTIndexer(graph=KnowledgeGraph())
     idx.load()
@@ -420,7 +420,7 @@ def _sample_repo_symbols(n: int = 5) -> list[str]:
     """
     try:
         from indexer.ast_indexer import ASTIndexer
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()
         rev = idx.index_data.get("reverse_index", {})
@@ -443,7 +443,7 @@ def _benchmark_memories() -> list[str]:
 
 def run_benchmark() -> dict:
     """Run all benchmarks and return a consolidated metrics dict."""
-    from memory.circuit_breaker import CircuitOpenError
+    from data.memory.circuit_breaker import CircuitOpenError
 
     print("Running CogniRepo benchmark...", flush=True)
 

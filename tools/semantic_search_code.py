@@ -16,9 +16,9 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from memory.embeddings import encode_with_timeout
+from data.memory.embeddings import encode_with_timeout
 from indexer.ast_indexer import ASTIndexer
-from graph.knowledge_graph import KnowledgeGraph
+from data.graph.knowledge_graph import KnowledgeGraph
 
 # language label → file extensions mapping (for the optional language filter)
 _LANG_EXTENSIONS: dict[str, set[str]] = {

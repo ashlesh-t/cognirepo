@@ -678,7 +678,7 @@ def _seed_learnings_from_docs(repo_root: str) -> int:
     Called during init so retrieve_learnings() has data immediately.
     Returns the number of sections stored.
     """
-    from memory.learning_store import ProjectLearningStore  # pylint: disable=import-outside-toplevel
+    from data.memory.learning_store import ProjectLearningStore  # pylint: disable=import-outside-toplevel
     store = ProjectLearningStore()
     md_candidates = [
         "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md",
@@ -725,7 +725,7 @@ def _index_with_progress(svc_path: str, svc_name: str):
     """Run ASTIndexer in a daemon thread while showing a pulsing progress bar."""
     import threading  # pylint: disable=import-outside-toplevel
     from cli.wizard import _animate_indexing  # pylint: disable=import-outside-toplevel
-    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+    from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
     from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
 
     done   = threading.Event()
@@ -793,7 +793,7 @@ def _register_in_org_graph(svc, parent_path: str) -> None:
     authoritative values instead of leaving agents to guess.
     """
     try:
-        from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+        from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
         og = get_org_graph()
         meta: dict = {"service_type": svc.service_type}
         port = getattr(svc, "port", None) or _detect_service_port(svc.path)
@@ -815,7 +815,7 @@ def _wire_inter_repo_edges(children: list, parent_path: str) -> None:
     og.infer_import_edges() — no new logic, just wiring them into the setup flow.
     """
     try:
-        from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+        from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
         from indexer.inter_repo_indexer import extract_dependencies  # pylint: disable=import-outside-toplevel
         import json as _json  # pylint: disable=import-outside-toplevel
 
@@ -871,7 +871,7 @@ def _inject_child_stubs_into_parent_kg(children: list, parent_path: str) -> None
     try:
         import json as _json  # pylint: disable=import-outside-toplevel
         from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
 
         # Load parent KG via parent context
         _parent_cog = get_cognirepo_dir_for_repo(parent_path)
@@ -1221,7 +1221,7 @@ def init_project(
     _verb = "Re-indexing" if _already_init else "Indexing"
     print(f"\n{_verb} repo …  (use --no-index to skip)")
 
-    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+    from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
     from indexer.ast_indexer import ASTIndexer        # pylint: disable=import-outside-toplevel
 
     cwd = os.getcwd()

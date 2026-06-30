@@ -99,13 +99,13 @@ class AutoStore:
             return False
 
         try:
-            from memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
+            from data.memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
             from core.vector_db.local_vector_db import LocalVectorDB  # pylint: disable=import-outside-toplevel
         except ImportError as exc:
             log.debug("AutoStore: cannot import deps: %s", exc)
             return False
 
-        from memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
+        from data.memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
         db = LocalVectorDB()
 
         vec = encode_with_timeout(text).astype("float32")

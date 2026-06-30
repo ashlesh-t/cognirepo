@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 def _make_indexer(files: dict) -> MagicMock:
     """Build a mock ASTIndexer with given files dict."""
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.knowledge_graph import KnowledgeGraph
     from indexer.ast_indexer import ASTIndexer
 
     ASTIndexer.lookup_symbol.cache_clear()

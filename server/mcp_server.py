@@ -19,7 +19,7 @@ from mcp.server.fastmcp import FastMCP
 
 from core.config.logging import setup_logging, new_trace_id
 from core.config.version import __version__ as _APP_VERSION
-from memory.circuit_breaker import get_breaker, CircuitOpenError
+from data.memory.circuit_breaker import get_breaker, CircuitOpenError
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -31,9 +31,9 @@ from tools.semantic_search_code import semantic_search_code as _semantic_search_
 from tools.dependency_graph import dependency_graph as _dependency_graph
 from tools.explain_change import explain_change as _explain_change
 from retrieval.docs_search import search_docs as _search_docs
-from memory.episodic_memory import log_event, search_episodes
-from memory.learning_store import get_learning_store
-from memory.embeddings import evict_model
+from data.memory.episodic_memory import log_event, search_episodes
+from data.memory.learning_store import get_learning_store
+from data.memory.embeddings import evict_model
 from server.learning_middleware import intercept_after_store, intercept_after_episode
 from server.idle_manager import get_idle_manager
 
@@ -99,7 +99,7 @@ def _get_graph():
     if _GRAPH is None:
         with _SINGLETON_LOCK:
             if _GRAPH is None:
-                from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+                from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
                 _GRAPH = KnowledgeGraph()
     return _GRAPH
 
@@ -241,7 +241,7 @@ def _repo_ctx(repo_path: str | None):
     target_dir = get_cognirepo_dir_for_repo(abs_path)
     token = _CTX_DIR.set(target_dir)
     try:
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
         g = KnowledgeGraph()
         idx = ASTIndexer(g)
@@ -323,7 +323,7 @@ def _auto_store_hook(tool_name: str, result) -> None:
         text = _extract_auto_store_text(tool_name, result)
         if not text:
             return
-        from memory.auto_store import AutoStore  # pylint: disable=import-outside-toplevel
+        from data.memory.auto_store import AutoStore  # pylint: disable=import-outside-toplevel
         importance = AutoStore.importance_for(tool_name, result)
         AutoStore().store_if_novel(text, source_tool=tool_name, importance=importance)
     except Exception:  # pylint: disable=broad-except
@@ -336,7 +336,7 @@ def _behaviour_record_query(query: str, result) -> None:
         return
     try:
         import uuid as _uuid  # pylint: disable=import-outside-toplevel
-        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         from core.vector_db.local_vector_db import LocalVectorDB as _LVDB  # pylint: disable=import-outside-toplevel
         g = _get_graph()
         bt = BehaviourTracker(g, db_adapter=_LVDB())
@@ -393,7 +393,7 @@ def _annotate_with_symbol(repo_list: list[dict], symbol: str) -> list[dict]:
         token = _CTX_DIR.set(cognirepo_dir)
         try:
             from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-            from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+            from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
             idx = ASTIndexer(KnowledgeGraph())
             idx.load()
             locs = idx.lookup_symbol(symbol)
@@ -515,7 +515,7 @@ def supersede_learning(
         new_chroma_id = ""
         try:
             from core.vector_db.factory import get_vector_adapter as _gva  # pylint: disable=import-outside-toplevel
-            from memory.semantic_memory import SemanticMemory as _SM  # pylint: disable=import-outside-toplevel
+            from data.memory.semantic_memory import SemanticMemory as _SM  # pylint: disable=import-outside-toplevel
             _db = _gva()
             _db.remove([int(old_id)])
             found_old = True
@@ -534,7 +534,7 @@ def supersede_learning(
 
         if not found_old:
             # Fallback: try learning-store supersede (for structured learnings).
-            from memory.learning_store import get_learning_store as _gls  # pylint: disable=import-outside-toplevel
+            from data.memory.learning_store import get_learning_store as _gls  # pylint: disable=import-outside-toplevel
             ls_result = _gls().supersede_learning(old_id, new_text, learning_type)
             return ls_result
 
@@ -680,7 +680,7 @@ def list_org_context() -> dict:
     and which scope (project vs org) is appropriate.
     """
     from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
-    from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+    from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
     router = CrossRepoRouter()
     summary = router.get_context_summary()
 
@@ -732,7 +732,7 @@ def org_dependencies(depth: int = 2) -> dict:
     "what depends on X", or when investigating cross-service call chains.
     """
     from retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
-    from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+    from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
 
     router = CrossRepoRouter()
     og = get_org_graph()
@@ -804,7 +804,7 @@ def link_repos(
     Do NOT call for repos not yet registered via cognirepo init.
     Returns: {linked: True, edge: {src, dst, kind}}
     """
-    from graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
+    from data.graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
     kind_map = {
         "imports": "IMPORTS",
         "calls_api": "CALLS_API",
@@ -842,7 +842,7 @@ def _resolve_repo_for_symbol(symbol: str, og) -> str | None:
     """
     from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
     from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+    from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
 
     sym_lower = symbol.lower()
 
@@ -899,7 +899,7 @@ def cross_repo_traverse(
     Claude: use this when the user asks "which services use X?",
     "what does auth-service depend on?", or when tracing a bug across service boundaries.
     """
-    from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+    from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
 
     og = get_org_graph()
     if start_repo:
@@ -998,7 +998,7 @@ def lookup_symbol(name: str, include_org: bool = False, repo_path: str | None = 
                     continue
                 sib_token = _CTX_DIR.set(cognirepo_dir)
                 try:
-                    from graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
+                    from data.graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
                     sib_indexer = ASTIndexer(_KG())
                     sib_indexer.load()
                     sib_locs = sib_indexer.lookup_symbol(name)
@@ -1153,7 +1153,7 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
                 logger.info("who_calls: graph empty for repo_path, returning empty dict")
                 return {"local_callers": [], "cross_repo_callers": [], "truncated": False}
 
-        from graph.knowledge_graph import EdgeType  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import EdgeType  # pylint: disable=import-outside-toplevel
 
         # After stub resolution, callers may have been moved to real file-qualified
         # nodes (e.g. "utils/auth.py::verify_token") or remain as "symbol::verify_token".
@@ -1268,7 +1268,7 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
         # Cross-repo: check dependent services for callers of this function
         cross_repo_callers: list[dict] = []
         try:
-            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
             from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
             og = get_org_graph()
             current = os.path.abspath(repo_root or ".")
@@ -1281,7 +1281,7 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
                 token = _CTX_DIR.set(cog_dir)
                 try:
                     from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-                    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+                    from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
                     sib_idx = ASTIndexer(KnowledgeGraph())
                     sib_idx.load()
                     for loc in sib_idx.lookup_symbol(function_name):
@@ -1336,7 +1336,7 @@ def find_symbol_path(
 
     Returns {path, hops, crosses_services, services_traversed} or {error}.
     """
-    from graph.cross_service_path import find_symbol_path as _find_path  # pylint: disable=import-outside-toplevel
+    from data.graph.cross_service_path import find_symbol_path as _find_path  # pylint: disable=import-outside-toplevel
     return _find_path(
         from_symbol=from_symbol,
         to_symbol=to_symbol,
@@ -1488,7 +1488,7 @@ def graph_stats(repo_path: str | None = None) -> dict:
         if g is None:
             g = _get_graph()
         stats = g.stats()
-        from graph.knowledge_graph import PYTHON_BUILTINS  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import PYTHON_BUILTINS  # pylint: disable=import-outside-toplevel
         concept_nodes = [
             n for n, d in g.G.nodes(data=True)
             if d.get("type") == "CONCEPT" and n.split("::")[-1] not in PYTHON_BUILTINS
@@ -1822,7 +1822,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         error_patterns: list = []
         if _behaviour_enabled():
             try:
-                from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+                from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
                 g = _get_graph()
                 bt = BehaviourTracker(g)
                 sw = bt.data.get("symbol_weights", {})
@@ -1859,7 +1859,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
     # ── child services (orchestrator repos only) ──────────────────────────────
     child_services: list[dict] = []
     try:
-        from graph.org_graph import get_org_graph as _gog  # pylint: disable=import-outside-toplevel
+        from data.graph.org_graph import get_org_graph as _gog  # pylint: disable=import-outside-toplevel
         _og = _gog()
         _children = _og.get_children(os.path.abspath("."))
         for _cp in _children:
@@ -1973,7 +1973,7 @@ def get_user_profile(repo_path: str | None = None) -> dict:
             g = _get_graph()
         if not _behaviour_enabled():
             return {"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
-        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g)
     return bt.get_user_profile()
 
@@ -2012,7 +2012,7 @@ def record_user_preference(
             g = _get_graph()
         if not _behaviour_enabled():
             return {"recorded": False, "behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
-        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g)
         if preference_key == "query_rewrite":
             return bt.record_query_rewrite(preference_value, context or preference_value)
@@ -2037,7 +2037,7 @@ def get_error_patterns(min_count: int = 1, repo_path: str | None = None) -> list
             g = _get_graph()
         if not _behaviour_enabled():
             return [{"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}]
-        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g)
     return bt.get_error_patterns(min_count=min_count)
 
@@ -2066,7 +2066,7 @@ def record_error(
             g = _get_graph()
         if not _behaviour_enabled():
             return {"recorded": False, "behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
-        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g)
         bt.record_error(
             error_type=error_type,
@@ -2652,7 +2652,7 @@ def run_server(project_dir: str | None = None) -> None:
     import threading as _threading  # pylint: disable=import-outside-toplevel
     def _prewarm():
         try:
-            from memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
+            from data.memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
             encode_with_timeout("warmup", timeout=60)
         except Exception:  # pylint: disable=broad-except
             pass

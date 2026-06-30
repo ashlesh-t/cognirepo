@@ -123,8 +123,8 @@ def search_docs(query: str) -> list[dict]:
 
     # ── pass 0: semantic vector search against doc chunks (DocIngester output) ─
     try:
-        from memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
-        from memory.semantic_memory import SemanticMemory  # pylint: disable=import-outside-toplevel
+        from data.memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
+        from data.memory.semantic_memory import SemanticMemory  # pylint: disable=import-outside-toplevel
         _mem = SemanticMemory()
         _qvec = encode_with_timeout(query).astype("float32")
         # Use search_with_scores so we get actual relevance scores, not 0.0.

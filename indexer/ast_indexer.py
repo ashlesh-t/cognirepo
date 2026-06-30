@@ -41,8 +41,8 @@ import faiss
 import numpy as np
 import warnings
 
-from graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
-from graph.graph_utils import make_node_id, node_id_from_symbol_record
+from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
+from data.graph.graph_utils import make_node_id, node_id_from_symbol_record
 from indexer.index_utils import SymbolTable, build_symbol_table_from_index
 from indexer.language_registry import (
     _get_language,
@@ -50,7 +50,7 @@ from indexer.language_registry import (
     lang_label,
     lang_name,
 )
-from memory.embeddings import get_model
+from data.memory.embeddings import get_model
 
 log = logging.getLogger(__name__)
 
@@ -1707,7 +1707,7 @@ class ASTIndexer:
         Must be called AFTER ``_build_reverse_index()`` so the index is complete.
         Skipped when the graph is empty (graph indexing was disabled).
         """
-        from graph.knowledge_graph import EdgeType, NodeType  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import EdgeType, NodeType  # pylint: disable=import-outside-toplevel
 
         if self.graph.G.number_of_nodes() == 0:
             return

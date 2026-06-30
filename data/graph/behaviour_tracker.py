@@ -19,8 +19,8 @@ import re
 from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
 
-from graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
-from graph.graph_utils import make_node_id
+from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
+from data.graph.graph_utils import make_node_id
 
 if TYPE_CHECKING:
     from indexer.ast_indexer import ASTIndexer

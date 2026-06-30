@@ -17,7 +17,7 @@ class TestLookupSymbolCache:
     """Tests for @lru_cache on ASTIndexer.lookup_symbol."""
 
     def _make_indexer(self, reverse_index: dict) -> "ASTIndexer":
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         from indexer.ast_indexer import ASTIndexer
         # clear any stale cache state before each test
         ASTIndexer.lookup_symbol.cache_clear()

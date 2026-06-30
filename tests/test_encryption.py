@@ -128,7 +128,7 @@ class TestEpisodicEncryption:
 
         with mock.patch("keyring.get_password", side_effect=fake_get), \
              mock.patch("keyring.set_password", side_effect=fake_set):
-            from memory.episodic_memory import log_event
+            from data.memory.episodic_memory import log_event
             log_event("test sensitive event", {"detail": "secret"})
 
         # Raw bytes must NOT contain the plaintext
@@ -165,7 +165,7 @@ class TestEpisodicEncryption:
         """When encryption is disabled, file is human-readable JSON."""
         _disable_encryption(isolated_cognirepo)
 
-        from memory.episodic_memory import log_event
+        from data.memory.episodic_memory import log_event
         log_event("plaintext event")
 
         with open(".cognirepo/memory/episodic.json", "rb") as f:
@@ -191,7 +191,7 @@ class TestGraphEncryption:
 
         with mock.patch("keyring.get_password", side_effect=fake_get), \
              mock.patch("keyring.set_password", side_effect=fake_set):
-            from graph.knowledge_graph import KnowledgeGraph
+            from data.graph.knowledge_graph import KnowledgeGraph
             kg = KnowledgeGraph()
             kg.add_node("fn::secret_func", "FUNCTION")
             kg.save()
@@ -204,7 +204,7 @@ class TestGraphEncryption:
     def test_graph_disabled_encryption_is_pickle(self, isolated_cognirepo):
         _disable_encryption(isolated_cognirepo)
 
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         kg = KnowledgeGraph()
         kg.add_node("fn::visible_func", "FUNCTION")
         kg.save()

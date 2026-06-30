@@ -84,7 +84,7 @@ def test_edge_types_match_docs():
     Every EdgeType constant in graph/knowledge_graph.py must appear in
     docs/architecture/graph.md.
     """
-    from graph.knowledge_graph import EdgeType
+    from data.graph.knowledge_graph import EdgeType
 
     graph_doc = (ROOT / "docs" / "architecture" / "graph.md").read_text(encoding="utf-8")
 

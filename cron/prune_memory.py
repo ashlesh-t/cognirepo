@@ -70,7 +70,7 @@ AGGRESSIVE_THRESHOLD = 0.05
 def _check_memory_pressure() -> bool:
     """Return True if it is safe to proceed (circuit CLOSED)."""
     try:
-        from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+        from data.memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
         get_breaker().check()
         return True
     except Exception:  # pylint: disable=broad-except
@@ -117,7 +117,7 @@ def _rebuild_faiss(kept: list[dict[str, Any]], dry_run: bool) -> int:
     try:
         import faiss  # pylint: disable=import-outside-toplevel
         import numpy as np  # pylint: disable=import-outside-toplevel
-        from memory.embeddings import get_model  # pylint: disable=import-outside-toplevel
+        from data.memory.embeddings import get_model  # pylint: disable=import-outside-toplevel
 
         model = get_model()
         texts = [e.get("text", "") for e in kept]
@@ -145,7 +145,7 @@ def _prune_graph(dry_run: bool) -> dict[str, int]:
     if not os.path.exists(_graph_pkl()):
         return stats
     try:
-        from graph.knowledge_graph import KnowledgeGraph, NodeType  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph, NodeType  # pylint: disable=import-outside-toplevel
         kg = KnowledgeGraph()
         orphans = [n for n in list(kg.G.nodes()) if kg.G.degree(n) == 0]
         stats["orphans_removed"] = len(orphans)
@@ -276,7 +276,7 @@ def cleanup_suppressed(
         return {"skipped": True, "reason": "circuit_open"}
 
     try:
-        from memory.cleanup_queue import CleanupQueue          # pylint: disable=import-outside-toplevel
+        from data.memory.cleanup_queue import CleanupQueue          # pylint: disable=import-outside-toplevel
         from core.vector_db.local_vector_db import LocalVectorDB    # pylint: disable=import-outside-toplevel
     except ImportError as exc:
         return {"error": str(exc)}

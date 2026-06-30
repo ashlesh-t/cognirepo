@@ -72,8 +72,8 @@ def _add_to_knowledge_graph(text: str, source_file: str) -> None:
             return
 
         import hashlib  # pylint: disable=import-outside-toplevel
-        from graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType  # pylint: disable=import-outside-toplevel
-        from graph.graph_utils import extract_entities_from_text, make_node_id  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType  # pylint: disable=import-outside-toplevel
+        from data.graph.graph_utils import extract_entities_from_text, make_node_id  # pylint: disable=import-outside-toplevel
 
         node_hash = hashlib.sha256(text.encode()).hexdigest()[:8]
         node_id = f"memory::{node_hash}"
@@ -105,7 +105,7 @@ def _add_to_knowledge_graph(text: str, source_file: str) -> None:
 def _store_globally(text: str) -> None:
     """Persist text in the global ~/.cognirepo/ user memory store."""
     try:
-        from memory.user_memory import set_preference, record_action  # pylint: disable=import-outside-toplevel
+        from data.memory.user_memory import set_preference, record_action  # pylint: disable=import-outside-toplevel
         import hashlib  # pylint: disable=import-outside-toplevel
         key = f"memory:{hashlib.sha256(text.encode()).hexdigest()[:8]}"
         set_preference(key, {"text": text, "source": "claude-auto-memory", "agent": "claude"})
@@ -218,7 +218,7 @@ def _store_visited_file(file_path: str) -> bool:
 
     # Chunk and store
     try:
-        from memory.auto_store import AutoStore  # pylint: disable=import-outside-toplevel
+        from data.memory.auto_store import AutoStore  # pylint: disable=import-outside-toplevel
         store = AutoStore()
         chunks = _chunk_source_file(content, abs_path)
         stored_any = False

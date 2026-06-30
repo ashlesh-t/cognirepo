@@ -31,7 +31,7 @@ class CrossRepoRouter:
         Falls back to orgs.json for backward compatibility if no graph siblings found.
         """
         try:
-            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
             og = get_org_graph()
             siblings = og.get_siblings(self.repo_path)
             if siblings:
@@ -63,7 +63,7 @@ class CrossRepoRouter:
         # Primary source: OrgGraph (~/.cognirepo/org_graph.pkl) — this is where
         # child repos registered via `cognirepo init --parent-repo` live.
         try:
-            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
             og = get_org_graph()
             for repo_path in og.list_repos():
                 abs_repo = os.path.realpath(os.path.normpath(repo_path))
@@ -173,7 +173,7 @@ class CrossRepoRouter:
             return []
 
         all_results = []
-        from memory.semantic_memory import SemanticMemory  # pylint: disable=import-outside-toplevel
+        from data.memory.semantic_memory import SemanticMemory  # pylint: disable=import-outside-toplevel
         from core.config.paths import _CTX_DIR  # pylint: disable=import-outside-toplevel
 
         for repo in siblings:
@@ -212,7 +212,7 @@ class CrossRepoRouter:
         if not self._project_org or not self._project_name:
             return []
         try:
-            from memory.project_memory import ProjectMemory  # pylint: disable=import-outside-toplevel
+            from data.memory.project_memory import ProjectMemory  # pylint: disable=import-outside-toplevel
             pm = ProjectMemory(self._project_org, self._project_name)
             results = pm.search(query, top_k=top_k)
             for r in results:

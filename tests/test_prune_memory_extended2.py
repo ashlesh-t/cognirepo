@@ -164,7 +164,7 @@ def test_prune_graph_dry_run(tmp_path):
     with open(pkl_path, "w") as f:
         f.write("fake")
     with patch("cron.prune_memory._graph_pkl", return_value=pkl_path):
-        with patch("graph.knowledge_graph.KnowledgeGraph") as mock_kg_cls:
+        with patch("data.graph.knowledge_graph.KnowledgeGraph") as mock_kg_cls:
             import networkx as nx
             mock_kg = MagicMock()
             mock_kg.G.nodes.return_value = []
@@ -183,7 +183,7 @@ def test_prune_graph_dry_run(tmp_path):
 def test_cleanup_suppressed_empty_queue(tmp_path):
     import cron.prune_memory as pm
     with patch("cron.prune_memory._check_memory_pressure", return_value=True):
-        with patch("memory.cleanup_queue.CleanupQueue") as mock_queue_cls:
+        with patch("data.memory.cleanup_queue.CleanupQueue") as mock_queue_cls:
             mock_q = MagicMock()
             mock_q.__len__ = lambda s: 0
             mock_q.pop_batch.return_value = []
@@ -195,7 +195,7 @@ def test_cleanup_suppressed_empty_queue(tmp_path):
 def test_cleanup_suppressed_dry_run(tmp_path):
     import cron.prune_memory as pm
     with patch("cron.prune_memory._check_memory_pressure", return_value=True):
-        with patch("memory.cleanup_queue.CleanupQueue") as mock_queue_cls:
+        with patch("data.memory.cleanup_queue.CleanupQueue") as mock_queue_cls:
             mock_q = MagicMock()
             mock_q.__len__ = MagicMock(return_value=3)
             mock_q.pop_batch.return_value = [

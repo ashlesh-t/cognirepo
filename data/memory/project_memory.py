@@ -20,7 +20,7 @@ from pathlib import Path
 
 from core.config.lock import store_lock
 from core.config.orgs import get_shared_memory_path
-from memory.embeddings import encode_with_timeout
+from data.memory.embeddings import encode_with_timeout
 
 logger = logging.getLogger(__name__)
 

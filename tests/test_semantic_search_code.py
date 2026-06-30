@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 def _make_indexer_with_symbols(symbols: list[dict]):
     """Build a mock ASTIndexer with a FAISS index populated from symbols."""
     import faiss
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.knowledge_graph import KnowledgeGraph
     from indexer.ast_indexer import ASTIndexer
 
     ASTIndexer.lookup_symbol.cache_clear()
@@ -135,7 +135,7 @@ class TestSemanticSearchCode:
         """semantic_search_code must never return episodic (non-symbol) entries."""
         from tools.semantic_search_code import semantic_search_code
         import faiss as _faiss
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         from indexer.ast_indexer import ASTIndexer
 
         ASTIndexer.lookup_symbol.cache_clear()

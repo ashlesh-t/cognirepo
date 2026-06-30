@@ -56,7 +56,7 @@ def _detect_blind_spots(index_health: dict) -> list[str]:
 
     # ── 3. Knowledge graph empty or corrupted ────────────────────────────────
     try:
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         import os as _os  # pylint: disable=import-outside-toplevel
         kg = KnowledgeGraph()
         pkl_path = get_path("graph/graph.pkl")
@@ -123,7 +123,7 @@ def _detect_blind_spots(index_health: dict) -> list[str]:
 
     # ── 7. Microservice children with no API edges ───────────────────────────
     try:
-        from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+        from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
         import os as _os2  # pylint: disable=import-outside-toplevel
         _og = get_org_graph()
         _children = _og.get_children(_os2.getcwd())
@@ -196,7 +196,7 @@ def prime_session() -> dict:
 
     # ── architecture + recent decisions from learning store ───────────────────
     try:
-        from memory.learning_store import get_learning_store  # pylint: disable=import-outside-toplevel
+        from data.memory.learning_store import get_learning_store  # pylint: disable=import-outside-toplevel
         store = get_learning_store()
         arch_learnings = store.retrieve_learnings("architecture overview design", top_k=3)
         brief["architecture"] = [
@@ -213,7 +213,7 @@ def prime_session() -> dict:
 
     # ── entry points from knowledge graph (top symbols by in-degree) ─────────
     try:
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         kg = KnowledgeGraph()
         if kg.G.number_of_nodes() > 0:
             top = sorted(
@@ -234,8 +234,8 @@ def prime_session() -> dict:
     # agents into reporting CI/config files as "hottest symbols". Both keys
     # are emitted for one release; hot_symbols is deprecated.
     try:
-        from graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
-        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
+        from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(_KG())
         weights = bt.data.get("symbol_weights", {})
         hot = sorted(

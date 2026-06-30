@@ -33,8 +33,8 @@ from watchdog.observers import Observer
 from indexer.language_registry import is_supported
 
 if TYPE_CHECKING:
-    from graph.behaviour_tracker import BehaviourTracker
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.behaviour_tracker import BehaviourTracker
+    from data.graph.knowledge_graph import KnowledgeGraph
     from indexer.ast_indexer import ASTIndexer
 
 
@@ -112,7 +112,7 @@ class RepoFileHandler(FileSystemEventHandler):
 
             # 4. Tag matching episodic entries as stale (not deleted)
             try:
-                from memory.episodic_memory import mark_stale  # pylint: disable=import-outside-toplevel
+                from data.memory.episodic_memory import mark_stale  # pylint: disable=import-outside-toplevel
                 mark_stale(rel_path)
             except Exception as _exc:  # pylint: disable=broad-except
                 import logging as _logging  # pylint: disable=import-outside-toplevel

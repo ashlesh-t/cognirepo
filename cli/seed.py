@@ -76,7 +76,7 @@ def _seed_commit_messages(repo_root: str, dry_run: bool = False) -> int:
         return 0
 
     try:
-        from memory.learning_store import get_learning_store  # pylint: disable=import-outside-toplevel
+        from data.memory.learning_store import get_learning_store  # pylint: disable=import-outside-toplevel
         store = get_learning_store()
     except Exception:  # pylint: disable=broad-except
         return 0
@@ -169,7 +169,7 @@ def _seed_adr_files(repo_root: str, dry_run: bool = False) -> int:
         return 0
 
     try:
-        from memory.learning_store import get_learning_store  # pylint: disable=import-outside-toplevel
+        from data.memory.learning_store import get_learning_store  # pylint: disable=import-outside-toplevel
         store = get_learning_store()
     except Exception:  # pylint: disable=broad-except
         return 0
@@ -210,7 +210,7 @@ def _seed_inline_comments(repo_root: str, dry_run: bool = False) -> int:
                        ".cognirepo", "dist", "build"})
 
     try:
-        from memory.learning_store import get_learning_store  # pylint: disable=import-outside-toplevel
+        from data.memory.learning_store import get_learning_store  # pylint: disable=import-outside-toplevel
         store = get_learning_store()
     except Exception:  # pylint: disable=broad-except
         return 0
@@ -265,8 +265,8 @@ def seed_from_git_log(
     # pylint: disable=too-many-locals, too-many-branches
     # ── 1. resolve tracker ────────────────────────────────────────────────────
     if tracker is None:
-        from graph.knowledge_graph import KnowledgeGraph        # pylint: disable=import-outside-toplevel
-        from graph.behaviour_tracker import BehaviourTracker    # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph        # pylint: disable=import-outside-toplevel
+        from data.graph.behaviour_tracker import BehaviourTracker    # pylint: disable=import-outside-toplevel
         tracker = BehaviourTracker(graph=KnowledgeGraph())
 
     # idempotent guard
@@ -321,7 +321,7 @@ def seed_from_git_log(
 
     # ── 4. resolve symbols from AST index ────────────────────────────────────
     if indexer is None:
-        from graph.knowledge_graph import KnowledgeGraph    # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph    # pylint: disable=import-outside-toplevel
         from indexer.ast_indexer import ASTIndexer          # pylint: disable=import-outside-toplevel
         indexer = ASTIndexer(graph=tracker.graph if hasattr(tracker, "graph") else KnowledgeGraph())
         indexer.load()

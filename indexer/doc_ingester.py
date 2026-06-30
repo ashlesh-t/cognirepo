@@ -99,7 +99,7 @@ class DocIngester:
             return {"chunks": 0, "files": 0}
 
         try:
-            from memory.embeddings import get_model          # pylint: disable=import-outside-toplevel
+            from data.memory.embeddings import get_model          # pylint: disable=import-outside-toplevel
             from core.vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
         except ImportError as exc:
             log.warning("DocIngester: cannot import dependencies (%s) — skipping", exc)

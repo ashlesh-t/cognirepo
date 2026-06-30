@@ -201,7 +201,7 @@ def build_org_graph_for_org(org_name: str) -> int:
     Returns count of edges added.
     """
     from core.config.orgs import list_orgs  # pylint: disable=import-outside-toplevel
-    from graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
+    from data.graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
 
     orgs = list_orgs()
     org_data = orgs.get(org_name, {})

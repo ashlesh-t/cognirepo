@@ -10,7 +10,7 @@ from server.learning_middleware import intercept_after_store, intercept_after_ep
 
 def test_intercept_after_store_captures_correction(tmp_path, monkeypatch):
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
-    import memory.learning_store as ls
+    import data.memory.learning_store as ls
     # Reset singleton
     ls._STORE = None
 
@@ -32,7 +32,7 @@ def test_intercept_after_store_captures_correction(tmp_path, monkeypatch):
 
 def test_intercept_after_store_ignores_normal_text(tmp_path, monkeypatch):
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
-    import memory.learning_store as ls
+    import data.memory.learning_store as ls
     ls._STORE = None
 
     stored = []
@@ -50,7 +50,7 @@ def test_intercept_after_store_ignores_normal_text(tmp_path, monkeypatch):
 
 def test_intercept_after_episode_captures_prod_issue(tmp_path, monkeypatch):
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
-    import memory.learning_store as ls
+    import data.memory.learning_store as ls
     ls._STORE = None
 
     stored = []

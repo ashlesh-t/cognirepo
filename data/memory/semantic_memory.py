@@ -10,7 +10,7 @@ Module for managing and retrieving semantic memories using vector embeddings.
 import logging
 
 from core.vector_db.factory import get_vector_adapter
-from memory.embeddings import encode_with_timeout
+from data.memory.embeddings import encode_with_timeout
 
 logger = logging.getLogger(__name__)
 

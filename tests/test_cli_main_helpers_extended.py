@@ -100,15 +100,15 @@ def test_log_error_no_context(tmp_path):
 def test_direct_store_local():
     from cli.main import _direct_store
     with patch("tools.store_memory.store_memory", return_value={"status": "stored", "id": "abc"}):
-        with patch("memory.user_memory.record_action"):
+        with patch("data.memory.user_memory.record_action"):
             result = _direct_store("remember this", "cli")
     assert isinstance(result, dict)
 
 
 def test_direct_store_global():
     from cli.main import _direct_store
-    with patch("memory.user_memory.set_preference"):
-        with patch("memory.user_memory.record_action"):
+    with patch("data.memory.user_memory.set_preference"):
+        with patch("data.memory.user_memory.record_action"):
             result = _direct_store("remember this globally", "cli", global_scope=True)
     assert result["scope"] == "global"
 
@@ -118,15 +118,15 @@ def test_direct_store_global():
 def test_direct_retrieve_local():
     from cli.main import _direct_retrieve
     with patch("tools.retrieve_memory.retrieve_memory", return_value=[{"text": "found", "score": 0.9}]):
-        with patch("memory.user_memory.record_action"):
+        with patch("data.memory.user_memory.record_action"):
             result = _direct_retrieve("query text", top_k=5)
     assert isinstance(result, list)
 
 
 def test_direct_retrieve_global():
     from cli.main import _direct_retrieve
-    with patch("memory.user_memory.list_preferences", return_value={"key": {"text": "pref"}}):
-        with patch("memory.user_memory.record_action"):
+    with patch("data.memory.user_memory.list_preferences", return_value={"key": {"text": "pref"}}):
+        with patch("data.memory.user_memory.record_action"):
             result = _direct_retrieve("query", top_k=5, global_scope=True)
     assert isinstance(result, (list, dict))
 
@@ -144,7 +144,7 @@ def test_direct_search():
 
 def test_direct_log_event():
     from cli.main import _direct_log
-    with patch("memory.episodic_memory.log_event"):
+    with patch("data.memory.episodic_memory.log_event"):
         result = _direct_log("deployment", {"version": "1.1.0"})
     assert result["status"] == "logged"
     assert result["event"] == "deployment"
@@ -154,7 +154,7 @@ def test_direct_log_event():
 
 def test_direct_history():
     from cli.main import _direct_history
-    with patch("memory.episodic_memory.get_history", return_value=[{"event": "test"}]):
+    with patch("data.memory.episodic_memory.get_history", return_value=[{"event": "test"}]):
         result = _direct_history(limit=10)
     assert isinstance(result, list)
 
@@ -293,7 +293,7 @@ def test_cmd_doctor_as_json_no_crash():
 
 def test_cmd_sessions_no_crash(capsys):
     from cli.main import _cmd_sessions
-    with patch("memory.episodic_memory.get_history", return_value=[
+    with patch("data.memory.episodic_memory.get_history", return_value=[
         {"event": "session_end", "timestamp": "2026-01-01T00:00:00Z", "metadata": {"summary": "test session"}}
     ]):
         try:

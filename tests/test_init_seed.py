@@ -109,8 +109,8 @@ class TestSeedFromGitLog:
         assert "skipped" in result
 
     def test_already_seeded_is_idempotent(self):
-        from graph.knowledge_graph import KnowledgeGraph
-        from graph.behaviour_tracker import BehaviourTracker
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from data.graph.behaviour_tracker import BehaviourTracker
         from cli.seed import seed_from_git_log
 
         kg = KnowledgeGraph()
@@ -124,8 +124,8 @@ class TestSeedFromGitLog:
         assert result.get("skipped") == "already seeded"
 
     def test_dry_run_writes_nothing(self):
-        from graph.knowledge_graph import KnowledgeGraph
-        from graph.behaviour_tracker import BehaviourTracker
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from data.graph.behaviour_tracker import BehaviourTracker
         from cli.seed import seed_from_git_log
 
         kg = KnowledgeGraph()
@@ -145,8 +145,8 @@ class TestSeedFromGitLog:
         if proc.returncode != 0:
             pytest.skip("no git repo available")
 
-        from graph.knowledge_graph import KnowledgeGraph
-        from graph.behaviour_tracker import BehaviourTracker
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from data.graph.behaviour_tracker import BehaviourTracker
         from indexer.ast_indexer import ASTIndexer
         from cli.seed import seed_from_git_log
 

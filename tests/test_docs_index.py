@@ -156,13 +156,13 @@ def test_docs_index_answer_returns_results(tmp_path):
     mock_embeddings = MagicMock()
     mock_embeddings.get_model.return_value = fake_model
 
-    with patch.dict(sys.modules, {"faiss": mock_faiss, "memory.embeddings": mock_embeddings}):
+    with patch.dict(sys.modules, {"faiss": mock_faiss, "data.memory.embeddings": mock_embeddings}):
         idx = DocsIndex(tmp_path)
 
     idx._index = fake_faiss_index
     idx._meta = chunks
 
-    with patch.dict(sys.modules, {"memory.embeddings": mock_embeddings}):
+    with patch.dict(sys.modules, {"data.memory.embeddings": mock_embeddings}):
         results = idx.answer("how do I install", top_k=2)
 
     assert len(results) == 2

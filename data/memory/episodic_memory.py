@@ -170,7 +170,7 @@ def _semantic_episode_search(data: list, query: str, limit: int) -> list:
     """Vector fallback for search_episodes when BM25 returns no results."""
     try:
         import numpy as np  # pylint: disable=import-outside-toplevel
-        from memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
+        from data.memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
         q_vec = encode_with_timeout(query)
         q_norm = np.linalg.norm(q_vec)
         if q_norm == 0:

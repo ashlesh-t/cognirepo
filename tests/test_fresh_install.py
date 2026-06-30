@@ -21,7 +21,7 @@ def test_rank_bm25_importable():
 
 def test_episodic_search_no_import_error():
     """episodic_search must run without raising ImportError."""
-    from memory.episodic_memory import search_episodes, log_event
+    from data.memory.episodic_memory import search_episodes, log_event
 
     log_event("sprint1 test entry", {"tag": "test"})
     results = search_episodes("sprint1 test")

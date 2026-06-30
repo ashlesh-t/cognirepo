@@ -8,7 +8,7 @@
 import pytest
 
 from core.probes import ProbeResult, RSSProbe, DiskFreeProbe, StorageSizeProbe
-from memory.circuit_breaker import CircuitBreaker, CircuitOpenError, State
+from data.memory.circuit_breaker import CircuitBreaker, CircuitOpenError, State
 
 
 # ── probe unit tests ──────────────────────────────────────────────────────────

@@ -164,7 +164,7 @@ def route(
 
     # ── 3. inject relevant past learnings (corrections/prod_issues) ─────────
     try:
-        from memory.learning_store import get_learning_store  # pylint: disable=import-outside-toplevel
+        from data.memory.learning_store import get_learning_store  # pylint: disable=import-outside-toplevel
         learnings = get_learning_store().retrieve_learnings(
             query, top_k=3, types=["correction", "prod_issue"],
         )
@@ -466,7 +466,7 @@ def try_local_resolve(query: str, context_bundle) -> str | None:
 def _lookup_symbol(symbol: str, _bundle) -> str | None:
     """Reverse-index lookup for a symbol name."""
     try:
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
 
         if not os.path.exists(".cognirepo/index/ast_index.json"):
@@ -499,7 +499,7 @@ def _lookup_symbol(symbol: str, _bundle) -> str | None:
 def _who_calls(func_name: str, _bundle) -> str | None:
     """Return callers of a function from the call graph."""
     try:
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
 
         if not os.path.exists(".cognirepo/graph/graph.pkl"):
             return None
@@ -552,7 +552,7 @@ def _list_files() -> str | None:
 def _graph_stats() -> str | None:
     """Return a one-line summary of the knowledge graph."""
     try:
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         kg = KnowledgeGraph()
         graph = kg.G
         return f"Knowledge graph: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges."
@@ -563,7 +563,7 @@ def _graph_stats() -> str | None:
 def _recent_history() -> str | None:
     """Return last 5 episodic events."""
     try:
-        from memory.episodic_memory import get_history  # pylint: disable=import-outside-toplevel
+        from data.memory.episodic_memory import get_history  # pylint: disable=import-outside-toplevel
         events = get_history(5)
         if not events:
             return "No episodic history found."
@@ -725,7 +725,7 @@ def _post_process(
 ) -> None:
     """Log episodic event and update behaviour graph after a successful route."""
     try:
-        from memory.episodic_memory import log_event  # pylint: disable=import-outside-toplevel
+        from data.memory.episodic_memory import log_event  # pylint: disable=import-outside-toplevel
         log_event(
             event=f"ask: {query[:120]}",
             metadata={
@@ -740,8 +740,8 @@ def _post_process(
         pass
 
     try:
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         import uuid  # pylint: disable=import-outside-toplevel
 
         kg = KnowledgeGraph()

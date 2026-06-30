@@ -187,7 +187,7 @@ class TestBackendParity:
 
 class TestEpisodicBM25Filter:
     def test_returns_list(self, isolated_cognirepo):
-        from memory.episodic_memory import log_event
+        from data.memory.episodic_memory import log_event
         log_event("deployed auth service to production", {"env": "prod"})
         log_event("fixed bug in payment module", {"module": "payments"})
         log_event("updated JWT expiry to 24 hours", {"service": "auth"})
@@ -197,7 +197,7 @@ class TestEpisodicBM25Filter:
         assert isinstance(results, list)
 
     def test_relevant_event_ranked_first(self, isolated_cognirepo):
-        from memory.episodic_memory import log_event
+        from data.memory.episodic_memory import log_event
         log_event("JWT token expiry updated in middleware")
         log_event("unrelated cooking recipe discussion")
         log_event("another unrelated topic about databases")
@@ -213,7 +213,7 @@ class TestEpisodicBM25Filter:
         assert results == []
 
     def test_top_k_respected(self, isolated_cognirepo):
-        from memory.episodic_memory import log_event
+        from data.memory.episodic_memory import log_event
         for i in range(10):
             log_event(f"test event number {i} with some content")
 
@@ -222,7 +222,7 @@ class TestEpisodicBM25Filter:
         assert len(results) <= 3
 
     def test_time_range_filter(self, isolated_cognirepo):
-        from memory.episodic_memory import log_event, get_history
+        from data.memory.episodic_memory import log_event, get_history
         log_event("early event alpha")
         log_event("middle event beta")
         log_event("recent event gamma")

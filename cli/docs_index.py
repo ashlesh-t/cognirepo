@@ -97,7 +97,7 @@ def build_docs_index(dest: Path, doc_roots: Optional[list[Path]] = None) -> int:
     Returns the number of chunks indexed.
     """
     import faiss  # pylint: disable=import-outside-toplevel
-    from memory.embeddings import get_model  # pylint: disable=import-outside-toplevel
+    from data.memory.embeddings import get_model  # pylint: disable=import-outside-toplevel
 
     dest.mkdir(parents=True, exist_ok=True)
 
@@ -186,7 +186,7 @@ class DocsIndex:
         Return top_k results with their cosine similarity scores.
         Each result: {file, section, score, text}
         """
-        from memory.embeddings import get_model  # pylint: disable=import-outside-toplevel
+        from data.memory.embeddings import get_model  # pylint: disable=import-outside-toplevel
         import numpy as np  # pylint: disable=import-outside-toplevel
         model = get_model()
         vec = next(iter(model.embed([query]))).astype("float32").reshape(1, -1)

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 
-from memory.learning_store import auto_tag, get_learning_store
+from data.memory.learning_store import auto_tag, get_learning_store
 
 logger = logging.getLogger(__name__)
 

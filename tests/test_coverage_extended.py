@@ -68,11 +68,11 @@ def test_cross_repo_all_org_repos(tmp_path):
 
 def test_auto_store_basic():
     """Exercise AutoStore logic to remove 0% coverage."""
-    from memory.auto_store import AutoStore
+    from data.memory.auto_store import AutoStore
     
     # Patch dependencies globally
     with patch("vector_db.local_vector_db.LocalVectorDB"), \
-         patch("memory.embeddings.encode_with_timeout") as mock_encode:
+         patch("data.memory.embeddings.encode_with_timeout") as mock_encode:
         
         mock_encode.return_value = np.zeros(384, dtype="float32")
         
@@ -117,7 +117,7 @@ def test_env_wizard_status(tmp_path):
 def test_ast_indexer_unsupported_ext(tmp_path):
     """Ensure indexer handles unsupported extensions gracefully."""
     from indexer.ast_indexer import ASTIndexer
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.knowledge_graph import KnowledgeGraph
     
     # Create the file first to avoid FileNotFoundError
     dummy = tmp_path / "dummy.unknown"

@@ -217,7 +217,7 @@ def wire_cross_service_edges(
     Returns number of edges added.
     """
     from core.config.paths import http_calls_path, endpoints_path  # pylint: disable=import-outside-toplevel
-    from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+    from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
 
     caller_repo = os.path.abspath(caller_repo)
     calls_file = http_calls_path()
@@ -271,8 +271,8 @@ def wire_cross_service_edges(
 
                 # Add CALLS_ENDPOINT edge to local KG
                 if knowledge_graph is not None:
-                    from graph.knowledge_graph import NodeType, EdgeType  # pylint: disable=import-outside-toplevel
-                    from graph.graph_utils import make_node_id  # pylint: disable=import-outside-toplevel
+                    from data.graph.knowledge_graph import NodeType, EdgeType  # pylint: disable=import-outside-toplevel
+                    from data.graph.graph_utils import make_node_id  # pylint: disable=import-outside-toplevel
                     caller_node = make_node_id("FUNCTION", call["caller_function"], call["caller_file"])
                     ep_node_id = f"endpoint::{sib_repo_abs}::{ep['method']}::{ep['path_pattern']}"
                     knowledge_graph.add_node(  # type: ignore[attr-defined]

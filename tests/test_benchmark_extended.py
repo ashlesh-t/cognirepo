@@ -139,7 +139,7 @@ def test_measure_symbol_lookup_mocked():
     mock_idx = MagicMock()
     mock_idx.lookup_symbol.return_value = [{"name": "fn", "file": "x.py", "line": 1}]
     with patch("indexer.ast_indexer.ASTIndexer", return_value=mock_idx):
-        with patch("graph.knowledge_graph.KnowledgeGraph"):
+        with patch("data.graph.knowledge_graph.KnowledgeGraph"):
             result = measure_symbol_lookup(["hybrid_retrieve"])
     assert isinstance(result, dict)
 

@@ -30,7 +30,7 @@ def setup_benchmark_index(isolated_cognirepo, monkeypatch):
     """
     from cli.init_project import init_project
     from indexer.ast_indexer import ASTIndexer
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.knowledge_graph import KnowledgeGraph
     
     # Initialize
     init_project(no_index=True, interactive=False, non_interactive=True)
@@ -54,7 +54,7 @@ def setup_benchmark_index(isolated_cognirepo, monkeypatch):
 
 def _index_has_data() -> bool:
     from indexer.ast_indexer import ASTIndexer
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.knowledge_graph import KnowledgeGraph
     idx = ASTIndexer(graph=KnowledgeGraph())
     idx.load()
     return len(idx.index_data.get("reverse_index", {})) > 0
@@ -91,7 +91,7 @@ class TestTokenReductionMetric:
 class TestSymbolLookupLatency:
     def test_lookup_under_10ms(self):
         from indexer.ast_indexer import ASTIndexer
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()
 
@@ -102,7 +102,7 @@ class TestSymbolLookupLatency:
 
     def test_hit_rate_for_known_symbols(self):
         from indexer.ast_indexer import ASTIndexer
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         idx = ASTIndexer(graph=KnowledgeGraph())
         idx.load()
         assert idx.lookup_symbol("store_memory")
@@ -149,7 +149,7 @@ class TestMemoryRecall:
         # project default (chroma), so LocalVectorDB would always be empty.
         db = get_vector_adapter()
         results = db.search(
-            __import__("memory.embeddings", fromlist=["encode_with_timeout"])
+            __import__("data.memory.embeddings", fromlist=["encode_with_timeout"])
             .encode_with_timeout(marker).astype("float32"),
             top_k=5,
         )

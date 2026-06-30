@@ -121,11 +121,12 @@ where = ["."]
 include = [
     "cognirepo*",
     # ── New layered packages ───────────────────────────────────────────────────
-    "core*",
+    "core*", "data*",
     # ── Shim packages (old names, kept for backward compat until v2.0) ────────
     "_bm25*", "config*", "security*", "vector_db*",
+    "graph*", "memory*",
     # ── Not yet restructured layers (migrated in subsequent steps) ────────────
-    "adapters*", "cli*", "cron*", "graph*", "indexer*", "memory*",
+    "adapters*", "cli*", "cron*", "indexer*",
     "orchestrator*", "retrieval*", "server*", "tools*",
 ]
 exclude = ["venv*", "*.egg-info*"]

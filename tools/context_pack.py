@@ -124,7 +124,7 @@ def _autosave_context(result: dict) -> None:
         os.makedirs(save_dir, exist_ok=True)
         org_graph_summary = None
         try:
-            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
             org_graph_summary = get_org_graph().summary()
         except Exception:  # pylint: disable=broad-except
             pass
@@ -257,8 +257,8 @@ def context_pack(
     # ── 0. pre-call query enhancement ────────────────────────────────────────
     _enhanced = None
     try:
-        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         _bt = BehaviourTracker(KnowledgeGraph())
         _enhanced = enhance_query(query, _bt)
         retrieval_query = _enhanced.text
@@ -455,7 +455,7 @@ def context_pack(
 def _file_mode_context(file_path: str, max_tokens: int, window_lines: int, repo_root: str | None = None) -> dict:
     """Return all indexed context for a specific file (Cursor-style file mode)."""
     from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+    from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
 
     sections = []
     token_budget = max_tokens

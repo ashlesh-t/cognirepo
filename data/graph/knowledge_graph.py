@@ -147,7 +147,7 @@ class KnowledgeGraph:
         from multiple MCP server processes (e.g. Claude + Gemini) from
         corrupting the pickle.
         """
-        from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+        from data.memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
         breaker = get_breaker()
         breaker.check()
         os.makedirs(os.path.dirname(_graph_file()), exist_ok=True)

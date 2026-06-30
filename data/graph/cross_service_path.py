@@ -42,7 +42,7 @@ def _load_kg(repo_abs: str) -> "nx.DiGraph | None":
     """Load the KnowledgeGraph for a given repo directory."""
     try:
         from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         sib_dir = get_cognirepo_dir_for_repo(repo_abs)
         token = _CTX_DIR.set(sib_dir)
         try:
@@ -60,7 +60,7 @@ def _find_symbol_in_repo(symbol: str, repo_abs: str) -> "str | None":
     try:
         from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
         from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         sib_dir = get_cognirepo_dir_for_repo(repo_abs)
         token = _CTX_DIR.set(sib_dir)
         try:
@@ -68,7 +68,7 @@ def _find_symbol_in_repo(symbol: str, repo_abs: str) -> "str | None":
             idx.load()
             locs = idx.lookup_symbol(symbol)
             if locs:
-                from graph.graph_utils import make_node_id  # pylint: disable=import-outside-toplevel
+                from data.graph.graph_utils import make_node_id  # pylint: disable=import-outside-toplevel
                 return make_node_id("FUNCTION", symbol, locs[0]["file"])
         finally:
             _CTX_DIR.reset(token)
@@ -113,8 +113,8 @@ def find_symbol_path(
       services_traversed— list of service names
       error             — error message if path not found
     """
-    from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
-    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+    from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+    from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
 
     og = get_org_graph()
 

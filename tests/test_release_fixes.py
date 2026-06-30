@@ -66,7 +66,7 @@ class TestSkipDirs:
 
 class TestBoundedSubgraph:
     def _build_graph(self, fan_out: int):
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         kg = KnowledgeGraph.__new__(KnowledgeGraph)  # skip disk load
         import networkx as nx
         kg.G = nx.DiGraph()
@@ -83,7 +83,7 @@ class TestBoundedSubgraph:
         assert result["truncated"] is True
 
     def test_hub_nodes_skipped(self):
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         import networkx as nx
         kg = KnowledgeGraph.__new__(KnowledgeGraph)
         kg.G = nx.DiGraph()
@@ -110,7 +110,7 @@ class TestBoundedSubgraph:
 
 class TestLearningStoreDedup:
     def test_identical_text_not_duplicated(self, tmp_path, monkeypatch):
-        import memory.learning_store as ls_mod
+        import data.memory.learning_store as ls_mod
         backend = ls_mod._LearningBackend.__new__(ls_mod._LearningBackend)
         index_file = tmp_path / "learnings.json"
         monkeypatch.setattr(backend, "_index_path", lambda: index_file, raising=False)
@@ -123,7 +123,7 @@ class TestLearningStoreDedup:
         assert len(records) == 1
 
     def test_different_text_stored_separately(self, tmp_path, monkeypatch):
-        import memory.learning_store as ls_mod
+        import data.memory.learning_store as ls_mod
         backend = ls_mod._LearningBackend.__new__(ls_mod._LearningBackend)
         index_file = tmp_path / "learnings.json"
         monkeypatch.setattr(backend, "_index_path", lambda: index_file, raising=False)

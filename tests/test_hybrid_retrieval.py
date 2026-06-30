@@ -18,7 +18,7 @@ from __future__ import annotations
 
 class TestHybridRetriever:
     def test_returns_list(self):
-        from memory.semantic_memory import SemanticMemory
+        from data.memory.semantic_memory import SemanticMemory
         sm = SemanticMemory()
         sm.store("fixed JWT expiry in verify_token")
         sm.store("refactored session handling")
@@ -29,7 +29,7 @@ class TestHybridRetriever:
         assert isinstance(results, list)
 
     def test_final_score_present(self):
-        from memory.semantic_memory import SemanticMemory
+        from data.memory.semantic_memory import SemanticMemory
         sm = SemanticMemory()
         sm.store("authentication token verification logic")
 
@@ -41,7 +41,7 @@ class TestHybridRetriever:
             assert 0.0 <= results[0]["final_score"] <= 1.0
 
     def test_top_k_respected(self):
-        from memory.semantic_memory import SemanticMemory
+        from data.memory.semantic_memory import SemanticMemory
         sm = SemanticMemory()
         for i in range(8):
             sm.store(f"memory item {i} about code and functions")
@@ -65,7 +65,7 @@ class TestHybridRetriever:
         assert isinstance(results, list)
 
     def test_hybrid_retrieve_function(self):
-        from memory.semantic_memory import SemanticMemory
+        from data.memory.semantic_memory import SemanticMemory
         sm = SemanticMemory()
         sm.store("debug the login flow for oauth")
 
@@ -74,7 +74,7 @@ class TestHybridRetriever:
         assert isinstance(results, list)
 
     def test_scores_sorted_descending(self):
-        from memory.semantic_memory import SemanticMemory
+        from data.memory.semantic_memory import SemanticMemory
         sm = SemanticMemory()
         sm.store("verify_token handles JWT expiry correctly")
         sm.store("unrelated topic about cooking recipes")
@@ -129,7 +129,7 @@ class TestConcurrentCacheMiss:
 
 class TestEpisodicBM25:
     def test_episodic_filter(self):
-        from memory.episodic_memory import log_event
+        from data.memory.episodic_memory import log_event
         log_event("deployed auth service to production", {"env": "prod"})
         log_event("fixed bug in payment module", {"module": "payments"})
         log_event("updated JWT expiry to 24 hours", {"service": "auth"})

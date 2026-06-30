@@ -22,7 +22,7 @@ from __future__ import annotations
 from collections import deque
 from pathlib import Path
 
-from graph.knowledge_graph import KnowledgeGraph
+from data.graph.knowledge_graph import KnowledgeGraph
 from indexer.ast_indexer import ASTIndexer
 
 

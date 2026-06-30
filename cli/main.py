@@ -101,9 +101,9 @@ def _log_error_to_file(exc: Exception, context: str = "") -> str:
 
 def _direct_store(text, source, global_scope=False):
     """Call store_memory tool directly."""
-    from memory.user_memory import record_action  # pylint: disable=import-outside-toplevel
+    from data.memory.user_memory import record_action  # pylint: disable=import-outside-toplevel
     if global_scope:
-        from memory.user_memory import set_preference  # pylint: disable=import-outside-toplevel
+        from data.memory.user_memory import set_preference  # pylint: disable=import-outside-toplevel
         set_preference(f"memory:{hash(text) & 0xFFFFFF}", {"text": text, "source": source})
         record_action("store-global")
         return {"status": "stored", "text": text, "source": source, "scope": "global"}
@@ -114,9 +114,9 @@ def _direct_store(text, source, global_scope=False):
 
 def _direct_retrieve(query, top_k, global_scope=False):
     """Call retrieve_memory tool directly."""
-    from memory.user_memory import record_action  # pylint: disable=import-outside-toplevel
+    from data.memory.user_memory import record_action  # pylint: disable=import-outside-toplevel
     if global_scope:
-        from memory.user_memory import list_preferences  # pylint: disable=import-outside-toplevel
+        from data.memory.user_memory import list_preferences  # pylint: disable=import-outside-toplevel
         record_action("retrieve-global")
         prefs = list_preferences()
         # Simple keyword match over global preferences
@@ -425,7 +425,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
 
     # ── Check 3: Knowledge graph ──────────────────────────────────────────────
     try:
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         _kg = KnowledgeGraph()
         _nodes = _kg.G.number_of_nodes()
         _edges = _kg.G.number_of_edges()
@@ -626,7 +626,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
 
     # ── Check 9: Circuit breaker ──────────────────────────────────────────────
     try:
-        from memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+        from data.memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
         import psutil  # pylint: disable=import-outside-toplevel
         _cb = get_breaker()
         _rss_mb = psutil.Process().memory_info().rss / 1024 / 1024
@@ -771,7 +771,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
 
     # ── Check 17: org member repos have valid indexes ────────────────────────
     try:
-        from graph.org_graph import get_org_graph as _get_og  # pylint: disable=import-outside-toplevel
+        from data.graph.org_graph import get_org_graph as _get_og  # pylint: disable=import-outside-toplevel
         from core.config.paths import get_cognirepo_dir_for_repo as _gcdr  # pylint: disable=import-outside-toplevel
         _og2 = _get_og()
         _org_repos = _og2.list_repos() if _og2 else []
@@ -843,7 +843,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
 
     # ── Check 20: org CALLS_API wiring present for registered children ──────
     try:
-        from graph.org_graph import get_org_graph as _get_og3  # pylint: disable=import-outside-toplevel
+        from data.graph.org_graph import get_org_graph as _get_og3  # pylint: disable=import-outside-toplevel
         _og3 = _get_og3()
         _children3 = _og3.get_children(os.path.abspath(".")) if _og3 else []
         if _children3:
@@ -948,8 +948,8 @@ def _cmd_status() -> None:
     """
     print("\n  CogniRepo Status\n  " + "─" * 40)
     try:
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-        from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         from retrieval.hybrid import _load_weights  # pylint: disable=import-outside-toplevel
 
         weights = _load_weights()
@@ -1024,7 +1024,7 @@ def _cmd_status() -> None:
         # ── memory health ─────────────────────────────────────────────────────
         print("\n  Memory health:")
         try:
-            from memory.episodic_memory import _load as _ep_load, _get_max_events  # pylint: disable=import-outside-toplevel
+            from data.memory.episodic_memory import _load as _ep_load, _get_max_events  # pylint: disable=import-outside-toplevel
             ep_data    = _ep_load()
             ep_count   = len(ep_data)
             ep_cap     = _get_max_events()
@@ -1285,7 +1285,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
 
         # Register parent in org graph as hub
         try:
-            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
             og = get_org_graph()
             og.add_repo(parent_path, metadata={"role": "orchestrator"})
             og.save()
@@ -1330,7 +1330,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
             print("  Indexing … (this may take 30–120 s for large repos)\n")
             try:
                 from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-                from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+                from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
                 _kg = KnowledgeGraph()
                 _idx = ASTIndexer(graph=_kg)
                 _idx.index_repo(parent_path)
@@ -1759,7 +1759,7 @@ def _print_ready_summary(summary: dict | None = None) -> None:
 def _maybe_tip_index_repo() -> None:
     """Print an index-repo tip when the graph is empty (cold-start hint)."""
     try:
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         if KnowledgeGraph().G.number_of_nodes() == 0:
             print("Tip: run 'cognirepo index-repo .' to enable graph-based retrieval.")
     except Exception:  # pylint: disable=broad-except
@@ -1768,14 +1768,14 @@ def _maybe_tip_index_repo() -> None:
 
 def _direct_log(event, metadata):
     """Log an episodic event directly."""
-    from memory.episodic_memory import log_event  # pylint: disable=import-outside-toplevel
+    from data.memory.episodic_memory import log_event  # pylint: disable=import-outside-toplevel
     log_event(event, metadata)
     return {"status": "logged", "event": event}
 
 
 def _direct_history(limit):
     """Fetch episodic history directly."""
-    from memory.episodic_memory import get_history  # pylint: disable=import-outside-toplevel
+    from data.memory.episodic_memory import get_history  # pylint: disable=import-outside-toplevel
     return get_history(limit)
 
 
@@ -1792,7 +1792,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
             file=sys.stderr,
         )
         sys.exit(1)
-    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+    from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
     from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
     kg = KnowledgeGraph()
     indexer = ASTIndexer(graph=kg)
@@ -2027,7 +2027,7 @@ def _write_last_indexed_sha(repo_path: str) -> None:
 def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
     """Start the file watcher, optionally forking into the background."""
     import os  # pylint: disable=import-outside-toplevel
-    from graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+    from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
     from indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
 
     abs_path = os.path.abspath(path)
@@ -2113,9 +2113,9 @@ def _start_watcher_bg(path: str) -> None:
 
     def _run():
         try:
-            from graph.knowledge_graph import KnowledgeGraph as _KG    # pylint: disable=import-outside-toplevel
+            from data.graph.knowledge_graph import KnowledgeGraph as _KG    # pylint: disable=import-outside-toplevel
             from indexer.ast_indexer import ASTIndexer as _AI          # pylint: disable=import-outside-toplevel
-            from graph.behaviour_tracker import BehaviourTracker as _BT # pylint: disable=import-outside-toplevel
+            from data.graph.behaviour_tracker import BehaviourTracker as _BT # pylint: disable=import-outside-toplevel
             from indexer.file_watcher import create_watcher             # pylint: disable=import-outside-toplevel
             from cli.daemon import run_watcher_with_crash_guard         # pylint: disable=import-outside-toplevel
             import time as _time                                         # pylint: disable=import-outside-toplevel
@@ -3521,7 +3521,7 @@ def _main():
         _parent_repo = getattr(args, "parent_repo", None)
         if not _no_link:
             try:
-                from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+                from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
                 _og = get_org_graph()
                 _cwd = str(__import__("pathlib").Path.cwd().resolve())
 
@@ -3602,7 +3602,7 @@ def _main():
         # ── git-aware changed-only reindex ───────────────────────────────────
         if getattr(args, "changed_only", False):
             import subprocess as _sp  # pylint: disable=import-outside-toplevel
-            from graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
+            from data.graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
             from indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
             _supported_exts = {
                 ".py", ".js", ".ts", ".tsx", ".jsx", ".java",
@@ -3655,7 +3655,7 @@ def _main():
 
         # ── selective reindex (--files) ──────────────────────────────────────
         if getattr(args, "files", None):
-            from graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
+            from data.graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
             from indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
             _kg = _KG()
             _indexer = _AI(graph=_kg)
@@ -3810,7 +3810,7 @@ def _main():
                 _file_sums = _existing.get("_structured", {}).get("files", {})
                 if _file_sums:
                     from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-                    from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+                    from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
                     _kg = KnowledgeGraph()
                     _idx = ASTIndexer(graph=_kg)
                     _idx.load()
@@ -3889,7 +3889,7 @@ def _main():
             else:
                 print(f"Failed to unlink. Org '{args.org_name}' or repo path not found.")
         elif args.org_command == "link-repos":
-            from graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
+            from data.graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
             invalidate_org_graph()
             og = get_org_graph()
             og.link(args.repo_a, args.repo_b, kind=args.edge_type)
@@ -3900,7 +3900,7 @@ def _main():
                 f"[{args.edge_type}]"
             )
         elif args.org_command == "rewire":
-            from graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
+            from data.graph.org_graph import get_org_graph, invalidate_org_graph  # pylint: disable=import-outside-toplevel
             from indexer.http_call_scanner import wire_cross_service_edges  # pylint: disable=import-outside-toplevel
             from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
             invalidate_org_graph()
@@ -3926,7 +3926,7 @@ def _main():
                     _CTX_DIR.reset(token)
             print(f"Rewire complete — {total} CALLS_API edge(s) across {len(indexed)} indexed repo(s).")
         elif args.org_command == "graph":
-            from graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
             og = get_org_graph()
             if getattr(args, "json", False):
                 print(json.dumps(og.to_dict(), indent=2))
@@ -4015,7 +4015,7 @@ def _main():
                 print(f"[cognirepo] Watcher already running (PID {running['pid']}).")
                 return
             print("[cognirepo] Starting watcher (--ensure-running)...")
-            from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+            from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
             from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
             kg = KnowledgeGraph()
             indexer = ASTIndexer(graph=kg)
@@ -4086,7 +4086,7 @@ def _main():
                 _maybe_tip_index_repo()
 
         elif args.command == "user-prefs":
-            from memory.user_memory import (  # pylint: disable=import-outside-toplevel
+            from data.memory.user_memory import (  # pylint: disable=import-outside-toplevel
                 set_preference, list_preferences, get_behaviour_summary,
             )
             if args.set:

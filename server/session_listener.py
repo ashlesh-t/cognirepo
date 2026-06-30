@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from memory.learning_store import auto_tag, get_learning_store
+from data.memory.learning_store import auto_tag, get_learning_store
 
 logger = logging.getLogger(__name__)
 

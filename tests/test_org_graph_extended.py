@@ -15,7 +15,7 @@ import pytest
 
 @pytest.fixture
 def fresh_org_graph(tmp_path, monkeypatch):
-    import graph.org_graph as og_mod
+    import data.graph.org_graph as og_mod
     graph_file = str(tmp_path / "org_graph.pkl")
     monkeypatch.setattr(og_mod, "_graph_path", lambda: graph_file)
     # Prevent _migrate_from_orgs_json from pulling in real ~/.cognirepo/orgs.json
@@ -27,14 +27,14 @@ def fresh_org_graph(tmp_path, monkeypatch):
 # ── OrgGraph basic operations ─────────────────────────────────────────────────
 
 def test_org_graph_add_repo(fresh_org_graph):
-    from graph.org_graph import OrgGraph
+    from data.graph.org_graph import OrgGraph
     og = OrgGraph()
     og.add_repo("/path/to/repo")
     assert "/path/to/repo" in og.G.nodes
 
 
 def test_org_graph_add_edge(fresh_org_graph):
-    from graph.org_graph import OrgGraph
+    from data.graph.org_graph import OrgGraph
     og = OrgGraph()
     og.add_repo("/path/to/a")
     og.add_repo("/path/to/b")
@@ -43,7 +43,7 @@ def test_org_graph_add_edge(fresh_org_graph):
 
 
 def test_org_graph_get_dependencies_empty(fresh_org_graph):
-    from graph.org_graph import OrgGraph
+    from data.graph.org_graph import OrgGraph
     og = OrgGraph()
     og.add_repo("/path/to/current")
     deps = og.get_dependencies("/path/to/current")
@@ -52,7 +52,7 @@ def test_org_graph_get_dependencies_empty(fresh_org_graph):
 
 
 def test_org_graph_get_dependencies_one_hop(fresh_org_graph):
-    from graph.org_graph import OrgGraph
+    from data.graph.org_graph import OrgGraph
     og = OrgGraph()
     og.add_repo("/path/to/main")
     og.add_repo("/path/to/lib")
@@ -64,7 +64,7 @@ def test_org_graph_get_dependencies_one_hop(fresh_org_graph):
 
 
 def test_org_graph_get_dependents(fresh_org_graph):
-    from graph.org_graph import OrgGraph
+    from data.graph.org_graph import OrgGraph
     og = OrgGraph()
     og.add_repo("/path/to/lib")
     og.add_repo("/path/to/consumer")
@@ -74,7 +74,7 @@ def test_org_graph_get_dependents(fresh_org_graph):
 
 
 def test_org_graph_get_dependencies_multi_hop(fresh_org_graph):
-    from graph.org_graph import OrgGraph
+    from data.graph.org_graph import OrgGraph
     og = OrgGraph()
     og.add_repo("/a")
     og.add_repo("/b")
@@ -87,7 +87,7 @@ def test_org_graph_get_dependencies_multi_hop(fresh_org_graph):
 
 
 def test_org_graph_unknown_repo_returns_empty(fresh_org_graph):
-    from graph.org_graph import OrgGraph
+    from data.graph.org_graph import OrgGraph
     og = OrgGraph()
     deps = og.get_dependencies("/nonexistent/repo", depth=2)
     assert deps == []
@@ -96,7 +96,7 @@ def test_org_graph_unknown_repo_returns_empty(fresh_org_graph):
 # ── save and load ─────────────────────────────────────────────────────────────
 
 def test_org_graph_save_load_roundtrip(fresh_org_graph, tmp_path):
-    from graph.org_graph import OrgGraph, invalidate_org_graph
+    from data.graph.org_graph import OrgGraph, invalidate_org_graph
 
     og = OrgGraph()
     og.add_repo("/path/to/myservice")
@@ -110,13 +110,13 @@ def test_org_graph_save_load_roundtrip(fresh_org_graph, tmp_path):
 # ── get_org_graph singleton ───────────────────────────────────────────────────
 
 def test_get_org_graph_returns_instance(fresh_org_graph):
-    from graph.org_graph import get_org_graph, OrgGraph
+    from data.graph.org_graph import get_org_graph, OrgGraph
     og = get_org_graph()
     assert isinstance(og, OrgGraph)
 
 
 def test_get_org_graph_singleton(fresh_org_graph):
-    from graph.org_graph import get_org_graph, invalidate_org_graph
+    from data.graph.org_graph import get_org_graph, invalidate_org_graph
     invalidate_org_graph()
     og1 = get_org_graph()
     og2 = get_org_graph()
@@ -124,7 +124,7 @@ def test_get_org_graph_singleton(fresh_org_graph):
 
 
 def test_invalidate_org_graph_resets_singleton(fresh_org_graph):
-    from graph.org_graph import get_org_graph, invalidate_org_graph
+    from data.graph.org_graph import get_org_graph, invalidate_org_graph
     og1 = get_org_graph()
     invalidate_org_graph()
     og2 = get_org_graph()
@@ -134,7 +134,7 @@ def test_invalidate_org_graph_resets_singleton(fresh_org_graph):
 # ── edge types ────────────────────────────────────────────────────────────────
 
 def test_org_graph_calls_api_edge(fresh_org_graph):
-    from graph.org_graph import OrgGraph
+    from data.graph.org_graph import OrgGraph
     og = OrgGraph()
     og.add_repo("/frontend")
     og.add_repo("/backend")
@@ -144,7 +144,7 @@ def test_org_graph_calls_api_edge(fresh_org_graph):
 
 
 def test_org_graph_child_of_edge(fresh_org_graph):
-    from graph.org_graph import OrgGraph
+    from data.graph.org_graph import OrgGraph
     og = OrgGraph()
     og.add_repo("/parent")
     og.add_repo("/child")
@@ -153,7 +153,7 @@ def test_org_graph_child_of_edge(fresh_org_graph):
 
 
 def test_org_graph_discovered_edge(fresh_org_graph):
-    from graph.org_graph import OrgGraph
+    from data.graph.org_graph import OrgGraph
     og = OrgGraph()
     og.add_repo("/repo_a")
     og.add_repo("/repo_b")
@@ -164,7 +164,7 @@ def test_org_graph_discovered_edge(fresh_org_graph):
 # ── org_name ─────────────────────────────────────────────────────────────────
 
 def test_org_graph_org_name_from_nodes(fresh_org_graph):
-    from graph.org_graph import OrgGraph
+    from data.graph.org_graph import OrgGraph
     og = OrgGraph()
     og.add_repo("/projects/cognirepo")
     og.add_repo("/projects/service_b")

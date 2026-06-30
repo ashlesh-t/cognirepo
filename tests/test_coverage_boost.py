@@ -118,7 +118,7 @@ def test_doc_ingester_basic(tmp_path):
     
     ingester = DocIngester(str(tmp_path))
     # Mock model and DB to avoid heavy lifting
-    with patch("memory.embeddings.get_model"), \
+    with patch("data.memory.embeddings.get_model"), \
          patch("core.vector_db.local_vector_db.LocalVectorDB"):
         summary = ingester.ingest()
         assert "chunks" in summary
@@ -128,7 +128,7 @@ def test_doc_ingester_basic(tmp_path):
 # ── 6. memory/cleanup_queue.py (basic coverage) ──────────────────────────────
 
 def test_cleanup_queue_basic(isolated_cognirepo):
-    from memory.cleanup_queue import CleanupQueue
+    from data.memory.cleanup_queue import CleanupQueue
     q = CleanupQueue()
     # Empty queue
     assert q.pop_batch(1) == []

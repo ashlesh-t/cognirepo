@@ -99,9 +99,9 @@ def test_add_to_knowledge_graph_with_cognirepo_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(scm, "_REPO_ROOT", str(tmp_path))
 
     mock_kg = MagicMock()
-    with patch("graph.knowledge_graph.KnowledgeGraph", return_value=mock_kg):
-        with patch("graph.graph_utils.extract_entities_from_text", return_value=["entity1"]):
-            with patch("graph.graph_utils.make_node_id", return_value="concept::entity1"):
+    with patch("data.graph.knowledge_graph.KnowledgeGraph", return_value=mock_kg):
+        with patch("data.graph.graph_utils.extract_entities_from_text", return_value=["entity1"]):
+            with patch("data.graph.graph_utils.make_node_id", return_value="concept::entity1"):
                 scm._add_to_knowledge_graph("user is a senior engineer", "/path/memory.md")
     # No assertion needed — just verifying no exception raised
 
@@ -110,15 +110,15 @@ def test_add_to_knowledge_graph_with_cognirepo_dir(tmp_path, monkeypatch):
 
 def test_store_globally_best_effort():
     from tools.sync_claude_memory import _store_globally
-    with patch("memory.user_memory.set_preference") as mock_set:
-        with patch("memory.user_memory.record_action"):
+    with patch("data.memory.user_memory.set_preference") as mock_set:
+        with patch("data.memory.user_memory.record_action"):
             _store_globally("some memory text to store globally")
             mock_set.assert_called_once()
 
 
 def test_store_globally_exception_swallowed():
     from tools.sync_claude_memory import _store_globally
-    with patch("memory.user_memory.set_preference", side_effect=RuntimeError("fail")):
+    with patch("data.memory.user_memory.set_preference", side_effect=RuntimeError("fail")):
         _store_globally("text")  # must not raise
 
 
@@ -244,7 +244,7 @@ def test_store_visited_file_novel(tmp_path, monkeypatch):
     f.write_text(content)
     mock_store = MagicMock()
     mock_store.store_if_novel.return_value = True
-    with patch("memory.auto_store.AutoStore", return_value=mock_store):
+    with patch("data.memory.auto_store.AutoStore", return_value=mock_store):
         result = scm._store_visited_file(str(f))
     assert result is True
 

@@ -18,14 +18,14 @@ import pytest
 # ── memory/auto_store.py (55% → 80%) ─────────────────────────────────────────
 
 def test_auto_store_store_if_novel_new_text():
-    from memory.auto_store import AutoStore
+    from data.memory.auto_store import AutoStore
     store = AutoStore()
     result = store.store_if_novel("novel test memory text for auto store", source_tool="test")
     assert isinstance(result, bool)
 
 
 def test_auto_store_store_if_novel_duplicate():
-    from memory.auto_store import AutoStore
+    from data.memory.auto_store import AutoStore
     store = AutoStore()
     text = "duplicate memory text for dedup testing"
     store.store_if_novel(text, source_tool="test")
@@ -35,21 +35,21 @@ def test_auto_store_store_if_novel_duplicate():
 
 
 def test_auto_store_importance_default():
-    from memory.auto_store import AutoStore
+    from data.memory.auto_store import AutoStore
     store = AutoStore()
     result = store.store_if_novel("text with default importance", source_tool="test")
     assert isinstance(result, bool)
 
 
 def test_auto_store_empty_text():
-    from memory.auto_store import AutoStore
+    from data.memory.auto_store import AutoStore
     store = AutoStore()
     result = store.store_if_novel("", source_tool="test")
     assert result is False or isinstance(result, bool)
 
 
 def test_auto_store_short_text():
-    from memory.auto_store import AutoStore
+    from data.memory.auto_store import AutoStore
     store = AutoStore()
     result = store.store_if_novel("Hi", source_tool="test")
     assert result is False or isinstance(result, bool)
@@ -78,26 +78,26 @@ def test_prune_memory_archive_flag():
 # ── memory/circuit_breaker.py (68% → 85%) ────────────────────────────────────
 
 def test_circuit_breaker_initial_state():
-    from memory.circuit_breaker import CircuitBreaker
+    from data.memory.circuit_breaker import CircuitBreaker
     cb = CircuitBreaker(rss_limit_mb=999999.0)
     assert cb.state == "CLOSED"
 
 
 def test_circuit_breaker_check_not_tripped():
-    from memory.circuit_breaker import CircuitBreaker
+    from data.memory.circuit_breaker import CircuitBreaker
     cb = CircuitBreaker(rss_limit_mb=999999.0)
     cb.check()  # should not raise
     assert cb.state == "CLOSED"
 
 
 def test_circuit_breaker_closed_state():
-    from memory.circuit_breaker import CircuitBreaker
+    from data.memory.circuit_breaker import CircuitBreaker
     cb = CircuitBreaker(rss_limit_mb=999999.0)
     assert cb.state == "CLOSED"
 
 
 def test_circuit_breaker_force_open():
-    from memory.circuit_breaker import CircuitBreaker
+    from data.memory.circuit_breaker import CircuitBreaker
     cb = CircuitBreaker(rss_limit_mb=0.001)  # tiny limit to force open
     try:
         cb.check()
@@ -110,8 +110,8 @@ def test_circuit_breaker_force_open():
 # ── graph/behaviour_tracker.py (73% → 90%) ───────────────────────────────────
 
 def test_behaviour_tracker_record_query():
-    from graph.behaviour_tracker import BehaviourTracker
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.behaviour_tracker import BehaviourTracker
+    from data.graph.knowledge_graph import KnowledgeGraph
     bt = BehaviourTracker(KnowledgeGraph())
     bt.record_query(
         query_id="test_q_001",
@@ -122,8 +122,8 @@ def test_behaviour_tracker_record_query():
 
 
 def test_behaviour_tracker_query_history_fields():
-    from graph.behaviour_tracker import BehaviourTracker
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.behaviour_tracker import BehaviourTracker
+    from data.graph.knowledge_graph import KnowledgeGraph
     bt = BehaviourTracker(KnowledgeGraph())
     bt.record_query("q1", "fix the auth bug", ["auth_check"])
     entry = bt.data["query_history"]["q1"]
@@ -133,8 +133,8 @@ def test_behaviour_tracker_query_history_fields():
 
 
 def test_behaviour_tracker_question_type_detection():
-    from graph.behaviour_tracker import BehaviourTracker
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.behaviour_tracker import BehaviourTracker
+    from data.graph.knowledge_graph import KnowledgeGraph
     bt = BehaviourTracker(KnowledgeGraph())
     bt.record_query("q_fix", "fix the broken import in retrieval", [])
     style = bt.data["interaction_style"]
@@ -143,8 +143,8 @@ def test_behaviour_tracker_question_type_detection():
 
 
 def test_behaviour_tracker_terminology_extraction():
-    from graph.behaviour_tracker import BehaviourTracker
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.behaviour_tracker import BehaviourTracker
+    from data.graph.knowledge_graph import KnowledgeGraph
     bt = BehaviourTracker(KnowledgeGraph())
     bt.record_query("q_term", "explain the FAISS indexer", [])
     style = bt.data["interaction_style"]
@@ -153,17 +153,17 @@ def test_behaviour_tracker_terminology_extraction():
 
 
 def test_behaviour_tracker_get_user_profile():
-    from graph.behaviour_tracker import BehaviourTracker
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.behaviour_tracker import BehaviourTracker
+    from data.graph.knowledge_graph import KnowledgeGraph
     bt = BehaviourTracker(KnowledgeGraph())
     profile = bt.get_user_profile()
     assert isinstance(profile, dict)
 
 
 def test_behaviour_tracker_save_and_load(tmp_path, monkeypatch):
-    from graph.behaviour_tracker import BehaviourTracker, _behaviour_file
-    from graph.knowledge_graph import KnowledgeGraph
-    import graph.behaviour_tracker as bt_mod
+    from data.graph.behaviour_tracker import BehaviourTracker, _behaviour_file
+    from data.graph.knowledge_graph import KnowledgeGraph
+    import data.graph.behaviour_tracker as bt_mod
     bf = str(tmp_path / ".cognirepo" / "behaviour.json")
     (tmp_path / ".cognirepo").mkdir(exist_ok=True)
     monkeypatch.setattr(bt_mod, "_behaviour_file", lambda: bf)
@@ -176,8 +176,8 @@ def test_behaviour_tracker_save_and_load(tmp_path, monkeypatch):
 
 
 def test_behaviour_tracker_record_feedback():
-    from graph.behaviour_tracker import BehaviourTracker
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.behaviour_tracker import BehaviourTracker
+    from data.graph.knowledge_graph import KnowledgeGraph
     bt = BehaviourTracker(KnowledgeGraph())
     bt.record_query("q_fb", "explain auth", ["auth_check"])
     # record_feedback might not exist — graceful skip
@@ -186,9 +186,9 @@ def test_behaviour_tracker_record_feedback():
 
 
 def test_behaviour_tracker_auto_summarize_fires_at_10(monkeypatch, tmp_path):
-    from graph.behaviour_tracker import BehaviourTracker
-    from graph.knowledge_graph import KnowledgeGraph
-    import graph.behaviour_tracker as bt_mod
+    from data.graph.behaviour_tracker import BehaviourTracker
+    from data.graph.knowledge_graph import KnowledgeGraph
+    import data.graph.behaviour_tracker as bt_mod
     bf = str(tmp_path / ".cognirepo" / "behaviour.json")
     (tmp_path / ".cognirepo").mkdir(exist_ok=True)
     monkeypatch.setattr(bt_mod, "_behaviour_file", lambda: bf)

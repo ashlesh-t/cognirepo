@@ -29,7 +29,7 @@ def test_no_writes_to_real_home(tmp_path):
     set_global_dir(str(isolated_global))
 
     # Run user_memory operations
-    from memory.user_memory import set_preference, get_preference, record_action
+    from data.memory.user_memory import set_preference, get_preference, record_action
 
     set_preference("test_key", "test_value")
     result = get_preference("test_key")

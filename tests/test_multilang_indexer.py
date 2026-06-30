@@ -32,7 +32,7 @@ def fresh_indexer(isolated_cognirepo):
     fake_model = MagicMock()
     fake_model.embed.side_effect = lambda texts: iter([np.zeros(384, dtype="float32") for _ in texts])
     with patch("indexer.ast_indexer.get_model", return_value=fake_model):
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         from indexer.ast_indexer import ASTIndexer
         from indexer.language_registry import clear_cache
         clear_cache()

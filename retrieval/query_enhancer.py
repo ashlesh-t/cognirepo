@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from graph.behaviour_tracker import BehaviourTracker
+    from data.graph.behaviour_tracker import BehaviourTracker
 
 _VAGUE_PATTERN = re.compile(
     r"\b(it|that|this|the thing|the bug|the issue|the problem|the error|the fix)\b",

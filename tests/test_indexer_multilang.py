@@ -38,7 +38,7 @@ import pytest
 @pytest.fixture()
 def fresh_indexer(isolated_cognirepo):
     """Return an ASTIndexer wired to an empty KnowledgeGraph."""
-    from graph.knowledge_graph import KnowledgeGraph
+    from data.graph.knowledge_graph import KnowledgeGraph
     from indexer.ast_indexer import ASTIndexer
     from indexer.language_registry import clear_cache
     clear_cache()

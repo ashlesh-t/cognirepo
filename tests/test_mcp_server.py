@@ -39,7 +39,7 @@ class TestMCPToolFunctions:
         assert isinstance(results, list)
 
     def test_log_episode_tool(self):
-        from memory.episodic_memory import log_event, get_history
+        from data.memory.episodic_memory import log_event, get_history
         log_event("mcp tool called: store_memory", {"source": "mcp"})
         history = get_history(1)
         assert len(history) >= 1
@@ -164,14 +164,14 @@ class TestNewMCPTools:
             _unseed_graph_node(g)
 
     def test_episodic_search_returns_list(self):
-        from memory.episodic_memory import log_event
+        from data.memory.episodic_memory import log_event
         from server.mcp_server import episodic_search
         log_event("error occurred during test run", {"source": "test"})
         result = episodic_search("error", limit=5)
         assert isinstance(result, list)
 
     def test_episodic_search_matches_keyword(self):
-        from memory.episodic_memory import log_event
+        from data.memory.episodic_memory import log_event
         from server.mcp_server import episodic_search
         log_event("unique_keyword_abc123 event logged")
         result = episodic_search("unique_keyword_abc123", limit=10)
@@ -179,7 +179,7 @@ class TestNewMCPTools:
         assert any("unique_keyword_abc123" in json.dumps(e) for e in result)
 
     def test_episodic_search_limit_respected(self):
-        from memory.episodic_memory import log_event
+        from data.memory.episodic_memory import log_event
         from server.mcp_server import episodic_search
         for i in range(5):
             log_event(f"repeated_limit_test event {i}")
@@ -308,11 +308,11 @@ class TestAgentBootstrapFraming:
 
         with patch("server.mcp_server._behaviour_enabled", return_value=True), \
              patch("server.mcp_server.BehaviourTracker", return_value=fake_bt) if False else \
-             patch("graph.behaviour_tracker.BehaviourTracker", return_value=fake_bt):
+             patch("data.graph.behaviour_tracker.BehaviourTracker", return_value=fake_bt):
             from server.mcp_server import get_agent_bootstrap
             with patch("server.mcp_server._behaviour_enabled", return_value=True), \
                  patch("server.mcp_server._get_graph", return_value=MagicMock()), \
-                 patch("graph.behaviour_tracker.BehaviourTracker", return_value=fake_bt), \
+                 patch("data.graph.behaviour_tracker.BehaviourTracker", return_value=fake_bt), \
                  patch("server.mcp_server._index_is_stale", return_value=False):
                 result = get_agent_bootstrap()
 
@@ -406,7 +406,7 @@ class TestSearchToken:
     def test_result_items_have_file_and_line(self, isolated_cognirepo, tmp_path):
         from server.mcp_server import search_token
         from indexer.ast_indexer import ASTIndexer
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         # Build a minimal index with a known symbol
         g = KnowledgeGraph()
         idx = ASTIndexer(g)
@@ -454,7 +454,7 @@ class TestLinkRepos:
 
     def test_link_repos_with_microservice_metadata(self, isolated_cognirepo, tmp_path):
         from server.mcp_server import link_repos
-        from graph.org_graph import get_org_graph, invalidate_org_graph
+        from data.graph.org_graph import get_org_graph, invalidate_org_graph
         src = str(tmp_path / "api_gateway")
         dst = str(tmp_path / "auth_service")
         result = link_repos(

@@ -260,7 +260,7 @@ class SummarizationEngine:
         """
         if file_data is None:
             from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-            from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+            from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
             kg = KnowledgeGraph()
             indexer = ASTIndexer(graph=kg)
             indexer.load()
@@ -290,7 +290,7 @@ class SummarizationEngine:
         Stores result in .cognirepo/index/summaries.json.
         """
         from indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-        from graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
 
         # Load once — shared across all files
         kg = KnowledgeGraph()
@@ -435,7 +435,7 @@ class SummarizationEngine:
         """
         try:
             import numpy as np  # pylint: disable=import-outside-toplevel
-            from memory.embeddings import get_model  # pylint: disable=import-outside-toplevel
+            from data.memory.embeddings import get_model  # pylint: disable=import-outside-toplevel
 
             model = get_model()
             indexer._ensure_faiss()

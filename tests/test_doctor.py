@@ -68,7 +68,7 @@ def _run_doctor(
     monkeypatch.setitem(sys.modules, "vector_db.local_vector_db", fake_vdb_mod)
 
     # ── stub graph ────────────────────────────────────────────────────────────
-    fake_graph_mod = types.ModuleType("graph.knowledge_graph")
+    fake_graph_mod = types.ModuleType("data.graph.knowledge_graph")
     if graph_fail:
         class _BadKG:
             def __init__(self):
@@ -83,17 +83,17 @@ def _run_doctor(
         class _FakeKG:
             G = _FakeG()
         fake_graph_mod.KnowledgeGraph = _FakeKG
-    monkeypatch.setitem(sys.modules, "graph.knowledge_graph", fake_graph_mod)
+    monkeypatch.setitem(sys.modules, "data.graph.knowledge_graph", fake_graph_mod)
 
     # ── stub episodic ─────────────────────────────────────────────────────────
-    fake_ep_mod = types.ModuleType("memory.episodic_memory")
+    fake_ep_mod = types.ModuleType("data.memory.episodic_memory")
     if episodic_fail:
         def _bad_history(**_kw):
             raise RuntimeError("episodic.json not found")
         fake_ep_mod.get_history = _bad_history
     else:
         fake_ep_mod.get_history = lambda **_kw: [{"event": "x"}] * 89
-    monkeypatch.setitem(sys.modules, "memory.episodic_memory", fake_ep_mod)
+    monkeypatch.setitem(sys.modules, "data.memory.episodic_memory", fake_ep_mod)
 
     # ── stub AST indexer ──────────────────────────────────────────────────────
     fake_idx_mod = types.ModuleType("indexer.ast_indexer")
@@ -114,14 +114,14 @@ def _run_doctor(
     monkeypatch.setitem(sys.modules, "indexer.language_registry", fake_lang_mod)
 
     # ── stub circuit breaker ──────────────────────────────────────────────────
-    fake_cb_mod = types.ModuleType("memory.circuit_breaker")
+    fake_cb_mod = types.ModuleType("data.memory.circuit_breaker")
     class _FakeCBState:
         value = "CLOSED"
     class _FakeCB:
         state = _FakeCBState()
         _rss_limit_mb = 6553.0
     fake_cb_mod.get_breaker = lambda: _FakeCB()
-    monkeypatch.setitem(sys.modules, "memory.circuit_breaker", fake_cb_mod)
+    monkeypatch.setitem(sys.modules, "data.memory.circuit_breaker", fake_cb_mod)
 
     # ── stub psutil ───────────────────────────────────────────────────────────
     fake_psutil = types.ModuleType("psutil")
