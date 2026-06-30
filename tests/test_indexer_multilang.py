@@ -250,7 +250,7 @@ class TestLanguageRegistry:
 
         monkeypatch.setattr(importlib, "import_module", patched_import)
 
-        from indexer import language_registry
+        from intelligence.indexer import language_registry
         clear_cache()
 
         lang = language_registry._get_language(".java")

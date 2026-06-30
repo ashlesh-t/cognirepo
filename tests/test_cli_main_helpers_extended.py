@@ -77,7 +77,7 @@ def test_print_search_results_plain_string(capsys):
 
 def test_log_error_to_file_creates_log(tmp_path):
     from interface.cli.main import _log_error_to_file
-    with patch("config.paths.get_path", return_value=str(tmp_path / "errors")):
+    with patch("core.config.paths.get_path", return_value=str(tmp_path / "errors")):
         try:
             raise ValueError("test error")
         except ValueError as exc:
@@ -87,7 +87,7 @@ def test_log_error_to_file_creates_log(tmp_path):
 
 def test_log_error_no_context(tmp_path):
     from interface.cli.main import _log_error_to_file
-    with patch("config.paths.get_path", return_value=str(tmp_path / "errors")):
+    with patch("core.config.paths.get_path", return_value=str(tmp_path / "errors")):
         try:
             raise RuntimeError("no context")
         except RuntimeError as exc:
@@ -163,7 +163,7 @@ def test_direct_history():
 
 def test_write_last_indexed_sha(tmp_path):
     from interface.cli.main import _write_last_indexed_sha
-    with patch("config.paths.get_path", return_value=str(tmp_path / "index" / "last_indexed.json")):
+    with patch("core.config.paths.get_path", return_value=str(tmp_path / "index" / "last_indexed.json")):
         try:
             _write_last_indexed_sha(str(tmp_path))
         except Exception:
@@ -182,7 +182,7 @@ def test_find_claude_desktop_config():
 
 def test_cmd_status_no_config(tmp_path):
     from interface.cli.main import _cmd_status
-    with patch("config.paths.get_path", return_value=str(tmp_path / "config.json")):
+    with patch("core.config.paths.get_path", return_value=str(tmp_path / "config.json")):
         try:
             _cmd_status()
         except SystemExit:
@@ -236,7 +236,7 @@ def test_cmd_list_mcp_no_crash(capsys):
 
 def test_cmd_list_orgs_no_crash(capsys):
     from interface.cli.main import _cmd_list_orgs
-    with patch("config.orgs.list_orgs", return_value={"testorg": {"repos": ["/path/to/repo"]}}):
+    with patch("core.config.orgs.list_orgs", return_value={"testorg": {"repos": ["/path/to/repo"]}}):
         _cmd_list_orgs()
     captured = capsys.readouterr()
     assert len(captured.out) >= 0
@@ -244,7 +244,7 @@ def test_cmd_list_orgs_no_crash(capsys):
 
 def test_cmd_list_orgs_empty(capsys):
     from interface.cli.main import _cmd_list_orgs
-    with patch("config.orgs.list_orgs", return_value={}):
+    with patch("core.config.orgs.list_orgs", return_value={}):
         _cmd_list_orgs()
     captured = capsys.readouterr()
     assert len(captured.out) >= 0

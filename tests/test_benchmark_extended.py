@@ -48,7 +48,7 @@ def test_load_last_run_with_history(tmp_path):
     hist = tmp_path / "benchmark_history.jsonl"
     entry = {"token_reduction_pct": 82.0, "timestamp": "2026-01-01T00:00:00Z"}
     hist.write_text(json.dumps(entry) + "\n")
-    with patch("config.paths.get_path", return_value=str(hist)):
+    with patch("core.config.paths.get_path", return_value=str(hist)):
         result = load_last_run()
     assert result is not None
     assert result.get("token_reduction_pct") == 82.0
@@ -58,7 +58,7 @@ def test_load_last_run_empty_file(tmp_path):
     from interface.tools.benchmark import load_last_run
     hist = tmp_path / "benchmark_history.jsonl"
     hist.write_text("")
-    with patch("config.paths.get_path", return_value=str(hist)):
+    with patch("core.config.paths.get_path", return_value=str(hist)):
         result = load_last_run()
     assert result is None
 
@@ -67,7 +67,7 @@ def test_load_last_run_corrupt_file(tmp_path):
     from interface.tools.benchmark import load_last_run
     hist = tmp_path / "benchmark_history.jsonl"
     hist.write_text("not json\n")
-    with patch("config.paths.get_path", return_value=str(hist)):
+    with patch("core.config.paths.get_path", return_value=str(hist)):
         result = load_last_run()
     assert result is None  # exception swallowed
 

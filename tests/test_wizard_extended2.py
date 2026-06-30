@@ -43,8 +43,8 @@ def test_run_wizard_skip_all_defaults(monkeypatch, tmp_path, capsys):
 
     # patch config writing and heavy operations
     with patch("interface.cli.init_project.init_project", return_value={"status": "ok"}):
-        with patch("config.orgs.list_orgs", return_value={}):
-            with patch("config.orgs.list_projects", return_value={}):
+        with patch("core.config.orgs.list_orgs", return_value={}):
+            with patch("core.config.orgs.list_projects", return_value={}):
                 try:
                     run_wizard()
                 except SystemExit:
@@ -71,8 +71,8 @@ def test_run_wizard_with_encryption(monkeypatch, tmp_path):
     monkeypatch.setattr("builtins.input", responses)
 
     with patch("interface.cli.wizard._pip_install", return_value=True):
-        with patch("config.orgs.list_orgs", return_value={}):
-            with patch("config.orgs.list_projects", return_value={}):
+        with patch("core.config.orgs.list_orgs", return_value={}):
+            with patch("core.config.orgs.list_projects", return_value={}):
                 try:
                     run_wizard()
                 except SystemExit:
@@ -97,8 +97,8 @@ def test_run_wizard_claude_mcp(monkeypatch, tmp_path):
     )
     monkeypatch.setattr("builtins.input", responses)
 
-    with patch("config.orgs.list_orgs", return_value={}):
-        with patch("config.orgs.list_projects", return_value={}):
+    with patch("core.config.orgs.list_orgs", return_value={}):
+        with patch("core.config.orgs.list_projects", return_value={}):
             try:
                 run_wizard()
             except SystemExit:
@@ -124,9 +124,9 @@ def test_run_wizard_new_org(monkeypatch, tmp_path):
     )
     monkeypatch.setattr("builtins.input", responses)
 
-    with patch("config.orgs.list_orgs", return_value={}):
-        with patch("config.orgs.list_projects", return_value={}):
-            with patch("config.orgs.create_project", return_value=True):
+    with patch("core.config.orgs.list_orgs", return_value={}):
+        with patch("core.config.orgs.list_projects", return_value={}):
+            with patch("core.config.orgs.create_project", return_value=True):
                 try:
                     run_wizard()
                 except (SystemExit, StopIteration):
@@ -152,8 +152,8 @@ def test_run_wizard_existing_org_with_project(monkeypatch, tmp_path):
     )
     monkeypatch.setattr("builtins.input", responses)
 
-    with patch("config.orgs.list_orgs", return_value={"myorg": {"repos": [], "projects": {}}}):
-        with patch("config.orgs.list_projects", return_value={"existing_proj": {}}):
+    with patch("core.config.orgs.list_orgs", return_value={"myorg": {"repos": [], "projects": {}}}):
+        with patch("core.config.orgs.list_projects", return_value={"existing_proj": {}}):
             try:
                 run_wizard()
             except (SystemExit, StopIteration):

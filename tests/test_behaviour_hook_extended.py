@@ -27,16 +27,16 @@ def test_load_profile_behaviour_disabled(tmp_path, monkeypatch):
     config = {"behaviour_tracking": False}
     (cog_dir / "config.json").write_text(json.dumps(config))
 
-    with patch("config.paths.set_cognirepo_dir"):
-        with patch("config.paths.get_cognirepo_dir_for_repo", return_value=str(cog_dir)):
-            with patch("config.paths.get_path", return_value=str(cog_dir / "config.json")):
+    with patch("core.config.paths.set_cognirepo_dir"):
+        with patch("core.config.paths.get_cognirepo_dir_for_repo", return_value=str(cog_dir)):
+            with patch("core.config.paths.get_path", return_value=str(cog_dir / "config.json")):
                 result = _load_profile(str(tmp_path))
     assert result is None
 
 
 def test_load_profile_exception_returns_none(tmp_path):
     from interface.tools.behaviour_hook import _load_profile
-    with patch("config.paths.set_cognirepo_dir", side_effect=RuntimeError("fail")):
+    with patch("core.config.paths.set_cognirepo_dir", side_effect=RuntimeError("fail")):
         result = _load_profile(str(tmp_path))
     assert result is None
 
@@ -45,7 +45,7 @@ def test_load_profile_exception_returns_none(tmp_path):
 
 def test_record_query_exception_swallowed(tmp_path):
     from interface.tools.behaviour_hook import _record_query
-    with patch("config.paths.set_cognirepo_dir", side_effect=RuntimeError("fail")):
+    with patch("core.config.paths.set_cognirepo_dir", side_effect=RuntimeError("fail")):
         _record_query(str(tmp_path), "some query")  # must not raise
 
 
@@ -56,9 +56,9 @@ def test_record_query_disabled(tmp_path):
     config = {"behaviour_tracking": False}
     (cog_dir / "config.json").write_text(json.dumps(config))
 
-    with patch("config.paths.set_cognirepo_dir"):
-        with patch("config.paths.get_cognirepo_dir_for_repo", return_value=str(cog_dir)):
-            with patch("config.paths.get_path", return_value=str(cog_dir / "config.json")):
+    with patch("core.config.paths.set_cognirepo_dir"):
+        with patch("core.config.paths.get_cognirepo_dir_for_repo", return_value=str(cog_dir)):
+            with patch("core.config.paths.get_path", return_value=str(cog_dir / "config.json")):
                 _record_query(str(tmp_path), "test query")  # must not raise
 
 

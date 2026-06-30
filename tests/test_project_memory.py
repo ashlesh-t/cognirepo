@@ -8,7 +8,7 @@ from data.memory.project_memory import ProjectMemory
 
 @pytest.fixture
 def mock_local_vector_db():
-    with patch("vector_db.local_vector_db.LocalVectorDB") as mock:
+    with patch("core.vector_db.local_vector_db.LocalVectorDB") as mock:
         yield mock
 
 @pytest.fixture

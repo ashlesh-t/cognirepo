@@ -83,11 +83,11 @@ def _import_try_local_resolve():
     if not hasattr(err_mod, "ModelCallError"):
         err_mod.ModelCallError = type("ModelCallError", (Exception,), {"NON_RETRYABLE_CODES": set(), "message": ""})
 
-    # Stub config.paths
-    if "config.paths" not in sys.modules:
-        m = types.ModuleType("config.paths")
+    # Stub core.config.paths
+    if "core.config.paths" not in sys.modules:
+        m = types.ModuleType("core.config.paths")
         m.get_path = lambda *a, **kw: ".cognirepo"
-        sys.modules["config.paths"] = m
+        sys.modules["core.config.paths"] = m
 
     from intelligence.orchestrator.router import try_local_resolve
     return try_local_resolve

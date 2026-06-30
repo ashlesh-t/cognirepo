@@ -83,8 +83,8 @@ def test_no_dev_path_imports():
     dev_only = ["pytest", "_pytest", "setuptools", "build", "pip._internal"]
     result = subprocess.run(
         [sys.executable, "-c",
-         "import sys; import memory.semantic_memory; import retrieval.hybrid; "
-         "import orchestrator.classifier; print('\\n'.join(sys.modules.keys()))"],
+         "import sys; import data.memory.semantic_memory; import intelligence.retrieval.hybrid; "
+         "import intelligence.orchestrator.classifier; print('\\n'.join(sys.modules.keys()))"],
         capture_output=True, text=True, timeout=30, cwd=str(ROOT),
     )
     if result.returncode != 0:

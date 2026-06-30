@@ -71,7 +71,7 @@ def test_auto_store_basic():
     from data.memory.auto_store import AutoStore
     
     # Patch dependencies globally
-    with patch("vector_db.local_vector_db.LocalVectorDB"), \
+    with patch("core.vector_db.local_vector_db.LocalVectorDB"), \
          patch("data.memory.embeddings.encode_with_timeout") as mock_encode:
         
         mock_encode.return_value = np.zeros(384, dtype="float32")
@@ -133,7 +133,7 @@ def test_ast_indexer_unsupported_ext(tmp_path):
 def test_config_lock_context(tmp_path, monkeypatch):
     """Exercise store_lock context manager."""
     from core.config.lock import store_lock
-    from config import paths
+    from core.config import paths
     
     # Redirect config path to tmp
     monkeypatch.setattr(paths, "get_path", lambda x: str(tmp_path / x))

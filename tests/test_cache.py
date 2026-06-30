@@ -92,7 +92,7 @@ class TestHybridRetrieveCache:
         invalidate_hybrid_cache()  # reset between tests
 
     def test_cache_miss_then_hit(self):
-        from retrieval import hybrid as h
+        from intelligence.retrieval import hybrid as h
         from intelligence.retrieval.hybrid import invalidate_hybrid_cache
         invalidate_hybrid_cache()
 
@@ -110,7 +110,7 @@ class TestHybridRetrieveCache:
         assert result1 == result2 == mock_result
 
     def test_different_queries_not_shared(self):
-        from retrieval import hybrid as h
+        from intelligence.retrieval import hybrid as h
         from intelligence.retrieval.hybrid import invalidate_hybrid_cache
         invalidate_hybrid_cache()
 
@@ -126,7 +126,7 @@ class TestHybridRetrieveCache:
         assert mock_cls.call_count == 2
 
     def test_invalidate_clears_cache(self):
-        from retrieval import hybrid as h
+        from intelligence.retrieval import hybrid as h
         from intelligence.retrieval.hybrid import invalidate_hybrid_cache
         invalidate_hybrid_cache()
 
@@ -144,7 +144,7 @@ class TestHybridRetrieveCache:
         assert mock_cls.call_count == 2
 
     def test_cache_expires_after_ttl(self):
-        from retrieval import hybrid as h
+        from intelligence.retrieval import hybrid as h
         from intelligence.retrieval.hybrid import invalidate_hybrid_cache
         invalidate_hybrid_cache()
 

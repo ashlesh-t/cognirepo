@@ -96,7 +96,7 @@ def test_query_org_memories_skip_no_cognirepo(tmp_path):
 
 def test_get_repo_org_not_linked(tmp_path):
     from intelligence.retrieval.cross_repo import get_repo_org
-    with patch("config.orgs.list_orgs", return_value={}):
+    with patch("core.config.orgs.list_orgs", return_value={}):
         result = get_repo_org(str(tmp_path))
     assert result is None
 
@@ -105,7 +105,7 @@ def test_get_repo_org_found(tmp_path):
     from intelligence.retrieval.cross_repo import get_repo_org
     abs_path = os.path.abspath(str(tmp_path))
     orgs = {"myorg": {"repos": [abs_path], "projects": {}}}
-    with patch("config.orgs._load_orgs", return_value=orgs):
+    with patch("core.config.orgs._load_orgs", return_value=orgs):
         result = get_repo_org(str(tmp_path))
     assert result == "myorg"
 

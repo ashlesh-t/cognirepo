@@ -459,7 +459,7 @@ class TestProviderFallback:
         p_grk = patch("intelligence.orchestrator.model_adapters.grok_adapter.call", side_effect=fake_grok_call)
 
         with p_gem, p_grk:
-            from orchestrator import router
+            from intelligence.orchestrator import router
             result = router._dispatch_with_fallback(
                 query="test", primary_provider="gemini",
                 primary_model="gemini-2.0-flash",

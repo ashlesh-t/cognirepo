@@ -45,7 +45,7 @@ def test_rebuild_writes_to_configured_path(tmp_path, monkeypatch):
         json.dump(entries, f)
 
     import importlib
-    from cron import prune_memory
+    from ops.cron import prune_memory
     importlib.reload(prune_memory)
 
     result = prune_memory.prune(threshold=0.10, dry_run=False)

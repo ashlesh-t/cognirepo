@@ -30,7 +30,7 @@ def test_on_session_end_marks_closed(tmp_path, monkeypatch):
     sessions_dir = tmp_path / ".cognirepo" / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr("config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
+    monkeypatch.setattr("core.config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
     import data.memory.learning_store as ls
     ls._STORE = ls.CompositeLearningStore(project_dir=str(tmp_path))
@@ -51,7 +51,7 @@ def test_on_session_end_idempotent(tmp_path, monkeypatch):
     sessions_dir = tmp_path / ".cognirepo" / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr("config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
+    monkeypatch.setattr("core.config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
     import data.memory.learning_store as ls
     ls._STORE = ls.CompositeLearningStore(project_dir=str(tmp_path))
@@ -65,7 +65,7 @@ def test_recover_unclosed_sessions(tmp_path, monkeypatch):
     sessions_dir = tmp_path / ".cognirepo" / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr("config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
+    monkeypatch.setattr("core.config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
     import data.memory.learning_store as ls
     ls._STORE = ls.CompositeLearningStore(project_dir=str(tmp_path))

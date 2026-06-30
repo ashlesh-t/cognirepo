@@ -344,7 +344,7 @@ class TestAgentBootstrapFraming:
         mock_popen = MagicMock()
         with patch("interface.server.mcp_server._behaviour_enabled", return_value=False), \
              patch("interface.server.mcp_server._index_is_stale", return_value=True), \
-             patch("config.paths.get_path", side_effect=lambda p: str(cognirepo_dir / p)), \
+             patch("core.config.paths.get_path", side_effect=lambda p: str(cognirepo_dir / p)), \
              patch("subprocess.Popen", mock_popen):
             from interface.server.mcp_server import get_agent_bootstrap
             result = get_agent_bootstrap()
@@ -370,7 +370,7 @@ class TestAgentBootstrapFraming:
         with patch("interface.server.mcp_server._behaviour_enabled", return_value=False), \
              patch("interface.server.mcp_server._index_is_stale", return_value=True), \
              patch("interface.server.mcp_server._get_indexer", return_value=mock_idx), \
-             patch("config.paths.get_path", side_effect=lambda p: str(cognirepo_dir / p)), \
+             patch("core.config.paths.get_path", side_effect=lambda p: str(cognirepo_dir / p)), \
              patch("subprocess.Popen", mock_popen):
             from interface.server.mcp_server import get_agent_bootstrap
             get_agent_bootstrap()

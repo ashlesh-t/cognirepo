@@ -103,7 +103,7 @@ class TestGraphRemoveFileNodes:
 class TestEpisodicMarkStale:
     def test_matching_entries_tagged_stale(self, tmp_path, monkeypatch):
         """Entries that reference file_path are tagged stale."""
-        from memory import episodic_memory as em
+        from data.memory import episodic_memory as em
         monkeypatch.setattr(
             "data.memory.episodic_memory._file_path",
             lambda: str(tmp_path / "episodic.json"),
@@ -127,7 +127,7 @@ class TestEpisodicMarkStale:
 
     def test_stale_entries_still_queryable(self, tmp_path, monkeypatch):
         """Stale entries are NOT deleted — get_history() still returns them."""
-        from memory import episodic_memory as em
+        from data.memory import episodic_memory as em
         monkeypatch.setattr(em, "_save", lambda data: _raw_save(tmp_path, data))
         monkeypatch.setattr(em, "_load", lambda: _raw_load(tmp_path))
 
@@ -142,7 +142,7 @@ class TestEpisodicMarkStale:
 
     def test_already_stale_not_double_tagged(self, tmp_path, monkeypatch):
         """Calling mark_stale twice does not change the stale entry again."""
-        from memory import episodic_memory as em
+        from data.memory import episodic_memory as em
         monkeypatch.setattr(em, "_save", lambda data: _raw_save(tmp_path, data))
         monkeypatch.setattr(em, "_load", lambda: _raw_load(tmp_path))
 

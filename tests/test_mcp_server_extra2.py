@@ -33,7 +33,7 @@ def test_evict_singletons_with_graph():
 
 def test_behaviour_enabled_no_config():
     from interface.server.mcp_server import _behaviour_enabled
-    with patch("config.paths.get_path", side_effect=FileNotFoundError("no config")):
+    with patch("core.config.paths.get_path", side_effect=FileNotFoundError("no config")):
         result = _behaviour_enabled()
     assert result is False
 
@@ -42,7 +42,7 @@ def test_behaviour_enabled_true(tmp_path):
     from interface.server.mcp_server import _behaviour_enabled
     cfg = tmp_path / "config.json"
     cfg.write_text(json.dumps({"behaviour_tracking": True}))
-    with patch("config.paths.get_path", return_value=str(cfg)):
+    with patch("core.config.paths.get_path", return_value=str(cfg)):
         result = _behaviour_enabled()
     assert result is True
 
@@ -118,7 +118,7 @@ def test_search_docs_returns_dict():
 
 def test_architecture_overview_no_summaries(tmp_path):
     from interface.server.mcp_server import architecture_overview
-    with patch("config.paths.get_path", return_value=str(tmp_path / "nonexistent.json")):
+    with patch("core.config.paths.get_path", return_value=str(tmp_path / "nonexistent.json")):
         result = architecture_overview(scope="root")
     assert isinstance(result, str)
     assert "not found" in result.lower() or "summarize" in result.lower()
@@ -129,7 +129,7 @@ def test_architecture_overview_root(tmp_path):
     summaries = {"repo": "This is a cognitive infrastructure repo."}
     summary_path = tmp_path / "summaries.json"
     summary_path.write_text(json.dumps(summaries))
-    with patch("config.paths.get_path", return_value=str(summary_path)):
+    with patch("core.config.paths.get_path", return_value=str(summary_path)):
         result = architecture_overview(scope="root")
     assert "cognitive" in result
 
@@ -139,7 +139,7 @@ def test_architecture_overview_unknown_scope(tmp_path):
     summaries = {"repo": "test", "directories": {}, "files": {}}
     summary_path = tmp_path / "summaries.json"
     summary_path.write_text(json.dumps(summaries))
-    with patch("config.paths.get_path", return_value=str(summary_path)):
+    with patch("core.config.paths.get_path", return_value=str(summary_path)):
         result = architecture_overview(scope="nonexistent_scope")
     assert "No summary found" in result
 
@@ -156,7 +156,7 @@ def test_episodic_search_returns_list():
 
 def test_list_org_context_with_orgs():
     from interface.server.mcp_server import list_org_context
-    with patch("config.orgs.list_orgs", return_value={"myorg": {"repos": ["/path/to/repo"]}}):
+    with patch("core.config.orgs.list_orgs", return_value={"myorg": {"repos": ["/path/to/repo"]}}):
         result = list_org_context()
     assert isinstance(result, dict)
 

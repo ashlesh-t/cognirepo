@@ -195,7 +195,7 @@ class TestStaleReindexHelpers:
     def test_watcher_alive_false_without_pidfile(self, tmp_path, monkeypatch):
         import interface.server.mcp_server as srv
         monkeypatch.setattr(
-            "config.paths.get_path", lambda rel: str(tmp_path / rel), raising=False
+            "core.config.paths.get_path", lambda rel: str(tmp_path / rel), raising=False
         )
         assert srv._watcher_alive() is False
 

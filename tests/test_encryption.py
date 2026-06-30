@@ -152,7 +152,7 @@ class TestEpisodicEncryption:
 
         with mock.patch("keyring.get_password", side_effect=fake_get), \
              mock.patch("keyring.set_password", side_effect=fake_set):
-            from memory import episodic_memory
+            from data.memory import episodic_memory
             # Force module reload so get_storage_config is re-evaluated
             import importlib
             importlib.reload(episodic_memory)

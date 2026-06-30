@@ -24,7 +24,7 @@ def test_project_dir_isolates_sessions(tmp_path):
 
     # ── project A ────────────────────────────────────────────────────────────
     set_cognirepo_dir(str(dir_a))
-    from orchestrator import session as sess_mod
+    from intelligence.orchestrator import session as sess_mod
     # Reload so module-level state picks up the new dir override
     import importlib
     importlib.reload(sess_mod)

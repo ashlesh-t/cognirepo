@@ -50,14 +50,14 @@ class TestLocalVectorDB:
     def _make_adapter(self, tmp_path, monkeypatch):
         """Return a LocalVectorDB wired to a temp directory."""
         monkeypatch.setattr(
-            "vector_db.local_vector_db._index_file",
+            "core.vector_db.local_vector_db._index_file",
             lambda: str(tmp_path / "semantic.index"),
         )
         monkeypatch.setattr(
-            "vector_db.local_vector_db._meta_file",
+            "core.vector_db.local_vector_db._meta_file",
             lambda: str(tmp_path / "semantic_metadata.json"),
         )
-        monkeypatch.setattr("vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
+        monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
         from core.vector_db.local_vector_db import LocalVectorDB
         return LocalVectorDB(dim=4)
 
@@ -156,19 +156,19 @@ class TestGetVectorAdapter:
         """When config.json is absent (or has no vector_backend), return LocalVectorDB."""
         from core.vector_db.local_vector_db import LocalVectorDB
         monkeypatch.setattr(
-            "vector_db.factory._find_config",
+            "core.vector_db.factory._find_config",
             lambda: None,
         )
         from core.vector_db.factory import get_vector_adapter
         monkeypatch.setattr(
-            "vector_db.local_vector_db._index_file",
+            "core.vector_db.local_vector_db._index_file",
             lambda: str(tmp_path / "semantic.index"),
         )
         monkeypatch.setattr(
-            "vector_db.local_vector_db._meta_file",
+            "core.vector_db.local_vector_db._meta_file",
             lambda: str(tmp_path / "semantic_metadata.json"),
         )
-        monkeypatch.setattr("vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
+        monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
         adapter = get_vector_adapter()
         assert isinstance(adapter, LocalVectorDB)
 
@@ -178,7 +178,7 @@ class TestGetVectorAdapter:
         config.write_text(json.dumps({"storage": {"vector_backend": "chroma"}}))
 
         monkeypatch.setattr(
-            "vector_db.factory._find_config",
+            "core.vector_db.factory._find_config",
             lambda: config,
         )
 
@@ -187,14 +187,14 @@ class TestGetVectorAdapter:
         if not _CHROMA_AVAILABLE:
             # Falls back to LocalVectorDB when chromadb not installed
             monkeypatch.setattr(
-                "vector_db.local_vector_db._index_file",
+                "core.vector_db.local_vector_db._index_file",
                 lambda: str(tmp_path / "semantic.index"),
             )
             monkeypatch.setattr(
-                "vector_db.local_vector_db._meta_file",
+                "core.vector_db.local_vector_db._meta_file",
                 lambda: str(tmp_path / "semantic_metadata.json"),
             )
-            monkeypatch.setattr("vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
+            monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
             from core.vector_db.local_vector_db import LocalVectorDB
             adapter = get_vector_adapter()
             assert isinstance(adapter, LocalVectorDB)

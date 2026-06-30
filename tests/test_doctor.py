@@ -53,7 +53,7 @@ def _run_doctor(
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
     # ── stub vector_db ────────────────────────────────────────────────────────
-    fake_vdb_mod = types.ModuleType("vector_db.local_vector_db")
+    fake_vdb_mod = types.ModuleType("core.vector_db.local_vector_db")
     if faiss_fail:
         class _BadVDB:
             def __init__(self):
@@ -65,7 +65,7 @@ def _run_doctor(
         class _FakeVDB:
             index = _FakeIndex()
         fake_vdb_mod.LocalVectorDB = _FakeVDB
-    monkeypatch.setitem(sys.modules, "vector_db.local_vector_db", fake_vdb_mod)
+    monkeypatch.setitem(sys.modules, "core.vector_db.local_vector_db", fake_vdb_mod)
 
     # ── stub graph ────────────────────────────────────────────────────────────
     fake_graph_mod = types.ModuleType("data.graph.knowledge_graph")
