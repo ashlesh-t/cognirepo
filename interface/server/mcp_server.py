@@ -24,18 +24,18 @@ from data.memory.circuit_breaker import get_breaker, CircuitOpenError
 setup_logging()
 logger = logging.getLogger(__name__)
 
-from tools.store_memory import store_memory as _store_memory
-from tools.retrieve_memory import retrieve_memory as _retrieve_memory
-from tools.context_pack import context_pack as _context_pack
-from tools.semantic_search_code import semantic_search_code as _semantic_search_code
-from tools.dependency_graph import dependency_graph as _dependency_graph
-from tools.explain_change import explain_change as _explain_change
+from interface.tools.store_memory import store_memory as _store_memory
+from interface.tools.retrieve_memory import retrieve_memory as _retrieve_memory
+from interface.tools.context_pack import context_pack as _context_pack
+from interface.tools.semantic_search_code import semantic_search_code as _semantic_search_code
+from interface.tools.dependency_graph import dependency_graph as _dependency_graph
+from interface.tools.explain_change import explain_change as _explain_change
 from intelligence.retrieval.docs_search import search_docs as _search_docs
 from data.memory.episodic_memory import log_event, search_episodes
 from data.memory.learning_store import get_learning_store
 from data.memory.embeddings import evict_model
-from server.learning_middleware import intercept_after_store, intercept_after_episode
-from server.idle_manager import get_idle_manager
+from interface.server.learning_middleware import intercept_after_store, intercept_after_episode
+from interface.server.idle_manager import get_idle_manager
 
 _CONFLICT_OVERLAP_THRESHOLD = 0.35  # word-overlap ratio that triggers conflict warning
 
@@ -562,7 +562,7 @@ def retrieve_memory(query: str, top_k: int = 5, include_org: bool = False, repo_
             results = results[:top_k]
 
     try:
-        from tools.context_pack import save_query_context  # pylint: disable=import-outside-toplevel
+        from interface.tools.context_pack import save_query_context  # pylint: disable=import-outside-toplevel
         save_query_context(query, tool="retrieve_memory")
     except Exception:  # pylint: disable=broad-except
         pass
@@ -1452,7 +1452,7 @@ def episodic_search(query: str, limit: int = 10, repo_path: str | None = None) -
         result = search_episodes(query, limit)
     _behaviour_record_query(query, result)
     try:
-        from tools.context_pack import save_query_context  # pylint: disable=import-outside-toplevel
+        from interface.tools.context_pack import save_query_context  # pylint: disable=import-outside-toplevel
         save_query_context(query, tool="episodic_search")
     except Exception:  # pylint: disable=broad-except
         pass
@@ -1574,7 +1574,7 @@ def search_docs(query: str, top_k: int = 5, repo_path: str | None = None) -> dic
         if isinstance(result, list):
             result = result[:top_k]
     try:
-        from tools.context_pack import save_query_context  # pylint: disable=import-outside-toplevel
+        from interface.tools.context_pack import save_query_context  # pylint: disable=import-outside-toplevel
         save_query_context(query, tool="search_docs")
     except Exception:  # pylint: disable=broad-except
         pass
@@ -1952,7 +1952,7 @@ def get_session_brief(repo_path: str | None = None) -> dict:
     repo_path: optional absolute path to the target repository.
     """
     with _repo_ctx(repo_path):
-        from tools.prime_session import prime_session  # pylint: disable=import-outside-toplevel
+        from interface.tools.prime_session import prime_session  # pylint: disable=import-outside-toplevel
         return prime_session()
 
 
@@ -2640,7 +2640,7 @@ def run_server(project_dir: str | None = None) -> None:
             with open(_cfg_path, encoding="utf-8") as _wf:
                 _watch_cfg = json.load(_wf).get("watch", {})
         if _watch_cfg.get("auto_enabled", True):
-            from cli.main import _start_watcher_bg  # pylint: disable=import-outside-toplevel
+            from interface.cli.main import _start_watcher_bg  # pylint: disable=import-outside-toplevel
             _start_watcher_bg(project_dir or os.getcwd())
     except Exception:  # pylint: disable=broad-except
         pass  # watcher is best-effort — never block server startup

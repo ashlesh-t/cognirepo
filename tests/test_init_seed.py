@@ -21,12 +21,12 @@ import pytest
 
 class TestInitProject:
     def test_gitignore_is_created(self):
-        from cli.init_project import init_project
+        from interface.cli.init_project import init_project
         init_project(no_index=True, interactive=False, non_interactive=True)
         assert os.path.exists(".cognirepo/.gitignore")
 
     def test_gitignore_content(self):
-        from cli.init_project import init_project
+        from interface.cli.init_project import init_project
         init_project(no_index=True, interactive=False, non_interactive=True)
         with open(".cognirepo/.gitignore", encoding="utf-8") as f:
             content = f.read()
@@ -35,7 +35,7 @@ class TestInitProject:
         assert "!.gitignore" in content
 
     def test_config_json_created(self):
-        from cli.init_project import init_project
+        from interface.cli.init_project import init_project
         init_project(no_index=True, interactive=False, non_interactive=True)
         assert os.path.exists(".cognirepo/config.json")
         with open(".cognirepo/config.json", encoding="utf-8") as f:
@@ -46,13 +46,13 @@ class TestInitProject:
         assert "storage" in data
 
     def test_no_index_returns_none_triple(self):
-        from cli.init_project import init_project
+        from interface.cli.init_project import init_project
         result = init_project(no_index=True, interactive=False, non_interactive=True)
         assert result == (None, None, None)
 
     def test_idempotent_project_id_preserved(self):
         """Re-running init must not regenerate the project_id."""
-        from cli.init_project import init_project
+        from interface.cli.init_project import init_project
         init_project(no_index=True, interactive=False, non_interactive=True)
         with open(".cognirepo/config.json", encoding="utf-8") as f:
             original_id = json.load(f)["project_id"]
@@ -63,7 +63,7 @@ class TestInitProject:
 
     def test_no_secrets_in_config_when_keyring_available(self, monkeypatch):
         """Config must not contain password_hash or jwt_secret (removed in v0.2)."""
-        from cli.init_project import init_project
+        from interface.cli.init_project import init_project
         init_project(no_index=True, interactive=False, non_interactive=True)
         with open(".cognirepo/config.json", encoding="utf-8") as f:
             data = json.load(f)
@@ -72,18 +72,18 @@ class TestInitProject:
 
     def test_prompt_n_returns_none_triple(self, monkeypatch):
         """--no-index skips indexing and returns (None, None, None)."""
-        from cli.init_project import init_project
+        from interface.cli.init_project import init_project
         result = init_project(no_index=True, interactive=False, non_interactive=True)
         assert result == (None, None, None)
 
     def test_prompt_no_returns_none_triple(self, monkeypatch):
         """no_index=True is the canonical way to skip indexing (prompt was removed)."""
-        from cli.init_project import init_project
+        from interface.cli.init_project import init_project
         result = init_project(no_index=True, interactive=False, non_interactive=True)
         assert result == (None, None, None)
 
     def test_scaffold_dirs_created(self):
-        from cli.init_project import init_project
+        from interface.cli.init_project import init_project
         init_project(no_index=True, interactive=False, non_interactive=True)
         for d in (".cognirepo/memory", ".cognirepo/index", ".cognirepo/graph", ".cognirepo/vector_db"):
             assert os.path.isdir(d)
@@ -93,7 +93,7 @@ class TestInitProject:
 
 class TestSeedFromGitLog:
     def test_returns_dict(self):
-        from cli.seed import seed_from_git_log
+        from interface.cli.seed import seed_from_git_log
         result = seed_from_git_log(dry_run=True)
         assert isinstance(result, dict)
 
@@ -103,7 +103,7 @@ class TestSeedFromGitLog:
         # tmp_path has no .cognirepo; create minimal dirs
         os.makedirs(".cognirepo/graph", exist_ok=True)
         os.makedirs("vector_db", exist_ok=True)
-        from cli.seed import seed_from_git_log
+        from interface.cli.seed import seed_from_git_log
         result = seed_from_git_log()
         # Should be skipped — no error raised to user
         assert "skipped" in result
@@ -111,7 +111,7 @@ class TestSeedFromGitLog:
     def test_already_seeded_is_idempotent(self):
         from data.graph.knowledge_graph import KnowledgeGraph
         from data.graph.behaviour_tracker import BehaviourTracker
-        from cli.seed import seed_from_git_log
+        from interface.cli.seed import seed_from_git_log
 
         kg = KnowledgeGraph()
         tracker = BehaviourTracker(graph=kg)
@@ -126,7 +126,7 @@ class TestSeedFromGitLog:
     def test_dry_run_writes_nothing(self):
         from data.graph.knowledge_graph import KnowledgeGraph
         from data.graph.behaviour_tracker import BehaviourTracker
-        from cli.seed import seed_from_git_log
+        from interface.cli.seed import seed_from_git_log
 
         kg = KnowledgeGraph()
         tracker = BehaviourTracker(graph=kg)
@@ -148,7 +148,7 @@ class TestSeedFromGitLog:
         from data.graph.knowledge_graph import KnowledgeGraph
         from data.graph.behaviour_tracker import BehaviourTracker
         from intelligence.indexer.ast_indexer import ASTIndexer
-        from cli.seed import seed_from_git_log
+        from interface.cli.seed import seed_from_git_log
 
         # Use the real cognirepo root
         import pathlib

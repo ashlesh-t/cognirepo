@@ -301,9 +301,9 @@ def test_gemini_adapter_module_exists():
 # ── tools/benchmark.py (14%) ─────────────────────────────────────────────────
 
 def test_benchmark_measure_latency():
-    from tools.benchmark import measure_latency
+    from interface.tools.benchmark import measure_latency
     # measure_latency(golden, repeats) — calls context_pack internally
-    with patch("tools.context_pack.context_pack", return_value={"token_count": 10, "status": "ok", "sections": [], "query": "test", "truncated": False}):
+    with patch("interface.tools.context_pack.context_pack", return_value={"token_count": 10, "status": "ok", "sections": [], "query": "test", "truncated": False}):
         try:
             result = measure_latency(golden=None, repeats=1)
             assert isinstance(result, dict) or result is None
@@ -312,6 +312,6 @@ def test_benchmark_measure_latency():
 
 
 def test_benchmark_load_last_run():
-    from tools.benchmark import load_last_run
+    from interface.tools.benchmark import load_last_run
     result = load_last_run()
     assert result is None or isinstance(result, dict)

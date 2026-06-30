@@ -23,19 +23,19 @@ import numpy as np
 # ── 1. tools/search_docs.py ──────────────────────────────────────────────────
 
 def test_search_docs_tool_no_results(capsys):
-    from tools.search_docs import search_docs
-    with patch("tools.search_docs.ds", return_value=[]):
+    from interface.tools.search_docs import search_docs
+    with patch("interface.tools.search_docs.ds", return_value=[]):
         res = search_docs("nonexistent")
         assert res == []
         captured = capsys.readouterr()
         assert "No docs found" in captured.out
 
 def test_search_docs_tool_with_results(capsys):
-    from tools.search_docs import search_docs
+    from interface.tools.search_docs import search_docs
     mock_results = [
         {"path": "README.md", "line": 10, "context": "First match line"}
     ]
-    with patch("tools.search_docs.ds", return_value=mock_results):
+    with patch("interface.tools.search_docs.ds", return_value=mock_results):
         res = search_docs("query")
         assert res == mock_results
         captured = capsys.readouterr()
@@ -46,7 +46,7 @@ def test_search_docs_tool_with_results(capsys):
 # ── 2. tools/prime_session.py ────────────────────────────────────────────────
 
 def test_prime_session_empty(isolated_cognirepo):
-    from tools.prime_session import prime_session
+    from interface.tools.prime_session import prime_session
     brief = prime_session()
     assert "generated_at" in brief
     assert "repo" in brief
@@ -73,7 +73,7 @@ def test_prime_session_empty(isolated_cognirepo):
 ])
 def test_cli_smoke_commands(cmd, isolated_cognirepo):
     # Use subprocess to exercise cli/main.py entry point and all imports/argparse branches
-    res = subprocess.run([sys.executable, "-m", "cli.main"] + cmd, capture_output=True, text=True)
+    res = subprocess.run([sys.executable, "-m", "interface.cli.main"] + cmd, capture_output=True, text=True)
     # We don't necessarily care if it fails, we just want to exercise the code paths.
     assert res.returncode in (0, 1, 2)
 
@@ -143,7 +143,7 @@ def test_cleanup_queue_basic(isolated_cognirepo):
 # ── 7. tools/behaviour_hook.py (basic coverage) ──────────────────────────────
 
 def test_behaviour_hook_main_noop(capsys):
-    from tools.behaviour_hook import main
+    from interface.tools.behaviour_hook import main
     # Running without args or with unknown git action should be a no-op/print help
     with patch("sys.argv", ["behaviour_hook.py"]):
         main()

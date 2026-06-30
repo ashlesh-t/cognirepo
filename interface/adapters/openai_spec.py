@@ -34,7 +34,7 @@ def _load_manifest() -> list[dict]:
     if not os.path.exists(MANIFEST_PATH):
         print(f"[openai_spec] manifest not found at {MANIFEST_PATH}; generating…", file=sys.stderr)
         try:
-            from server.mcp_server import _write_manifest  # pylint: disable=import-outside-toplevel
+            from interface.server.mcp_server import _write_manifest  # pylint: disable=import-outside-toplevel
             _write_manifest()
         except Exception as exc:  # pylint: disable=broad-except
             print(f"[openai_spec] could not generate manifest: {exc}", file=sys.stderr)

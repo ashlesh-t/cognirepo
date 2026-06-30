@@ -1908,7 +1908,7 @@ class ASTIndexer:
         _t2_prog = None
         try:
             import time as _t2time  # pylint: disable=import-outside-toplevel
-            from tools.bg_progress import TaskProgress as _TP  # pylint: disable=import-outside-toplevel
+            from interface.tools.bg_progress import TaskProgress as _TP  # pylint: disable=import-outside-toplevel
             _t2_prog = _TP(f"tier2_index_{int(_t2time.time())}", "Tier 2 indexing", len(_pending))
         except Exception:  # pylint: disable=broad-except
             pass

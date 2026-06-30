@@ -125,8 +125,8 @@ def _reset_singletons():
         ("intelligence.retrieval.hybrid",         "_HYBRID_CACHE", {}),
         ("intelligence.retrieval.hybrid",         "_IN_FLIGHT",   {}),
         # Reset MCP server singletons so tests don't share state across execution order
-        ("server.mcp_server",        "_GRAPH",      None),
-        ("server.mcp_server",        "_INDEXER",    None),
+        ("interface.server.mcp_server",        "_GRAPH",      None),
+        ("interface.server.mcp_server",        "_INDEXER",    None),
     ]
     for _mod_path, _attr, _reset_val in _null_attrs:
         try:

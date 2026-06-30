@@ -42,7 +42,7 @@ def _run_doctor(
     Monkeypatches all heavy imports so the test needs no real .cognirepo/.
     """
     # pylint: disable=too-many-locals
-    from cli.main import _cmd_doctor  # imported here so SPDX header is already applied
+    from interface.cli.main import _cmd_doctor  # imported here so SPDX header is already applied
 
     # ── stub env ──────────────────────────────────────────────────────────────
     for var in ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
@@ -166,7 +166,7 @@ def _run_doctor(
     monkeypatch.setitem(sys.modules, "fastembed", fake_fe_mod)
 
     # ── stub server.mcp_server (new check 14) ─────────────────────────────────
-    fake_mcp_server_mod = types.ModuleType("server.mcp_server")
+    fake_mcp_server_mod = types.ModuleType("interface.server.mcp_server")
     fake_mcp_server_mod._REGISTERED_TOOLS = {
         "store_memory", "retrieve_memory", "record_decision",
         "context_pack", "semantic_search_code", "search_token",
@@ -182,7 +182,7 @@ def _run_doctor(
         "find_symbol_path", "get_service_endpoints",
     }
     monkeypatch.setitem(sys.modules, "server", types.ModuleType("server"))
-    monkeypatch.setitem(sys.modules, "server.mcp_server", fake_mcp_server_mod)
+    monkeypatch.setitem(sys.modules, "interface.server.mcp_server", fake_mcp_server_mod)
 
     # ── stub .cognirepo/ presence ─────────────────────────────────────────────
     if with_init:

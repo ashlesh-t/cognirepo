@@ -537,7 +537,7 @@ class BehaviourTracker:
             return False
 
         try:
-            from tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
+            from interface.tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
             # top 5 terms by frequency
             terms: dict = style.get("terminology", {})
             top_terms = sorted(terms, key=lambda k: terms[k], reverse=True)[:5]

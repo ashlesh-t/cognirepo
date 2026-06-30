@@ -53,8 +53,8 @@ def _make_indexer_with_symbols(symbols: list[dict]):
 
 class TestSemanticSearchCode:
     def test_returns_list(self):
-        from tools.semantic_search_code import semantic_search_code
-        with patch("tools.semantic_search_code.ASTIndexer") as mock_cls:
+        from interface.tools.semantic_search_code import semantic_search_code
+        with patch("interface.tools.semantic_search_code.ASTIndexer") as mock_cls:
             mock_cls.return_value = MagicMock(
                 faiss_index=None, faiss_meta=[]
             )
@@ -63,8 +63,8 @@ class TestSemanticSearchCode:
         assert isinstance(result, list)
 
     def test_returns_empty_when_no_index(self):
-        from tools.semantic_search_code import semantic_search_code
-        with patch("tools.semantic_search_code.ASTIndexer") as mock_cls:
+        from interface.tools.semantic_search_code import semantic_search_code
+        with patch("interface.tools.semantic_search_code.ASTIndexer") as mock_cls:
             inst = MagicMock()
             inst.faiss_index = None
             mock_cls.return_value = inst
@@ -72,16 +72,16 @@ class TestSemanticSearchCode:
         assert result == []
 
     def test_result_fields(self):
-        from tools.semantic_search_code import semantic_search_code
+        from interface.tools.semantic_search_code import semantic_search_code
         symbols = [
             {"name": "verify_token", "type": "FUNCTION", "file": "auth.py", "line": 10},
             {"name": "hash_password", "type": "FUNCTION", "file": "auth.py", "line": 30},
         ]
         indexer = _make_indexer_with_symbols(symbols)
 
-        with patch("tools.semantic_search_code.ASTIndexer") as mock_cls:
-            with patch("tools.semantic_search_code.KnowledgeGraph"):
-                with patch("tools.semantic_search_code.encode_with_timeout",
+        with patch("interface.tools.semantic_search_code.ASTIndexer") as mock_cls:
+            with patch("interface.tools.semantic_search_code.KnowledgeGraph"):
+                with patch("interface.tools.semantic_search_code.encode_with_timeout",
                            return_value=np.zeros(384, dtype="float32")):
                     mock_cls.return_value = indexer
                     result = semantic_search_code("token verification", top_k=2)
@@ -96,16 +96,16 @@ class TestSemanticSearchCode:
                 assert "score" in r
 
     def test_language_filter_python(self):
-        from tools.semantic_search_code import semantic_search_code
+        from interface.tools.semantic_search_code import semantic_search_code
         symbols = [
             {"name": "py_func", "type": "FUNCTION", "file": "auth.py", "line": 1},
             {"name": "ts_func", "type": "FUNCTION", "file": "auth.ts", "line": 1},
         ]
         indexer = _make_indexer_with_symbols(symbols)
 
-        with patch("tools.semantic_search_code.ASTIndexer") as mock_cls:
-            with patch("tools.semantic_search_code.KnowledgeGraph"):
-                with patch("tools.semantic_search_code.encode_with_timeout",
+        with patch("interface.tools.semantic_search_code.ASTIndexer") as mock_cls:
+            with patch("interface.tools.semantic_search_code.KnowledgeGraph"):
+                with patch("interface.tools.semantic_search_code.encode_with_timeout",
                            return_value=np.zeros(384, dtype="float32")):
                     mock_cls.return_value = indexer
                     result = semantic_search_code("func", language="python")
@@ -114,16 +114,16 @@ class TestSemanticSearchCode:
         assert all(f.endswith(".py") for f in files), f"Expected only .py files, got: {files}"
 
     def test_language_filter_typescript(self):
-        from tools.semantic_search_code import semantic_search_code
+        from interface.tools.semantic_search_code import semantic_search_code
         symbols = [
             {"name": "pyFunc", "type": "FUNCTION", "file": "main.py", "line": 1},
             {"name": "tsFunc", "type": "FUNCTION", "file": "main.ts", "line": 1},
         ]
         indexer = _make_indexer_with_symbols(symbols)
 
-        with patch("tools.semantic_search_code.ASTIndexer") as mock_cls:
-            with patch("tools.semantic_search_code.KnowledgeGraph"):
-                with patch("tools.semantic_search_code.encode_with_timeout",
+        with patch("interface.tools.semantic_search_code.ASTIndexer") as mock_cls:
+            with patch("interface.tools.semantic_search_code.KnowledgeGraph"):
+                with patch("interface.tools.semantic_search_code.encode_with_timeout",
                            return_value=np.zeros(384, dtype="float32")):
                     mock_cls.return_value = indexer
                     result = semantic_search_code("func", language="typescript")
@@ -133,7 +133,7 @@ class TestSemanticSearchCode:
 
     def test_no_episodic_entries_in_results(self):
         """semantic_search_code must never return episodic (non-symbol) entries."""
-        from tools.semantic_search_code import semantic_search_code
+        from interface.tools.semantic_search_code import semantic_search_code
         import faiss as _faiss
         from data.graph.knowledge_graph import KnowledgeGraph
         from intelligence.indexer.ast_indexer import ASTIndexer
@@ -155,9 +155,9 @@ class TestSemanticSearchCode:
         # inject an episodic (non-symbol) entry
         indexer.faiss_meta = [{"name": "ep", "source": "memory", "file": "ep.log", "start_line": 0, "type": "EP"}]
 
-        with patch("tools.semantic_search_code.ASTIndexer") as mock_cls:
-            with patch("tools.semantic_search_code.KnowledgeGraph"):
-                with patch("tools.semantic_search_code.encode_with_timeout", return_value=vec):
+        with patch("interface.tools.semantic_search_code.ASTIndexer") as mock_cls:
+            with patch("interface.tools.semantic_search_code.KnowledgeGraph"):
+                with patch("interface.tools.semantic_search_code.encode_with_timeout", return_value=vec):
                     mock_cls.return_value = indexer
                     result = semantic_search_code("anything")
 

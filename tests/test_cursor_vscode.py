@@ -38,7 +38,7 @@ def _run_in(tmp_path: Path, fn):
 class TestCursorMCP:
     def test_creates_cursor_mcp_json(self, tmp_path):
         """.cursor/mcp.json must be created with mcpServers entry."""
-        from cli.init_project import _setup_cursor_mcp
+        from interface.cli.init_project import _setup_cursor_mcp
 
         _run_in(tmp_path, lambda: _setup_cursor_mcp("myproject", str(tmp_path)))
 
@@ -53,7 +53,7 @@ class TestCursorMCP:
         assert str(tmp_path) in server_entry["args"]
 
     def test_server_name_includes_project_name(self, tmp_path):
-        from cli.init_project import _setup_cursor_mcp
+        from interface.cli.init_project import _setup_cursor_mcp
 
         _run_in(tmp_path, lambda: _setup_cursor_mcp("cool_project", str(tmp_path)))
 
@@ -63,7 +63,7 @@ class TestCursorMCP:
 
     def test_idempotent_does_not_delete_siblings(self, tmp_path):
         """Running twice keeps pre-existing mcpServers entries."""
-        from cli.init_project import _setup_cursor_mcp
+        from interface.cli.init_project import _setup_cursor_mcp
 
         # Pre-populate with a different server entry
         cursor_dir = tmp_path / ".cursor"
@@ -78,7 +78,7 @@ class TestCursorMCP:
         assert any("myproject" in k for k in cfg["mcpServers"])
 
     def test_valid_json_output(self, tmp_path):
-        from cli.init_project import _setup_cursor_mcp
+        from interface.cli.init_project import _setup_cursor_mcp
 
         _run_in(tmp_path, lambda: _setup_cursor_mcp("proj", str(tmp_path)))
 
@@ -92,7 +92,7 @@ class TestCursorMCP:
 class TestVSCodeMCP:
     def test_creates_vscode_mcp_json(self, tmp_path):
         """.vscode/mcp.json must be created with servers entry."""
-        from cli.init_project import _setup_vscode_mcp
+        from interface.cli.init_project import _setup_vscode_mcp
 
         _run_in(tmp_path, lambda: _setup_vscode_mcp("myproject", str(tmp_path)))
 
@@ -107,7 +107,7 @@ class TestVSCodeMCP:
 
     def test_type_is_stdio(self, tmp_path):
         """VS Code MCP entries must have type=stdio."""
-        from cli.init_project import _setup_vscode_mcp
+        from interface.cli.init_project import _setup_vscode_mcp
 
         _run_in(tmp_path, lambda: _setup_vscode_mcp("proj", str(tmp_path)))
 
@@ -116,7 +116,7 @@ class TestVSCodeMCP:
             assert entry["type"] == "stdio"
 
     def test_idempotent_does_not_delete_siblings(self, tmp_path):
-        from cli.init_project import _setup_vscode_mcp
+        from interface.cli.init_project import _setup_vscode_mcp
 
         vscode_dir = tmp_path / ".vscode"
         vscode_dir.mkdir()
@@ -130,7 +130,7 @@ class TestVSCodeMCP:
         assert any("myproject" in k for k in cfg["servers"])
 
     def test_valid_json_output(self, tmp_path):
-        from cli.init_project import _setup_vscode_mcp
+        from interface.cli.init_project import _setup_vscode_mcp
 
         _run_in(tmp_path, lambda: _setup_vscode_mcp("proj", str(tmp_path)))
 
@@ -142,7 +142,7 @@ class TestVSCodeMCP:
 
 class TestSetupMCPDispatch:
     def test_cursor_target_creates_cursor_file(self, tmp_path):
-        from cli.init_project import setup_mcp
+        from interface.cli.init_project import setup_mcp
 
         _run_in(tmp_path, lambda: setup_mcp(
             targets=["cursor"], project_name="p", project_path=str(tmp_path)
@@ -152,7 +152,7 @@ class TestSetupMCPDispatch:
         assert not (tmp_path / ".vscode" / "mcp.json").exists()
 
     def test_vscode_target_creates_vscode_file(self, tmp_path):
-        from cli.init_project import setup_mcp
+        from interface.cli.init_project import setup_mcp
 
         _run_in(tmp_path, lambda: setup_mcp(
             targets=["vscode"], project_name="p", project_path=str(tmp_path)
@@ -162,7 +162,7 @@ class TestSetupMCPDispatch:
         assert not (tmp_path / ".cursor" / "mcp.json").exists()
 
     def test_both_targets_create_both_files(self, tmp_path):
-        from cli.init_project import setup_mcp
+        from interface.cli.init_project import setup_mcp
 
         _run_in(tmp_path, lambda: setup_mcp(
             targets=["cursor", "vscode"], project_name="p", project_path=str(tmp_path)
@@ -172,7 +172,7 @@ class TestSetupMCPDispatch:
         assert (tmp_path / ".vscode" / "mcp.json").exists()
 
     def test_empty_targets_creates_nothing(self, tmp_path):
-        from cli.init_project import setup_mcp
+        from interface.cli.init_project import setup_mcp
 
         _run_in(tmp_path, lambda: setup_mcp(
             targets=[], project_name="p", project_path=str(tmp_path)
@@ -187,7 +187,7 @@ class TestSetupMCPDispatch:
 class TestDoctorValidation:
     def test_cursor_config_is_valid_json(self, tmp_path):
         """Simulate what cognirepo doctor does: read and parse the config."""
-        from cli.init_project import _setup_cursor_mcp
+        from interface.cli.init_project import _setup_cursor_mcp
 
         _run_in(tmp_path, lambda: _setup_cursor_mcp("proj", str(tmp_path)))
 
@@ -202,7 +202,7 @@ class TestDoctorValidation:
         assert valid
 
     def test_vscode_config_is_valid_json(self, tmp_path):
-        from cli.init_project import _setup_vscode_mcp
+        from interface.cli.init_project import _setup_vscode_mcp
 
         _run_in(tmp_path, lambda: _setup_vscode_mcp("proj", str(tmp_path)))
 

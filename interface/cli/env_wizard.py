@@ -174,7 +174,7 @@ class EnvWizard:
         Verify each key by making the minimal API call.
         Returns {key: ProbeResult}.
         """
-        from cli.key_probes import PROVIDER_PROBES  # pylint: disable=import-outside-toplevel
+        from interface.cli.key_probes import PROVIDER_PROBES  # pylint: disable=import-outside-toplevel
 
         if skip_verify:
             return {}
@@ -209,7 +209,7 @@ class EnvWizard:
         if self._non_interactive or not sys.stdin.isatty():
             return {}
 
-        from cli.key_probes import PROVIDER_PROBES  # pylint: disable=import-outside-toplevel
+        from interface.cli.key_probes import PROVIDER_PROBES  # pylint: disable=import-outside-toplevel
 
         results: dict[str, dict] = {}
         for key in failed_keys:

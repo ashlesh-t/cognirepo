@@ -20,33 +20,33 @@ import pytest
 # ── cli/seed.py ───────────────────────────────────────────────────────────────
 
 def test_seed_commit_messages_empty_repo(tmp_path):
-    from cli.seed import _seed_commit_messages
+    from interface.cli.seed import _seed_commit_messages
     result = _seed_commit_messages(str(tmp_path), dry_run=True)
     assert isinstance(result, int)
 
 
 def test_seed_commit_messages_dry_run(tmp_path):
-    from cli.seed import _seed_commit_messages
+    from interface.cli.seed import _seed_commit_messages
     # No git repo, should return 0 gracefully
     result = _seed_commit_messages(str(tmp_path), dry_run=True)
     assert result == 0
 
 
 def test_seed_adr_files_no_adr_dir(tmp_path):
-    from cli.seed import _seed_adr_files
+    from interface.cli.seed import _seed_adr_files
     result = _seed_adr_files(str(tmp_path), dry_run=True)
     assert isinstance(result, int)
     assert result == 0
 
 
 def test_seed_inline_comments_empty_repo(tmp_path):
-    from cli.seed import _seed_inline_comments
+    from interface.cli.seed import _seed_inline_comments
     result = _seed_inline_comments(str(tmp_path), dry_run=True)
     assert isinstance(result, int)
 
 
 def test_seed_inline_comments_with_py_file(tmp_path):
-    from cli.seed import _seed_inline_comments
+    from interface.cli.seed import _seed_inline_comments
     py_file = tmp_path / "module.py"
     py_file.write_text("# TODO: implement caching\ndef foo():\n    # NOTE: critical path\n    pass\n")
     result = _seed_inline_comments(str(tmp_path), dry_run=True)
@@ -54,13 +54,13 @@ def test_seed_inline_comments_with_py_file(tmp_path):
 
 
 def test_seed_from_session_no_session():
-    from cli.seed import seed_from_session
+    from interface.cli.seed import seed_from_session
     result = seed_from_session(session_id=None)
     assert isinstance(result, dict)
 
 
 def test_seed_from_git_log_dry_run(tmp_path):
-    from cli.seed import seed_from_git_log
+    from interface.cli.seed import seed_from_git_log
     result = seed_from_git_log(
         repo_root=str(tmp_path),
         dry_run=True,
@@ -71,7 +71,7 @@ def test_seed_from_git_log_dry_run(tmp_path):
 # ── cli/wizard.py ─────────────────────────────────────────────────────────────
 
 def test_wizard_helpers_import():
-    from cli.wizard import _c, _ok, _warn, _section
+    from interface.cli.wizard import _c, _ok, _warn, _section
     assert callable(_c)
     assert callable(_ok)
     assert callable(_warn)
@@ -79,62 +79,62 @@ def test_wizard_helpers_import():
 
 
 def test_wizard_c_color_code():
-    from cli.wizard import _c
+    from interface.cli.wizard import _c
     result = _c("31", "32")
     assert isinstance(result, str)
 
 
 def test_wizard_ok_prints(capsys):
-    from cli.wizard import _ok
+    from interface.cli.wizard import _ok
     _ok("test ok message")
     captured = capsys.readouterr()
     assert "test ok message" in captured.out or len(captured.out) >= 0
 
 
 def test_wizard_warn_prints(capsys):
-    from cli.wizard import _warn
+    from interface.cli.wizard import _warn
     _warn("test warning")
     captured = capsys.readouterr()
     assert "test warning" in captured.out or len(captured.out) >= 0
 
 
 def test_wizard_section_prints(capsys):
-    from cli.wizard import _section
+    from interface.cli.wizard import _section
     _section(1, 5, "Test Section", "subtitle")
     captured = capsys.readouterr()
     assert len(captured.out) >= 0
 
 
 def test_wizard_ask_yn_default_yes(monkeypatch):
-    from cli.wizard import _ask_yn
+    from interface.cli.wizard import _ask_yn
     monkeypatch.setattr("builtins.input", lambda _: "")  # press enter = default
     result = _ask_yn("Test prompt", default=True)
     assert result is True
 
 
 def test_wizard_ask_yn_no(monkeypatch):
-    from cli.wizard import _ask_yn
+    from interface.cli.wizard import _ask_yn
     monkeypatch.setattr("builtins.input", lambda _: "n")
     result = _ask_yn("Test prompt", default=True)
     assert result is False
 
 
 def test_wizard_ask_text(monkeypatch):
-    from cli.wizard import _ask_text
+    from interface.cli.wizard import _ask_text
     monkeypatch.setattr("builtins.input", lambda _: "custom value")
     result = _ask_text("Enter value", default="default")
     assert result == "custom value"
 
 
 def test_wizard_ask_text_default(monkeypatch):
-    from cli.wizard import _ask_text
+    from interface.cli.wizard import _ask_text
     monkeypatch.setattr("builtins.input", lambda _: "")
     result = _ask_text("Enter value", default="my_default")
     assert result == "my_default"
 
 
 def test_wizard_ask_choice(monkeypatch):
-    from cli.wizard import _ask_choice
+    from interface.cli.wizard import _ask_choice
     monkeypatch.setattr("builtins.input", lambda _: "1")
     result = _ask_choice(
         "Pick one",
@@ -145,7 +145,7 @@ def test_wizard_ask_choice(monkeypatch):
 
 
 def test_wizard_pip_install_mock():
-    from cli.wizard import _pip_install
+    from interface.cli.wizard import _pip_install
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(returncode=0)
         result = _pip_install("cpu")
@@ -155,19 +155,19 @@ def test_wizard_pip_install_mock():
 # ── cli/daemon.py ─────────────────────────────────────────────────────────────
 
 def test_daemon_module_importable():
-    import cli.daemon as daemon
+    import interface.cli.daemon as daemon
     assert daemon is not None
 
 
 def test_daemon_has_start_function():
-    import cli.daemon as daemon
+    import interface.cli.daemon as daemon
     assert hasattr(daemon, "start_daemon") or hasattr(daemon, "DaemonProcess") or True
 
 
 def test_daemon_non_linux_watch_exits_2(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
     import importlib
-    import cli.main as main_mod
+    import interface.cli.main as main_mod
     importlib.reload(main_mod)
     monkeypatch.setattr(sys, "argv", ["cognirepo", "watch", "--status"])
     try:

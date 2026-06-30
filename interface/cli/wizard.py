@@ -364,7 +364,7 @@ def _ask_multiselect(prompt: str, candidates: list) -> list:
 
 def _ask_fuzzy_add(root: str, already_shown: list) -> list:
     """Prompt for extra services not in the detected list (fuzzy name match)."""
-    from cli.service_detect import detect_sub_repos  # pylint: disable=import-outside-toplevel
+    from interface.cli.service_detect import detect_sub_repos  # pylint: disable=import-outside-toplevel
     print(f"\n  {_c(_DIM, '+ Add unlisted services (comma-separated names, fuzzy match) or Enter to skip:')}")
     try:
         raw = input("  > ").strip()
@@ -680,7 +680,7 @@ def run_wizard() -> dict:
         "Is this repo part of a microservice architecture?", default=False
     )
     if _is_microservice_repo:
-        from cli.service_detect import detect_sub_repos  # pylint: disable=import-outside-toplevel
+        from interface.cli.service_detect import detect_sub_repos  # pylint: disable=import-outside-toplevel
         _candidates = detect_sub_repos(os.getcwd())
         if _candidates:
             print(f"\n  {_c(_GREEN, '✓')}  Found {len(_candidates)} sub-repo(s) that look like services.\n")

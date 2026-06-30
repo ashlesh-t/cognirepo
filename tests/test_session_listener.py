@@ -9,7 +9,7 @@ import json
 import uuid
 from pathlib import Path
 
-from server.session_listener import on_session_end, recover_unclosed_sessions
+from interface.server.session_listener import on_session_end, recover_unclosed_sessions
 
 
 def _make_session(sessions_dir: Path, messages: list, closed: bool = False) -> str:

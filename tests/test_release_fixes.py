@@ -138,7 +138,7 @@ class TestLearningStoreDedup:
 
 class TestPortDetection:
     def test_spring_application_properties(self, tmp_path):
-        from cli.init_project import _detect_service_port
+        from interface.cli.init_project import _detect_service_port
         res_dir = tmp_path / "src" / "main" / "resources"
         res_dir.mkdir(parents=True)
         (res_dir / "application.properties").write_text(
@@ -147,12 +147,12 @@ class TestPortDetection:
         assert _detect_service_port(str(tmp_path)) == 8082
 
     def test_env_port(self, tmp_path):
-        from cli.init_project import _detect_service_port
+        from interface.cli.init_project import _detect_service_port
         (tmp_path / ".env").write_text("PORT=3000\nDEBUG=1\n", encoding="utf-8")
         assert _detect_service_port(str(tmp_path)) == 3000
 
     def test_no_config_returns_none(self, tmp_path):
-        from cli.init_project import _detect_service_port
+        from interface.cli.init_project import _detect_service_port
         assert _detect_service_port(str(tmp_path)) is None
 
 
@@ -193,14 +193,14 @@ class TestEnvTemplatePackaging:
 
 class TestStaleReindexHelpers:
     def test_watcher_alive_false_without_pidfile(self, tmp_path, monkeypatch):
-        import server.mcp_server as srv
+        import interface.server.mcp_server as srv
         monkeypatch.setattr(
             "config.paths.get_path", lambda rel: str(tmp_path / rel), raising=False
         )
         assert srv._watcher_alive() is False
 
     def test_spawn_background_reindex_respects_existing_lock(self, tmp_path):
-        import server.mcp_server as srv
+        import interface.server.mcp_server as srv
         lock = tmp_path / "index" / "reindex.lock"
         lock.parent.mkdir(parents=True)
         lock.write_text("", encoding="utf-8")

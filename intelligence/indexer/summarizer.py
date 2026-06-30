@@ -392,7 +392,7 @@ class SummarizationEngine:
                 pass
             # edge: launch progress window (failure never blocks summarization)
             try:
-                from tools.bg_progress import launch_progress_ui  # pylint: disable=import-outside-toplevel
+                from interface.tools.bg_progress import launch_progress_ui  # pylint: disable=import-outside-toplevel
                 launch_progress_ui()
             except Exception:  # pylint: disable=broad-except
                 pass
@@ -448,7 +448,7 @@ class SummarizationEngine:
             try:
                 import time as _time  # pylint: disable=import-outside-toplevel
                 _task_id = f"embed_summaries_{int(_time.time())}"
-                from tools.bg_progress import TaskProgress  # pylint: disable=import-outside-toplevel
+                from interface.tools.bg_progress import TaskProgress  # pylint: disable=import-outside-toplevel
                 _prog = TaskProgress(_task_id, "Embedding summaries", total)
             except Exception:  # pylint: disable=broad-except
                 pass  # progress UI unavailable — continue without it

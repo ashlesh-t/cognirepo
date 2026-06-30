@@ -28,7 +28,7 @@ def setup_benchmark_index(isolated_cognirepo, monkeypatch):
     """
     Build a test index in the isolated directory so benchmarks have data.
     """
-    from cli.init_project import init_project
+    from interface.cli.init_project import init_project
     from intelligence.indexer.ast_indexer import ASTIndexer
     from data.graph.knowledge_graph import KnowledgeGraph
     
@@ -70,18 +70,18 @@ def _faiss_has_data() -> bool:
 
 class TestTokenReductionMetric:
     def test_context_pack_reduces_tokens_by_at_least_50pct(self):
-        from tools.context_pack import context_pack
+        from interface.tools.context_pack import context_pack
         result = context_pack("store_memory", max_tokens=2000)
         assert result.get("token_count", 0) > 0
 
     def test_context_pack_stays_within_budget(self):
-        from tools.context_pack import context_pack
+        from interface.tools.context_pack import context_pack
         for budget in [500, 1000]:
             result = context_pack("hybrid retrieval", max_tokens=budget)
             assert result.get("token_count", 0) <= budget
 
     def test_context_pack_returns_nonzero_for_indexed_query(self):
-        from tools.context_pack import context_pack
+        from interface.tools.context_pack import context_pack
         result = context_pack("store_memory", max_tokens=2000)
         assert result.get("token_count", 0) > 0
 
@@ -138,7 +138,7 @@ class TestCacheSpeedup:
 
 class TestMemoryRecall:
     def test_stored_memory_recall_at_3(self):
-        from tools.store_memory import store_memory
+        from interface.tools.store_memory import store_memory
         from core.vector_db.factory import get_vector_adapter
 
         marker = f"BENCHMARK_MARKER_{uuid.uuid4().hex}"
@@ -157,7 +157,7 @@ class TestMemoryRecall:
         assert any(marker in t for t in stored_texts)
 
     def test_retrieve_memory_returns_list(self):
-        from tools.retrieve_memory import retrieve_memory
+        from interface.tools.retrieve_memory import retrieve_memory
         result = retrieve_memory("any query", top_k=3)
         assert isinstance(result, list)
 
@@ -178,7 +178,7 @@ class TestGraphScore:
 
 class TestContextRelevance:
     def test_context_sections_contain_query_keywords(self):
-        from tools.context_pack import context_pack
+        from interface.tools.context_pack import context_pack
         result = context_pack("store_memory", max_tokens=2000)
         assert "sections" in result
 
@@ -187,7 +187,7 @@ class TestContextRelevance:
 
 class TestPrecisionAtK:
     def test_measure_precision_returns_required_keys(self):
-        from tools.benchmark import measure_precision_at_k
+        from interface.tools.benchmark import measure_precision_at_k
         # Should not crash with empty golden
         result = measure_precision_at_k(golden=[])
         assert "queries_tested" in result
@@ -197,6 +197,6 @@ class TestPrecisionAtK:
 
 class TestLatencyHistogram:
     def test_measure_latency_returns_required_keys(self):
-        from tools.benchmark import measure_latency
+        from interface.tools.benchmark import measure_latency
         result = measure_latency(golden=[], repeats=1)
         assert "latency_p50_ms" in result

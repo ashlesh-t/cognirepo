@@ -65,7 +65,7 @@ def test_hard_dependencies_importable():
 def test_cli_entrypoint_responds():
     """cognirepo --help must exit 0 and mention key commands."""
     result = subprocess.run(
-        [sys.executable, "-m", "cli.main", "--help"],
+        [sys.executable, "-m", "interface.cli.main", "--help"],
         capture_output=True, text=True, timeout=15,
         cwd=str(ROOT),
     )

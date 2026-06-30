@@ -29,25 +29,25 @@ class TestGitUtils:
     )
 
     def test_parse_since_days(self):
-        from tools.git_utils import _parse_since
+        from interface.tools.git_utils import _parse_since
         result = _parse_since("7d")
         # should be a YYYY-MM-DD date
         import re
         assert re.match(r"^\d{4}-\d{2}-\d{2}$", result)
 
     def test_parse_since_iso_passthrough(self):
-        from tools.git_utils import _parse_since
+        from interface.tools.git_utils import _parse_since
         result = _parse_since("2026-01-01")
         assert result == "2026-01-01"
 
     def test_parse_since_weeks(self):
-        from tools.git_utils import _parse_since
+        from interface.tools.git_utils import _parse_since
         r7d = _parse_since("7d")
         r1w = _parse_since("1w")
         assert r7d == r1w
 
     def test_parse_git_log_output(self):
-        from tools.git_utils import _parse_git_log_output
+        from interface.tools.git_utils import _parse_git_log_output
         commits = _parse_git_log_output(self._SAMPLE_LOG)
         assert len(commits) == 1
         c = commits[0]
@@ -59,36 +59,36 @@ class TestGitUtils:
         assert c["diff_summary"]["hunks"] == 1
 
     def test_parse_empty_log(self):
-        from tools.git_utils import _parse_git_log_output
+        from interface.tools.git_utils import _parse_git_log_output
         result = _parse_git_log_output("")
         assert result == []
 
     def test_git_log_patch_returns_list(self):
-        from tools.git_utils import git_log_patch
+        from interface.tools.git_utils import git_log_patch
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         mock_proc.stdout = self._SAMPLE_LOG
-        with patch("tools.git_utils.subprocess.run", return_value=mock_proc):
-            with patch("tools.git_utils._find_git_root", return_value="/fake/repo"):
+        with patch("interface.tools.git_utils.subprocess.run", return_value=mock_proc):
+            with patch("interface.tools.git_utils._find_git_root", return_value="/fake/repo"):
                 result = git_log_patch("auth.py", since="7d", repo_root="/fake/repo")
         assert isinstance(result, list)
         assert len(result) == 1
 
     def test_git_not_found_raises(self):
-        from tools.git_utils import git_log_patch, GitNotFoundError
+        from interface.tools.git_utils import git_log_patch, GitNotFoundError
         import subprocess
-        with patch("tools.git_utils.subprocess.run", side_effect=FileNotFoundError):
-            with patch("tools.git_utils._find_git_root", return_value="/fake/repo"):
+        with patch("interface.tools.git_utils.subprocess.run", side_effect=FileNotFoundError):
+            with patch("interface.tools.git_utils._find_git_root", return_value="/fake/repo"):
                 with pytest.raises(GitNotFoundError):
                     git_log_patch("auth.py", repo_root="/fake/repo")
 
     def test_nonzero_returncode_returns_empty(self):
-        from tools.git_utils import git_log_patch
+        from interface.tools.git_utils import git_log_patch
         mock_proc = MagicMock()
         mock_proc.returncode = 128
         mock_proc.stdout = ""
-        with patch("tools.git_utils.subprocess.run", return_value=mock_proc):
-            with patch("tools.git_utils._find_git_root", return_value="/fake/repo"):
+        with patch("interface.tools.git_utils.subprocess.run", return_value=mock_proc):
+            with patch("interface.tools.git_utils._find_git_root", return_value="/fake/repo"):
                 result = git_log_patch("auth.py", repo_root="/fake/repo")
         assert result == []
 
@@ -110,9 +110,9 @@ class TestExplainChange:
     ]
 
     def test_returns_required_keys(self):
-        from tools.explain_change import explain_change
-        with patch("tools.explain_change.git_log_patch", return_value=self._MOCK_COMMITS):
-            with patch("tools.explain_change.episodic_bm25_filter", return_value=[]):
+        from interface.tools.explain_change import explain_change
+        with patch("interface.tools.explain_change.git_log_patch", return_value=self._MOCK_COMMITS):
+            with patch("interface.tools.explain_change.episodic_bm25_filter", return_value=[]):
                 result = explain_change("auth.py")
         assert "target" in result
         assert "since" in result
@@ -120,60 +120,60 @@ class TestExplainChange:
         assert "episodic_context" in result
 
     def test_target_preserved(self):
-        from tools.explain_change import explain_change
-        with patch("tools.explain_change.git_log_patch", return_value=[]):
-            with patch("tools.explain_change.episodic_bm25_filter", return_value=[]):
+        from interface.tools.explain_change import explain_change
+        with patch("interface.tools.explain_change.git_log_patch", return_value=[]):
+            with patch("interface.tools.explain_change.episodic_bm25_filter", return_value=[]):
                 result = explain_change("retrieval/hybrid.py", since="30d")
         assert result["target"] == "retrieval/hybrid.py"
         assert result["since"] == "30d"
 
     def test_git_summary_totals(self):
-        from tools.explain_change import explain_change
+        from interface.tools.explain_change import explain_change
         commits = [
             {"hash": "a", "author": "X", "date": "2026-01-01", "message": "m1",
              "diff_summary": {"added": 5, "removed": 2, "hunks": 1}},
             {"hash": "b", "author": "X", "date": "2026-01-02", "message": "m2",
              "diff_summary": {"added": 3, "removed": 1, "hunks": 2}},
         ]
-        with patch("tools.explain_change.git_log_patch", return_value=commits):
-            with patch("tools.explain_change.episodic_bm25_filter", return_value=[]):
+        with patch("interface.tools.explain_change.git_log_patch", return_value=commits):
+            with patch("interface.tools.explain_change.episodic_bm25_filter", return_value=[]):
                 result = explain_change("auth.py")
         assert result["git_summary"]["total_added"] == 8
         assert result["git_summary"]["total_removed"] == 3
         assert len(result["git_summary"]["commits"]) == 2
 
     def test_no_git_repo_returns_error(self):
-        from tools.explain_change import explain_change
-        from tools.git_utils import GitNotFoundError
-        with patch("tools.explain_change.git_log_patch", side_effect=GitNotFoundError("not a git repository")):
+        from interface.tools.explain_change import explain_change
+        from interface.tools.git_utils import GitNotFoundError
+        with patch("interface.tools.explain_change.git_log_patch", side_effect=GitNotFoundError("not a git repository")):
             result = explain_change("auth.py")
         assert "error" in result
         assert "not a git repository" in result["error"]
 
     def test_episodic_context_included(self):
-        from tools.explain_change import explain_change
+        from interface.tools.explain_change import explain_change
         ep_events = [
             {"event": "fixed JWT expiry bug in auth", "time": "2026-03-15", "metadata": {}}
         ]
-        with patch("tools.explain_change.git_log_patch", return_value=self._MOCK_COMMITS):
-            with patch("tools.explain_change.episodic_bm25_filter", return_value=ep_events):
+        with patch("interface.tools.explain_change.git_log_patch", return_value=self._MOCK_COMMITS):
+            with patch("interface.tools.explain_change.episodic_bm25_filter", return_value=ep_events):
                 result = explain_change("auth.py")
         assert len(result["episodic_context"]) == 1
         assert "JWT" in result["episodic_context"][0]["event"]
 
     def test_episodic_failure_doesnt_crash(self):
         """If episodic search fails, git summary is still returned."""
-        from tools.explain_change import explain_change
-        with patch("tools.explain_change.git_log_patch", return_value=self._MOCK_COMMITS):
-            with patch("tools.explain_change.episodic_bm25_filter", side_effect=RuntimeError("fail")):
+        from interface.tools.explain_change import explain_change
+        with patch("interface.tools.explain_change.git_log_patch", return_value=self._MOCK_COMMITS):
+            with patch("interface.tools.explain_change.episodic_bm25_filter", side_effect=RuntimeError("fail")):
                 result = explain_change("auth.py")
         assert "git_summary" in result
         assert result["episodic_context"] == []
 
     def test_empty_git_history_still_returns_structure(self):
-        from tools.explain_change import explain_change
-        with patch("tools.explain_change.git_log_patch", return_value=[]):
-            with patch("tools.explain_change.episodic_bm25_filter", return_value=[]):
+        from interface.tools.explain_change import explain_change
+        with patch("interface.tools.explain_change.git_log_patch", return_value=[]):
+            with patch("interface.tools.explain_change.episodic_bm25_filter", return_value=[]):
                 result = explain_change("new_file.py")
         assert result["git_summary"]["commits"] == []
         assert result["git_summary"]["total_added"] == 0

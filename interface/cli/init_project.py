@@ -296,7 +296,7 @@ def _setup_claude_mcp(
         cmd, args = cognirepo_bin, ["serve", "--project-dir", project_path]
     else:
         cmd = sys.executable
-        args = ["-m", "cli.main", "serve", "--project-dir", project_path]
+        args = ["-m", "interface.cli.main", "serve", "--project-dir", project_path]
 
     server_entry = {"command": cmd, "args": args}
 
@@ -334,7 +334,7 @@ def _setup_claude_mcp(
 
     # ── Behaviour hooks — wired after settings.json exists ────────────────────
     try:
-        from cli.main import _write_claude_hooks  # pylint: disable=import-outside-toplevel
+        from interface.cli.main import _write_claude_hooks  # pylint: disable=import-outside-toplevel
         _write_claude_hooks(claude_dir, project_path)
     except Exception:  # pylint: disable=broad-except
         pass  # non-fatal; doctor will warn if hooks are missing
@@ -399,7 +399,7 @@ def _setup_gemini_mcp(
         cmd, args = cognirepo_bin, ["serve", "--project-dir", project_path]
     else:
         cmd = sys.executable
-        args = ["-m", "cli.main", "serve", "--project-dir", project_path]
+        args = ["-m", "interface.cli.main", "serve", "--project-dir", project_path]
 
     server_entry = {"command": cmd, "args": args}
 
@@ -461,7 +461,7 @@ def _setup_cursor_mcp(project_name: str, project_path: str) -> None:
         cmd, args = cognirepo_bin, ["serve", "--project-dir", project_path]
     else:
         cmd = sys.executable
-        args = ["-m", "cli.main", "serve", "--project-dir", project_path]
+        args = ["-m", "interface.cli.main", "serve", "--project-dir", project_path]
 
     mcp_json_path = os.path.join(cursor_dir, "mcp.json")
     if os.path.exists(mcp_json_path):
@@ -512,7 +512,7 @@ def _setup_vscode_mcp(project_name: str, project_path: str) -> None:
         cmd, args = cognirepo_bin, ["serve", "--project-dir", project_path]
     else:
         cmd = sys.executable
-        args = ["-m", "cli.main", "serve", "--project-dir", project_path]
+        args = ["-m", "interface.cli.main", "serve", "--project-dir", project_path]
 
     mcp_json_path = os.path.join(vscode_dir, "mcp.json")
     if os.path.exists(mcp_json_path):
@@ -724,7 +724,7 @@ def _seed_learnings_from_docs(repo_root: str) -> int:
 def _index_with_progress(svc_path: str, svc_name: str):
     """Run ASTIndexer in a daemon thread while showing a pulsing progress bar."""
     import threading  # pylint: disable=import-outside-toplevel
-    from cli.wizard import _animate_indexing  # pylint: disable=import-outside-toplevel
+    from interface.cli.wizard import _animate_indexing  # pylint: disable=import-outside-toplevel
     from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
     from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
 
@@ -992,12 +992,12 @@ def _auto_setup_child_repos(
     rejected: list | None = None,
 ) -> None:
     """Animate queue pop/process for each detected microservice."""
-    from cli.wizard import (  # pylint: disable=import-outside-toplevel
+    from interface.cli.wizard import (  # pylint: disable=import-outside-toplevel
         _animate_enqueue, _animate_pop, _service_header, _ask_yn,
         _ok, _warn,
     )
-    from cli.init_project import init_project as _init_project  # pylint: disable=import-outside-toplevel
-    from cli.main import _write_claude_hooks  # pylint: disable=import-outside-toplevel
+    from interface.cli.init_project import init_project as _init_project  # pylint: disable=import-outside-toplevel
+    from interface.cli.main import _write_claude_hooks  # pylint: disable=import-outside-toplevel
 
     _animate_enqueue(children)
 
@@ -1122,7 +1122,7 @@ def init_project(
     _wizard_ran = False
     if interactive  and not non_interactive:
         try:
-            from cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
+            from interface.cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
             wizard_cfg = None
             while wizard_cfg is None:
                 wizard_cfg = run_wizard()
@@ -1285,7 +1285,7 @@ def init_project(
                 print(f"  Tier 2: {' + '.join(_what)} queued — background indexing started.")
                 # edge: launch progress window (failure never blocks indexing)
                 try:
-                    from tools.bg_progress import launch_progress_ui as _lpui  # pylint: disable=import-outside-toplevel
+                    from interface.tools.bg_progress import launch_progress_ui as _lpui  # pylint: disable=import-outside-toplevel
                     _lpui()
                 except Exception:  # pylint: disable=broad-except
                     pass
@@ -1294,7 +1294,7 @@ def init_project(
 
     # seed behaviour weights from git history (fast — no embedding, just git log)
     try:
-        from cli.seed import seed_from_git_log  # pylint: disable=import-outside-toplevel
+        from interface.cli.seed import seed_from_git_log  # pylint: disable=import-outside-toplevel
         _seed_result = seed_from_git_log(repo_root=cwd, indexer=indexer)
         _n_seeded = _seed_result.get("seeded", 0) if isinstance(_seed_result, dict) else 0
         if _n_seeded > 0:

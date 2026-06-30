@@ -104,7 +104,7 @@ def test_router_available_providers():
 
 def test_env_wizard_status(tmp_path):
     """Test EnvWizard status detection."""
-    from cli.env_wizard import EnvWizard
+    from interface.cli.env_wizard import EnvWizard
     wizard = EnvWizard(project_dir=str(tmp_path))
     
     # Test all status returns a dict with expected keys
@@ -158,7 +158,7 @@ def test_setup_logging_no_crash():
 
 def test_mcp_server_module_state():
     """Ensure MCP server instance exists."""
-    from server.mcp_server import mcp
+    from interface.server.mcp_server import mcp
     assert mcp is not None
 
 
@@ -166,7 +166,7 @@ def test_mcp_server_module_state():
 
 def test_daemon_watcher_check_logic(tmp_path):
     """Exercise is_watcher_running_for_path logic."""
-    from cli.daemon import is_watcher_running_for_path
+    from interface.cli.daemon import is_watcher_running_for_path
     
     # Check for non-existent repo should return None
     assert is_watcher_running_for_path("/non/existent/path") is None

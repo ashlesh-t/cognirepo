@@ -267,7 +267,7 @@ def _load_manifest() -> list[dict]:
     """Load tool schemas from server/manifest.json, generating it if absent."""
     if not os.path.exists(MANIFEST_PATH):
         try:
-            from server.mcp_server import _write_manifest  # pylint: disable=import-outside-toplevel
+            from interface.server.mcp_server import _write_manifest  # pylint: disable=import-outside-toplevel
             _write_manifest()
         except Exception:  # pylint: disable=broad-except
             return []

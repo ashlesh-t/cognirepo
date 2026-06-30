@@ -219,7 +219,7 @@ class TestGraphEncryption:
 class TestGitignoreBlanket:
     def test_gitignore_blanket_pattern(self, isolated_cognirepo):
         """cognirepo init must write * as the primary gitignore pattern."""
-        from cli.init_project import init_project
+        from interface.cli.init_project import init_project
         # Ensure it doesn't try to run the wizard or ask questions
         init_project(no_index=True, interactive=False, non_interactive=True)
 

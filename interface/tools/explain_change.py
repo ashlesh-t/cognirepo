@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 
-from tools.git_utils import git_log_patch, GitNotFoundError
+from interface.tools.git_utils import git_log_patch, GitNotFoundError
 from intelligence.retrieval.hybrid import episodic_bm25_filter
 
 

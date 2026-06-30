@@ -99,7 +99,7 @@ def measure_token_reduction(queries: list[str]) -> dict:
       pack_tokens = context_pack output tokens
     Returns average savings %.
     """
-    from tools.context_pack import context_pack
+    from interface.tools.context_pack import context_pack
     from data.memory.circuit_breaker import CircuitOpenError
 
     savings_naive = []
@@ -232,8 +232,8 @@ def measure_memory_recall(test_memories: list[str]) -> dict:
     because hybrid may rank AST symbols above freshly-stored memories.
     Recall@k = fraction where stored text appears in the top-k results.
     """
-    from tools.store_memory import store_memory
-    from tools.retrieve_memory import retrieve_memory
+    from interface.tools.store_memory import store_memory
+    from interface.tools.retrieve_memory import retrieve_memory
     from intelligence.retrieval.hybrid import invalidate_hybrid_cache
 
     stored = []
@@ -272,7 +272,7 @@ def measure_precision_at_k(golden: list[dict] | None = None, k: int = 3) -> dict
     precision@k = fraction of queries where expected_file_pattern appears in top-k sections.
     Loads golden set from tests/fixtures/benchmark_golden.json if not provided.
     """
-    from tools.context_pack import context_pack
+    from interface.tools.context_pack import context_pack
 
     if golden is None:
         import os as _os
@@ -322,7 +322,7 @@ def measure_latency(golden: list[dict] | None = None, repeats: int = 3) -> dict:
     Run each golden query `repeats` times, record wall-clock time.
     Returns p50, p95, p99 in ms.
     """
-    from tools.context_pack import context_pack
+    from interface.tools.context_pack import context_pack
     import statistics
 
     if golden is None:
@@ -375,7 +375,7 @@ def measure_context_relevance(queries: list[str]) -> dict:
     For each query, check what fraction of context_pack sections
     contain at least one query keyword.
     """
-    from tools.context_pack import context_pack
+    from interface.tools.context_pack import context_pack
 
     relevance_scores = []
     for q in queries:

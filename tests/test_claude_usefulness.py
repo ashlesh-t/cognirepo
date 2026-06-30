@@ -26,7 +26,7 @@ def setup_test_index(isolated_cognirepo, monkeypatch):
     """
     Build a small test index in the isolated directory so tests have data to query.
     """
-    from cli.init_project import init_project
+    from interface.cli.init_project import init_project
     from intelligence.indexer.ast_indexer import ASTIndexer
     from data.graph.knowledge_graph import KnowledgeGraph
     
@@ -69,19 +69,19 @@ class TestTokenReduction:
     """context_pack must use fewer tokens than reading source files directly."""
 
     def test_context_pack_under_budget(self):
-        from tools.context_pack import context_pack
+        from interface.tools.context_pack import context_pack
         result = context_pack("how does hybrid retrieval work", max_tokens=2000)
         assert result["token_count"] <= 2000
 
     def test_context_pack_fewer_tokens_than_raw_file(self):
-        from tools.context_pack import context_pack
+        from interface.tools.context_pack import context_pack
         # packed_tokens will be small because we only have few dummy symbols
         result = context_pack("HybridRetriever scoring formula", max_tokens=2000)
         assert result["token_count"] > 0
         assert result["token_count"] < 1000
 
     def test_token_savings_reported(self):
-        from tools.context_pack import context_pack
+        from interface.tools.context_pack import context_pack
         result = context_pack("memory episodic search", max_tokens=1000)
         assert "token_count" in result
         assert result["token_count"] > 0
@@ -153,8 +153,8 @@ class TestCacheEfficiency:
 
 class TestMemoryRecall:
     def test_stored_memory_is_retrievable(self):
-        from tools.store_memory import store_memory
-        from tools.retrieve_memory import retrieve_memory
+        from interface.tools.store_memory import store_memory
+        from interface.tools.retrieve_memory import retrieve_memory
         
         text = "pytest usefulness test: memory round-trip"
         store_memory(text, source="test")
@@ -176,18 +176,18 @@ class TestMemoryRecall:
 @_skip_no_tiktoken
 class TestAnswerGrounding:
     def test_context_pack_has_sections(self):
-        from tools.context_pack import context_pack
+        from interface.tools.context_pack import context_pack
         result = context_pack("store_memory implementation", max_tokens=2000)
         assert "sections" in result
 
     def test_context_pack_sections_have_content(self):
-        from tools.context_pack import context_pack
+        from interface.tools.context_pack import context_pack
         result = context_pack("hybrid", max_tokens=2000)
         for section in result.get("sections", []):
             assert "content" in section or "text" in section
 
     def test_context_pack_query_preserved(self):
-        from tools.context_pack import context_pack
+        from interface.tools.context_pack import context_pack
         query = "unique_test_query"
         result = context_pack(query, max_tokens=500)
         assert result.get("query") == query

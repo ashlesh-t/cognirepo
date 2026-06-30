@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from server.idle_manager import IdleManager, get_idle_manager, reset_idle_manager
+from interface.server.idle_manager import IdleManager, get_idle_manager, reset_idle_manager
 
 
 @pytest.fixture(autouse=True)

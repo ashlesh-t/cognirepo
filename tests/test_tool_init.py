@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
-from cli.init_project import _setup_cursor_mcp, _setup_vscode_mcp, setup_mcp
+from interface.cli.init_project import _setup_cursor_mcp, _setup_vscode_mcp, setup_mcp
 
 
 # ── _setup_cursor_mcp ─────────────────────────────────────────────────────────
@@ -124,8 +124,8 @@ def test_setup_mcp_all_tools(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     with (
         patch("shutil.which", return_value="/usr/bin/cognirepo"),
-        patch("cli.init_project._setup_claude_mcp"),
-        patch("cli.init_project._setup_gemini_mcp"),
+        patch("interface.cli.init_project._setup_claude_mcp"),
+        patch("interface.cli.init_project._setup_gemini_mcp"),
     ):
         setup_mcp(["claude", "gemini", "cursor", "vscode"], "proj", str(tmp_path))
     assert (tmp_path / ".cursor" / "mcp.json").exists()

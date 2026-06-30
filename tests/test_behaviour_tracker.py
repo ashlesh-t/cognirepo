@@ -173,7 +173,7 @@ class TestFramingHintsLifecycle:
         # Manually add one more pattern to reach the threshold without auto-trigger
         bt.data["interaction_style"]["query_patterns"].append("how does routing work in this middleware 9")
         # Manually call summarize with store_memory mocked to ensure it succeeds
-        with _patch("tools.store_memory.store_memory", return_value=None):
+        with _patch("interface.tools.store_memory.store_memory", return_value=None):
             result = bt.summarize_interaction_style()
         hint = bt.data["interaction_style"].get("framing_hints", "")
         assert isinstance(hint, str)

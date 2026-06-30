@@ -33,7 +33,7 @@ log = logger  # legacy alias — some handlers reference `log`
 from core.config.logging import setup_logging
 setup_logging()
 
-from cli.init_project import init_project
+from interface.cli.init_project import init_project
 
 
 from core.config.paths import get_path
@@ -107,7 +107,7 @@ def _direct_store(text, source, global_scope=False):
         set_preference(f"memory:{hash(text) & 0xFFFFFF}", {"text": text, "source": source})
         record_action("store-global")
         return {"status": "stored", "text": text, "source": source, "scope": "global"}
-    from tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
+    from interface.tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
     record_action("store")
     return store_memory(text, source)
 
@@ -128,7 +128,7 @@ def _direct_retrieve(query, top_k, global_scope=False):
                 if any(w in text.lower() for w in q.split()):
                     results.append({"text": text, "source": val.get("source", ""), "scope": "global"})
         return results[:top_k]
-    from tools.retrieve_memory import retrieve_memory  # pylint: disable=import-outside-toplevel
+    from interface.tools.retrieve_memory import retrieve_memory  # pylint: disable=import-outside-toplevel
     record_action("retrieve")
     return retrieve_memory(query, top_k)
 
@@ -600,7 +600,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
 
     # ── Check 8: Daemon heartbeat ─────────────────────────────────────────────
     try:
-        from cli.daemon import heartbeat_age_seconds, read_heartbeat, _is_alive  # pylint: disable=import-outside-toplevel
+        from interface.cli.daemon import heartbeat_age_seconds, read_heartbeat, _is_alive  # pylint: disable=import-outside-toplevel
         _hb_age = heartbeat_age_seconds()
         _hb = read_heartbeat()
         if _hb_age is None:
@@ -610,7 +610,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             if not _is_alive(_pid):
                 # Stale heartbeat file from a previous run — clean it up silently
                 try:
-                    from cli.daemon import _heartbeat_file  # pylint: disable=import-outside-toplevel
+                    from interface.cli.daemon import _heartbeat_file  # pylint: disable=import-outside-toplevel
                     _heartbeat_file().unlink(missing_ok=True)
                 except Exception:  # pylint: disable=broad-except
                     pass
@@ -909,7 +909,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     if release_check:
         print("\n  Release checks:")
         try:
-            from cli.release_check import run_release_checks  # pylint: disable=import-outside-toplevel
+            from interface.cli.release_check import run_release_checks  # pylint: disable=import-outside-toplevel
             _rc_violations = run_release_checks()
             if not _rc_violations:
                 _ok("Docs — no legacy version refs or old tier names found")
@@ -1237,8 +1237,8 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     ServiceCandidate objects and wizard config can flow into init_project() and
     _auto_setup_child_repos() without serialization.
     """
-    from cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
-    from cli.init_project import init_project, _auto_setup_child_repos  # pylint: disable=import-outside-toplevel
+    from interface.cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
+    from interface.cli.init_project import init_project, _auto_setup_child_repos  # pylint: disable=import-outside-toplevel
 
     parent_path = os.path.abspath(os.getcwd())
 
@@ -1275,7 +1275,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
 
     # ── 3. Orchestrator: doc-seed parent (no AST index of source) ────────────
     if orchestrator_mode:
-        from cli.init_project import _seed_learnings_from_docs  # pylint: disable=import-outside-toplevel
+        from interface.cli.init_project import _seed_learnings_from_docs  # pylint: disable=import-outside-toplevel
         try:
             from intelligence.indexer.doc_ingester import run_ingest_subprocess  # pylint: disable=import-outside-toplevel
             run_ingest_subprocess(parent_path)
@@ -1441,7 +1441,7 @@ def _write_claude_hooks(claude_dir: str, project_dir: str) -> None:
         # Genuine fallback: last-resort importlib lookup, then project_dir (legacy).
         try:
             import importlib.util as _ilu  # pylint: disable=import-outside-toplevel
-            _spec = _ilu.find_spec("tools.behaviour_hook")
+            _spec = _ilu.find_spec("interface.tools.behaviour_hook")
             if _spec and _spec.origin:
                 _pkg_tools = os.path.dirname(_spec.origin)
             else:
@@ -1569,7 +1569,7 @@ def _cmd_ask_local(query: str, verbose: bool = False, top_k: int = 5) -> None:
         from intelligence.orchestrator.router import try_local_resolve  # pylint: disable=import-outside-toplevel
     except ImportError:
         # Fallback when orchestrator is unavailable: use context_pack directly
-        from tools.context_pack import context_pack  # pylint: disable=import-outside-toplevel
+        from interface.tools.context_pack import context_pack  # pylint: disable=import-outside-toplevel
         result = context_pack(query, max_tokens=1000, include_episodic=False)
         if result.get("status") in ("no_confident_match", "index_empty"):
             print(f"No local match found. Run `cognirepo index-repo .` first.")
@@ -1609,7 +1609,7 @@ def _cmd_ask_local(query: str, verbose: bool = False, top_k: int = 5) -> None:
 
 def _cmd_prime(as_json: bool = False) -> None:
     """Generate a session brief for agent bootstrap — thin wrapper over prime_session()."""
-    from tools.prime_session import prime_session  # pylint: disable=import-outside-toplevel
+    from interface.tools.prime_session import prime_session  # pylint: disable=import-outside-toplevel
     brief = prime_session()
 
     if as_json:
@@ -1850,7 +1850,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
 
     # ── Stage 4: seed LearningStore from README/docs sections ────────────────
     try:
-        from cli.init_project import _seed_learnings_from_docs  # pylint: disable=import-outside-toplevel
+        from interface.cli.init_project import _seed_learnings_from_docs  # pylint: disable=import-outside-toplevel
         _n_learned = _seed_learnings_from_docs(abs_path)
         if _n_learned > 0:
             print(f"  Learnings seeded: {_n_learned} doc sections stored")
@@ -1954,7 +1954,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
 
     # Persist timing to benchmark history for trend tracking
     try:
-        from tools.benchmark import _save_to_history as _bsave  # pylint: disable=import-outside-toplevel
+        from interface.tools.benchmark import _save_to_history as _bsave  # pylint: disable=import-outside-toplevel
         from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
         _bsave({
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -2033,7 +2033,7 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
     abs_path = os.path.abspath(path)
 
     # ── TASK-009: Singleton enforcement ──────────────────────────────────────
-    from cli.daemon import is_watcher_running_for_path  # pylint: disable=import-outside-toplevel
+    from interface.cli.daemon import is_watcher_running_for_path  # pylint: disable=import-outside-toplevel
     existing = is_watcher_running_for_path(abs_path)
     if existing:
         print(
@@ -2047,7 +2047,7 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
     session_id = f"watch_{ts}"
 
     if daemon:
-        from cli.daemon import daemonize, flock_register_watcher  # pylint: disable=import-outside-toplevel
+        from interface.cli.daemon import daemonize, flock_register_watcher  # pylint: disable=import-outside-toplevel
         from pathlib import Path  # pylint: disable=import-outside-toplevel
 
         cognirepo_dir = Path(get_path(""))
@@ -2070,7 +2070,7 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
     behaviour = BehaviourTracker(graph=kg)
 
     # ── TASK-008: Crash-recovery loop ─────────────────────────────────────────
-    from cli.daemon import run_watcher_with_crash_guard  # pylint: disable=import-outside-toplevel
+    from interface.cli.daemon import run_watcher_with_crash_guard  # pylint: disable=import-outside-toplevel
 
     if not daemon:
         print(f"Watching {abs_path} for changes. Ctrl+C to stop.")
@@ -2105,7 +2105,7 @@ def _start_watcher_bg(path: str) -> None:
     """
     abs_path = os.path.abspath(path)
     try:
-        from cli.daemon import is_watcher_running_for_path  # pylint: disable=import-outside-toplevel
+        from interface.cli.daemon import is_watcher_running_for_path  # pylint: disable=import-outside-toplevel
         if is_watcher_running_for_path(abs_path):
             return  # already watching — skip silently
     except Exception:  # pylint: disable=broad-except
@@ -2117,7 +2117,7 @@ def _start_watcher_bg(path: str) -> None:
             from intelligence.indexer.ast_indexer import ASTIndexer as _AI          # pylint: disable=import-outside-toplevel
             from data.graph.behaviour_tracker import BehaviourTracker as _BT # pylint: disable=import-outside-toplevel
             from intelligence.indexer.file_watcher import create_watcher             # pylint: disable=import-outside-toplevel
-            from cli.daemon import run_watcher_with_crash_guard         # pylint: disable=import-outside-toplevel
+            from interface.cli.daemon import run_watcher_with_crash_guard         # pylint: disable=import-outside-toplevel
             import time as _time                                         # pylint: disable=import-outside-toplevel
             _kg = _KG()
             _indexer = _AI(graph=_kg)
@@ -2541,7 +2541,7 @@ def _cmd_update_directives() -> int:
     """
     import shutil  # pylint: disable=import-outside-toplevel
     from pathlib import Path  # pylint: disable=import-outside-toplevel
-    from cli.init_project import setup_mcp  # pylint: disable=import-outside-toplevel
+    from interface.cli.init_project import setup_mcp  # pylint: disable=import-outside-toplevel
     from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
 
     cwd = os.getcwd()
@@ -3461,7 +3461,7 @@ def _main():
         sys.exit(0)
 
     if args.command == "setup-env":
-        from cli.env_wizard import EnvWizard  # pylint: disable=import-outside-toplevel
+        from interface.cli.env_wizard import EnvWizard  # pylint: disable=import-outside-toplevel
         wizard = EnvWizard(
             non_interactive=getattr(args, "non_interactive", False),
         )
@@ -3469,7 +3469,7 @@ def _main():
         sys.exit(0)
 
     if args.command == "metrics":
-        from cli.metrics_server import run_metrics_server  # pylint: disable=import-outside-toplevel
+        from interface.cli.metrics_server import run_metrics_server  # pylint: disable=import-outside-toplevel
         run_metrics_server(host=args.host, port=args.port)
         sys.exit(0)
 
@@ -3505,7 +3505,7 @@ def _main():
 
             if _systemd:
                 try:
-                    from cli.daemon import write_systemd_unit  # pylint: disable=import-outside-toplevel
+                    from interface.cli.daemon import write_systemd_unit  # pylint: disable=import-outside-toplevel
                     _unit_path = write_systemd_unit(".")
                     print(
                         f"\n[cognirepo] systemd unit written to {_unit_path}\n"
@@ -3544,7 +3544,7 @@ def _main():
                 _svc_url = getattr(args, "api_base_url", None)
                 if not _svc_port:
                     try:
-                        from cli.init_project import _detect_service_port  # pylint: disable=import-outside-toplevel
+                        from interface.cli.init_project import _detect_service_port  # pylint: disable=import-outside-toplevel
                         _svc_port = _detect_service_port(_cwd)
                     except Exception:  # pylint: disable=broad-except
                         pass
@@ -3594,7 +3594,7 @@ def _main():
         sys.exit(0)
 
     if args.command == "serve":
-        from server.mcp_server import run_server  # pylint: disable=import-outside-toplevel
+        from interface.server.mcp_server import run_server  # pylint: disable=import-outside-toplevel
         run_server(project_dir=getattr(args, "project_dir", None))
         return
 
@@ -3702,7 +3702,7 @@ def _main():
         return
 
     if args.command == "benchmark":
-        from tools.benchmark import run_benchmark, print_report, load_last_run  # pylint: disable=import-outside-toplevel
+        from interface.tools.benchmark import run_benchmark, print_report, load_last_run  # pylint: disable=import-outside-toplevel
         metrics = run_benchmark()
         if metrics.get("aborted"):
             # run_benchmark already printed the abort reason + partial result;
@@ -3716,11 +3716,11 @@ def _main():
         return
 
     if args.command == "migrate-config":
-        from cli.migrate_config import run_migrate_config  # pylint: disable=import-outside-toplevel
+        from interface.cli.migrate_config import run_migrate_config  # pylint: disable=import-outside-toplevel
         sys.exit(run_migrate_config(dry_run=getattr(args, "dry_run", False)))
 
     if args.command == "export-spec":
-        from adapters.openai_spec import export  # pylint: disable=import-outside-toplevel
+        from interface.adapters.openai_spec import export  # pylint: disable=import-outside-toplevel
         paths = export()
         # Also write openai_tools.json to stdout so `cognirepo export-spec > /tmp/spec.json` works
         if paths.get("openai_tools"):
@@ -3747,7 +3747,7 @@ def _main():
         return
 
     if args.command == "seed":
-        from cli.seed import seed_from_git_log  # pylint: disable=import-outside-toplevel
+        from interface.cli.seed import seed_from_git_log  # pylint: disable=import-outside-toplevel
         from_git = getattr(args, "from_git", False)
         seed_comments = getattr(args, "comments", False)
         result = seed_from_git_log(
@@ -3982,7 +3982,7 @@ def _main():
                 file=sys.stderr,
             )
             sys.exit(2)
-        from cli.daemon import (  # pylint: disable=import-outside-toplevel
+        from interface.cli.daemon import (  # pylint: disable=import-outside-toplevel
             heartbeat_age_seconds,
             read_heartbeat,
             is_watcher_running_for_path,
@@ -4036,7 +4036,7 @@ def _main():
         sys.exit(_cmd_update_directives())
 
     if args.command == "list":
-        from cli.daemon import print_watcher_list, view_watcher_logs, stop_watcher  # pylint: disable=import-outside-toplevel
+        from interface.cli.daemon import print_watcher_list, view_watcher_logs, stop_watcher  # pylint: disable=import-outside-toplevel
         if args.view or args.stop:
             if not args.name:
                 print("--view and --stop require -n <PID_OR_NAME>.", file=sys.stderr)

@@ -18,7 +18,7 @@ import pytest
 @pytest.fixture
 def daemon_tmp(tmp_path, monkeypatch):
     """Redirect daemon's _find_cognirepo_dir to tmp_path."""
-    import cli.daemon as daemon_mod
+    import interface.cli.daemon as daemon_mod
     cog_dir = tmp_path / ".cognirepo"
     cog_dir.mkdir(exist_ok=True)
     monkeypatch.setattr(daemon_mod, "_find_cognirepo_dir", lambda: cog_dir)
@@ -28,7 +28,7 @@ def daemon_tmp(tmp_path, monkeypatch):
 # ── _find_cognirepo_dir ───────────────────────────────────────────────────────
 
 def test_find_cognirepo_dir_returns_path():
-    from cli.daemon import _find_cognirepo_dir
+    from interface.cli.daemon import _find_cognirepo_dir
     result = _find_cognirepo_dir()
     assert isinstance(result, Path)
 
@@ -113,19 +113,19 @@ def test_heartbeat_age_corrupt_timestamp(daemon_tmp):
 # ── _is_alive ─────────────────────────────────────────────────────────────────
 
 def test_is_alive_current_pid():
-    from cli.daemon import _is_alive
+    from interface.cli.daemon import _is_alive
     result = _is_alive(os.getpid())
     assert result is True
 
 
 def test_is_alive_dead_pid():
-    from cli.daemon import _is_alive
+    from interface.cli.daemon import _is_alive
     result = _is_alive(999999)  # very unlikely to exist
     assert result is False
 
 
 def test_is_alive_zero():
-    from cli.daemon import _is_alive
+    from interface.cli.daemon import _is_alive
     result = _is_alive(0)
     assert isinstance(result, bool)
 

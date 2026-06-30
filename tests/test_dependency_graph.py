@@ -37,8 +37,8 @@ def _make_indexer(files: dict) -> MagicMock:
 
 class TestDependencyGraph:
     def _run(self, indexer, module, **kwargs):
-        from tools.dependency_graph import dependency_graph
-        with patch("tools.dependency_graph._load_indexer", return_value=indexer):
+        from interface.tools.dependency_graph import dependency_graph
+        with patch("interface.tools.dependency_graph._load_indexer", return_value=indexer):
             return dependency_graph(module, **kwargs)
 
     def test_missing_module_returns_error(self):
