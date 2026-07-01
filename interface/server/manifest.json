@@ -15,7 +15,7 @@
           },
           "source": {
             "type": "string",
-            "description": "Origin label (file, url, …)",
+            "description": "Origin label (file, url, \u2026)",
             "default": ""
           },
           "repo_path": {
@@ -557,7 +557,7 @@
     },
     {
       "name": "search_token",
-      "description": "Fast BM25 token search over symbol names and docs — no embedding needed.",
+      "description": "Fast BM25 token search over symbol names and docs \u2014 no embedding needed.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -592,7 +592,7 @@
     },
     {
       "name": "get_last_context",
-      "description": "Return what the last agent was looking at — resume from cross-agent handoff.",
+      "description": "Return what the last agent was looking at \u2014 resume from cross-agent handoff.",
       "parameters": {
         "type": "object",
         "properties": {}

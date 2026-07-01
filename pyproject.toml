@@ -120,18 +120,7 @@ cognirepo = "interface.cli.main:main"
 where = ["."]
 include = [
     "cognirepo*",
-    # ── New layered packages ───────────────────────────────────────────────────
-    "core*", "data*", "intelligence*", "interface*",
-    # ── Shim packages (old names, kept for backward compat until v2.0) ────────
-    "_bm25*", "config*", "security*", "vector_db*",
-    "graph*", "memory*",
-    "indexer*", "retrieval*", "orchestrator*",
-    # ── New interface/ops shims (old names, kept for backward compat until v2.0) ─
-    "adapters*", "cli*", "server*", "tools*",
-    # ── ops layer ─────────────────────────────────────────────────────────────
-    "ops*",
-    # ── ops shim (old name, kept for backward compat until v2.0) ─────────────
-    "cron*",
+    "core*", "data*", "intelligence*", "interface*", "ops*",
 ]
 exclude = ["venv*", "*.egg-info*"]
 
