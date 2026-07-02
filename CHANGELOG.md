@@ -10,7 +10,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [1.2.0] — 2026-07-01
+## [2.0.0] — 2026-07-02
 
 ### Changed
 - **Depth-oriented package restructure** — flat 14-package layout replaced with a
@@ -38,10 +38,19 @@ Versioning: [Semantic Versioning](https://semver.org/)
   comments or string literals).
 - `scripts/check_circular_deps.py` — layer cycle verifier; only flags toplevel imports.
 
-### Backward Compatibility
-All old import paths (`from memory import ...`, `from tools import ...`, etc.) continue
-to work via `sys.modules` shim packages that emit `DeprecationWarning`. Shims are
-removed in v2.0. MCP tool surface (34 tools, signatures) is unchanged.
+### BREAKING CHANGES
+All old top-level import paths (`memory`, `graph`, `indexer`, `retrieval`,
+`orchestrator`, `tools`, `server`, `adapters`, `cli`, `cron`, `config`,
+`security`, `vector_db`, `_bm25`) have been **removed**, not shimmed. Code that
+imports `from memory.semantic_memory import SemanticMemory`, `import tools`,
+etc. will now fail with `ModuleNotFoundError`, not a `DeprecationWarning`. No
+`sys.modules` compatibility layer was implemented — an earlier draft of this
+changelog claimed one existed; it did not, and rather than add one, the old
+paths were removed outright to avoid shipping a redirect layer nobody
+verified. Update all imports to the new layer-prefixed paths (e.g.
+`from data.memory.semantic_memory import SemanticMemory`,
+`from interface.tools import ...`). MCP tool surface (34 tools, signatures) is
+unchanged — only Python import paths are affected.
 
 ---
 

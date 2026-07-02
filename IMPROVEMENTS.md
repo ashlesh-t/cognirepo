@@ -46,12 +46,19 @@ by running `cognirepo export-spec`.
 
 ---
 
-## 3. Shim packages scheduled for removal in v2.0
+## 3. Old top-level import paths removed, not shimmed (v2.0.0)
 
-The following backward-compat shim packages at the repo root emit
-`DeprecationWarning` and will be **removed in v2.0**:
+An earlier draft of this restructure planned backward-compat shim packages
+at the repo root (`sys.modules` redirects emitting `DeprecationWarning`) for
+the old flat-layout import paths below. Those shims were never actually
+implemented — the old packages were `git mv`'d away with nothing left in
+their place, and `pyproject.toml`'s `packages.find.include` dropped all 14
+old names. Rather than build and verify a shim layer after the fact, the
+old paths were removed outright and the release was cut as a breaking major
+version (`2.0.0`) instead of a minor bump. See `CHANGELOG.md` under
+`[2.0.0] BREAKING CHANGES`.
 
-| Shim (old path) | New path |
+| Old path (removed) | New path |
 |---|---|
 | `_bm25` | `core._bm25` |
 | `config` | `core.config` |
