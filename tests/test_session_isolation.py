@@ -20,11 +20,11 @@ def test_project_dir_isolates_sessions(tmp_path):
     dir_a.mkdir(parents=True)
     dir_b.mkdir(parents=True)
 
-    from config.paths import set_cognirepo_dir
+    from core.config.paths import set_cognirepo_dir
 
     # ── project A ────────────────────────────────────────────────────────────
     set_cognirepo_dir(str(dir_a))
-    from orchestrator import session as sess_mod
+    from intelligence.orchestrator import session as sess_mod
     # Reload so module-level state picks up the new dir override
     import importlib
     importlib.reload(sess_mod)

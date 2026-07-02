@@ -8,7 +8,7 @@
 import threading
 import time
 
-from cron.scheduler import BackgroundScheduler
+from ops.cron.scheduler import BackgroundScheduler
 
 
 def test_scheduler_fires_task():
@@ -45,8 +45,8 @@ def test_scheduler_stop_prevents_future_runs():
 
 def test_scheduler_skips_when_breaker_open(monkeypatch):
     """When the circuit breaker is OPEN the scheduled task must be skipped."""
-    from cron.probes import ProbeResult
-    from memory.circuit_breaker import get_breaker, CircuitBreaker
+    from core.probes import ProbeResult
+    from data.memory.circuit_breaker import get_breaker, CircuitBreaker
 
     # Replace the singleton with a tripped breaker
     bad_breaker = CircuitBreaker(
@@ -60,7 +60,7 @@ def test_scheduler_skips_when_breaker_open(monkeypatch):
     except Exception:
         pass
 
-    monkeypatch.setattr("memory.circuit_breaker._BREAKER", bad_breaker)
+    monkeypatch.setattr("data.memory.circuit_breaker._BREAKER", bad_breaker)
 
     task_ran = [False]
 

@@ -23,9 +23,7 @@ jobs:
 
       - name: Run Bandit (HIGH + CRITICAL only)
         run: |
-          bandit -r adapters/ cli/ cron/ graph/ indexer/ \
-                    memory/ orchestrator/ retrieval/ security/ server/ \
-                    tools/ vector_db/ \
+          bandit -r core/ data/ intelligence/ interface/ ops/ \
                  -x tests/ \
                  -ll
 

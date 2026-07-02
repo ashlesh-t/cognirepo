@@ -62,7 +62,7 @@ class TestFernetHelpers:
     def test_encrypt_decrypt_round_trip(self):
         pytest.importorskip("cryptography")
         pytest.importorskip("keyring")
-        from security.encryption import get_or_create_key, encrypt_bytes, decrypt_bytes
+        from core.security.encryption import get_or_create_key, encrypt_bytes, decrypt_bytes
 
         with mock.patch("keyring.get_password", return_value=None), \
              mock.patch("keyring.set_password"):
@@ -77,7 +77,7 @@ class TestFernetHelpers:
         """Second call with same project_id returns the same key."""
         pytest.importorskip("cryptography")
         pytest.importorskip("keyring")
-        from security.encryption import get_or_create_key
+        from core.security.encryption import get_or_create_key
 
         stored_key = None
 
@@ -105,7 +105,7 @@ class TestFernetHelpers:
         if "security.encryption" in sys.modules:
             del sys.modules["security.encryption"]
 
-        from security import encryption  # re-import
+        from core.security import encryption  # re-import
         with pytest.raises(ImportError, match="pip install 'cognirepo\\[security\\]'"):
             encryption._require_deps()
 
@@ -128,7 +128,7 @@ class TestEpisodicEncryption:
 
         with mock.patch("keyring.get_password", side_effect=fake_get), \
              mock.patch("keyring.set_password", side_effect=fake_set):
-            from memory.episodic_memory import log_event
+            from data.memory.episodic_memory import log_event
             log_event("test sensitive event", {"detail": "secret"})
 
         # Raw bytes must NOT contain the plaintext
@@ -152,7 +152,7 @@ class TestEpisodicEncryption:
 
         with mock.patch("keyring.get_password", side_effect=fake_get), \
              mock.patch("keyring.set_password", side_effect=fake_set):
-            from memory import episodic_memory
+            from data.memory import episodic_memory
             # Force module reload so get_storage_config is re-evaluated
             import importlib
             importlib.reload(episodic_memory)
@@ -165,7 +165,7 @@ class TestEpisodicEncryption:
         """When encryption is disabled, file is human-readable JSON."""
         _disable_encryption(isolated_cognirepo)
 
-        from memory.episodic_memory import log_event
+        from data.memory.episodic_memory import log_event
         log_event("plaintext event")
 
         with open(".cognirepo/memory/episodic.json", "rb") as f:
@@ -191,7 +191,7 @@ class TestGraphEncryption:
 
         with mock.patch("keyring.get_password", side_effect=fake_get), \
              mock.patch("keyring.set_password", side_effect=fake_set):
-            from graph.knowledge_graph import KnowledgeGraph
+            from data.graph.knowledge_graph import KnowledgeGraph
             kg = KnowledgeGraph()
             kg.add_node("fn::secret_func", "FUNCTION")
             kg.save()
@@ -204,7 +204,7 @@ class TestGraphEncryption:
     def test_graph_disabled_encryption_is_pickle(self, isolated_cognirepo):
         _disable_encryption(isolated_cognirepo)
 
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         kg = KnowledgeGraph()
         kg.add_node("fn::visible_func", "FUNCTION")
         kg.save()
@@ -219,7 +219,7 @@ class TestGraphEncryption:
 class TestGitignoreBlanket:
     def test_gitignore_blanket_pattern(self, isolated_cognirepo):
         """cognirepo init must write * as the primary gitignore pattern."""
-        from cli.init_project import init_project
+        from interface.cli.init_project import init_project
         # Ensure it doesn't try to run the wizard or ask questions
         init_project(no_index=True, interactive=False, non_interactive=True)
 

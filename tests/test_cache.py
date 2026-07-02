@@ -17,19 +17,19 @@ class TestLookupSymbolCache:
     """Tests for @lru_cache on ASTIndexer.lookup_symbol."""
 
     def _make_indexer(self, reverse_index: dict) -> "ASTIndexer":
-        from graph.knowledge_graph import KnowledgeGraph
-        from indexer.ast_indexer import ASTIndexer
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from intelligence.indexer.ast_indexer import ASTIndexer
         # clear any stale cache state before each test
         ASTIndexer.lookup_symbol.cache_clear()
         kg = MagicMock(spec=KnowledgeGraph)
         kg.G = MagicMock()
-        with patch("indexer.ast_indexer.get_model", return_value=MagicMock()):
+        with patch("intelligence.indexer.ast_indexer.get_model", return_value=MagicMock()):
             indexer = ASTIndexer(graph=kg)
         indexer.index_data["reverse_index"] = reverse_index
         return indexer
 
     def test_lookup_returns_correct_locations(self):
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         rev = {"my_function": [["src/foo.py", 10], ["src/bar.py", 20]]}
         indexer = self._make_indexer(rev)
         result = indexer.lookup_symbol("my_function")
@@ -42,7 +42,7 @@ class TestLookupSymbolCache:
 
     def test_repeated_calls_use_cache(self):
         """Second call to lookup_symbol with same arg should hit the lru_cache."""
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         rev = {"cached_fn": [["a.py", 5]]}
         indexer = self._make_indexer(rev)
         ASTIndexer.lookup_symbol.cache_clear()
@@ -59,7 +59,7 @@ class TestLookupSymbolCache:
 
     def test_cache_cleared_after_build_reverse_index(self):
         """_build_reverse_index must call cache_clear() so fresh results are served."""
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         rev = {"fn_old": [["old.py", 1]]}
         indexer = self._make_indexer(rev)
         ASTIndexer.lookup_symbol.cache_clear()
@@ -88,12 +88,12 @@ class TestHybridRetrieveCache:
     """Tests for TTL cache on hybrid_retrieve."""
 
     def setup_method(self):
-        from retrieval.hybrid import invalidate_hybrid_cache
+        from intelligence.retrieval.hybrid import invalidate_hybrid_cache
         invalidate_hybrid_cache()  # reset between tests
 
     def test_cache_miss_then_hit(self):
-        from retrieval import hybrid as h
-        from retrieval.hybrid import invalidate_hybrid_cache
+        from intelligence.retrieval import hybrid as h
+        from intelligence.retrieval.hybrid import invalidate_hybrid_cache
         invalidate_hybrid_cache()
 
         mock_result = [{"text": "result", "final_score": 0.9}]
@@ -110,8 +110,8 @@ class TestHybridRetrieveCache:
         assert result1 == result2 == mock_result
 
     def test_different_queries_not_shared(self):
-        from retrieval import hybrid as h
-        from retrieval.hybrid import invalidate_hybrid_cache
+        from intelligence.retrieval import hybrid as h
+        from intelligence.retrieval.hybrid import invalidate_hybrid_cache
         invalidate_hybrid_cache()
 
         with patch.object(h, "HybridRetriever") as mock_cls:
@@ -126,8 +126,8 @@ class TestHybridRetrieveCache:
         assert mock_cls.call_count == 2
 
     def test_invalidate_clears_cache(self):
-        from retrieval import hybrid as h
-        from retrieval.hybrid import invalidate_hybrid_cache
+        from intelligence.retrieval import hybrid as h
+        from intelligence.retrieval.hybrid import invalidate_hybrid_cache
         invalidate_hybrid_cache()
 
         mock_result = [{"text": "result", "final_score": 0.8}]
@@ -144,8 +144,8 @@ class TestHybridRetrieveCache:
         assert mock_cls.call_count == 2
 
     def test_cache_expires_after_ttl(self):
-        from retrieval import hybrid as h
-        from retrieval.hybrid import invalidate_hybrid_cache
+        from intelligence.retrieval import hybrid as h
+        from intelligence.retrieval.hybrid import invalidate_hybrid_cache
         invalidate_hybrid_cache()
 
         mock_result = [{"text": "result"}]
@@ -154,7 +154,7 @@ class TestHybridRetrieveCache:
             mock_instance.retrieve.return_value = mock_result
             mock_cls.return_value = mock_instance
 
-            with patch("retrieval.hybrid.time") as mock_time:
+            with patch("intelligence.retrieval.hybrid.time") as mock_time:
                 mock_time.monotonic.return_value = 0.0
                 h.hybrid_retrieve("ttl_query", top_k=5)
 
@@ -166,7 +166,7 @@ class TestHybridRetrieveCache:
         assert mock_cls.call_count == 2
 
     def test_cache_stats_available(self):
-        from retrieval.hybrid import cache_stats
+        from intelligence.retrieval.hybrid import cache_stats
         stats = cache_stats()
         assert "hits" in stats
         assert "misses" in stats

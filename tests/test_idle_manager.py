@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from server.idle_manager import IdleManager, get_idle_manager, reset_idle_manager
+from interface.server.idle_manager import IdleManager, get_idle_manager, reset_idle_manager
 
 
 @pytest.fixture(autouse=True)
@@ -153,16 +153,16 @@ class TestEvictModel:
 
     def test_evict_model_clears_global(self, monkeypatch):
         """evict_model() sets memory.embeddings.MODEL to None."""
-        import memory.embeddings as emb
+        import data.memory.embeddings as emb
         monkeypatch.setattr(emb, "MODEL", object())  # pretend model is loaded
-        from memory.embeddings import evict_model
+        from data.memory.embeddings import evict_model
         evict_model()
         assert emb.MODEL is None
 
     def test_evict_model_noop_when_already_none(self, monkeypatch):
         """evict_model() is safe to call when MODEL is already None."""
-        import memory.embeddings as emb
+        import data.memory.embeddings as emb
         monkeypatch.setattr(emb, "MODEL", None)
-        from memory.embeddings import evict_model
+        from data.memory.embeddings import evict_model
         evict_model()  # must not raise
         assert emb.MODEL is None

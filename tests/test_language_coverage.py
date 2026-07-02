@@ -70,7 +70,7 @@ def test_grammar_parses_fixture(ext, args):
 
 def test_language_registry_declared_grammars_importable():
     """All grammars in _GRAMMAR_MAP must either import or report a clean skip."""
-    from indexer.language_registry import _GRAMMAR_MAP  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.language_registry import _GRAMMAR_MAP  # pylint: disable=import-outside-toplevel
     missing = []
     for ext, pkg in _GRAMMAR_MAP.items():
         if not _grammar_installed(pkg):

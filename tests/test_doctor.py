@@ -42,7 +42,7 @@ def _run_doctor(
     Monkeypatches all heavy imports so the test needs no real .cognirepo/.
     """
     # pylint: disable=too-many-locals
-    from cli.main import _cmd_doctor  # imported here so SPDX header is already applied
+    from interface.cli.main import _cmd_doctor  # imported here so SPDX header is already applied
 
     # ── stub env ──────────────────────────────────────────────────────────────
     for var in ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
@@ -53,7 +53,7 @@ def _run_doctor(
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-key")
 
     # ── stub vector_db ────────────────────────────────────────────────────────
-    fake_vdb_mod = types.ModuleType("vector_db.local_vector_db")
+    fake_vdb_mod = types.ModuleType("core.vector_db.local_vector_db")
     if faiss_fail:
         class _BadVDB:
             def __init__(self):
@@ -65,10 +65,10 @@ def _run_doctor(
         class _FakeVDB:
             index = _FakeIndex()
         fake_vdb_mod.LocalVectorDB = _FakeVDB
-    monkeypatch.setitem(sys.modules, "vector_db.local_vector_db", fake_vdb_mod)
+    monkeypatch.setitem(sys.modules, "core.vector_db.local_vector_db", fake_vdb_mod)
 
     # ── stub graph ────────────────────────────────────────────────────────────
-    fake_graph_mod = types.ModuleType("graph.knowledge_graph")
+    fake_graph_mod = types.ModuleType("data.graph.knowledge_graph")
     if graph_fail:
         class _BadKG:
             def __init__(self):
@@ -83,45 +83,45 @@ def _run_doctor(
         class _FakeKG:
             G = _FakeG()
         fake_graph_mod.KnowledgeGraph = _FakeKG
-    monkeypatch.setitem(sys.modules, "graph.knowledge_graph", fake_graph_mod)
+    monkeypatch.setitem(sys.modules, "data.graph.knowledge_graph", fake_graph_mod)
 
     # ── stub episodic ─────────────────────────────────────────────────────────
-    fake_ep_mod = types.ModuleType("memory.episodic_memory")
+    fake_ep_mod = types.ModuleType("data.memory.episodic_memory")
     if episodic_fail:
         def _bad_history(**_kw):
             raise RuntimeError("episodic.json not found")
         fake_ep_mod.get_history = _bad_history
     else:
         fake_ep_mod.get_history = lambda **_kw: [{"event": "x"}] * 89
-    monkeypatch.setitem(sys.modules, "memory.episodic_memory", fake_ep_mod)
+    monkeypatch.setitem(sys.modules, "data.memory.episodic_memory", fake_ep_mod)
 
     # ── stub AST indexer ──────────────────────────────────────────────────────
-    fake_idx_mod = types.ModuleType("indexer.ast_indexer")
+    fake_idx_mod = types.ModuleType("intelligence.indexer.ast_indexer")
     class _FakeASTIndexer:
         def __init__(self, **_kw):
             self.index_data = {}
         def load(self):
             pass
     fake_idx_mod.ASTIndexer = _FakeASTIndexer
-    monkeypatch.setitem(sys.modules, "indexer.ast_indexer", fake_idx_mod)
+    monkeypatch.setitem(sys.modules, "intelligence.indexer.ast_indexer", fake_idx_mod)
 
     # ── stub language registry ────────────────────────────────────────────────
-    fake_lang_mod = types.ModuleType("indexer.language_registry")
+    fake_lang_mod = types.ModuleType("intelligence.indexer.language_registry")
     fake_lang_mod.supported_extensions = lambda: {".py", ".js", ".ts"}
     fake_lang_mod._GRAMMAR_MAP = {".py": "tree-sitter-python"}
     fake_lang_mod._get_language = lambda ext: None
     fake_lang_mod.clear_cache = lambda: None
-    monkeypatch.setitem(sys.modules, "indexer.language_registry", fake_lang_mod)
+    monkeypatch.setitem(sys.modules, "intelligence.indexer.language_registry", fake_lang_mod)
 
     # ── stub circuit breaker ──────────────────────────────────────────────────
-    fake_cb_mod = types.ModuleType("memory.circuit_breaker")
+    fake_cb_mod = types.ModuleType("data.memory.circuit_breaker")
     class _FakeCBState:
         value = "CLOSED"
     class _FakeCB:
         state = _FakeCBState()
         _rss_limit_mb = 6553.0
     fake_cb_mod.get_breaker = lambda: _FakeCB()
-    monkeypatch.setitem(sys.modules, "memory.circuit_breaker", fake_cb_mod)
+    monkeypatch.setitem(sys.modules, "data.memory.circuit_breaker", fake_cb_mod)
 
     # ── stub psutil ───────────────────────────────────────────────────────────
     fake_psutil = types.ModuleType("psutil")
@@ -166,7 +166,7 @@ def _run_doctor(
     monkeypatch.setitem(sys.modules, "fastembed", fake_fe_mod)
 
     # ── stub server.mcp_server (new check 14) ─────────────────────────────────
-    fake_mcp_server_mod = types.ModuleType("server.mcp_server")
+    fake_mcp_server_mod = types.ModuleType("interface.server.mcp_server")
     fake_mcp_server_mod._REGISTERED_TOOLS = {
         "store_memory", "retrieve_memory", "record_decision",
         "context_pack", "semantic_search_code", "search_token",
@@ -181,8 +181,7 @@ def _run_doctor(
         "record_user_preference", "supersede_learning", "get_agent_bootstrap",
         "find_symbol_path", "get_service_endpoints",
     }
-    monkeypatch.setitem(sys.modules, "server", types.ModuleType("server"))
-    monkeypatch.setitem(sys.modules, "server.mcp_server", fake_mcp_server_mod)
+    monkeypatch.setitem(sys.modules, "interface.server.mcp_server", fake_mcp_server_mod)
 
     # ── stub .cognirepo/ presence ─────────────────────────────────────────────
     if with_init:

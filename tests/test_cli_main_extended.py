@@ -23,7 +23,7 @@ import pytest
 
 def _run(*args, timeout=15):
     return subprocess.run(
-        [sys.executable, "-m", "cli.main"] + list(args),
+        [sys.executable, "-m", "interface.cli.main"] + list(args),
         capture_output=True, text=True, timeout=timeout,
     )
 
@@ -157,7 +157,7 @@ def test_export_spec_command():
 # ── Direct function calls for coverage of internal helpers ───────────────────
 
 def test_cmd_status_function():
-    from cli.main import _cmd_status
+    from interface.cli.main import _cmd_status
     try:
         _cmd_status()
     except SystemExit:
@@ -167,7 +167,7 @@ def test_cmd_status_function():
 
 
 def test_cmd_prime_function():
-    from cli.main import _cmd_prime
+    from interface.cli.main import _cmd_prime
     try:
         _cmd_prime(as_json=False)
     except SystemExit:
@@ -177,7 +177,7 @@ def test_cmd_prime_function():
 
 
 def test_cmd_prime_json_function():
-    from cli.main import _cmd_prime
+    from interface.cli.main import _cmd_prime
     try:
         _cmd_prime(as_json=True)
     except SystemExit:
@@ -187,7 +187,7 @@ def test_cmd_prime_json_function():
 
 
 def test_cmd_list_mcp_function():
-    from cli.main import _cmd_list_mcp
+    from interface.cli.main import _cmd_list_mcp
     try:
         _cmd_list_mcp()
     except SystemExit:
@@ -197,7 +197,7 @@ def test_cmd_list_mcp_function():
 
 
 def test_cmd_list_orgs_function():
-    from cli.main import _cmd_list_orgs
+    from interface.cli.main import _cmd_list_orgs
     try:
         _cmd_list_orgs()
     except SystemExit:
@@ -207,7 +207,7 @@ def test_cmd_list_orgs_function():
 
 
 def test_cmd_sessions_function():
-    from cli.main import _cmd_sessions
+    from interface.cli.main import _cmd_sessions
     try:
         _cmd_sessions(limit=5)
     except SystemExit:
@@ -217,7 +217,7 @@ def test_cmd_sessions_function():
 
 
 def test_cmd_install_hooks_function():
-    from cli.main import _cmd_install_hooks
+    from interface.cli.main import _cmd_install_hooks
     try:
         result = _cmd_install_hooks()
         assert result in (0, 1, 2, None)
@@ -228,7 +228,7 @@ def test_cmd_install_hooks_function():
 
 
 def test_cmd_uninstall_hooks_function():
-    from cli.main import _cmd_uninstall_hooks
+    from interface.cli.main import _cmd_uninstall_hooks
     try:
         result = _cmd_uninstall_hooks()
         assert result in (0, 1, 2, None)
@@ -239,7 +239,7 @@ def test_cmd_uninstall_hooks_function():
 
 
 def test_cmd_verify_index_function():
-    from cli.main import _cmd_verify_index
+    from interface.cli.main import _cmd_verify_index
     try:
         result = _cmd_verify_index()
         assert result in (0, 1, 2, None)
@@ -250,7 +250,7 @@ def test_cmd_verify_index_function():
 
 
 def test_cmd_doctor_function():
-    from cli.main import _cmd_doctor
+    from interface.cli.main import _cmd_doctor
     try:
         result = _cmd_doctor(verbose=False)
         assert result in (0, 1, 2, None)
@@ -261,7 +261,7 @@ def test_cmd_doctor_function():
 
 
 def test_cmd_doctor_fix_function():
-    from cli.main import _cmd_doctor_fix
+    from interface.cli.main import _cmd_doctor_fix
     try:
         result = _cmd_doctor_fix()
         assert result in (0, 1, 2, None)
@@ -272,7 +272,7 @@ def test_cmd_doctor_fix_function():
 
 
 def test_cmd_coverage_function():
-    from cli.main import _cmd_coverage
+    from interface.cli.main import _cmd_coverage
     try:
         result = _cmd_coverage()
         assert result in (0, 1, 2, None)
@@ -283,7 +283,7 @@ def test_cmd_coverage_function():
 
 
 def test_cmd_update_directives_function():
-    from cli.main import _cmd_update_directives
+    from interface.cli.main import _cmd_update_directives
     try:
         result = _cmd_update_directives()
         assert result in (0, 1, 2, None)

@@ -6,7 +6,7 @@
 
 import os
 import pytest
-from config.orgs import create_org, list_orgs, link_repo_to_org, unlink_repo_from_org, get_repo_org
+from core.config.orgs import create_org, list_orgs, link_repo_to_org, unlink_repo_from_org, get_repo_org
 
 def test_create_and_list_orgs(isolated_cognirepo):
     assert create_org("test-org") is True

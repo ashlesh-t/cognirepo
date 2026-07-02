@@ -5,25 +5,25 @@
 
 ---
 
-## 1. MCP Tools (via `server/mcp_server.py`)
+## 1. MCP Tools (via `interface/server/mcp_server.py`)
 
 All tools are registered via `FastMCP` and exposed over stdio transport.
 
 | Tool | Status | Implementation | Notes |
 |------|--------|----------------|-------|
-| `context_pack(query, max_tokens)` | ✅ | `tools/context_pack.py` | Hybrid retrieve → ±25-line code windows → greedy token pack; tiktoken + fallback |
-| `lookup_symbol(name)` | ✅ | `server/mcp_server.py` → `ASTIndexer.lookup_symbol()` | O(1) reverse index; enriched with graph node type |
-| `who_calls(function_name)` | ✅ | `server/mcp_server.py` → `KnowledgeGraph.get_neighbours()` | Returns callers + file/line from CALLED_BY edges |
-| `subgraph(entity, depth)` | ✅ | `server/mcp_server.py` → `KnowledgeGraph.subgraph_around()` | BFS up to depth 2; returns nodes + edge list |
-| `retrieve_memory(query, top_k)` | ✅ | `tools/retrieve_memory.py` | FAISS cosine similarity via `SemanticMemory.retrieve()` |
-| `store_memory(text, source)` | ✅ | `tools/store_memory.py` | Embeds + stores to FAISS; logs to episodic |
-| `log_episode(event, metadata)` | ✅ | `memory/episodic_memory.py::log_event()` | Append-only JSONL with timestamp chain |
-| `search_docs(query)` | ✅ | `retrieval/docs_search.py` | Full-text search over all `.md` files, returns file+line+snippet |
-| `episodic_search(query, limit)` | ✅ | `memory/episodic_memory.py::search_episodes()` | BM25Okapi ranked; module-level corpus cache with TTL |
-| `graph_stats()` | ✅ | `server/mcp_server.py` → `KnowledgeGraph.stats()` | Node count by type, edge count |
-| `semantic_search_code(query, language, top_k)` | ✅ | `tools/semantic_search_code.py` | FAISS search filtered to code-type entries; language filter optional |
-| `dependency_graph(file_path)` | ✅ | `tools/dependency_graph.py` | Returns imports-from + imported-by using knowledge graph edges |
-| `explain_change(file_path, before, after)` | ✅ | `tools/explain_change.py` | Diff analysis using `difflib`; identifies added/removed symbols |
+| `context_pack(query, max_tokens)` | ✅ | `interface/tools/context_pack.py` | Hybrid retrieve → ±25-line code windows → greedy token pack; tiktoken + fallback |
+| `lookup_symbol(name)` | ✅ | `interface/server/mcp_server.py` → `ASTIndexer.lookup_symbol()` | O(1) reverse index; enriched with graph node type |
+| `who_calls(function_name)` | ✅ | `interface/server/mcp_server.py` → `KnowledgeGraph.get_neighbours()` | Returns callers + file/line from CALLED_BY edges |
+| `subgraph(entity, depth)` | ✅ | `interface/server/mcp_server.py` → `KnowledgeGraph.subgraph_around()` | BFS up to depth 2; returns nodes + edge list |
+| `retrieve_memory(query, top_k)` | ✅ | `interface/tools/retrieve_memory.py` | FAISS cosine similarity via `SemanticMemory.retrieve()` |
+| `store_memory(text, source)` | ✅ | `interface/tools/store_memory.py` | Embeds + stores to FAISS; logs to episodic |
+| `log_episode(event, metadata)` | ✅ | `data/memory/episodic_memory.py::log_event()` | Append-only JSONL with timestamp chain |
+| `search_docs(query)` | ✅ | `intelligence/retrieval/docs_search.py` | Full-text search over all `.md` files, returns file+line+snippet |
+| `episodic_search(query, limit)` | ✅ | `data/memory/episodic_memory.py::search_episodes()` | BM25Okapi ranked; module-level corpus cache with TTL |
+| `graph_stats()` | ✅ | `interface/server/mcp_server.py` → `KnowledgeGraph.stats()` | Node count by type, edge count |
+| `semantic_search_code(query, language, top_k)` | ✅ | `interface/tools/semantic_search_code.py` | FAISS search filtered to code-type entries; language filter optional |
+| `dependency_graph(file_path)` | ✅ | `interface/tools/dependency_graph.py` | Returns imports-from + imported-by using knowledge graph edges |
+| `explain_change(file_path, before, after)` | ✅ | `interface/tools/explain_change.py` | Diff analysis using `difflib`; identifies added/removed symbols |
 
 **MCP transport:** stdio (FastMCP). No HTTP transport for MCP.
 
@@ -34,22 +34,22 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 ### 2.1 Semantic Memory (FAISS)
 | Feature | Status | File |
 |---------|--------|------|
-| Store text with embedding | ✅ | `memory/semantic_memory.py::store()` |
-| FAISS flat index (L2) | ✅ | `vector_db/local_vector_db.py` |
-| Cosine similarity retrieval | ✅ | `memory/semantic_memory.py::retrieve()` |
+| Store text with embedding | ✅ | `data/memory/semantic_memory.py::store()` |
+| FAISS flat index (L2) | ✅ | `core/vector_db/local_vector_db.py` |
+| Cosine similarity retrieval | ✅ | `data/memory/semantic_memory.py::retrieve()` |
 | Importance score (sentence length heuristic) | ✅ | `semantic_memory.py::compute_importance()` |
-| Persist to disk (`index.faiss` + `metadata.json`) | ✅ | `vector_db/local_vector_db.py::save()` |
-| Encryption at rest (AES-256 GCM) | ✅ | `security/encryption.py` + keyring; activated by `storage.encrypt: true` |
-| Remove vectors by ID (`remove_ids`) | ✅ | `vector_db/local_vector_db.py` via `IndexIDMap2` |
-| StorageAdapter ABC | ✅ | `vector_db/adapter.py` |
-| FAISSAdapter | ✅ | `vector_db/faiss_adapter.py` |
-| ChromaDBAdapter (optional) | ⚠️ | `vector_db/chroma_adapter.py` — guarded ImportError; requires `pip install chromadb` |
-| Adapter factory (`get_storage_adapter`) | ✅ | `vector_db/__init__.py` |
+| Persist to disk (`index.faiss` + `metadata.json`) | ✅ | `core/vector_db/local_vector_db.py::save()` |
+| Encryption at rest (AES-256 GCM) | ✅ | `core/security/encryption.py` + keyring; activated by `storage.encrypt: true` |
+| Remove vectors by ID (`remove_ids`) | ✅ | `core/vector_db/local_vector_db.py` via `IndexIDMap2` |
+| StorageAdapter ABC | ✅ | `core/vector_db/adapter.py` |
+| FAISSAdapter | ✅ | `core/vector_db/faiss_adapter.py` |
+| ChromaDBAdapter (optional) | ⚠️ | `core/vector_db/chroma_adapter.py` — guarded ImportError; requires `pip install chromadb` |
+| Adapter factory (`get_storage_adapter`) | ✅ | `core/vector_db/__init__.py` |
 
 ### 2.2 Episodic Memory (Event Log)
 | Feature | Status | File |
 |---------|--------|------|
-| Append-only JSONL event log | ✅ | `memory/episodic_memory.py` |
+| Append-only JSONL event log | ✅ | `data/memory/episodic_memory.py` |
 | Timestamp chain | ✅ | Each event has `timestamp` (ISO 8601) |
 | BM25 keyword search (`search_episodes`) | ✅ | `_bm25` module with `BM25Okapi`; pure-Python fallback |
 | Module-level BM25 corpus cache (TTL) | ✅ | `_BM25_INDEX` + `_BM25_TS` with 60s TTL |
@@ -60,20 +60,20 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 ### 2.3 Circuit Breaker
 | Feature | Status | File |
 |---------|--------|------|
-| RSS memory limit | ✅ | `memory/circuit_breaker.py` |
+| RSS memory limit | ✅ | `data/memory/circuit_breaker.py` |
 | Open/closed/half-open states | ✅ | `CircuitBreaker.state` |
-| Integration with retrieval | ✅ | `retrieval/hybrid.py` checks breaker |
+| Integration with retrieval | ✅ | `intelligence/retrieval/hybrid.py` checks breaker |
 
 ---
 
 ## 3. Knowledge Graph
 
-**Backend:** NetworkX DiGraph (`graph/knowledge_graph.py`)
+**Backend:** NetworkX DiGraph (`data/graph/knowledge_graph.py`)
 
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Node types: FILE, FUNCTION, CLASS, CONCEPT, QUERY | ✅ | `NodeType` constants |
-| Edge types: RELATES_TO, DEFINED_IN, CALLED_BY, QUERIED_WITH, CO_OCCURS | ✅ | `EdgeType` constants in `graph/knowledge_graph.py` |
+| Edge types: RELATES_TO, DEFINED_IN, CALLED_BY, QUERIED_WITH, CO_OCCURS | ✅ | `EdgeType` constants in `data/graph/knowledge_graph.py` |
 | Persist/load (`graph.pkl`) | ✅ | Pickle serialization |
 | `add_node()`, `add_edge()` | ✅ | |
 | `nodes_for_file()` | ✅ | All nodes attributed to a file |
@@ -83,14 +83,14 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | `shortest_path(src, dst)` | ✅ | Returns node list |
 | `subgraph_around(node, radius)` | ✅ | BFS to radius; returns dict of nodes+edges |
 | `stats()` | ✅ | Count by node type + total edges |
-| Behaviour tracking | ✅ | `graph/behaviour_tracker.py` — access frequency per node |
-| Entity extraction from text | ✅ | `graph/graph_utils.py::extract_entities_from_text()` |
+| Behaviour tracking | ✅ | `data/graph/behaviour_tracker.py` — access frequency per node |
+| Entity extraction from text | ✅ | `data/graph/graph_utils.py::extract_entities_from_text()` |
 
 ---
 
 ## 4. AST Indexer
 
-**File:** `indexer/ast_indexer.py` + `indexer/language_registry.py`
+**File:** `intelligence/indexer/ast_indexer.py` + `intelligence/indexer/language_registry.py`
 
 ### Languages
 | Language | Extensions | Backend | Status |
@@ -120,7 +120,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ## 5. File Watcher (Hot Reload)
 
-**File:** `indexer/file_watcher.py`
+**File:** `intelligence/indexer/file_watcher.py`
 
 | Feature | Status | Notes |
 |---------|--------|-------|
@@ -262,7 +262,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 | Integration | Status | File | Notes |
 |-------------|--------|------|-------|
-| Claude Desktop (MCP stdio) | ✅ | `server/mcp_server.py` | Works with any MCP stdio client |
+| Claude Desktop (MCP stdio) | ✅ | `interface/server/mcp_server.py` | Works with any MCP stdio client |
 | Gemini CLI (`.gemini/COGNIREPO.md`) | ✅ | `.gemini/COGNIREPO.md` | Tool-first workflow instructions |
 | Cursor (`.cursor/mcp.json`) | ✅ | `cli/init_project.py::_setup_cursor_mcp()` | Auto-generated by `cognirepo init` |
 | VS Code (`.vscode/mcp.json`) | ✅ | `cli/init_project.py::_setup_vscode_mcp()` | `type: stdio` format |
@@ -296,7 +296,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| AES-256 GCM encryption at rest | ✅ | `security/encryption.py`; key in OS keychain |
+| AES-256 GCM encryption at rest | ✅ | `core/security/encryption.py`; key in OS keychain |
 | OS keychain key storage | ✅ | `keyring` library |
 | JWT authentication (REST) | ✅ | `api/auth.py` |
 | Bcrypt password hashing | ✅ | Used for API password verification |

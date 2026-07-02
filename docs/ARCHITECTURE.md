@@ -2,6 +2,48 @@
 
 ---
 
+## Package Layer Hierarchy (v2.0.0+)
+
+Six dependency-ordered layers with downward-only coupling enforced by `scripts/check_circular_deps.py`:
+
+```
+Layer 0 — core/
+    core/config/        configuration, paths, locking, org registry, versioning
+    core/security/      encryption, storage config, project IDs
+    core/vector_db/     FAISS/Chroma adapter factory (no business logic)
+    core/_bm25/         BM25 pure-Python fallback + C++ extension
+    core/probes.py      RSS + storage size probes (moved from cron/)
+    core/metrics.py     Prometheus counters (moved from server/)
+
+Layer 1 — data/
+    data/memory/        semantic store, episodic journal, embeddings, circuit breaker
+    data/graph/         knowledge graph, behaviour tracker, org graph
+
+Layer 2 — intelligence/
+    intelligence/indexer/     AST indexer, doc ingester, summarizer, file watcher
+    intelligence/retrieval/   hybrid retriever, cross-repo router, docs search
+    intelligence/orchestrator/ request classifier, context builder, model adapters
+
+Layer 3 — interface/
+    interface/tools/    MCP tool handlers (single entry point, stateless)
+    interface/server/   FastMCP server, session listener, learning middleware
+    interface/adapters/ OpenAI spec export, cursor MCP config
+
+Layer 4 — ops/
+    ops/cron/           scheduler, memory pruner
+
+Layer 5 — interface/cli/  (top-level consumer, depends on all layers)
+    cognirepo/          package stub enabling `python -m cognirepo`
+```
+
+**Dependency rule:** a module in layer N may only import from layers 0…N.
+Upward imports (lower layer → higher layer) are forbidden at toplevel.
+Lazy upward imports inside function bodies are permitted but logged by the checker.
+
+**Enforcement:** `scripts/check_circular_deps.py` rebuilds the import graph at every commit and fails on any upward dependency.
+
+---
+
 ## System Overview
 
 ![alt text](cognirepo-workflow.png)
@@ -10,22 +52,22 @@
 
 ## Component Responsibilities
 
-### `tools/` — Single Source of Truth
+### `interface/tools/` — Single Source of Truth
 
 forward requests to these functions. **Never duplicate logic in an adapter.**
 
 | Module | Responsibility |
 |--------|---------------|
-| `tools/memory.py` | `retrieve_memory`, `store_memory`, `log_episode` |
-| `tools/index.py` | `lookup_symbol`, `semantic_search_code` |
-| `tools/graph.py` | `who_calls`, `subgraph`, `graph_stats`, `dependency_graph` |
-| `tools/context.py` | `context_pack` — bundles all signals into token-bounded output |
-| `tools/docs.py` | `search_docs` — full-text search over `.md` files |
-| `tools/diff.py` | `explain_change` — explains what changed between code versions |
+| `interface/tools/retrieve_memory.py` | `retrieve_memory`, `store_memory`, `log_episode` |
+| `interface/tools/semantic_search_code.py` | `lookup_symbol`, `semantic_search_code` |
+| `interface/tools/context_pack.py` | `context_pack` — bundles all signals into token-bounded output |
+| `interface/tools/search_docs.py` | `search_docs` — full-text search over `.md` files |
+| `interface/tools/explain_change.py` | `explain_change` — explains what changed between code versions |
+| `interface/tools/dependency_graph.py` | `dependency_graph` — imports-from + imported-by via graph edges |
 
 ---
 
-### `retrieval/hybrid.py` — Hybrid Retrieval
+### `intelligence/retrieval/hybrid.py` — Hybrid Retrieval
 
 Combines **3 signals** into a single weighted ranked result list:
 
@@ -41,24 +83,24 @@ Do not call FAISS or the graph directly from tools — always go through `Hybrid
 
 ---
 
-### `memory/` — Storage Layer
+### `data/memory/` — Storage Layer
 
 | Module | Responsibility |
 |--------|---------------|
-| `memory/vector_memory.py` | FAISS semantic store + sentence-transformer embeddings |
-| `memory/episodic_memory.py` | Append-only event journal with BM25 search and stale marking |
-| `memory/circuit_breaker.py` | RSS memory limit — opens circuit at threshold to prevent OOM |
+| `data/memory/semantic_memory.py` | FAISS semantic store + sentence-transformer embeddings |
+| `data/memory/episodic_memory.py` | Append-only event journal with BM25 search and stale marking |
+| `data/memory/circuit_breaker.py` | RSS memory limit — opens circuit at threshold to prevent OOM |
 
 ---
 
-### `graph/` — Knowledge Graph
+### `data/graph/` — Knowledge Graph
 
 | Module | Responsibility |
 |--------|---------------|
-| `graph/knowledge_graph.py` | NetworkX DiGraph: FILE, FUNCTION, CLASS, CONCEPT, QUERY, SESSION, USER_ACTION, MEMORY nodes |
-| `graph/behaviour_tracker.py` | Tracks access frequency per symbol; weights retrieval signals |
+| `data/graph/knowledge_graph.py` | NetworkX DiGraph: FILE, FUNCTION, CLASS, CONCEPT, QUERY, SESSION, USER_ACTION, MEMORY nodes |
+| `data/graph/behaviour_tracker.py` | Tracks access frequency per symbol; weights retrieval signals |
 
-Node types (`NodeType` constants in `graph/knowledge_graph.py`):
+Node types (`NodeType` constants in `data/graph/knowledge_graph.py`):
 - `FILE` — source file
 - `FUNCTION` — function/method definition
 - `CLASS` — class/struct/interface definition
@@ -68,7 +110,7 @@ Node types (`NodeType` constants in `graph/knowledge_graph.py`):
 - `USER_ACTION` — a recorded user interaction
 - `MEMORY` — cross-agent memory node (synced from Claude/Gemini/etc.)
 
-Edge types (`EdgeType` constants in `graph/knowledge_graph.py`):
+Edge types (`EdgeType` constants in `data/graph/knowledge_graph.py`):
 - `RELATES_TO` — generic semantic relationship between two nodes
 - `DEFINED_IN` — FUNCTION/CLASS → FILE (symbol defined in file)
 - `CALLED_BY` — FUNCTION → FUNCTION (callee → caller, forward direction)
@@ -84,12 +126,12 @@ See `docs/architecture/graph.md` for the full schema with query examples.
 
 ---
 
-### `indexer/` — AST Indexing
+### `intelligence/indexer/` — AST Indexing
 
 | Module | Responsibility |
 |--------|---------------|
-| `indexer/ast_indexer.py` | Multi-language AST parser + symbol extractor + FAISS ingestion |
-| `indexer/file_watcher.py` | Watchdog-based hot reload — indexes on file change, prunes on delete |
+| `intelligence/indexer/ast_indexer.py` | Multi-language AST parser + symbol extractor + FAISS ingestion |
+| `intelligence/indexer/file_watcher.py` | Watchdog-based hot reload — indexes on file change, prunes on delete |
 
 Supported languages: Python (stdlib `ast`), TypeScript, JavaScript, Go, Rust, Java, C++ (tree-sitter).
 
@@ -100,7 +142,7 @@ On file deletion, the watcher:
 
 ---
 
-### `vector_db/` — Storage Adapter Layer
+### `core/vector_db/` — Storage Adapter Layer
 
 Pluggable vector storage backend:
 
@@ -110,18 +152,18 @@ Pluggable vector storage backend:
 | `ChromaDBAdapter` | Optional — ChromaDB, requires `pip install chromadb` |
 
 Configured via `storage.vector_backend` in `config.json`.
-Use `get_storage_adapter()` factory — do not instantiate directly.
+Use `get_storage_adapter()` factory (`core/vector_db/__init__.py`) — do not instantiate directly.
 
 ---
 
-### `orchestrator/` — Multi-Model Routing
+### `intelligence/orchestrator/` — Multi-Model Routing
 
 | Module | Responsibility |
 |--------|---------------|
-| `orchestrator/classifier.py` | Query complexity classifier — QUICK / STANDARD / COMPLEX / EXPERT |
-| `orchestrator/router.py` | Routes QUICK to Gemini Flash, COMPLEX to Claude Opus, etc. |
+| `intelligence/orchestrator/classifier.py` | Query complexity classifier — QUICK / STANDARD / COMPLEX / EXPERT |
+| `intelligence/orchestrator/router.py` | Routes QUICK to Gemini Flash, COMPLEX to Claude Opus, etc. |
 
-Do not hardcode model names outside `classifier.py`.
+Do not hardcode model names outside `intelligence/orchestrator/classifier.py`.
 
 ---
 
@@ -148,31 +190,30 @@ Run `make proto` to regenerate `cognirepo_pb2.py` after changing the `.proto` fi
 
 ---
 
-### `cli/` — Command-Line Interface
+### `interface/cli/` — Command-Line Interface
 
-Entry point: `cognirepo` → `cli/main.py::main()`
+Entry point: `cognirepo` → `interface/cli/main.py::main()`
 
 Key modules:
-- `cli/init_project.py` — `cognirepo init` scaffolding, idempotent
-- `cli/wizard.py` — interactive terminal wizard
-- `cli/daemon.py` — heartbeat, singleton lock, systemd unit generation
-- `cli/repl.py` — interactive REPL (when run with no args)
-- `cli/seed.py` — seed behaviour graph from git history
+- `interface/cli/init_project.py` — `cognirepo init` scaffolding, idempotent
+- `interface/cli/wizard.py` — interactive terminal wizard
+- `interface/cli/daemon.py` — heartbeat, singleton lock, systemd unit generation
+- `interface/cli/seed.py` — seed behaviour graph from git history
 
 ---
 
 ## Data Flow: `context_pack("how does BM25 search work")`
 
 ```
-tools/context.py::context_pack()
+interface/tools/context_pack.py::context_pack()
     │
-    ├── HybridRetriever.retrieve(query, top_k=20)
-    │       ├── VectorMemory.search(query)          → top FAISS hits
-    │       ├── KnowledgeGraph.subgraph(entity)     → related nodes
-    │       ├── EpisodicMemory.search_episodes()    → BM25 keyword hits
-    │       └── BehaviourTracker.weight()           → access frequency boost
+    ├── HybridRetriever.retrieve(query, top_k=20)   [intelligence/retrieval/hybrid.py]
+    │       ├── VectorMemory.search(query)           → top FAISS hits
+    │       ├── KnowledgeGraph.subgraph(entity)      → related nodes  [data/graph/]
+    │       ├── EpisodicMemory.search_episodes()     → BM25 keyword hits  [data/memory/]
+    │       └── BehaviourTracker.weight()            → access frequency boost
     │
-    ├── ASTIndexer.lookup_symbol("BM25Okapi")       → file + line
+    ├── ASTIndexer.lookup_symbol("BM25Okapi")        → file + line  [intelligence/indexer/]
     │
     └── Pack to max_tokens budget → return bundle
 ```

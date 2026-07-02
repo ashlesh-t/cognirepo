@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cli.cli_config import load_cli_config, CLIConfig, _DEFAULT_TOML
+from interface.cli.cli_config import load_cli_config, CLIConfig, _DEFAULT_TOML
 
 
 def _write(tmp_path: Path, content: str) -> Path:

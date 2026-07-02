@@ -5,12 +5,12 @@
 # Licensed under MIT. See LICENSE file in repository root.
 
 """Tests for server/learning_middleware.py — auto-learning intercepts."""
-from server.learning_middleware import intercept_after_store, intercept_after_episode
+from interface.server.learning_middleware import intercept_after_store, intercept_after_episode
 
 
 def test_intercept_after_store_captures_correction(tmp_path, monkeypatch):
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
-    import memory.learning_store as ls
+    import data.memory.learning_store as ls
     # Reset singleton
     ls._STORE = None
 
@@ -32,7 +32,7 @@ def test_intercept_after_store_captures_correction(tmp_path, monkeypatch):
 
 def test_intercept_after_store_ignores_normal_text(tmp_path, monkeypatch):
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
-    import memory.learning_store as ls
+    import data.memory.learning_store as ls
     ls._STORE = None
 
     stored = []
@@ -50,7 +50,7 @@ def test_intercept_after_store_ignores_normal_text(tmp_path, monkeypatch):
 
 def test_intercept_after_episode_captures_prod_issue(tmp_path, monkeypatch):
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
-    import memory.learning_store as ls
+    import data.memory.learning_store as ls
     ls._STORE = None
 
     stored = []
@@ -71,9 +71,9 @@ def test_intercept_after_episode_captures_prod_issue(tmp_path, monkeypatch):
 def test_intercept_after_episode_fires(monkeypatch):
     """log_episode() must call intercept_after_episode — verifies Task 2 wiring."""
     from unittest.mock import patch, call
-    with patch("server.mcp_server.intercept_after_episode") as mock_intercept, \
-         patch("server.mcp_server.log_event"):
-        from server.mcp_server import log_episode
+    with patch("interface.server.mcp_server.intercept_after_episode") as mock_intercept, \
+         patch("interface.server.mcp_server.log_event"):
+        from interface.server.mcp_server import log_episode
         log_episode("discovered auth flow uses Redis")
 
     mock_intercept.assert_called_once()

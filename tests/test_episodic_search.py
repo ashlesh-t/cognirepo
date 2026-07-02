@@ -30,7 +30,7 @@ def _raw_load(tmp_path: Path) -> list:
 
 def _patch_episodic(monkeypatch, tmp_path):
     """Wire episodic_memory to use raw JSON in tmp_path (no encryption)."""
-    import memory.episodic_memory as em
+    import data.memory.episodic_memory as em
     em._BM25_CORPUS = None
     em._BM25_INDEX = None
     monkeypatch.setattr(em, "_load", lambda: _raw_load(tmp_path))
@@ -71,11 +71,11 @@ class TestBM25RankingInSearchEpisodes:
         _patch_episodic(monkeypatch, tmp_path)
         _seed(tmp_path)
 
-        import memory.episodic_memory as em
+        import data.memory.episodic_memory as em
         em._BM25_CORPUS = None
         em._BM25_INDEX = None
 
-        from memory.episodic_memory import search_episodes
+        from data.memory.episodic_memory import search_episodes
         results = search_episodes("authentication JWT", limit=3)
 
         assert len(results) >= 1
@@ -86,11 +86,11 @@ class TestBM25RankingInSearchEpisodes:
         _patch_episodic(monkeypatch, tmp_path)
         _seed(tmp_path)
 
-        import memory.episodic_memory as em
+        import data.memory.episodic_memory as em
         em._BM25_CORPUS = None
         em._BM25_INDEX = None
 
-        from memory.episodic_memory import search_episodes
+        from data.memory.episodic_memory import search_episodes
         # "zzzxxx" matches nothing → all scores are 0 → empty list
         results = search_episodes("zzzxxx_nonexistent_term", limit=5)
         assert results == []
@@ -99,22 +99,22 @@ class TestBM25RankingInSearchEpisodes:
         _patch_episodic(monkeypatch, tmp_path)
         _raw_save(tmp_path, [])
 
-        import memory.episodic_memory as em
+        import data.memory.episodic_memory as em
         em._BM25_CORPUS = None
         em._BM25_INDEX = None
 
-        from memory.episodic_memory import search_episodes
+        from data.memory.episodic_memory import search_episodes
         assert search_episodes("anything", limit=5) == []
 
     def test_limit_respected(self, tmp_path, monkeypatch):
         _patch_episodic(monkeypatch, tmp_path)
         _seed(tmp_path)
 
-        import memory.episodic_memory as em
+        import data.memory.episodic_memory as em
         em._BM25_CORPUS = None
         em._BM25_INDEX = None
 
-        from memory.episodic_memory import search_episodes
+        from data.memory.episodic_memory import search_episodes
         results = search_episodes("error", limit=1)
         assert len(results) <= 1
 
@@ -123,11 +123,11 @@ class TestBM25RankingInSearchEpisodes:
         _patch_episodic(monkeypatch, tmp_path)
         _seed(tmp_path)
 
-        import memory.episodic_memory as em
+        import data.memory.episodic_memory as em
         em._BM25_CORPUS = None
         em._BM25_INDEX = None
 
-        from memory.episodic_memory import search_episodes
+        from data.memory.episodic_memory import search_episodes
         results = search_episodes("error", limit=5)
         for r in results:
             assert "id" in r
@@ -142,17 +142,17 @@ class TestBM25CacheLifecycle:
         _patch_episodic(monkeypatch, tmp_path)
         _seed(tmp_path)
 
-        import memory.episodic_memory as em
+        import data.memory.episodic_memory as em
         em._BM25_CORPUS = None
         em._BM25_INDEX = None
 
-        from memory.episodic_memory import search_episodes
+        from data.memory.episodic_memory import search_episodes
         search_episodes("error", limit=3)
         assert em._BM25_INDEX is not None
 
     def test_cache_invalidated_on_save(self, tmp_path, monkeypatch):
         """After _save(), BM25 cache fields are reset to None."""
-        import memory.episodic_memory as em
+        import data.memory.episodic_memory as em
 
         # Use real _save but patch file paths
         monkeypatch.setattr(em, "_load", lambda: _raw_load(tmp_path))
@@ -168,12 +168,12 @@ class TestBM25CacheLifecycle:
         em._BM25_INDEX = None
         _seed(tmp_path)
 
-        from memory.episodic_memory import search_episodes
+        from data.memory.episodic_memory import search_episodes
         search_episodes("error", limit=3)
         assert em._BM25_INDEX is not None  # built
 
         # Trigger _save
-        from memory.episodic_memory import mark_stale
+        from data.memory.episodic_memory import mark_stale
         mark_stale("auth/auth.py")  # tags e_0, calls _save
         assert em._BM25_INDEX is None     # invalidated
 
@@ -182,11 +182,11 @@ class TestBM25CacheLifecycle:
         _patch_episodic(monkeypatch, tmp_path)
         _seed(tmp_path)
 
-        import memory.episodic_memory as em
+        import data.memory.episodic_memory as em
         em._BM25_CORPUS = None
         em._BM25_INDEX = None
 
-        from memory.episodic_memory import search_episodes
+        from data.memory.episodic_memory import search_episodes
         search_episodes("error", limit=3)
         bm25_obj_first = em._BM25_INDEX
 

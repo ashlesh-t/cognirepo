@@ -14,7 +14,7 @@ import sys
 
 def _reload_logging_module():
     """Force a fresh import of config.logging (resets _SETUP_DONE)."""
-    import config.logging as mod  # pylint: disable=import-outside-toplevel
+    import core.config.logging as mod  # pylint: disable=import-outside-toplevel
     mod._SETUP_DONE = False  # type: ignore[attr-defined]
     return mod
 
@@ -22,7 +22,7 @@ def _reload_logging_module():
 # ── trace ID helpers ──────────────────────────────────────────────────────────
 
 def test_new_trace_id_returns_hex_string():
-    from config.logging import new_trace_id
+    from core.config.logging import new_trace_id
     tid = new_trace_id()
     assert isinstance(tid, str)
     assert len(tid) == 32          # uuid4.hex is 32 hex chars
@@ -30,13 +30,13 @@ def test_new_trace_id_returns_hex_string():
 
 
 def test_get_trace_id_returns_set_value():
-    from config.logging import new_trace_id, get_trace_id
+    from core.config.logging import new_trace_id, get_trace_id
     tid = new_trace_id()
     assert get_trace_id() == tid
 
 
 def test_get_trace_id_none_when_unset():
-    from config.logging import cogni_trace_id, get_trace_id
+    from core.config.logging import cogni_trace_id, get_trace_id
     cogni_trace_id.set(None)
     assert get_trace_id() is None
 
@@ -44,7 +44,7 @@ def test_get_trace_id_none_when_unset():
 # ── JSON formatter ────────────────────────────────────────────────────────────
 
 def test_json_formatter_produces_valid_ndjson(capfd):
-    from config.logging import JSONFormatter, TraceFilter, cogni_trace_id
+    from core.config.logging import JSONFormatter, TraceFilter, cogni_trace_id
 
     cogni_trace_id.set("abc123")
     handler = logging.StreamHandler(sys.stderr)
@@ -70,7 +70,7 @@ def test_json_formatter_produces_valid_ndjson(capfd):
 
 
 def test_json_formatter_trace_id_null_when_unset(capfd):
-    from config.logging import JSONFormatter, TraceFilter, cogni_trace_id
+    from core.config.logging import JSONFormatter, TraceFilter, cogni_trace_id
 
     cogni_trace_id.set(None)
     handler = logging.StreamHandler(sys.stderr)

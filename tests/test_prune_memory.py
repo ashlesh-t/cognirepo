@@ -22,7 +22,7 @@ def test_rebuild_writes_to_configured_path(tmp_path, monkeypatch):
     Setup includes one high-importance entry (kept) and one zero-importance
     entry (pruned) so that the FAISS rebuild actually executes.
     """
-    from config.paths import set_cognirepo_dir, get_path
+    from core.config.paths import set_cognirepo_dir, get_path
     set_cognirepo_dir(str(tmp_path / ".cognirepo"))
 
     # ── seed semantic_metadata.json: one kept, one pruned ──────────────────
@@ -45,7 +45,7 @@ def test_rebuild_writes_to_configured_path(tmp_path, monkeypatch):
         json.dump(entries, f)
 
     import importlib
-    from cron import prune_memory
+    from ops.cron import prune_memory
     importlib.reload(prune_memory)
 
     result = prune_memory.prune(threshold=0.10, dry_run=False)

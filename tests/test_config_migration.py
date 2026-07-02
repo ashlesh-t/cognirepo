@@ -11,8 +11,8 @@ import pytest
 import json
 from pathlib import Path
 
-from cli.migrate_config import migrate_config, _TIER_RENAMES
-from orchestrator.classifier import ConfigMigrationError, _load_model_registry
+from interface.cli.migrate_config import migrate_config, _TIER_RENAMES
+from intelligence.orchestrator.classifier import ConfigMigrationError, _load_model_registry
 
 
 # ── migrate_config() ──────────────────────────────────────────────────────────
@@ -97,7 +97,7 @@ def test_migrate_preserves_other_keys(tmp_path, monkeypatch):
 def test_migrate_file_not_found(tmp_path):
     """FileNotFoundError raised when config.json does not exist."""
     nonexistent = tmp_path / "nowhere" / "config.json"
-    import cli.migrate_config as _mc
+    import interface.cli.migrate_config as _mc
     original = _mc._config_path
     _mc._config_path = lambda: nonexistent
     try:

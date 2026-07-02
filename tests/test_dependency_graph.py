@@ -14,8 +14,8 @@ from unittest.mock import MagicMock, patch
 
 def _make_indexer(files: dict) -> MagicMock:
     """Build a mock ASTIndexer with given files dict."""
-    from graph.knowledge_graph import KnowledgeGraph
-    from indexer.ast_indexer import ASTIndexer
+    from data.graph.knowledge_graph import KnowledgeGraph
+    from intelligence.indexer.ast_indexer import ASTIndexer
 
     ASTIndexer.lookup_symbol.cache_clear()
 
@@ -28,7 +28,7 @@ def _make_indexer(files: dict) -> MagicMock:
 
     kg = MagicMock(spec=KnowledgeGraph)
     kg.G = MagicMock()
-    with patch("indexer.ast_indexer.get_model", return_value=MagicMock()):
+    with patch("intelligence.indexer.ast_indexer.get_model", return_value=MagicMock()):
         indexer = ASTIndexer(graph=kg)
     indexer.index_data["files"] = files
     indexer.index_data["reverse_index"] = rev
@@ -37,8 +37,8 @@ def _make_indexer(files: dict) -> MagicMock:
 
 class TestDependencyGraph:
     def _run(self, indexer, module, **kwargs):
-        from tools.dependency_graph import dependency_graph
-        with patch("tools.dependency_graph._load_indexer", return_value=indexer):
+        from interface.tools.dependency_graph import dependency_graph
+        with patch("interface.tools.dependency_graph._load_indexer", return_value=indexer):
             return dependency_graph(module, **kwargs)
 
     def test_missing_module_returns_error(self):

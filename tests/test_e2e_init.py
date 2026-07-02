@@ -23,7 +23,7 @@ def test_init_creates_index(tmp_path, monkeypatch):
     After init_project() runs, the AST index must exist and contain symbols.
     This is the core 'first-run experience' check — no second command needed.
     """
-    from config.paths import set_cognirepo_dir, get_path
+    from core.config.paths import set_cognirepo_dir, get_path
     set_cognirepo_dir(str(tmp_path / ".cognirepo"))
     monkeypatch.chdir(tmp_path)
 
@@ -31,7 +31,7 @@ def test_init_creates_index(tmp_path, monkeypatch):
     fixture = tmp_path / "hello.py"
     fixture.write_text("def greet(name: str) -> str:\n    return f'Hello, {name}'\n")
 
-    from cli.init_project import init_project
+    from interface.cli.init_project import init_project
     summary, kg, indexer = init_project(
         no_index=False,
         interactive=False,
@@ -58,11 +58,11 @@ def test_init_creates_index(tmp_path, monkeypatch):
 
 def test_no_index_flag_skips_indexing(tmp_path, monkeypatch):
     """--no-index must skip indexing and return (None, None, None)."""
-    from config.paths import set_cognirepo_dir
+    from core.config.paths import set_cognirepo_dir
     set_cognirepo_dir(str(tmp_path / ".cognirepo"))
     monkeypatch.chdir(tmp_path)
 
-    from cli.init_project import init_project
+    from interface.cli.init_project import init_project
     result = init_project(
         no_index=True,
         interactive=False,
@@ -99,10 +99,10 @@ def test_setup_calls_wizard_and_init(tmp_path, monkeypatch):
     mock_init     = MagicMock(return_value=(None, None, None))
     mock_doctor   = MagicMock()
 
-    with patch("cli.wizard.run_wizard", mock_wizard), \
-         patch("cli.init_project.init_project", mock_init), \
-         patch("cli.main._cmd_doctor", mock_doctor):
-        from cli.main import _cmd_setup
+    with patch("interface.cli.wizard.run_wizard", mock_wizard), \
+         patch("interface.cli.init_project.init_project", mock_init), \
+         patch("interface.cli.main._cmd_doctor", mock_doctor):
+        from interface.cli.main import _cmd_setup
         _cmd_setup(no_index=True)
 
     assert mock_wizard.called, "run_wizard() was not called"

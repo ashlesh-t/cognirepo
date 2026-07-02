@@ -11,8 +11,8 @@ import urllib.request
 
 import pytest
 
-from server.metrics import metrics_available
-from cli.metrics_server import start_metrics_server_thread
+from core.metrics import metrics_available
+from interface.cli.metrics_server import start_metrics_server_thread
 
 
 def _find_free_port() -> int:

@@ -26,7 +26,7 @@ def _make_input_responses(*responses):
 
 def test_run_wizard_skip_all_defaults(monkeypatch, tmp_path, capsys):
     """Simulate wizard with all defaults, skipping MCP (index 7) and no org."""
-    from cli.wizard import run_wizard
+    from interface.cli.wizard import run_wizard
 
     # Responses (in order of wizard steps):
     # 1. project name → default (empty)
@@ -42,9 +42,9 @@ def test_run_wizard_skip_all_defaults(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr("builtins.input", responses)
 
     # patch config writing and heavy operations
-    with patch("cli.init_project.init_project", return_value={"status": "ok"}):
-        with patch("config.orgs.list_orgs", return_value={}):
-            with patch("config.orgs.list_projects", return_value={}):
+    with patch("interface.cli.init_project.init_project", return_value={"status": "ok"}):
+        with patch("core.config.orgs.list_orgs", return_value={}):
+            with patch("core.config.orgs.list_projects", return_value={}):
                 try:
                     run_wizard()
                 except SystemExit:
@@ -55,7 +55,7 @@ def test_run_wizard_skip_all_defaults(monkeypatch, tmp_path, capsys):
 
 def test_run_wizard_with_encryption(monkeypatch, tmp_path):
     """Simulate wizard with encryption enabled."""
-    from cli.wizard import run_wizard
+    from interface.cli.wizard import run_wizard
 
     responses = _make_input_responses(
         "myproject",  # project name
@@ -70,9 +70,9 @@ def test_run_wizard_with_encryption(monkeypatch, tmp_path):
     )
     monkeypatch.setattr("builtins.input", responses)
 
-    with patch("cli.wizard._pip_install", return_value=True):
-        with patch("config.orgs.list_orgs", return_value={}):
-            with patch("config.orgs.list_projects", return_value={}):
+    with patch("interface.cli.wizard._pip_install", return_value=True):
+        with patch("core.config.orgs.list_orgs", return_value={}):
+            with patch("core.config.orgs.list_projects", return_value={}):
                 try:
                     run_wizard()
                 except SystemExit:
@@ -81,7 +81,7 @@ def test_run_wizard_with_encryption(monkeypatch, tmp_path):
 
 def test_run_wizard_claude_mcp(monkeypatch, tmp_path):
     """Simulate wizard choosing Claude MCP."""
-    from cli.wizard import run_wizard
+    from interface.cli.wizard import run_wizard
 
     responses = _make_input_responses(
         "",    # project name default
@@ -97,8 +97,8 @@ def test_run_wizard_claude_mcp(monkeypatch, tmp_path):
     )
     monkeypatch.setattr("builtins.input", responses)
 
-    with patch("config.orgs.list_orgs", return_value={}):
-        with patch("config.orgs.list_projects", return_value={}):
+    with patch("core.config.orgs.list_orgs", return_value={}):
+        with patch("core.config.orgs.list_projects", return_value={}):
             try:
                 run_wizard()
             except SystemExit:
@@ -107,7 +107,7 @@ def test_run_wizard_claude_mcp(monkeypatch, tmp_path):
 
 def test_run_wizard_new_org(monkeypatch, tmp_path):
     """Simulate wizard with creating a new org."""
-    from cli.wizard import run_wizard
+    from interface.cli.wizard import run_wizard
 
     responses = _make_input_responses(
         "",          # project name default
@@ -124,9 +124,9 @@ def test_run_wizard_new_org(monkeypatch, tmp_path):
     )
     monkeypatch.setattr("builtins.input", responses)
 
-    with patch("config.orgs.list_orgs", return_value={}):
-        with patch("config.orgs.list_projects", return_value={}):
-            with patch("config.orgs.create_project", return_value=True):
+    with patch("core.config.orgs.list_orgs", return_value={}):
+        with patch("core.config.orgs.list_projects", return_value={}):
+            with patch("core.config.orgs.create_project", return_value=True):
                 try:
                     run_wizard()
                 except (SystemExit, StopIteration):
@@ -135,7 +135,7 @@ def test_run_wizard_new_org(monkeypatch, tmp_path):
 
 def test_run_wizard_existing_org_with_project(monkeypatch, tmp_path):
     """Simulate wizard selecting existing org and project."""
-    from cli.wizard import run_wizard
+    from interface.cli.wizard import run_wizard
 
     responses = _make_input_responses(
         "",          # project name
@@ -152,8 +152,8 @@ def test_run_wizard_existing_org_with_project(monkeypatch, tmp_path):
     )
     monkeypatch.setattr("builtins.input", responses)
 
-    with patch("config.orgs.list_orgs", return_value={"myorg": {"repos": [], "projects": {}}}):
-        with patch("config.orgs.list_projects", return_value={"existing_proj": {}}):
+    with patch("core.config.orgs.list_orgs", return_value={"myorg": {"repos": [], "projects": {}}}):
+        with patch("core.config.orgs.list_projects", return_value={"existing_proj": {}}):
             try:
                 run_wizard()
             except (SystemExit, StopIteration):
@@ -163,7 +163,7 @@ def test_run_wizard_existing_org_with_project(monkeypatch, tmp_path):
 # ── _pip_install with real subprocess.run ────────────────────────────────────
 
 def test_pip_install_success():
-    from cli.wizard import _pip_install
+    from interface.cli.wizard import _pip_install
     import subprocess
     with patch("subprocess.check_call", return_value=0):
         result = _pip_install("cpu")
@@ -171,7 +171,7 @@ def test_pip_install_success():
 
 
 def test_pip_install_failure():
-    from cli.wizard import _pip_install
+    from interface.cli.wizard import _pip_install
     import subprocess
     with patch("subprocess.check_call", side_effect=subprocess.CalledProcessError(1, "pip")):
         result = _pip_install("cpu")
@@ -179,7 +179,7 @@ def test_pip_install_failure():
 
 
 def test_pip_install_not_found():
-    from cli.wizard import _pip_install
+    from interface.cli.wizard import _pip_install
     with patch("subprocess.check_call", side_effect=FileNotFoundError("pip not found")):
         result = _pip_install("cpu")
     assert result is False
@@ -188,21 +188,21 @@ def test_pip_install_not_found():
 # ── _ask_yn edge cases ────────────────────────────────────────────────────────
 
 def test_ask_yn_yes():
-    from cli.wizard import _ask_yn
+    from interface.cli.wizard import _ask_yn
     with patch("builtins.input", return_value="y"):
         result = _ask_yn("Test?", default=False)
     assert result is True
 
 
 def test_ask_yn_yes_uppercase():
-    from cli.wizard import _ask_yn
+    from interface.cli.wizard import _ask_yn
     with patch("builtins.input", return_value="Y"):
         result = _ask_yn("Test?", default=False)
     assert result is True
 
 
 def test_ask_yn_invalid_then_yes():
-    from cli.wizard import _ask_yn
+    from interface.cli.wizard import _ask_yn
     responses = iter(["xyz", "y"])
     with patch("builtins.input", side_effect=lambda _: next(responses)):
         result = _ask_yn("Test?", default=False)
@@ -212,7 +212,7 @@ def test_ask_yn_invalid_then_yes():
 # ── _ask_choice edge cases ────────────────────────────────────────────────────
 
 def test_ask_choice_out_of_range():
-    from cli.wizard import _ask_choice
+    from interface.cli.wizard import _ask_choice
     responses = iter(["99", "1"])
     with patch("builtins.input", side_effect=lambda _: next(responses)):
         result = _ask_choice("Pick:", choices=["a", "b"], default=0)
@@ -220,7 +220,7 @@ def test_ask_choice_out_of_range():
 
 
 def test_ask_choice_non_numeric():
-    from cli.wizard import _ask_choice
+    from interface.cli.wizard import _ask_choice
     responses = iter(["abc", "2"])
     with patch("builtins.input", side_effect=lambda _: next(responses)):
         result = _ask_choice("Pick:", choices=["a", "b"], default=0)
@@ -228,7 +228,7 @@ def test_ask_choice_non_numeric():
 
 
 def test_ask_choice_default():
-    from cli.wizard import _ask_choice
+    from interface.cli.wizard import _ask_choice
     with patch("builtins.input", return_value=""):
         result = _ask_choice("Pick:", choices=["a", "b"], default=1)
     assert result == 1
@@ -237,14 +237,14 @@ def test_ask_choice_default():
 # ── _c with BOLD and color ────────────────────────────────────────────────────
 
 def test_c_with_bold():
-    from cli.wizard import _c, _BOLD, _GREEN
+    from interface.cli.wizard import _c, _BOLD, _GREEN
     result = _c(_GREEN, _BOLD, "test text")
     assert isinstance(result, str)
     assert "test text" in result
 
 
 def test_section_output(capsys):
-    from cli.wizard import _section
+    from interface.cli.wizard import _section
     _section(3, 7, "Test Section", "This is a subtitle for the section")
     captured = capsys.readouterr()
     assert len(captured.out) > 0

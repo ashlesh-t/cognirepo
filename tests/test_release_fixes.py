@@ -20,7 +20,7 @@ import pytest
 
 class TestAtomicIndexPersistence:
     def test_atomic_json_dump_replaces_file(self, tmp_path):
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         target = str(tmp_path / "out.json")
         ASTIndexer._atomic_json_dump({"a": 1}, target)
         with open(target, encoding="utf-8") as f:
@@ -28,7 +28,7 @@ class TestAtomicIndexPersistence:
         assert not os.path.exists(target + ".tmp")
 
     def test_load_json_self_heal_returns_default_on_corruption(self, tmp_path):
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         target = str(tmp_path / "ast_index.json")
         # Simulate the truncated-mid-write corruption observed on kubernetes
         with open(target, "w", encoding="utf-8") as f:
@@ -40,7 +40,7 @@ class TestAtomicIndexPersistence:
         assert os.path.exists(target + ".corrupt")
 
     def test_load_json_self_heal_reads_valid_file(self, tmp_path):
-        from indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.ast_indexer import ASTIndexer
         target = str(tmp_path / "ok.json")
         with open(target, "w", encoding="utf-8") as f:
             json.dump([1, 2, 3], f)
@@ -51,14 +51,14 @@ class TestAtomicIndexPersistence:
 
 class TestSkipDirs:
     def test_staging_not_skipped_by_default(self):
-        from indexer.ast_indexer import _SKIP_DIRS
+        from intelligence.indexer.ast_indexer import _SKIP_DIRS
         # staging/ holds real source in Kubernetes-style repos
         assert "staging" not in _SKIP_DIRS
         assert "vendor" in _SKIP_DIRS
         assert "third_party" in _SKIP_DIRS
 
     def test_go_type_spec_indexed_as_class(self):
-        from indexer.ast_indexer import _TS_CLASS_TYPES
+        from intelligence.indexer.ast_indexer import _TS_CLASS_TYPES
         assert "type_spec" in _TS_CLASS_TYPES
 
 
@@ -66,7 +66,7 @@ class TestSkipDirs:
 
 class TestBoundedSubgraph:
     def _build_graph(self, fan_out: int):
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         kg = KnowledgeGraph.__new__(KnowledgeGraph)  # skip disk load
         import networkx as nx
         kg.G = nx.DiGraph()
@@ -83,7 +83,7 @@ class TestBoundedSubgraph:
         assert result["truncated"] is True
 
     def test_hub_nodes_skipped(self):
-        from graph.knowledge_graph import KnowledgeGraph
+        from data.graph.knowledge_graph import KnowledgeGraph
         import networkx as nx
         kg = KnowledgeGraph.__new__(KnowledgeGraph)
         kg.G = nx.DiGraph()
@@ -110,7 +110,7 @@ class TestBoundedSubgraph:
 
 class TestLearningStoreDedup:
     def test_identical_text_not_duplicated(self, tmp_path, monkeypatch):
-        import memory.learning_store as ls_mod
+        import data.memory.learning_store as ls_mod
         backend = ls_mod._LearningBackend.__new__(ls_mod._LearningBackend)
         index_file = tmp_path / "learnings.json"
         monkeypatch.setattr(backend, "_index_path", lambda: index_file, raising=False)
@@ -123,7 +123,7 @@ class TestLearningStoreDedup:
         assert len(records) == 1
 
     def test_different_text_stored_separately(self, tmp_path, monkeypatch):
-        import memory.learning_store as ls_mod
+        import data.memory.learning_store as ls_mod
         backend = ls_mod._LearningBackend.__new__(ls_mod._LearningBackend)
         index_file = tmp_path / "learnings.json"
         monkeypatch.setattr(backend, "_index_path", lambda: index_file, raising=False)
@@ -138,7 +138,7 @@ class TestLearningStoreDedup:
 
 class TestPortDetection:
     def test_spring_application_properties(self, tmp_path):
-        from cli.init_project import _detect_service_port
+        from interface.cli.init_project import _detect_service_port
         res_dir = tmp_path / "src" / "main" / "resources"
         res_dir.mkdir(parents=True)
         (res_dir / "application.properties").write_text(
@@ -147,12 +147,12 @@ class TestPortDetection:
         assert _detect_service_port(str(tmp_path)) == 8082
 
     def test_env_port(self, tmp_path):
-        from cli.init_project import _detect_service_port
+        from interface.cli.init_project import _detect_service_port
         (tmp_path / ".env").write_text("PORT=3000\nDEBUG=1\n", encoding="utf-8")
         assert _detect_service_port(str(tmp_path)) == 3000
 
     def test_no_config_returns_none(self, tmp_path):
-        from cli.init_project import _detect_service_port
+        from interface.cli.init_project import _detect_service_port
         assert _detect_service_port(str(tmp_path)) is None
 
 
@@ -193,14 +193,14 @@ class TestEnvTemplatePackaging:
 
 class TestStaleReindexHelpers:
     def test_watcher_alive_false_without_pidfile(self, tmp_path, monkeypatch):
-        import server.mcp_server as srv
+        import interface.server.mcp_server as srv
         monkeypatch.setattr(
-            "config.paths.get_path", lambda rel: str(tmp_path / rel), raising=False
+            "core.config.paths.get_path", lambda rel: str(tmp_path / rel), raising=False
         )
         assert srv._watcher_alive() is False
 
     def test_spawn_background_reindex_respects_existing_lock(self, tmp_path):
-        import server.mcp_server as srv
+        import interface.server.mcp_server as srv
         lock = tmp_path / "index" / "reindex.lock"
         lock.parent.mkdir(parents=True)
         lock.write_text("", encoding="utf-8")

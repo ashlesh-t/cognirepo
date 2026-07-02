@@ -9,7 +9,7 @@ import json
 import uuid
 from pathlib import Path
 
-from server.session_listener import on_session_end, recover_unclosed_sessions
+from interface.server.session_listener import on_session_end, recover_unclosed_sessions
 
 
 def _make_session(sessions_dir: Path, messages: list, closed: bool = False) -> str:
@@ -30,9 +30,9 @@ def test_on_session_end_marks_closed(tmp_path, monkeypatch):
     sessions_dir = tmp_path / ".cognirepo" / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr("config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
+    monkeypatch.setattr("core.config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
-    import memory.learning_store as ls
+    import data.memory.learning_store as ls
     ls._STORE = ls.CompositeLearningStore(project_dir=str(tmp_path))
 
     messages = [
@@ -51,9 +51,9 @@ def test_on_session_end_idempotent(tmp_path, monkeypatch):
     sessions_dir = tmp_path / ".cognirepo" / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr("config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
+    monkeypatch.setattr("core.config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
-    import memory.learning_store as ls
+    import data.memory.learning_store as ls
     ls._STORE = ls.CompositeLearningStore(project_dir=str(tmp_path))
 
     sid = _make_session(sessions_dir, [], closed=True)
@@ -65,9 +65,9 @@ def test_recover_unclosed_sessions(tmp_path, monkeypatch):
     sessions_dir = tmp_path / ".cognirepo" / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr("config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
+    monkeypatch.setattr("core.config.paths.get_path", lambda key: str(tmp_path / ".cognirepo" / key))
     monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(tmp_path / "global"))
-    import memory.learning_store as ls
+    import data.memory.learning_store as ls
     ls._STORE = ls.CompositeLearningStore(project_dir=str(tmp_path))
 
     # Create 2 unclosed + 1 already closed

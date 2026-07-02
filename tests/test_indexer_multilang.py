@@ -38,9 +38,9 @@ import pytest
 @pytest.fixture()
 def fresh_indexer(isolated_cognirepo):
     """Return an ASTIndexer wired to an empty KnowledgeGraph."""
-    from graph.knowledge_graph import KnowledgeGraph
-    from indexer.ast_indexer import ASTIndexer
-    from indexer.language_registry import clear_cache
+    from data.graph.knowledge_graph import KnowledgeGraph
+    from intelligence.indexer.ast_indexer import ASTIndexer
+    from intelligence.indexer.language_registry import clear_cache
     clear_cache()
     kg = KnowledgeGraph()
     return ASTIndexer(graph=kg)
@@ -224,13 +224,13 @@ class TestJavaIndexing:
 class TestLanguageRegistry:
     def test_supported_extensions_includes_python(self):
         """Python is always in supported_extensions (stdlib fallback)."""
-        from indexer.language_registry import supported_extensions, clear_cache
+        from intelligence.indexer.language_registry import supported_extensions, clear_cache
         clear_cache()
         exts = supported_extensions()
         assert ".py" in exts
 
     def test_unsupported_ext_not_in_supported(self):
-        from indexer.language_registry import _get_language, clear_cache
+        from intelligence.indexer.language_registry import _get_language, clear_cache
         clear_cache()
         lang = _get_language(".rb")
         assert lang is None
@@ -238,7 +238,7 @@ class TestLanguageRegistry:
     def test_missing_grammar_returns_none_no_crash(self, monkeypatch):
         """Importing a non-existent grammar package must not raise."""
         import importlib
-        from indexer.language_registry import clear_cache
+        from intelligence.indexer.language_registry import clear_cache
         clear_cache()
 
         original_import = importlib.import_module
@@ -250,19 +250,19 @@ class TestLanguageRegistry:
 
         monkeypatch.setattr(importlib, "import_module", patched_import)
 
-        from indexer import language_registry
+        from intelligence.indexer import language_registry
         clear_cache()
 
         lang = language_registry._get_language(".java")
         assert lang is None  # no crash, returns None
 
     def test_is_supported_python_always_true(self):
-        from indexer.language_registry import is_supported, clear_cache
+        from intelligence.indexer.language_registry import is_supported, clear_cache
         clear_cache()
         assert is_supported(Path("anything.py")) is True
 
     def test_is_supported_ruby_false(self):
-        from indexer.language_registry import is_supported
+        from intelligence.indexer.language_registry import is_supported
         assert is_supported(Path("script.rb")) is False
 
 

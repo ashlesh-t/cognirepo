@@ -34,15 +34,15 @@ def router():
     Fixes issue where other tests stub router as MagicMock and xdist workers 
     share sys.modules.
     """
-    existing = sys.modules.get("orchestrator.router")
+    existing = sys.modules.get("intelligence.orchestrator.router")
     if existing is None or isinstance(existing, MagicMock):
-        sys.modules.pop("orchestrator.router", None)
-        import orchestrator.router as router_mod
+        sys.modules.pop("intelligence.orchestrator.router", None)
+        import intelligence.orchestrator.router as router_mod
         import importlib
         importlib.reload(router_mod)
         return router_mod
     
-    import orchestrator.router as router_mod
+    import intelligence.orchestrator.router as router_mod
     return router_mod
 
 

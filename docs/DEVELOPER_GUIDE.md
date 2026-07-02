@@ -35,14 +35,14 @@ pylint $(git ls-files '*.py' | grep -v '_pb2') --disable=C,R,import-error --fail
 
 ## How to Add a New MCP Tool
 
-MCP tools are implemented in `tools/` and registered in `server/mcp_server.py`.
+MCP tools are implemented in `interface/tools/` and registered in `interface/server/mcp_server.py`.
 
-### 1. Implement in `tools/`
+### 1. Implement in `interface/tools/`
 
-Create or extend a file in `tools/`. Each tool is a plain Python function:
+Create or extend a file in `interface/tools/`. Each tool is a plain Python function:
 
 ```python
-# tools/my_tools.py
+# interface/tools/my_tools.py
 def my_new_tool(query: str, top_k: int = 5) -> list[dict]:
     """
     Brief description of what this tool does.
@@ -59,14 +59,14 @@ def my_new_tool(query: str, top_k: int = 5) -> list[dict]:
 ```
 
 **Rules:**
-- All storage access goes through `tools/` — never call FAISS or the graph directly from adapters.
+- All storage access goes through `interface/tools/` — never call FAISS or the graph directly from adapters.
 - Tools must not call each other (keep them composable at the caller level).
 - Tools must be stateless across calls (no module-level mutable state).
 
-### 2. Register in `server/mcp_server.py`
+### 2. Register in `interface/server/mcp_server.py`
 
 ```python
-from tools.my_tools import my_new_tool
+from interface.tools.my_tools import my_new_tool
 
 @server.call_tool()
 async def handle_my_new_tool(name: str, arguments: dict) -> list[TextContent]:
@@ -77,7 +77,7 @@ async def handle_my_new_tool(name: str, arguments: dict) -> list[TextContent]:
 
 Also add the tool definition to `@server.list_tools()`.
 
-### 3. Register in `adapters/openai_spec.py`
+### 3. Register in `interface/adapters/openai_spec.py`
 
 Add a JSON schema entry for the tool so it appears in the OpenAI-compatible spec.
 
@@ -86,7 +86,7 @@ Add a JSON schema entry for the tool so it appears in the OpenAI-compatible spec
 ```python
 # tests/test_my_tools.py
 def test_my_new_tool_returns_list():
-    from tools.my_tools import my_new_tool
+    from interface.tools.my_tools import my_new_tool
     result = my_new_tool("test query")
     assert isinstance(result, list)
 ```
@@ -118,7 +118,7 @@ import tree_sitter_kotlin
 KOTLIN_LANGUAGE = Language(tree_sitter_kotlin.language())
 ```
 
-### 3. Register in `indexer/ast_indexer.py`
+### 3. Register in `intelligence/indexer/ast_indexer.py`
 
 Add to the `LANGUAGE_MAP` dict:
 ```python
@@ -138,9 +138,9 @@ def _load_kotlin():
 
 ### 4. Add extraction logic
 
-In `indexer/ast_indexer.py`, add a `_extract_<language>_symbols()` function that uses tree-sitter queries to extract functions, classes, and variables.
+In `intelligence/indexer/ast_indexer.py`, add a `_extract_<language>_symbols()` function that uses tree-sitter queries to extract functions, classes, and variables.
 
-### 5. Add to `LANGUAGE_DISPLAY` in `cli/main.py`
+### 5. Add to `LANGUAGE_DISPLAY` in `interface/cli/main.py`
 
 ```python
 LANGUAGE_DISPLAY = {
@@ -161,7 +161,7 @@ def test_kotlin_function_extracted(tmp_path):
 
 ## How to Add a New CLI Command
 
-### 1. Add the subparser in `cli/main.py`
+### 1. Add the subparser in `interface/cli/main.py`
 
 ```python
 p_mycommand = sub.add_parser("mycommand", help="What it does")

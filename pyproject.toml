@@ -1,6 +1,6 @@
 [project]
 name = "cognirepo"
-version = "1.1.3"
+version = "2.0.0"
 description = "Local cognitive infrastructure layer for AI agents"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -49,7 +49,7 @@ dependencies = [
     # system metrics + connectivity
     "psutil>=6.0",
     "requests>=2.33",
-    "python-multipart>=0.0.26",
+    "python-multipart>=0.0.30",
 ]
 
 [project.urls]
@@ -76,7 +76,7 @@ cpp = [
     "scikit-build-core>=0.9",
 ]
 security = [
-    "cryptography>=46.0.7",
+    "cryptography>=48.0.1",
     "keyring>=25.0",
 ]
 cli = [
@@ -114,11 +114,14 @@ dev = [
 ]
 
 [project.scripts]
-cognirepo = "cli.main:main"
+cognirepo = "interface.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["cognirepo*", "_bm25*", "adapters*", "cli*", "config*", "cron*", "graph*", "indexer*", "memory*", "orchestrator*", "retrieval*", "security*", "server*", "tools*", "vector_db*"]
+include = [
+    "cognirepo*",
+    "core*", "data*", "intelligence*", "interface*", "ops*",
+]
 exclude = ["venv*", "*.egg-info*"]
 
 [tool.setuptools.package-data]
@@ -162,18 +165,18 @@ omit = [
     "setup.py",
     # Background / CLI-interactive / org-runtime modules with 0% pytest coverage.
     # These require live network, org setup, or interactive TTY — not unit-testable.
-    "cli/release_check.py",
-    "cli/wizard.py",
-    "cli/seed.py",
-    "indexer/doc_ingester.py",
-    "indexer/inter_repo_indexer.py",
-    "memory/auto_store.py",
-    "memory/cleanup_queue.py",
-    "memory/project_memory.py",
-    "tools/behaviour_hook.py",
-    "tools/prime_session.py",
-    "tools/search_docs.py",
-    "tools/sync_claude_memory.py",
+    "interface/cli/release_check.py",
+    "interface/cli/wizard.py",
+    "interface/cli/seed.py",
+    "intelligence/indexer/doc_ingester.py",
+    "intelligence/indexer/inter_repo_indexer.py",
+    "data/memory/auto_store.py",
+    "data/memory/cleanup_queue.py",
+    "data/memory/project_memory.py",
+    "interface/tools/behaviour_hook.py",
+    "interface/tools/prime_session.py",
+    "interface/tools/search_docs.py",
+    "interface/tools/sync_claude_memory.py",
 ]
 
 [tool.coverage.report]

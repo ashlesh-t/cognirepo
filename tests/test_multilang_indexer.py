@@ -31,10 +31,10 @@ def fresh_indexer(isolated_cognirepo):
     import numpy as np
     fake_model = MagicMock()
     fake_model.embed.side_effect = lambda texts: iter([np.zeros(384, dtype="float32") for _ in texts])
-    with patch("indexer.ast_indexer.get_model", return_value=fake_model):
-        from graph.knowledge_graph import KnowledgeGraph
-        from indexer.ast_indexer import ASTIndexer
-        from indexer.language_registry import clear_cache
+    with patch("intelligence.indexer.ast_indexer.get_model", return_value=fake_model):
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from intelligence.indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.language_registry import clear_cache
         clear_cache()
         kg = KnowledgeGraph()
         return ASTIndexer(graph=kg)
@@ -112,7 +112,7 @@ class TestTypeScriptIndexing:
     def test_ts_uses_typescript_grammar_not_javascript(self):
         """Verify .ts dispatches to tree_sitter_typescript, not tree_sitter_javascript."""
         pytest.importorskip("tree_sitter_typescript")
-        from indexer.language_registry import _get_language, clear_cache
+        from intelligence.indexer.language_registry import _get_language, clear_cache
         import tree_sitter_typescript
         clear_cache()
         lang = _get_language(".ts")
@@ -202,32 +202,32 @@ class TestRustIndexing:
 class TestLanguageRegistryV2:
     def test_ts_grammar_is_typescript_not_javascript(self):
         """language_registry must NOT map .ts to tree_sitter_javascript."""
-        from indexer.language_registry import _GRAMMAR_MAP
+        from intelligence.indexer.language_registry import _GRAMMAR_MAP
         assert _GRAMMAR_MAP.get(".ts") == "tree_sitter_typescript"
         assert _GRAMMAR_MAP.get(".tsx") == "tree_sitter_typescript"
 
     def test_tsx_uses_tsx_function(self):
         pytest.importorskip("tree_sitter_typescript")
-        from indexer.language_registry import _GRAMMAR_FUNC_OVERRIDE
+        from intelligence.indexer.language_registry import _GRAMMAR_FUNC_OVERRIDE
         assert ".ts" in _GRAMMAR_FUNC_OVERRIDE
         assert _GRAMMAR_FUNC_OVERRIDE[".ts"][1] == "language_typescript"
         assert ".tsx" in _GRAMMAR_FUNC_OVERRIDE
         assert _GRAMMAR_FUNC_OVERRIDE[".tsx"][1] == "language_tsx"
 
     def test_ts_lang_name_is_typescript(self):
-        from indexer.language_registry import lang_name
+        from intelligence.indexer.language_registry import lang_name
         assert lang_name(".ts") == "typescript"
         assert lang_name(".tsx") == "tsx"
 
     def test_go_supported(self):
         pytest.importorskip("tree_sitter_go")
-        from indexer.language_registry import is_supported, clear_cache
+        from intelligence.indexer.language_registry import is_supported, clear_cache
         clear_cache()
         assert is_supported(Path("main.go")) is True
 
     def test_rust_supported(self):
         pytest.importorskip("tree_sitter_rust")
-        from indexer.language_registry import is_supported, clear_cache
+        from intelligence.indexer.language_registry import is_supported, clear_cache
         clear_cache()
         assert is_supported(Path("lib.rs")) is True
 
@@ -236,7 +236,7 @@ class TestLanguageRegistryV2:
 
 class TestWatchdogCoverage:
     def _make_handler(self):
-        from indexer.file_watcher import RepoFileHandler
+        from intelligence.indexer.file_watcher import RepoFileHandler
         indexer = MagicMock()
         indexer.index_data = {"files": {}, "reverse_index": {}}
         graph = MagicMock()
@@ -254,7 +254,7 @@ class TestWatchdogCoverage:
     def test_supported_extensions_trigger_reindex(self, ext, tmp_path):
         """on_modified must trigger _reindex for each indexed extension."""
         from pathlib import Path
-        from indexer.language_registry import is_supported
+        from intelligence.indexer.language_registry import is_supported
         if not is_supported(Path(f"file{ext}")):
             pytest.skip(f"grammar for {ext} not installed")
 
@@ -286,7 +286,7 @@ class TestWatchdogCoverage:
 
     def test_cache_invalidated_on_reindex(self, tmp_path):
         """After _reindex, invalidate_hybrid_cache must be called."""
-        from indexer.file_watcher import RepoFileHandler
+        from intelligence.indexer.file_watcher import RepoFileHandler
         indexer = MagicMock()
         indexer.index_data = {"files": {}, "reverse_index": {}}
         graph = MagicMock()
@@ -297,8 +297,8 @@ class TestWatchdogCoverage:
         fake_file = tmp_path / "module.py"
         fake_file.write_text("def foo(): pass")
 
-        with patch("indexer.file_watcher.RepoFileHandler._reindex", wraps=handler._reindex):
-            with patch("retrieval.hybrid.invalidate_hybrid_cache") as mock_inv:
+        with patch("intelligence.indexer.file_watcher.RepoFileHandler._reindex", wraps=handler._reindex):
+            with patch("intelligence.retrieval.hybrid.invalidate_hybrid_cache") as mock_inv:
                 with patch("os.path.relpath", return_value="module.py"):
                     handler._reindex(str(fake_file))
 
@@ -306,7 +306,7 @@ class TestWatchdogCoverage:
 
     def test_cache_invalidated_on_remove(self, tmp_path):
         """After _remove, invalidate_hybrid_cache must be called."""
-        from indexer.file_watcher import RepoFileHandler
+        from intelligence.indexer.file_watcher import RepoFileHandler
         indexer = MagicMock()
         indexer.index_data = {"files": {"module.py": {}}, "reverse_index": {}}
         graph = MagicMock()
@@ -314,7 +314,7 @@ class TestWatchdogCoverage:
         behaviour = MagicMock()
         handler = RepoFileHandler("/repo", indexer, graph, behaviour, "test")
 
-        with patch("retrieval.hybrid.invalidate_hybrid_cache") as mock_inv:
+        with patch("intelligence.retrieval.hybrid.invalidate_hybrid_cache") as mock_inv:
             with patch("os.path.relpath", return_value="module.py"):
                 handler._remove("/repo/module.py")
 

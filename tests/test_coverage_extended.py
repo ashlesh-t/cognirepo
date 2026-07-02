@@ -20,7 +20,7 @@ import numpy as np
 
 def test_docs_search_fast_path(tmp_path, monkeypatch):
     """Test that docs_search uses the ast_index.json fast path if available."""
-    from retrieval.docs_search import search_docs
+    from intelligence.retrieval.docs_search import search_docs
     monkeypatch.chdir(tmp_path)
     
     # Create fake index with a .md entry
@@ -44,11 +44,11 @@ def test_docs_search_fast_path(tmp_path, monkeypatch):
 
 def test_cross_repo_all_org_repos(tmp_path):
     """Test get_all_org_repos correctly merges top-level and project-level repos."""
-    from retrieval.cross_repo import CrossRepoRouter
+    from intelligence.retrieval.cross_repo import CrossRepoRouter
     
-    with patch("retrieval.cross_repo.get_repo_org", return_value="my-org"), \
-         patch("retrieval.cross_repo.purge_stale_repos"), \
-         patch("retrieval.cross_repo.list_orgs") as mock_orgs:
+    with patch("intelligence.retrieval.cross_repo.get_repo_org", return_value="my-org"), \
+         patch("intelligence.retrieval.cross_repo.purge_stale_repos"), \
+         patch("intelligence.retrieval.cross_repo.list_orgs") as mock_orgs:
         
         mock_orgs.return_value = {
             "my-org": {
@@ -68,11 +68,11 @@ def test_cross_repo_all_org_repos(tmp_path):
 
 def test_auto_store_basic():
     """Exercise AutoStore logic to remove 0% coverage."""
-    from memory.auto_store import AutoStore
+    from data.memory.auto_store import AutoStore
     
     # Patch dependencies globally
-    with patch("vector_db.local_vector_db.LocalVectorDB"), \
-         patch("memory.embeddings.encode_with_timeout") as mock_encode:
+    with patch("core.vector_db.local_vector_db.LocalVectorDB"), \
+         patch("data.memory.embeddings.encode_with_timeout") as mock_encode:
         
         mock_encode.return_value = np.zeros(384, dtype="float32")
         
@@ -92,7 +92,7 @@ def test_auto_store_basic():
 
 def test_router_available_providers():
     """Test _available_providers logic based on env vars."""
-    from orchestrator.router import _available_providers
+    from intelligence.orchestrator.router import _available_providers
     
     with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test", "GEMINI_API_KEY": ""}, clear=True):
         providers = _available_providers()
@@ -104,7 +104,7 @@ def test_router_available_providers():
 
 def test_env_wizard_status(tmp_path):
     """Test EnvWizard status detection."""
-    from cli.env_wizard import EnvWizard
+    from interface.cli.env_wizard import EnvWizard
     wizard = EnvWizard(project_dir=str(tmp_path))
     
     # Test all status returns a dict with expected keys
@@ -116,8 +116,8 @@ def test_env_wizard_status(tmp_path):
 
 def test_ast_indexer_unsupported_ext(tmp_path):
     """Ensure indexer handles unsupported extensions gracefully."""
-    from indexer.ast_indexer import ASTIndexer
-    from graph.knowledge_graph import KnowledgeGraph
+    from intelligence.indexer.ast_indexer import ASTIndexer
+    from data.graph.knowledge_graph import KnowledgeGraph
     
     # Create the file first to avoid FileNotFoundError
     dummy = tmp_path / "dummy.unknown"
@@ -132,8 +132,8 @@ def test_ast_indexer_unsupported_ext(tmp_path):
 
 def test_config_lock_context(tmp_path, monkeypatch):
     """Exercise store_lock context manager."""
-    from config.lock import store_lock
-    from config import paths
+    from core.config.lock import store_lock
+    from core.config import paths
     
     # Redirect config path to tmp
     monkeypatch.setattr(paths, "get_path", lambda x: str(tmp_path / x))
@@ -148,7 +148,7 @@ def test_config_lock_context(tmp_path, monkeypatch):
 
 def test_setup_logging_no_crash():
     """Ensure setup_logging can be called multiple times."""
-    from config.logging import setup_logging
+    from core.config.logging import setup_logging
     setup_logging()
     setup_logging(level="DEBUG")
     assert True
@@ -158,7 +158,7 @@ def test_setup_logging_no_crash():
 
 def test_mcp_server_module_state():
     """Ensure MCP server instance exists."""
-    from server.mcp_server import mcp
+    from interface.server.mcp_server import mcp
     assert mcp is not None
 
 
@@ -166,7 +166,7 @@ def test_mcp_server_module_state():
 
 def test_daemon_watcher_check_logic(tmp_path):
     """Exercise is_watcher_running_for_path logic."""
-    from cli.daemon import is_watcher_running_for_path
+    from interface.cli.daemon import is_watcher_running_for_path
     
     # Check for non-existent repo should return None
     assert is_watcher_running_for_path("/non/existent/path") is None

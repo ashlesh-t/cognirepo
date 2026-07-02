@@ -5,7 +5,7 @@
 # Licensed under MIT. See LICENSE file in repository root.
 
 """Tests for cli/env_wizard.py — .env setup wizard."""
-from cli.env_wizard import EnvWizard, _mask, _read_dotenv, _set_dotenv_key
+from interface.cli.env_wizard import EnvWizard, _mask, _read_dotenv, _set_dotenv_key
 
 
 # ── _mask helper ──────────────────────────────────────────────────────────────
@@ -106,7 +106,7 @@ def test_verify_keys_calls_probe(tmp_path, monkeypatch):
         called_with.append(api_key)
         return {"ok": True, "latency_ms": 100.0, "error": ""}
 
-    import cli.key_probes as kp
+    import interface.cli.key_probes as kp
     monkeypatch.setattr(kp, "PROVIDER_PROBES", {
         "ANTHROPIC_API_KEY": ("anthropic", mock_probe),
     })

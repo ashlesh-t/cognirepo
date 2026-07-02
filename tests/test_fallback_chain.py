@@ -35,8 +35,8 @@ except ImportError:
     _HEAVY_DEPS_STUBBED.append("networkx")
 
 # ── Use real ModelCallError and ModelResponse (both modules are importable) ───
-from orchestrator.model_adapters.errors import ModelCallError  # noqa: E402
-from orchestrator.model_adapters.anthropic_adapter import ModelResponse  # noqa: E402
+from intelligence.orchestrator.model_adapters.errors import ModelCallError  # noqa: E402
+from intelligence.orchestrator.model_adapters.anthropic_adapter import ModelResponse  # noqa: E402
 
 # ── Remaining heavy stubs ─────────────────────────────────────────────────────
 # Only stub modules that are NOT already importable (avoid polluting real installs).
@@ -52,22 +52,22 @@ def _try_real_import(mod: str) -> bool:
         return False
 
 for _mod in (
-    "orchestrator.context_builder",
-    "orchestrator.model_adapters.gemini_adapter",
-    "orchestrator.model_adapters.grok_adapter",
-    "orchestrator.model_adapters.openai_adapter",
-    "graph.behaviour_tracker",
-    "memory.episodic_memory",
+    "intelligence.orchestrator.context_builder",
+    "intelligence.orchestrator.model_adapters.gemini_adapter",
+    "intelligence.orchestrator.model_adapters.grok_adapter",
+    "intelligence.orchestrator.model_adapters.openai_adapter",
+    "data.graph.behaviour_tracker",
+    "data.memory.episodic_memory",
 ):
     if _mod not in sys.modules and not _try_real_import(_mod):
         sys.modules[_mod] = MagicMock()
         _STUBBED_BY_THIS_FILE.append(_mod)
 
 # graph.knowledge_graph needs networkx — never stub it if networkx is real
-_need_graph_stub = not _try_real_import("graph.knowledge_graph")
-if _need_graph_stub and "graph.knowledge_graph" not in sys.modules:
-    sys.modules["graph.knowledge_graph"] = MagicMock()
-    _STUBBED_BY_THIS_FILE.append("graph.knowledge_graph")
+_need_graph_stub = not _try_real_import("data.graph.knowledge_graph")
+if _need_graph_stub and "data.graph.knowledge_graph" not in sys.modules:
+    sys.modules["data.graph.knowledge_graph"] = MagicMock()
+    _STUBBED_BY_THIS_FILE.append("data.graph.knowledge_graph")
 
 
 @pytest.fixture(autouse=True, scope="module")
@@ -78,9 +78,9 @@ def _restore_stubs():
     for _mod in _STUBBED_BY_THIS_FILE + _HEAVY_DEPS_STUBBED:
         sys.modules.pop(_mod, None)
     # Evict the router so later tests re-import it cleanly
-    sys.modules.pop("orchestrator.router", None)
+    sys.modules.pop("intelligence.orchestrator.router", None)
     for _mod in list(sys.modules):
-        if "graph.knowledge_graph" in _mod or "retrieval" in _mod:
+        if "data.graph.knowledge_graph" in _mod or "retrieval" in _mod:
             sys.modules.pop(_mod, None)
 
 # ── Router Fixture (Guards against sys.modules pollution) ─────────────────────
@@ -92,14 +92,14 @@ def router():
     Fixes issue where other tests stub router as MagicMock and xdist workers 
     share sys.modules.
     """
-    existing = sys.modules.get("orchestrator.router")
+    existing = sys.modules.get("intelligence.orchestrator.router")
     if existing is None or isinstance(existing, MagicMock):
-        sys.modules.pop("orchestrator.router", None)
-        import orchestrator.router as router_mod
+        sys.modules.pop("intelligence.orchestrator.router", None)
+        import intelligence.orchestrator.router as router_mod
         import importlib
         importlib.reload(router_mod)
     else:
-        import orchestrator.router as router_mod
+        import intelligence.orchestrator.router as router_mod
     
     return router_mod
 

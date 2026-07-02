@@ -21,7 +21,7 @@ import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from cli.init_project import init_project
+from interface.cli.init_project import init_project
 
 REPO_ROOT = Path(__file__).parent.parent
 
@@ -38,13 +38,13 @@ class TestIdempotentInit:
         orig_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
-            with patch("cli.init_project.get_path", return_value=config_file):
-                with patch("cli.init_project._scaffold_dirs"):
-                    with patch("cli.init_project._init_empty_stores"):
-                        with patch("cli.init_project._write_config"):
-                            with patch("cli.init_project._write_gitignore"):
-                                with patch("cli.init_project._seed_dotenv"):
-                                    with patch("cli.init_project._seed_learnings_from_docs"):
+            with patch("interface.cli.init_project.get_path", return_value=config_file):
+                with patch("interface.cli.init_project._scaffold_dirs"):
+                    with patch("interface.cli.init_project._init_empty_stores"):
+                        with patch("interface.cli.init_project._write_config"):
+                            with patch("interface.cli.init_project._write_gitignore"):
+                                with patch("interface.cli.init_project._seed_dotenv"):
+                                    with patch("interface.cli.init_project._seed_learnings_from_docs"):
                                         with patch("builtins.input", return_value="n"):
                                             init_project(no_index=True, interactive=False)
 
@@ -69,13 +69,13 @@ class TestIdempotentInit:
         orig_cwd = os.getcwd()
         try:
             os.chdir(tmp_path)
-            with patch("cli.init_project.get_path", return_value=config_file):
-                with patch("cli.init_project._scaffold_dirs"):
-                    with patch("cli.init_project._init_empty_stores"):
-                        with patch("cli.init_project._write_config"):
-                            with patch("cli.init_project._write_gitignore"):
-                                with patch("cli.init_project._seed_dotenv"):
-                                    with patch("cli.init_project._seed_learnings_from_docs"):
+            with patch("interface.cli.init_project.get_path", return_value=config_file):
+                with patch("interface.cli.init_project._scaffold_dirs"):
+                    with patch("interface.cli.init_project._init_empty_stores"):
+                        with patch("interface.cli.init_project._write_config"):
+                            with patch("interface.cli.init_project._write_gitignore"):
+                                with patch("interface.cli.init_project._seed_dotenv"):
+                                    with patch("interface.cli.init_project._seed_learnings_from_docs"):
                                         with patch("builtins.input", return_value="n"):
                                             init_project(no_index=True, interactive=False)
         finally:
@@ -89,20 +89,20 @@ class TestIdempotentInit:
 class TestNonInteractiveFlag:
     def test_non_interactive_skips_wizard(self):
         """--non-interactive must not call run_wizard."""
-        with patch("cli.init_project._scaffold_dirs"):
-            with patch("cli.init_project._init_empty_stores"):
-                with patch("cli.init_project._write_config"):
-                    with patch("cli.init_project._write_gitignore"):
-                        with patch("cli.init_project._seed_dotenv"):
-                            with patch("cli.init_project._seed_learnings_from_docs"):
-                                with patch("cli.init_project.get_path") as mock_path:
+        with patch("interface.cli.init_project._scaffold_dirs"):
+            with patch("interface.cli.init_project._init_empty_stores"):
+                with patch("interface.cli.init_project._write_config"):
+                    with patch("interface.cli.init_project._write_gitignore"):
+                        with patch("interface.cli.init_project._seed_dotenv"):
+                            with patch("interface.cli.init_project._seed_learnings_from_docs"):
+                                with patch("interface.cli.init_project.get_path") as mock_path:
                                     mock_config = MagicMock()
                                     mock_config.exists.return_value = False
                                     mock_config.parent.mkdir = MagicMock()
                                     mock_path.return_value = mock_config
-                                    with patch("cli.init_project.open", create=True):
+                                    with patch("interface.cli.init_project.open", create=True):
                                         with patch("json.load", return_value={}):
-                                            with patch("cli.wizard.run_wizard") as mock_wizard:
+                                            with patch("interface.cli.wizard.run_wizard") as mock_wizard:
                                                 init_project(
                                                     non_interactive=True,
                                                     no_index=True,
@@ -122,7 +122,7 @@ class TestNonInteractiveFlag:
 class TestReadySummary:
     def test_print_ready_summary_outputs_tools(self, capsys):
         """_print_ready_summary must list MCP tools Claude can call."""
-        from cli.main import _print_ready_summary
+        from interface.cli.main import _print_ready_summary
         _print_ready_summary(summary=None)
         out = capsys.readouterr().out
         assert "context_pack" in out
@@ -133,28 +133,28 @@ class TestReadySummary:
 
     def test_print_ready_summary_shows_youre_ready(self, capsys):
         """_print_ready_summary must output a 'You're ready!' message."""
-        from cli.main import _print_ready_summary
+        from interface.cli.main import _print_ready_summary
         _print_ready_summary(summary=None)
         out = capsys.readouterr().out
         assert "ready" in out.lower()
 
     def test_print_ready_summary_shows_next_steps(self, capsys):
         """_print_ready_summary must show next steps to the user."""
-        from cli.main import _print_ready_summary
+        from interface.cli.main import _print_ready_summary
         _print_ready_summary(summary=None)
         out = capsys.readouterr().out
         assert "doctor" in out or "next steps" in out.lower()
 
     def test_print_ready_summary_with_index_stats(self, capsys):
         """_print_ready_summary must show index stats when summary is provided."""
-        from cli.main import _print_ready_summary
+        from interface.cli.main import _print_ready_summary
         _print_ready_summary(summary={"files_indexed": 42, "symbols": 500})
         out = capsys.readouterr().out
         assert "42" in out or "500" in out
 
     def test_print_ready_summary_with_token_estimate(self, capsys):
         """_print_ready_summary must estimate token reduction for large repos."""
-        from cli.main import _print_ready_summary
+        from interface.cli.main import _print_ready_summary
         _print_ready_summary(summary={"files_indexed": 100, "symbols": 1000})
         out = capsys.readouterr().out
         assert "token" in out.lower() or "reduction" in out.lower()

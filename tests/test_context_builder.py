@@ -36,7 +36,7 @@ def _make_bundle(
     ast_hits=None,
     max_tokens=1000,
 ):
-    from orchestrator.context_builder import ContextBundle
+    from intelligence.orchestrator.context_builder import ContextBundle
     # copy lists so trim mutations don't affect caller's originals
     b = ContextBundle(
         query="test query",
@@ -62,19 +62,19 @@ def _make_memory(text, score=0.5):
 
 class TestTokenEstimation:
     def test_empty_string_is_zero(self):
-        from orchestrator.context_builder import _estimate_tokens
+        from intelligence.orchestrator.context_builder import _estimate_tokens
         assert _estimate_tokens("") == 0
 
     def test_four_chars_is_one_token(self):
-        from orchestrator.context_builder import _estimate_tokens
+        from intelligence.orchestrator.context_builder import _estimate_tokens
         assert _estimate_tokens("abcd") == 1
 
     def test_scales_linearly(self):
-        from orchestrator.context_builder import _estimate_tokens
+        from intelligence.orchestrator.context_builder import _estimate_tokens
         assert _estimate_tokens("a" * 400) == 100
 
     def test_long_text_estimated(self):
-        from orchestrator.context_builder import _estimate_tokens
+        from intelligence.orchestrator.context_builder import _estimate_tokens
         text = "hello world " * 1000  # 12000 chars → 3000 tokens
         assert _estimate_tokens(text) == 3000
 
@@ -83,27 +83,27 @@ class TestTokenEstimation:
 
 class TestTierBudgets:
     def test_standard_budget(self):
-        from orchestrator.context_builder import TIER_BUDGETS
+        from intelligence.orchestrator.context_builder import TIER_BUDGETS
         assert TIER_BUDGETS["STANDARD"] == 6_000
 
     def test_complex_budget(self):
-        from orchestrator.context_builder import TIER_BUDGETS
+        from intelligence.orchestrator.context_builder import TIER_BUDGETS
         assert TIER_BUDGETS["COMPLEX"] == 12_000
 
     def test_expert_budget(self):
-        from orchestrator.context_builder import TIER_BUDGETS
+        from intelligence.orchestrator.context_builder import TIER_BUDGETS
         assert TIER_BUDGETS["EXPERT"] == 24_000
 
     def test_build_sets_tier_budget(self, monkeypatch):
         """build() with tier='STANDARD' sets max_tokens=6000 on bundle."""
         _patch_build_sources(monkeypatch)
-        from orchestrator.context_builder import build
+        from intelligence.orchestrator.context_builder import build
         bundle = build("test", tier="STANDARD")
         assert bundle.max_tokens == 6_000
 
     def test_build_expert_budget(self, monkeypatch):
         _patch_build_sources(monkeypatch)
-        from orchestrator.context_builder import build
+        from intelligence.orchestrator.context_builder import build
         bundle = build("test", tier="EXPERT")
         assert bundle.max_tokens == 24_000
 
@@ -111,18 +111,18 @@ class TestTierBudgets:
 def _patch_build_sources(monkeypatch):
     """Stub out all external calls in context_builder.build()."""
     monkeypatch.setattr(
-        "orchestrator.context_builder._get_retriever",
+        "intelligence.orchestrator.context_builder._get_retriever",
         lambda: type("R", (), {"retrieve": lambda self, q, k: []})(),
     )
     monkeypatch.setattr(
-        "orchestrator.context_builder.KnowledgeGraph",
+        "intelligence.orchestrator.context_builder.KnowledgeGraph",
         lambda: type("KG", (), {
             "node_exists": lambda self, n: False,
             "subgraph_around": lambda self, n, radius=2: {"nodes": [], "edges": []},
         })(),
     )
     monkeypatch.setattr(
-        "orchestrator.context_builder.ASTIndexer",
+        "intelligence.orchestrator.context_builder.ASTIndexer",
         lambda graph: type("AI", (), {
             "load": lambda self: None,
             "lookup_symbol": lambda self, e: [],
@@ -130,15 +130,15 @@ def _patch_build_sources(monkeypatch):
         })(),
     )
     monkeypatch.setattr(
-        "orchestrator.context_builder.get_history",
+        "intelligence.orchestrator.context_builder.get_history",
         lambda limit: [],
     )
     monkeypatch.setattr(
-        "orchestrator.context_builder._load_manifest",
+        "intelligence.orchestrator.context_builder._load_manifest",
         lambda: [],
     )
     monkeypatch.setattr(
-        "orchestrator.context_builder.extract_entities_from_text",
+        "intelligence.orchestrator.context_builder.extract_entities_from_text",
         lambda q: [],
     )
 
@@ -147,7 +147,7 @@ def _patch_build_sources(monkeypatch):
 
 class TestNoBudgetExceeded:
     def test_small_bundle_not_trimmed(self):
-        from orchestrator.context_builder import _trim_to_budget
+        from intelligence.orchestrator.context_builder import _trim_to_budget
         b = _make_bundle(
             memories=[_make_memory("short memory")],
             episodes=[_make_episode("short event")],
@@ -158,7 +158,7 @@ class TestNoBudgetExceeded:
         assert b.token_count > 0
 
     def test_token_count_set_even_without_trim(self):
-        from orchestrator.context_builder import _trim_to_budget
+        from intelligence.orchestrator.context_builder import _trim_to_budget
         b = _make_bundle(max_tokens=50_000)
         _trim_to_budget(b)
         assert b.token_count >= 0
@@ -170,7 +170,7 @@ class TestNoBudgetExceeded:
 class TestEpisodicTrim:
     def test_episodes_trimmed_first(self):
         """Episodic events are removed before memories when over budget."""
-        from orchestrator.context_builder import _trim_to_budget
+        from intelligence.orchestrator.context_builder import _trim_to_budget
         big_episodes = [_make_episode(f"event {'x' * 300} number {i}") for i in range(20)]
         memories = [_make_memory("important memory xyz", score=0.9)]
         b = _make_bundle(episodes=big_episodes, memories=memories, max_tokens=300)
@@ -182,7 +182,7 @@ class TestEpisodicTrim:
 
     def test_oldest_episode_removed_first(self):
         """Most recent episode (index 0) survives; oldest (last) removed first."""
-        from orchestrator.context_builder import _trim_to_budget
+        from intelligence.orchestrator.context_builder import _trim_to_budget
         # Fill with large events so we're over budget
         episodes = [
             _make_episode(f"NEWEST_EVENT {'x' * 200}"),  # index 0 = newest
@@ -198,7 +198,7 @@ class TestEpisodicTrim:
 
     def test_all_episodes_can_be_removed(self):
         """If even removing all episodes isn't enough, trimming continues."""
-        from orchestrator.context_builder import _trim_to_budget
+        from intelligence.orchestrator.context_builder import _trim_to_budget
         massive_memory = [_make_memory("m " * 5000, score=0.9)]
         b = _make_bundle(
             memories=massive_memory,
@@ -216,7 +216,7 @@ class TestEpisodicTrim:
 class TestGraphTrim:
     def test_graph_lines_trimmed_from_end(self):
         """Graph context is trimmed by removing lines from the end."""
-        from orchestrator.context_builder import _trim_to_budget
+        from intelligence.orchestrator.context_builder import _trim_to_budget
         graph_lines = [f"node_{i}: {'x' * 50}" for i in range(50)]
         graph_text = "\n".join(graph_lines)
         b = _make_bundle(graph_context=graph_text, max_tokens=200)
@@ -229,7 +229,7 @@ class TestGraphTrim:
 
     def test_graph_trimmed_after_episodes_exhausted(self):
         """Graph is only trimmed after all episodes are removed."""
-        from orchestrator.context_builder import _trim_to_budget
+        from intelligence.orchestrator.context_builder import _trim_to_budget
         graph_text = "\n".join(f"node_{i}: {'y' * 80}" for i in range(30))
         episodes = [_make_episode(f"ep {i} {'z' * 10}") for i in range(3)]
         b = _make_bundle(graph_context=graph_text, episodes=episodes, max_tokens=200)
@@ -243,7 +243,7 @@ class TestGraphTrim:
 class TestMemoryTrim:
     def test_lowest_score_memory_removed_first(self):
         """Memory with the lowest final_score is removed before high-score ones."""
-        from orchestrator.context_builder import _trim_to_budget
+        from intelligence.orchestrator.context_builder import _trim_to_budget
         memories = [
             _make_memory("high score memory abc " * 100, score=0.95),
             _make_memory("medium score memory def " * 100, score=0.5),
@@ -261,7 +261,7 @@ class TestMemoryTrim:
 
     def test_high_score_memory_survives_trim(self):
         """High-scoring memory survives aggressive trimming."""
-        from orchestrator.context_builder import _trim_to_budget
+        from intelligence.orchestrator.context_builder import _trim_to_budget
         memories = [
             _make_memory("TOP_SCORE " * 50, score=1.0),
             _make_memory("low " * 500, score=0.01),
@@ -278,7 +278,7 @@ class TestMemoryTrim:
 class TestOverallBudget:
     def test_30k_context_trimmed_to_budget(self):
         """A 30k-token context gets trimmed to fit the budget without error."""
-        from orchestrator.context_builder import _trim_to_budget, _estimate_tokens
+        from intelligence.orchestrator.context_builder import _trim_to_budget, _estimate_tokens
         # Build ~30k token context (30k * 4 = 120k chars)
         big_episodes = [_make_episode("episode text " * 400) for _ in range(20)]
         big_graph = "\n".join(f"node_{i}: " + "edge data " * 200 for i in range(10))
@@ -300,7 +300,7 @@ class TestOverallBudget:
 
     def test_ast_hits_never_trimmed(self):
         """AST symbol hits are never removed during trimming."""
-        from orchestrator.context_builder import _trim_to_budget
+        from intelligence.orchestrator.context_builder import _trim_to_budget
         ast_hits = [
             {"name": "critical_fn", "file": "app.py", "line": 10, "type": "FUNCTION"}
         ] * 5
@@ -310,7 +310,7 @@ class TestOverallBudget:
         assert b.ast_hits == ast_hits  # never touched
 
     def test_was_trimmed_flag_set(self):
-        from orchestrator.context_builder import _trim_to_budget
+        from intelligence.orchestrator.context_builder import _trim_to_budget
         big = [_make_episode("x " * 1000) for _ in range(20)]
         b = _make_bundle(episodes=big, max_tokens=100)
         _trim_to_budget(b)
@@ -318,7 +318,7 @@ class TestOverallBudget:
 
     def test_system_prompt_updated_after_trim(self):
         """bundle.system_prompt reflects trimmed content, not original."""
-        from orchestrator.context_builder import _trim_to_budget
+        from intelligence.orchestrator.context_builder import _trim_to_budget
         episodes = [_make_episode(f"UNIQUE_EPISODE_{i} " + "pad " * 500) for i in range(5)]
         b = _make_bundle(episodes=episodes, max_tokens=200)
         _trim_to_budget(b)

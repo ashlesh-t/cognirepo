@@ -21,8 +21,8 @@ from unittest.mock import MagicMock, patch
 
 def _make_bt(tmp_path, monkeypatch):
     """Return a fresh BehaviourTracker backed by a temp dir."""
-    from graph.knowledge_graph import KnowledgeGraph
-    from graph.behaviour_tracker import BehaviourTracker
+    from data.graph.knowledge_graph import KnowledgeGraph
+    from data.graph.behaviour_tracker import BehaviourTracker
 
     cog_dir = tmp_path / ".cognirepo" / "graph"
     cog_dir.mkdir(parents=True, exist_ok=True)
@@ -173,7 +173,7 @@ class TestFramingHintsLifecycle:
         # Manually add one more pattern to reach the threshold without auto-trigger
         bt.data["interaction_style"]["query_patterns"].append("how does routing work in this middleware 9")
         # Manually call summarize with store_memory mocked to ensure it succeeds
-        with _patch("tools.store_memory.store_memory", return_value=None):
+        with _patch("interface.tools.store_memory.store_memory", return_value=None):
             result = bt.summarize_interaction_style()
         hint = bt.data["interaction_style"].get("framing_hints", "")
         assert isinstance(hint, str)
@@ -223,8 +223,8 @@ class TestBehaviourSymbolWeights:
 
 class TestBehaviourTrackerPersistence:
     def test_save_and_load_round_trip(self, tmp_path, monkeypatch):
-        from graph.knowledge_graph import KnowledgeGraph
-        from graph.behaviour_tracker import BehaviourTracker
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from data.graph.behaviour_tracker import BehaviourTracker
 
         cog_dir = tmp_path / ".cognirepo" / "graph"
         cog_dir.mkdir(parents=True, exist_ok=True)
@@ -241,8 +241,8 @@ class TestBehaviourTrackerPersistence:
         assert bt2.get_preferences().get("style") == "concise"
 
     def test_load_missing_file_starts_fresh(self, tmp_path, monkeypatch):
-        from graph.knowledge_graph import KnowledgeGraph
-        from graph.behaviour_tracker import BehaviourTracker
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from data.graph.behaviour_tracker import BehaviourTracker
 
         cog_dir = tmp_path / ".cognirepo" / "graph"
         cog_dir.mkdir(parents=True, exist_ok=True)
@@ -253,8 +253,8 @@ class TestBehaviourTrackerPersistence:
         assert bt.data["symbol_weights"] == {}
 
     def test_save_creates_behaviour_json_file(self, tmp_path, monkeypatch):
-        from graph.knowledge_graph import KnowledgeGraph
-        from graph.behaviour_tracker import BehaviourTracker
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from data.graph.behaviour_tracker import BehaviourTracker
 
         cog_dir = tmp_path / ".cognirepo" / "graph"
         cog_dir.mkdir(parents=True, exist_ok=True)

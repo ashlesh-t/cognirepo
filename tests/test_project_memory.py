@@ -4,21 +4,21 @@
 import pytest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from memory.project_memory import ProjectMemory
+from data.memory.project_memory import ProjectMemory
 
 @pytest.fixture
 def mock_local_vector_db():
-    with patch("vector_db.local_vector_db.LocalVectorDB") as mock:
+    with patch("core.vector_db.local_vector_db.LocalVectorDB") as mock:
         yield mock
 
 @pytest.fixture
 def mock_encode():
-    with patch("memory.project_memory.encode_with_timeout") as mock:
+    with patch("data.memory.project_memory.encode_with_timeout") as mock:
         mock.return_value = [0.1] * 384
         yield mock
 
 def test_project_memory_init(tmp_path):
-    with patch("memory.project_memory.get_shared_memory_path") as mock_path:
+    with patch("data.memory.project_memory.get_shared_memory_path") as mock_path:
         mock_path.return_value = tmp_path
         pm = ProjectMemory("test-org", "test-project")
         assert pm._org == "test-org"
@@ -28,7 +28,7 @@ def test_project_memory_init(tmp_path):
         assert (tmp_path / "memory").exists()
 
 def test_project_memory_store(tmp_path, mock_encode):
-    with patch("memory.project_memory.get_shared_memory_path") as mock_path:
+    with patch("data.memory.project_memory.get_shared_memory_path") as mock_path:
         mock_path.return_value = tmp_path
         pm = ProjectMemory("test-org", "test-project")
         
@@ -39,7 +39,7 @@ def test_project_memory_store(tmp_path, mock_encode):
         assert pm._db.metadata[0]["source"] == "repo-a"
 
 def test_project_memory_search(tmp_path, mock_encode):
-    with patch("memory.project_memory.get_shared_memory_path") as mock_path:
+    with patch("data.memory.project_memory.get_shared_memory_path") as mock_path:
         mock_path.return_value = tmp_path
         pm = ProjectMemory("test-org", "test-project")
         pm.store("hello world", "repo-a")
@@ -49,7 +49,7 @@ def test_project_memory_search(tmp_path, mock_encode):
         assert results[0]["text"] == "hello world"
 
 def test_project_memory_store_failure(tmp_path, mock_encode):
-    with patch("memory.project_memory.get_shared_memory_path") as mock_path:
+    with patch("data.memory.project_memory.get_shared_memory_path") as mock_path:
         mock_path.return_value = tmp_path
         pm = ProjectMemory("test-org", "test-project")
         
@@ -57,7 +57,7 @@ def test_project_memory_store_failure(tmp_path, mock_encode):
         pm.store("hello", "repo-a")  # Should not raise
 
 def test_project_memory_search_failure(tmp_path, mock_encode):
-    with patch("memory.project_memory.get_shared_memory_path") as mock_path:
+    with patch("data.memory.project_memory.get_shared_memory_path") as mock_path:
         mock_path.return_value = tmp_path
         pm = ProjectMemory("test-org", "test-project")
         

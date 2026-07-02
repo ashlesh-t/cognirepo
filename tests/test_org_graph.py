@@ -28,7 +28,7 @@ def org_graph_path(tmp_path, monkeypatch):
     path = str(tmp_path / "org_graph.pkl")
     monkeypatch.setenv("COGNIREPO_ORG_GRAPH", path)
     # Also redirect the lock file to tmp_path
-    import graph.org_graph as _og
+    import data.graph.org_graph as _og
     monkeypatch.setattr(
         _og,
         "_org_lock",
@@ -40,7 +40,7 @@ def org_graph_path(tmp_path, monkeypatch):
 class TestOrgGraphConcurrentWrite:
     def test_two_thread_writes_no_corruption(self, org_graph_path, isolated_cognirepo):
         """Two threads saving OrgGraph simultaneously must not corrupt the pickle."""
-        from graph.org_graph import OrgGraph, invalidate_org_graph
+        from data.graph.org_graph import OrgGraph, invalidate_org_graph
 
         errors: list[Exception] = []
 
@@ -71,7 +71,7 @@ class TestOrgGraphConcurrentWrite:
 class TestOrgGraphEncryption:
     def test_plaintext_round_trip(self, org_graph_path, isolated_cognirepo):
         """Save + load without encryption preserves graph data."""
-        from graph.org_graph import OrgGraph, invalidate_org_graph
+        from data.graph.org_graph import OrgGraph, invalidate_org_graph
 
         invalidate_org_graph()
         og = OrgGraph()
@@ -102,7 +102,7 @@ class TestOrgGraphEncryption:
         def fake_set(svc, proj, val):
             key_store[proj] = val
 
-        from graph.org_graph import OrgGraph, invalidate_org_graph
+        from data.graph.org_graph import OrgGraph, invalidate_org_graph
 
         with mock.patch("keyring.get_password", side_effect=fake_get), \
              mock.patch("keyring.set_password", side_effect=fake_set):
@@ -121,7 +121,7 @@ class TestOrgGraphEncryption:
         with open(org_graph_path, "wb") as f:
             f.write(b"not a valid pickle")
 
-        from graph.org_graph import OrgGraph, invalidate_org_graph
+        from data.graph.org_graph import OrgGraph, invalidate_org_graph
         invalidate_org_graph()
         og = OrgGraph()
         assert og.G.number_of_nodes() == 0
@@ -132,7 +132,7 @@ class TestOrgGraphEncryption:
 class TestOrgGraphEdgeCases:
     def test_link_repos_duplicate_is_idempotent(self, org_graph_path, isolated_cognirepo):
         """Calling link_repos() twice with the same src/dst must not duplicate edges."""
-        from graph.org_graph import OrgGraph, invalidate_org_graph
+        from data.graph.org_graph import OrgGraph, invalidate_org_graph
 
         invalidate_org_graph()
         og = OrgGraph()
@@ -149,7 +149,7 @@ class TestOrgGraphEdgeCases:
 
     def test_get_dependencies_returns_correct_shape(self, org_graph_path, isolated_cognirepo):
         """get_dependencies() returns list of dicts with required keys."""
-        from graph.org_graph import OrgGraph, invalidate_org_graph
+        from data.graph.org_graph import OrgGraph, invalidate_org_graph
 
         invalidate_org_graph()
         og = OrgGraph()
@@ -168,7 +168,7 @@ class TestOrgGraphEdgeCases:
 
     def test_get_dependents_returns_correct_shape(self, org_graph_path, isolated_cognirepo):
         """get_dependents() returns repos that depend ON the given repo."""
-        from graph.org_graph import OrgGraph, invalidate_org_graph
+        from data.graph.org_graph import OrgGraph, invalidate_org_graph
 
         invalidate_org_graph()
         og = OrgGraph()
@@ -181,7 +181,7 @@ class TestOrgGraphEdgeCases:
 
     def test_summary_returns_correct_shape(self, org_graph_path, isolated_cognirepo):
         """summary() returns dict with repo_count, edge_count, repos."""
-        from graph.org_graph import OrgGraph, invalidate_org_graph
+        from data.graph.org_graph import OrgGraph, invalidate_org_graph
 
         invalidate_org_graph()
         og = OrgGraph()
@@ -198,7 +198,7 @@ class TestOrgGraphEdgeCases:
 
     def test_unknown_edge_kind_defaults_to_discovered(self, org_graph_path, isolated_cognirepo):
         """link_repos with an invalid edge kind must silently fall back to DISCOVERED."""
-        from graph.org_graph import OrgGraph, invalidate_org_graph
+        from data.graph.org_graph import OrgGraph, invalidate_org_graph
 
         invalidate_org_graph()
         og = OrgGraph()
@@ -213,7 +213,7 @@ class TestOrgGraphEdgeCases:
 
     def test_get_dependencies_unregistered_repo_returns_empty(self, org_graph_path, isolated_cognirepo):
         """Querying deps for a repo not in graph returns [] not exception."""
-        from graph.org_graph import OrgGraph, invalidate_org_graph
+        from data.graph.org_graph import OrgGraph, invalidate_org_graph
 
         invalidate_org_graph()
         og = OrgGraph()

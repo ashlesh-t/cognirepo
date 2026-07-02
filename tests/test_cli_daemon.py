@@ -23,7 +23,7 @@ def test_daemon_module_does_not_import_fcntl_at_toplevel():
     cli/daemon.py must not import fcntl at module level.
     fcntl is Linux-only; importing it at the top level raises ImportError on Windows/macOS.
     """
-    daemon_src = (ROOT / "cli" / "daemon.py").read_text(encoding="utf-8")
+    daemon_src = (ROOT / "interface" / "cli" / "daemon.py").read_text(encoding="utf-8")
     lines = daemon_src.splitlines()
     # Find top-level import fcntl — must not appear before the first 'def ' or 'class '
     for i, line in enumerate(lines):
@@ -45,7 +45,7 @@ def test_daemon_start_friendly_error_on_unsupported_os(monkeypatch, tmp_path, ca
 
     # We need to call main() with 'watch --status' args
     import importlib
-    import cli.main as main_mod
+    import interface.cli.main as main_mod
     importlib.reload(main_mod)
 
     import argparse

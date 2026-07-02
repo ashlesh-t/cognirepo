@@ -117,16 +117,16 @@ def _reset_singletons():
     yield
     _null_attrs = [
         # (module_path, attr_name, reset_value)
-        ("memory.embeddings",        "MODEL",       None),
-        ("memory.circuit_breaker",   "_BREAKER",    None),
-        ("memory.episodic_memory",   "_BM25_CORPUS", None),
-        ("memory.episodic_memory",   "_BM25_INDEX",  None),
-        ("memory.learning_store",    "_STORE",      None),
-        ("retrieval.hybrid",         "_HYBRID_CACHE", {}),
-        ("retrieval.hybrid",         "_IN_FLIGHT",   {}),
+        ("data.memory.embeddings",        "MODEL",       None),
+        ("data.memory.circuit_breaker",   "_BREAKER",    None),
+        ("data.memory.episodic_memory",   "_BM25_CORPUS", None),
+        ("data.memory.episodic_memory",   "_BM25_INDEX",  None),
+        ("data.memory.learning_store",    "_STORE",      None),
+        ("intelligence.retrieval.hybrid",         "_HYBRID_CACHE", {}),
+        ("intelligence.retrieval.hybrid",         "_IN_FLIGHT",   {}),
         # Reset MCP server singletons so tests don't share state across execution order
-        ("server.mcp_server",        "_GRAPH",      None),
-        ("server.mcp_server",        "_INDEXER",    None),
+        ("interface.server.mcp_server",        "_GRAPH",      None),
+        ("interface.server.mcp_server",        "_INDEXER",    None),
     ]
     for _mod_path, _attr, _reset_val in _null_attrs:
         try:
@@ -155,7 +155,7 @@ def isolated_cognirepo(tmp_path, monkeypatch):
 
     Secrets are injected as env vars — no keychain access required in tests.
     """
-    from config.paths import set_cognirepo_dir, set_global_dir
+    from core.config.paths import set_cognirepo_dir, set_global_dir
     set_cognirepo_dir(str(tmp_path / ".cognirepo"))
     set_global_dir(str(tmp_path / ".cognirepo-global"))
 

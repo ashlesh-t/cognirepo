@@ -8,7 +8,7 @@
 import urllib.error
 import urllib.request
 
-from cli.key_probes import (
+from interface.cli.key_probes import (
     probe_anthropic,
     probe_gemini,
     probe_openai,

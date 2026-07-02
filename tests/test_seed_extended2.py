@@ -44,24 +44,24 @@ def git_repo(tmp_path):
 # ── _seed_commit_messages with real git repo ──────────────────────────────────
 
 def test_seed_commit_messages_real_repo_dry_run(git_repo):
-    from cli.seed import _seed_commit_messages
+    from interface.cli.seed import _seed_commit_messages
     result = _seed_commit_messages(str(git_repo), dry_run=True)
     assert isinstance(result, int)
     # May be 0 if learning_store unavailable, but shouldn't crash
 
 
 def test_seed_commit_messages_real_repo_with_store(git_repo):
-    from cli.seed import _seed_commit_messages
+    from interface.cli.seed import _seed_commit_messages
     mock_store = MagicMock()
     mock_store.store_learning.return_value = {"id": "abc123"}
-    with patch("memory.learning_store.get_learning_store", return_value=mock_store):
+    with patch("data.memory.learning_store.get_learning_store", return_value=mock_store):
         result = _seed_commit_messages(str(git_repo), dry_run=False)
     assert isinstance(result, int)
     assert result >= 1  # should have stored at least 1 commit
 
 
 def test_seed_commit_messages_no_git(tmp_path):
-    from cli.seed import _seed_commit_messages
+    from interface.cli.seed import _seed_commit_messages
     result = _seed_commit_messages(str(tmp_path), dry_run=True)
     assert result == 0  # not a git repo
 
@@ -69,7 +69,7 @@ def test_seed_commit_messages_no_git(tmp_path):
 # ── _seed_adr_files ───────────────────────────────────────────────────────────
 
 def test_seed_adr_files_with_adr_dir(tmp_path):
-    from cli.seed import _seed_adr_files
+    from interface.cli.seed import _seed_adr_files
     adr_dir = tmp_path / "docs" / "adr"
     adr_dir.mkdir(parents=True)
     adr_file = adr_dir / "0001-use-faiss.md"
@@ -85,14 +85,14 @@ def test_seed_adr_files_with_adr_dir(tmp_path):
     )
     mock_store = MagicMock()
     mock_store.store_learning.return_value = {"id": "xyz"}
-    with patch("memory.learning_store.get_learning_store", return_value=mock_store):
+    with patch("data.memory.learning_store.get_learning_store", return_value=mock_store):
         result = _seed_adr_files(str(tmp_path), dry_run=False)
     assert isinstance(result, int)
     assert result >= 0
 
 
 def test_seed_adr_files_with_decisions_md(tmp_path):
-    from cli.seed import _seed_adr_files
+    from interface.cli.seed import _seed_adr_files
     decisions = tmp_path / "DECISIONS.md"
     decisions.write_text(
         "# Architecture Decisions\n\n"
@@ -107,13 +107,13 @@ def test_seed_adr_files_with_decisions_md(tmp_path):
 
 
 def test_seed_adr_files_dry_run_prints(tmp_path, capsys):
-    from cli.seed import _seed_adr_files
+    from interface.cli.seed import _seed_adr_files
     adr_dir = tmp_path / "adr"
     adr_dir.mkdir()
     adr_file = adr_dir / "0001-decision.md"
     adr_file.write_text("# Decision\n\nThis is a long enough decision text that should pass the 80-char minimum threshold for seeding into the learning store.\n")
     mock_store = MagicMock()
-    with patch("memory.learning_store.get_learning_store", return_value=mock_store):
+    with patch("data.memory.learning_store.get_learning_store", return_value=mock_store):
         result = _seed_adr_files(str(tmp_path), dry_run=True)
     assert isinstance(result, int)
 
@@ -121,7 +121,7 @@ def test_seed_adr_files_dry_run_prints(tmp_path, capsys):
 # ── _seed_inline_comments with real Python file ───────────────────────────────
 
 def test_seed_inline_comments_real_py(tmp_path):
-    from cli.seed import _seed_inline_comments
+    from interface.cli.seed import _seed_inline_comments
     py_file = tmp_path / "module.py"
     py_file.write_text(
         "# TODO: implement better caching strategy\n"
@@ -139,7 +139,7 @@ def test_seed_inline_comments_real_py(tmp_path):
 
 
 def test_seed_inline_comments_with_store(tmp_path):
-    from cli.seed import _seed_inline_comments
+    from interface.cli.seed import _seed_inline_comments
     py_file = tmp_path / "core.py"
     py_file.write_text(
         "# BUG: race condition in concurrent indexing\n"
@@ -150,7 +150,7 @@ def test_seed_inline_comments_with_store(tmp_path):
         "    pass\n"
     )
     mock_store = MagicMock()
-    with patch("memory.learning_store.get_learning_store", return_value=mock_store):
+    with patch("data.memory.learning_store.get_learning_store", return_value=mock_store):
         result = _seed_inline_comments(str(tmp_path), dry_run=False)
     assert isinstance(result, int)
 
@@ -158,13 +158,13 @@ def test_seed_inline_comments_with_store(tmp_path):
 # ── seed_from_git_log with real git repo ──────────────────────────────────────
 
 def test_seed_from_git_log_real_repo_dry_run(git_repo):
-    from cli.seed import seed_from_git_log
+    from interface.cli.seed import seed_from_git_log
     mock_bt = MagicMock()
     mock_bt.data = {"symbol_weights": {}}
     mock_bt.save = MagicMock()
     mock_bt.graph = MagicMock()
-    with patch("graph.behaviour_tracker.BehaviourTracker", return_value=mock_bt):
-        with patch("graph.knowledge_graph.KnowledgeGraph"):
+    with patch("data.graph.behaviour_tracker.BehaviourTracker", return_value=mock_bt):
+        with patch("data.graph.knowledge_graph.KnowledgeGraph"):
             result = seed_from_git_log(
                 repo_root=str(git_repo),
                 dry_run=True,
@@ -176,7 +176,7 @@ def test_seed_from_git_log_real_repo_dry_run(git_repo):
 
 
 def test_seed_from_git_log_no_git(tmp_path):
-    from cli.seed import seed_from_git_log
+    from interface.cli.seed import seed_from_git_log
     result = seed_from_git_log(
         repo_root=str(tmp_path),
         dry_run=True,
@@ -188,8 +188,8 @@ def test_seed_from_git_log_no_git(tmp_path):
 # ── seed_from_session ─────────────────────────────────────────────────────────
 
 def test_seed_from_session_with_session_id():
-    from cli.seed import seed_from_session
-    with patch("memory.episodic_memory.get_history", return_value=[
+    from interface.cli.seed import seed_from_session
+    with patch("data.memory.episodic_memory.get_history", return_value=[
         {"event": "query: hybrid retrieval", "metadata": {"query": "hybrid retrieval"}},
         {"event": "session_end", "metadata": {"summary": "worked on retrieval"}},
     ]):
@@ -198,7 +198,7 @@ def test_seed_from_session_with_session_id():
 
 
 def test_seed_from_session_empty_history():
-    from cli.seed import seed_from_session
-    with patch("memory.episodic_memory.get_history", return_value=[]):
+    from interface.cli.seed import seed_from_session
+    with patch("data.memory.episodic_memory.get_history", return_value=[]):
         result = seed_from_session(session_id="test-session-empty")
     assert isinstance(result, dict)

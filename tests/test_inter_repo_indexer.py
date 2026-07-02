@@ -5,7 +5,7 @@ import pytest
 import os
 import json
 from pathlib import Path
-from indexer.inter_repo_indexer import extract_dependencies, _strip_version, _normalize
+from intelligence.indexer.inter_repo_indexer import extract_dependencies, _strip_version, _normalize
 
 def test_strip_version():
     assert _strip_version("requests>=2.28.0") == "requests"

@@ -20,36 +20,36 @@ import os
 
 class TestMCPToolFunctions:
     def test_store_memory_tool(self):
-        from tools.store_memory import store_memory
+        from interface.tools.store_memory import store_memory
         result = store_memory("test memory about JWT authentication", source="mcp_test")
         assert result["status"] == "stored"
         assert "importance" in result
         assert result["text"] == "test memory about JWT authentication"
 
     def test_retrieve_memory_tool_returns_list(self):
-        from tools.store_memory import store_memory
-        from tools.retrieve_memory import retrieve_memory
+        from interface.tools.store_memory import store_memory
+        from interface.tools.retrieve_memory import retrieve_memory
         store_memory("cached result for auth query in session")
         results = retrieve_memory("auth session", top_k=1)
         assert isinstance(results, list)
 
     def test_retrieve_memory_empty_store(self):
-        from tools.retrieve_memory import retrieve_memory
+        from interface.tools.retrieve_memory import retrieve_memory
         results = retrieve_memory("anything", top_k=5)
         assert isinstance(results, list)
 
     def test_log_episode_tool(self):
-        from memory.episodic_memory import log_event, get_history
+        from data.memory.episodic_memory import log_event, get_history
         log_event("mcp tool called: store_memory", {"source": "mcp"})
         history = get_history(1)
         assert len(history) >= 1
         assert "store_memory" in history[0]["event"]
 
     def test_manifest_written(self):
-        from server.mcp_server import _write_manifest, _build_manifest
+        from interface.server.mcp_server import _write_manifest, _build_manifest
         _write_manifest()
         # manifest.json is written next to mcp_server.py (not CWD)
-        import server.mcp_server as _mod
+        import interface.server.mcp_server as _mod
         manifest_path = os.path.join(os.path.dirname(_mod.__file__), "manifest.json")
         assert os.path.exists(manifest_path)
         data = _build_manifest()
@@ -60,19 +60,19 @@ class TestMCPToolFunctions:
         assert "log_episode" in tool_names
 
     def test_store_memory_importance_non_negative(self):
-        from tools.store_memory import store_memory
+        from interface.tools.store_memory import store_memory
         result = store_memory("short text")
         assert result["importance"] >= 0
 
     def test_store_memory_source_preserved(self):
-        from tools.store_memory import store_memory
+        from interface.tools.store_memory import store_memory
         result = store_memory("text with source", source="copilot")
         assert result.get("source") == "copilot"
 
 
 def _seed_graph_node():
     """Add a single dummy node so graph is non-empty and tool guards pass."""
-    from server.mcp_server import _get_graph
+    from interface.server.mcp_server import _get_graph
     g = _get_graph()
     g.G.add_node("_test_dummy_::node", type="FUNCTION")
     return g
@@ -84,7 +84,7 @@ def _unseed_graph_node(g):
 
 class TestNewMCPTools:
     def test_lookup_symbol_returns_list(self):
-        from server.mcp_server import lookup_symbol
+        from interface.server.mcp_server import lookup_symbol
         g = _seed_graph_node()
         try:
             result = lookup_symbol("log_event")
@@ -93,7 +93,7 @@ class TestNewMCPTools:
             _unseed_graph_node(g)
 
     def test_lookup_symbol_entries_have_required_fields(self):
-        from server.mcp_server import lookup_symbol
+        from interface.server.mcp_server import lookup_symbol
         g = _seed_graph_node()
         try:
             result = lookup_symbol("log_event")
@@ -105,7 +105,7 @@ class TestNewMCPTools:
             _unseed_graph_node(g)
 
     def test_who_calls_returns_dict_shape(self):
-        from server.mcp_server import who_calls
+        from interface.server.mcp_server import who_calls
         g = _seed_graph_node()
         try:
             result = who_calls("nonexistent_fn_xyz")
@@ -120,7 +120,7 @@ class TestNewMCPTools:
             _unseed_graph_node(g)
 
     def test_who_calls_empty_graph_returns_dict(self):
-        from server.mcp_server import who_calls
+        from interface.server.mcp_server import who_calls
         # With an empty graph the early-return path must still return dict shape
         result = who_calls("nonexistent_fn_xyz")
         assert isinstance(result, dict)
@@ -130,7 +130,7 @@ class TestNewMCPTools:
         assert result["truncated"] is False
 
     def test_who_calls_entries_have_required_fields(self):
-        from server.mcp_server import who_calls
+        from interface.server.mcp_server import who_calls
         g = _seed_graph_node()
         try:
             result = who_calls("log_event")
@@ -143,7 +143,7 @@ class TestNewMCPTools:
             _unseed_graph_node(g)
 
     def test_subgraph_returns_dict_with_nodes_and_edges(self):
-        from server.mcp_server import subgraph
+        from interface.server.mcp_server import subgraph
         g = _seed_graph_node()
         try:
             result = subgraph("nonexistent_entity_xyz", depth=2)
@@ -154,7 +154,7 @@ class TestNewMCPTools:
             _unseed_graph_node(g)
 
     def test_subgraph_is_json_serialisable(self):
-        from server.mcp_server import subgraph
+        from interface.server.mcp_server import subgraph
         g = _seed_graph_node()
         try:
             result = subgraph("nonexistent_entity_xyz", depth=1)
@@ -164,30 +164,30 @@ class TestNewMCPTools:
             _unseed_graph_node(g)
 
     def test_episodic_search_returns_list(self):
-        from memory.episodic_memory import log_event
-        from server.mcp_server import episodic_search
+        from data.memory.episodic_memory import log_event
+        from interface.server.mcp_server import episodic_search
         log_event("error occurred during test run", {"source": "test"})
         result = episodic_search("error", limit=5)
         assert isinstance(result, list)
 
     def test_episodic_search_matches_keyword(self):
-        from memory.episodic_memory import log_event
-        from server.mcp_server import episodic_search
+        from data.memory.episodic_memory import log_event
+        from interface.server.mcp_server import episodic_search
         log_event("unique_keyword_abc123 event logged")
         result = episodic_search("unique_keyword_abc123", limit=10)
         assert len(result) >= 1
         assert any("unique_keyword_abc123" in json.dumps(e) for e in result)
 
     def test_episodic_search_limit_respected(self):
-        from memory.episodic_memory import log_event
-        from server.mcp_server import episodic_search
+        from data.memory.episodic_memory import log_event
+        from interface.server.mcp_server import episodic_search
         for i in range(5):
             log_event(f"repeated_limit_test event {i}")
         result = episodic_search("repeated_limit_test", limit=3)
         assert len(result) <= 3
 
     def test_graph_stats_returns_expected_keys(self):
-        from server.mcp_server import graph_stats
+        from interface.server.mcp_server import graph_stats
         result = graph_stats()
         assert isinstance(result, dict)
         assert "node_count" in result
@@ -196,18 +196,18 @@ class TestNewMCPTools:
         assert "last_indexed" in result
 
     def test_graph_stats_counts_are_non_negative(self):
-        from server.mcp_server import graph_stats
+        from interface.server.mcp_server import graph_stats
         result = graph_stats()
         assert result["node_count"] >= 0
         assert result["edge_count"] >= 0
 
     def test_graph_stats_top_concepts_is_list(self):
-        from server.mcp_server import graph_stats
+        from interface.server.mcp_server import graph_stats
         result = graph_stats()
         assert isinstance(result["top_concepts"], list)
 
     def test_manifest_includes_new_tools(self):
-        from server.mcp_server import _build_manifest
+        from interface.server.mcp_server import _build_manifest
         manifest = _build_manifest()
         tool_names = [t["name"] for t in manifest.get("tools", [])]
         for name in ("lookup_symbol", "who_calls", "subgraph", "episodic_search", "graph_stats"):
@@ -218,7 +218,7 @@ class TestEmptyGraphWarnings:
     """A2.3 — MCP tools return correct shapes when the graph is empty."""
 
     def test_lookup_symbol_returns_empty_list_when_graph_empty(self):
-        from server.mcp_server import lookup_symbol, _get_graph
+        from interface.server.mcp_server import lookup_symbol, _get_graph
         # conftest isolates to tmp_path → graph is always empty
         graph = _get_graph()
         assert graph.G.number_of_nodes() == 0, "graph should be empty in test"
@@ -228,7 +228,7 @@ class TestEmptyGraphWarnings:
         assert result == []
 
     def test_who_calls_returns_dict_shape_when_graph_empty(self):
-        from server.mcp_server import who_calls
+        from interface.server.mcp_server import who_calls
         result = who_calls("anything")
         assert isinstance(result, dict)
         assert "local_callers" in result
@@ -237,19 +237,19 @@ class TestEmptyGraphWarnings:
         assert result["truncated"] is False
 
     def test_subgraph_warns_when_graph_empty(self):
-        from server.mcp_server import subgraph
+        from interface.server.mcp_server import subgraph
         result = subgraph("jwt_auth", depth=2)
         assert isinstance(result, dict)
         assert "warning" in result
 
     def test_lookup_symbol_returns_list_not_dict_on_empty_graph(self):
-        from server.mcp_server import lookup_symbol
+        from interface.server.mcp_server import lookup_symbol
         result = lookup_symbol("anything")
         # Must be a list — callers iterate it; returning dict would crash them
         assert isinstance(result, list)
 
     def test_no_warning_after_graph_populated(self):
-        from server.mcp_server import lookup_symbol, _get_graph
+        from interface.server.mcp_server import lookup_symbol, _get_graph
         graph = _get_graph()
         # manually add a node so graph is non-empty
         graph.G.add_node("test::node", type="FUNCTION")
@@ -262,19 +262,19 @@ class TestEmptyGraphWarnings:
 
 class TestManifestFormat:
     def test_manifest_tools_have_required_fields(self):
-        from server.mcp_server import _build_manifest
+        from interface.server.mcp_server import _build_manifest
         manifest = _build_manifest()
         for tool in manifest.get("tools", []):
             assert "name" in tool
             assert "description" in tool
 
     def test_openai_spec_export(self):
-        from server.mcp_server import _write_manifest
+        from interface.server.mcp_server import _write_manifest
         _write_manifest()
-        from adapters.openai_spec import export
+        from interface.adapters.openai_spec import export
         # _write_manifest writes next to mcp_server.py; openai_spec reads from there
-        import server.mcp_server as _mod
-        import adapters.openai_spec as _spec
+        import interface.server.mcp_server as _mod
+        import interface.adapters.openai_spec as _spec
         orig = _spec.MANIFEST_PATH
         _spec.MANIFEST_PATH = os.path.join(os.path.dirname(_mod.__file__), "manifest.json")
         try:
@@ -306,14 +306,14 @@ class TestAgentBootstrapFraming:
         fake_bt.get_user_profile.return_value = fake_profile
         fake_bt.get_error_patterns.return_value = []
 
-        with patch("server.mcp_server._behaviour_enabled", return_value=True), \
-             patch("server.mcp_server.BehaviourTracker", return_value=fake_bt) if False else \
-             patch("graph.behaviour_tracker.BehaviourTracker", return_value=fake_bt):
-            from server.mcp_server import get_agent_bootstrap
-            with patch("server.mcp_server._behaviour_enabled", return_value=True), \
-                 patch("server.mcp_server._get_graph", return_value=MagicMock()), \
-                 patch("graph.behaviour_tracker.BehaviourTracker", return_value=fake_bt), \
-                 patch("server.mcp_server._index_is_stale", return_value=False):
+        with patch("interface.server.mcp_server._behaviour_enabled", return_value=True), \
+             patch("interface.server.mcp_server.BehaviourTracker", return_value=fake_bt) if False else \
+             patch("data.graph.behaviour_tracker.BehaviourTracker", return_value=fake_bt):
+            from interface.server.mcp_server import get_agent_bootstrap
+            with patch("interface.server.mcp_server._behaviour_enabled", return_value=True), \
+                 patch("interface.server.mcp_server._get_graph", return_value=MagicMock()), \
+                 patch("data.graph.behaviour_tracker.BehaviourTracker", return_value=fake_bt), \
+                 patch("interface.server.mcp_server._index_is_stale", return_value=False):
                 result = get_agent_bootstrap()
 
         assert result["framing"]["depth"] != "unknown"
@@ -326,9 +326,9 @@ class TestAgentBootstrapFraming:
         monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
         (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
 
-        with patch("server.mcp_server._behaviour_enabled", return_value=False), \
-             patch("server.mcp_server._index_is_stale", return_value=False):
-            from server.mcp_server import get_agent_bootstrap
+        with patch("interface.server.mcp_server._behaviour_enabled", return_value=False), \
+             patch("interface.server.mcp_server._index_is_stale", return_value=False):
+            from interface.server.mcp_server import get_agent_bootstrap
             result = get_agent_bootstrap()
 
         assert result["framing"] == {}
@@ -342,11 +342,11 @@ class TestAgentBootstrapFraming:
         monkeypatch.setenv("COGNIREPO_DIR", str(cognirepo_dir))
 
         mock_popen = MagicMock()
-        with patch("server.mcp_server._behaviour_enabled", return_value=False), \
-             patch("server.mcp_server._index_is_stale", return_value=True), \
-             patch("config.paths.get_path", side_effect=lambda p: str(cognirepo_dir / p)), \
+        with patch("interface.server.mcp_server._behaviour_enabled", return_value=False), \
+             patch("interface.server.mcp_server._index_is_stale", return_value=True), \
+             patch("core.config.paths.get_path", side_effect=lambda p: str(cognirepo_dir / p)), \
              patch("subprocess.Popen", mock_popen):
-            from server.mcp_server import get_agent_bootstrap
+            from interface.server.mcp_server import get_agent_bootstrap
             result = get_agent_bootstrap()
 
         assert result["index_health"]["status"] == "reindexing"
@@ -367,12 +367,12 @@ class TestAgentBootstrapFraming:
         mock_idx = MagicMock()
         mock_idx.index_data = {"files": {}}
         mock_popen = MagicMock()
-        with patch("server.mcp_server._behaviour_enabled", return_value=False), \
-             patch("server.mcp_server._index_is_stale", return_value=True), \
-             patch("server.mcp_server._get_indexer", return_value=mock_idx), \
-             patch("config.paths.get_path", side_effect=lambda p: str(cognirepo_dir / p)), \
+        with patch("interface.server.mcp_server._behaviour_enabled", return_value=False), \
+             patch("interface.server.mcp_server._index_is_stale", return_value=True), \
+             patch("interface.server.mcp_server._get_indexer", return_value=mock_idx), \
+             patch("core.config.paths.get_path", side_effect=lambda p: str(cognirepo_dir / p)), \
              patch("subprocess.Popen", mock_popen):
-            from server.mcp_server import get_agent_bootstrap
+            from interface.server.mcp_server import get_agent_bootstrap
             get_agent_bootstrap()
 
         mock_popen.assert_not_called()
@@ -382,7 +382,7 @@ class TestAgentBootstrapFraming:
 
 class TestSearchToken:
     def test_empty_result_returns_dict(self, isolated_cognirepo):
-        from server.mcp_server import search_token
+        from interface.server.mcp_server import search_token
         result = search_token("nonexistent_zzz_xqr_unique_word")
         assert isinstance(result, dict)
         assert "results" in result
@@ -392,21 +392,21 @@ class TestSearchToken:
         assert result["count"] == 0
 
     def test_word_preserved_in_result(self, isolated_cognirepo):
-        from server.mcp_server import search_token
+        from interface.server.mcp_server import search_token
         result = search_token("authenticate")
         assert result["word"] == "authenticate"
 
     def test_word_kwarg_accepted(self, isolated_cognirepo):
-        from server.mcp_server import search_token
+        from interface.server.mcp_server import search_token
         # Ensure function param is named 'word' not 'token'
         result = search_token(word="validate")
         assert isinstance(result, dict)
         assert "results" in result
 
     def test_result_items_have_file_and_line(self, isolated_cognirepo, tmp_path):
-        from server.mcp_server import search_token
-        from indexer.ast_indexer import ASTIndexer
-        from graph.knowledge_graph import KnowledgeGraph
+        from interface.server.mcp_server import search_token
+        from intelligence.indexer.ast_indexer import ASTIndexer
+        from data.graph.knowledge_graph import KnowledgeGraph
         # Build a minimal index with a known symbol
         g = KnowledgeGraph()
         idx = ASTIndexer(g)
@@ -426,7 +426,7 @@ class TestSearchToken:
             assert "line" in hit
 
     def test_count_matches_results_length(self, isolated_cognirepo):
-        from server.mcp_server import search_token
+        from interface.server.mcp_server import search_token
         result = search_token("handler")
         assert result["count"] == len(result["results"])
 
@@ -435,7 +435,7 @@ class TestSearchToken:
 
 class TestLinkRepos:
     def test_link_repos_basic_returns_linked_true(self, isolated_cognirepo, tmp_path):
-        from server.mcp_server import link_repos
+        from interface.server.mcp_server import link_repos
         src = str(tmp_path / "service_a")
         dst = str(tmp_path / "service_b")
         result = link_repos(src_repo=src, dst_repo=dst, relationship="imports")
@@ -446,15 +446,15 @@ class TestLinkRepos:
         assert result["edge"]["kind"] == "IMPORTS"
 
     def test_link_repos_calls_api_relationship(self, isolated_cognirepo, tmp_path):
-        from server.mcp_server import link_repos
+        from interface.server.mcp_server import link_repos
         src = str(tmp_path / "gateway")
         dst = str(tmp_path / "auth_svc")
         result = link_repos(src_repo=src, dst_repo=dst, relationship="calls_api")
         assert result["edge"]["kind"] == "CALLS_API"
 
     def test_link_repos_with_microservice_metadata(self, isolated_cognirepo, tmp_path):
-        from server.mcp_server import link_repos
-        from graph.org_graph import get_org_graph, invalidate_org_graph
+        from interface.server.mcp_server import link_repos
+        from data.graph.org_graph import get_org_graph, invalidate_org_graph
         src = str(tmp_path / "api_gateway")
         dst = str(tmp_path / "auth_service")
         result = link_repos(
@@ -472,7 +472,7 @@ class TestLinkRepos:
         invalidate_org_graph()
 
     def test_link_repos_all_relationship_kinds(self, isolated_cognirepo, tmp_path):
-        from server.mcp_server import link_repos
+        from interface.server.mcp_server import link_repos
         mapping = [
             ("imports", "IMPORTS"),
             ("calls_api", "CALLS_API"),
@@ -489,7 +489,7 @@ class TestLinkRepos:
             assert result["edge"]["kind"] == kind, f"Failed for {rel}: got {result['edge']['kind']}"
 
     def test_link_repos_unknown_relationship_defaults_to_discovered(self, isolated_cognirepo, tmp_path):
-        from server.mcp_server import link_repos
+        from interface.server.mcp_server import link_repos
         result = link_repos(
             src_repo=str(tmp_path / "x"),
             dst_repo=str(tmp_path / "y"),
@@ -504,7 +504,7 @@ class TestBehaviourTrackingDisabled:
     """Tests that all behaviour tools return graceful shapes when tracking is off."""
 
     def test_get_error_patterns_disabled_returns_list(self, isolated_cognirepo):
-        from server.mcp_server import get_error_patterns
+        from interface.server.mcp_server import get_error_patterns
         result = get_error_patterns()
         assert isinstance(result, list), f"Expected list, got {type(result)}"
         if result:
@@ -512,7 +512,7 @@ class TestBehaviourTrackingDisabled:
             assert result[0].get("behaviour_tracking") == "disabled"
 
     def test_record_error_disabled_returns_dict_with_recorded_false(self, isolated_cognirepo):
-        from server.mcp_server import record_error
+        from interface.server.mcp_server import record_error
         result = record_error(error_type="TestError", message="test msg")
         assert isinstance(result, dict)
         # Either recorded=True (if tracking enabled) or recorded=False with disabled key
@@ -523,7 +523,7 @@ class TestBehaviourTrackingDisabled:
             assert "recorded" in result
 
     def test_record_user_preference_disabled_returns_dict_with_recorded_false(self, isolated_cognirepo):
-        from server.mcp_server import record_user_preference
+        from interface.server.mcp_server import record_user_preference
         result = record_user_preference(preference_key="style", preference_value="concise")
         assert isinstance(result, dict)
         if "behaviour_tracking" in result:
@@ -531,7 +531,7 @@ class TestBehaviourTrackingDisabled:
             assert result["recorded"] is False
 
     def test_get_user_profile_disabled_returns_dict(self, isolated_cognirepo):
-        from server.mcp_server import get_user_profile
+        from interface.server.mcp_server import get_user_profile
         result = get_user_profile()
         assert isinstance(result, dict)
         # Either a full profile or the disabled message
@@ -542,7 +542,7 @@ class TestBehaviourTrackingDisabled:
 
 class TestContextPackRepoPaths:
     def test_context_pack_with_fresh_repo_path_returns_valid_shape(self, isolated_cognirepo, tmp_path):
-        from server.mcp_server import context_pack
+        from interface.server.mcp_server import context_pack
         result = context_pack("authentication", repo_path=str(tmp_path))
         assert isinstance(result, dict)
         assert "query" in result
@@ -551,14 +551,14 @@ class TestContextPackRepoPaths:
         assert "truncated" in result
 
     def test_context_pack_with_none_repo_path_returns_valid_shape(self, isolated_cognirepo):
-        from server.mcp_server import context_pack
+        from interface.server.mcp_server import context_pack
         result = context_pack("anything", repo_path=None)
         assert isinstance(result, dict)
         assert "query" in result
         assert "sections" in result
 
     def test_context_pack_status_field_always_present(self, isolated_cognirepo):
-        from server.mcp_server import context_pack
+        from interface.server.mcp_server import context_pack
         result = context_pack("quantum entanglement unicorn blockchain", repo_path=None)
         # status must always be present — either "ok", "no_confident_match", or "index_empty"
         assert "status" in result or "sections" in result  # either shape is valid
@@ -570,15 +570,15 @@ class TestWhoCallsAllPaths:
     def test_who_calls_with_dynamic_fallback_still_returns_dict(self, isolated_cognirepo, tmp_path, monkeypatch):
         """Even when grep fallback fires, who_calls must return dict not list."""
         from unittest.mock import patch
-        from server.mcp_server import who_calls
+        from interface.server.mcp_server import who_calls
 
         fake_fallback = [
             {"caller": "dynamic_dispatch::foo.py:10", "file": "foo.py", "line": 10,
              "code_snippet": "register('my_fn')", "found_via": "dynamic_dispatch_fallback"}
         ]
-        with patch("server.mcp_server._who_calls_dynamic_fallback", return_value=fake_fallback), \
-             patch("server.mcp_server._graph_is_empty", return_value=False), \
-             patch("server.mcp_server._get_graph") as mock_g:
+        with patch("interface.server.mcp_server._who_calls_dynamic_fallback", return_value=fake_fallback), \
+             patch("interface.server.mcp_server._graph_is_empty", return_value=False), \
+             patch("interface.server.mcp_server._get_graph") as mock_g:
             mock_g.return_value.node_exists.return_value = False
             mock_g.return_value.G.number_of_nodes.return_value = 5
             result = who_calls("my_fn")
@@ -592,16 +592,16 @@ class TestWhoCallsAllPaths:
     def test_who_calls_truncated_flag_set_above_50(self, isolated_cognirepo, monkeypatch):
         """When fallback returns >50 callers, truncated must be True."""
         from unittest.mock import patch
-        from server.mcp_server import who_calls
+        from interface.server.mcp_server import who_calls
 
         big_fallback = [
             {"caller": f"fn_{i}", "file": f"f{i}.py", "line": i,
              "code_snippet": "", "found_via": "dynamic_dispatch_fallback"}
             for i in range(55)
         ]
-        with patch("server.mcp_server._who_calls_dynamic_fallback", return_value=big_fallback), \
-             patch("server.mcp_server._graph_is_empty", return_value=False), \
-             patch("server.mcp_server._get_graph") as mock_g:
+        with patch("interface.server.mcp_server._who_calls_dynamic_fallback", return_value=big_fallback), \
+             patch("interface.server.mcp_server._graph_is_empty", return_value=False), \
+             patch("interface.server.mcp_server._get_graph") as mock_g:
             mock_g.return_value.node_exists.return_value = False
             mock_g.return_value.G.number_of_nodes.return_value = 5
             result = who_calls("big_fn")

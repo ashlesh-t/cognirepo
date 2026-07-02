@@ -10,6 +10,50 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [2.0.0] — 2026-07-02
+
+### Changed
+- **Depth-oriented package restructure** — flat 14-package layout replaced with a
+  6-layer dependency hierarchy enforced by `scripts/check_circular_deps.py`:
+  `core/ → data/ → intelligence/ → interface/ → ops/ → (cli top-level consumer)`.
+  Eliminates accidental upward coupling; hard circular-dep violations drop from 16
+  (pre-refactor) to 0.
+- **Import namespace**: all packages now live under their layer prefix
+  (`from core.config import ...`, `from data.memory import ...`, etc.).
+- **Entry point updated**: `cognirepo` CLI now resolves to `interface.cli.main:main`.
+- **Bandit scan paths** updated to new layer structure in `.github/workflows/security.yml`.
+- **`intelligence/indexer/docs_index.py`** moved from `cli/` to `intelligence/indexer/`
+  to break the orchestrator→cli upward import.
+- **`core/probes.py`** (was `cron/probes.py`) and **`core/metrics.py`** (was
+  `server/metrics.py`) moved to `core/` to break data→ops and data→interface upward deps.
+- **`docs_index.DocsIndex.answer()`** early-exits before loading the embedding model
+  when the index is empty — fixes ImportError when fastembed is not installed.
+
+### Added
+- `IMPROVEMENTS.md` — documents two deferred items: behaviour_tracker upward callback
+  extraction and four MCP tools missing from `_build_manifest()`.
+- `scripts/build_import_graph.py` — AST-based import graph builder with
+  toplevel/lazy/type_check classification.
+- `scripts/rewrite_imports.py` — AST-guided import rewriter (no false positives on
+  comments or string literals).
+- `scripts/check_circular_deps.py` — layer cycle verifier; only flags toplevel imports.
+
+### BREAKING CHANGES
+All old top-level import paths (`memory`, `graph`, `indexer`, `retrieval`,
+`orchestrator`, `tools`, `server`, `adapters`, `cli`, `cron`, `config`,
+`security`, `vector_db`, `_bm25`) have been **removed**, not shimmed. Code that
+imports `from memory.semantic_memory import SemanticMemory`, `import tools`,
+etc. will now fail with `ModuleNotFoundError`, not a `DeprecationWarning`. No
+`sys.modules` compatibility layer was implemented — an earlier draft of this
+changelog claimed one existed; it did not, and rather than add one, the old
+paths were removed outright to avoid shipping a redirect layer nobody
+verified. Update all imports to the new layer-prefixed paths (e.g.
+`from data.memory.semantic_memory import SemanticMemory`,
+`from interface.tools import ...`). MCP tool surface (34 tools, signatures) is
+unchanged — only Python import paths are affected.
+
+---
+
 ## [1.1.3] — 2026-06-17
 
 ### Fixed

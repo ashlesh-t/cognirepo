@@ -23,19 +23,19 @@ import numpy as np
 # ── 1. tools/search_docs.py ──────────────────────────────────────────────────
 
 def test_search_docs_tool_no_results(capsys):
-    from tools.search_docs import search_docs
-    with patch("tools.search_docs.ds", return_value=[]):
+    from interface.tools.search_docs import search_docs
+    with patch("interface.tools.search_docs.ds", return_value=[]):
         res = search_docs("nonexistent")
         assert res == []
         captured = capsys.readouterr()
         assert "No docs found" in captured.out
 
 def test_search_docs_tool_with_results(capsys):
-    from tools.search_docs import search_docs
+    from interface.tools.search_docs import search_docs
     mock_results = [
         {"path": "README.md", "line": 10, "context": "First match line"}
     ]
-    with patch("tools.search_docs.ds", return_value=mock_results):
+    with patch("interface.tools.search_docs.ds", return_value=mock_results):
         res = search_docs("query")
         assert res == mock_results
         captured = capsys.readouterr()
@@ -46,7 +46,7 @@ def test_search_docs_tool_with_results(capsys):
 # ── 2. tools/prime_session.py ────────────────────────────────────────────────
 
 def test_prime_session_empty(isolated_cognirepo):
-    from tools.prime_session import prime_session
+    from interface.tools.prime_session import prime_session
     brief = prime_session()
     assert "generated_at" in brief
     assert "repo" in brief
@@ -73,7 +73,7 @@ def test_prime_session_empty(isolated_cognirepo):
 ])
 def test_cli_smoke_commands(cmd, isolated_cognirepo):
     # Use subprocess to exercise cli/main.py entry point and all imports/argparse branches
-    res = subprocess.run([sys.executable, "-m", "cli.main"] + cmd, capture_output=True, text=True)
+    res = subprocess.run([sys.executable, "-m", "interface.cli.main"] + cmd, capture_output=True, text=True)
     # We don't necessarily care if it fails, we just want to exercise the code paths.
     assert res.returncode in (0, 1, 2)
 
@@ -87,10 +87,10 @@ def test_chroma_adapter_basic_mocked():
 
     # Force reimport of chroma_adapter so it picks up the mocked chromadb,
     # regardless of what previous tests left in sys.modules.
-    sys.modules.pop("vector_db.chroma_adapter", None)
+    sys.modules.pop("core.vector_db.chroma_adapter", None)
 
     with patch.dict(sys.modules, {"chromadb": MagicMock()}):
-        from vector_db.chroma_adapter import ChromaDBAdapter
+        from core.vector_db.chroma_adapter import ChromaDBAdapter
         # We need to mock the client and collection
         with patch("chromadb.PersistentClient") as mock_client:
             mock_col = MagicMock()
@@ -110,7 +110,7 @@ def test_chroma_adapter_basic_mocked():
 # ── 5. indexer/doc_ingester.py (basic coverage) ──────────────────────────────
 
 def test_doc_ingester_basic(tmp_path):
-    from indexer.doc_ingester import DocIngester
+    from intelligence.indexer.doc_ingester import DocIngester
     
     # Create dummy README
     readme = tmp_path / "README.md"
@@ -118,8 +118,8 @@ def test_doc_ingester_basic(tmp_path):
     
     ingester = DocIngester(str(tmp_path))
     # Mock model and DB to avoid heavy lifting
-    with patch("memory.embeddings.get_model"), \
-         patch("vector_db.local_vector_db.LocalVectorDB"):
+    with patch("data.memory.embeddings.get_model"), \
+         patch("core.vector_db.local_vector_db.LocalVectorDB"):
         summary = ingester.ingest()
         assert "chunks" in summary
         assert "files" in summary
@@ -128,7 +128,7 @@ def test_doc_ingester_basic(tmp_path):
 # ── 6. memory/cleanup_queue.py (basic coverage) ──────────────────────────────
 
 def test_cleanup_queue_basic(isolated_cognirepo):
-    from memory.cleanup_queue import CleanupQueue
+    from data.memory.cleanup_queue import CleanupQueue
     q = CleanupQueue()
     # Empty queue
     assert q.pop_batch(1) == []
@@ -143,7 +143,7 @@ def test_cleanup_queue_basic(isolated_cognirepo):
 # ── 7. tools/behaviour_hook.py (basic coverage) ──────────────────────────────
 
 def test_behaviour_hook_main_noop(capsys):
-    from tools.behaviour_hook import main
+    from interface.tools.behaviour_hook import main
     # Running without args or with unknown git action should be a no-op/print help
     with patch("sys.argv", ["behaviour_hook.py"]):
         main()
@@ -154,7 +154,7 @@ def test_behaviour_hook_main_noop(capsys):
 # ── 8. retrieval/docs_search.py (logic coverage) ─────────────────────────────
 
 def test_docs_search_basic(tmp_path, monkeypatch):
-    from retrieval.docs_search import search_docs
+    from intelligence.retrieval.docs_search import search_docs
     monkeypatch.chdir(tmp_path)
     # Create dummy md
     (tmp_path / "doc.md").write_text("The secret word is pineapple.", encoding="utf-8")
@@ -169,17 +169,17 @@ def test_docs_search_basic(tmp_path, monkeypatch):
 # ── 9. retrieval/cross_repo.py (logic coverage) ──────────────────────────────
 
 def test_cross_repo_router_basic(tmp_path, monkeypatch):
-    from retrieval.cross_repo import CrossRepoRouter
+    from intelligence.retrieval.cross_repo import CrossRepoRouter
     monkeypatch.chdir(tmp_path)
     
-    with patch("retrieval.cross_repo.get_repo_org", return_value="my-org"), \
-         patch("retrieval.cross_repo.get_repo_project", return_value=("my-org", "my-proj")):
+    with patch("intelligence.retrieval.cross_repo.get_repo_org", return_value="my-org"), \
+         patch("intelligence.retrieval.cross_repo.get_repo_project", return_value=("my-org", "my-proj")):
         router = CrossRepoRouter()
         assert router.org_name == "my-org"
         assert router._project_name == "my-proj"
         
         # Test sibling fallback
-        with patch("retrieval.cross_repo.list_orgs", return_value={"my-org": {"repos": ["/other/repo"]}}), \
-             patch("retrieval.cross_repo.purge_stale_repos"):
+        with patch("intelligence.retrieval.cross_repo.list_orgs", return_value={"my-org": {"repos": ["/other/repo"]}}), \
+             patch("intelligence.retrieval.cross_repo.purge_stale_repos"):
             siblings = router.get_sibling_repos()
             assert "/other/repo" in siblings

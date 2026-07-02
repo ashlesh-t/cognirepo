@@ -1,0 +1,510 @@
+# SPDX-FileCopyrightText: 2026 Ashlesha T
+# SPDX-License-Identifier: MIT
+#
+# This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
+# Licensed under MIT. See LICENSE file in repository root.
+
+"""
+tools/context_pack.py — budget-pack retrieved code/episodic context into a
+token-bounded block that Claude can inject directly into its next prompt.
+
+Steps:
+  1. hybrid_retrieve(query, top_k=20) → ranked candidates
+  2. Confidence gate: if no code hit clears _MIN_CODE_CONFIDENCE, return
+     structured failure — never return README noise for a code query.
+  3. For each hit with a file:line source, extract a window of ±window_lines
+  4. Optionally include episodic hits (episodic_bm25_filter)
+  5. Pack sections greedily into max_tokens using tiktoken (cl100k_base)
+  6. Return structured dict with query, token_count, sections[], truncated flag
+  7. If autosave_context enabled, write to ~/.cognirepo/<repo>/last_context.json
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+from pathlib import Path
+from typing import Optional
+
+from core.config.lock import store_lock
+from intelligence.retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter, is_index_cold, MAX_QUERY_LEN
+from intelligence.retrieval.query_enhancer import enhance_query
+
+_logger = logging.getLogger(__name__)
+
+try:
+    import tiktoken as _tiktoken
+    _ENC = _tiktoken.get_encoding("cl100k_base")
+    _TIKTOKEN_OK = True
+except ImportError:
+    _ENC = None  # type: ignore[assignment]
+    _TIKTOKEN_OK = False
+except Exception:  # pylint: disable=broad-except
+    _ENC = None  # type: ignore[assignment]
+    _TIKTOKEN_OK = False
+
+
+def _count_tokens(text: str) -> int:
+    if not _TIKTOKEN_OK or _ENC is None:
+        # Graceful fallback: ~4 chars per token (cl100k_base average)
+        import logging as _logging  # pylint: disable=import-outside-toplevel
+        _logging.getLogger(__name__).warning(
+            "tiktoken not available — using char/4 token estimate. "
+            "Run: pip install tiktoken"
+        )
+        return max(1, len(text) // 4)
+    return len(_ENC.encode(text))
+
+# ── confidence gate ────────────────────────────────────────────────────────────
+# Minimum final_score for a code hit to be considered confident.
+# Set to 0.20 (down from 0.25) because all-MiniLM-L6-v2 scores are inherently
+# lower than larger models, and the cold-graph renormalization in hybrid.py now
+# avoids halving scores on fresh indices. 0.20 still rejects pure README noise
+# (scores ~0.10–0.15) while passing genuine code matches (scores ~0.25–0.60).
+_MIN_CODE_CONFIDENCE: float = float(os.environ.get("COGNIREPO_MIN_CONFIDENCE", "0.20"))
+
+# Relative noise gate: sections scoring below this fraction of the best hit in
+# their bucket are dropped from the pack (they're BM25/semantic stragglers, not
+# genuine matches). 0.5 keeps close runners-up while cutting tail noise.
+_REL_NOISE_RATIO: float = float(os.environ.get("COGNIREPO_REL_NOISE_RATIO", "0.5"))
+
+# Intent keywords: queries with these words get doc_index results in addition to code_index
+_DOC_INTENT_PATTERN = re.compile(
+    r"\b(how does|overview|architecture|what is|explain|describe|why does|design|"
+    r"purpose|history|background|changelog|readme|documentation)\b",
+    re.IGNORECASE,
+)
+
+
+
+def _read_window(file_path: str, center_line: int, window_lines: int, repo_root: str | None = None) -> str:
+    """
+    Read ±window_lines around center_line from file_path.
+    Returns the extracted text, or empty string if the file is unreadable.
+    """
+    repo_root = repo_root or os.environ.get("COGNIREPO_ROOT", os.getcwd())
+    abs_path = (
+        file_path if os.path.isabs(file_path)
+        else os.path.join(repo_root, file_path)
+    )
+    real_abs = os.path.realpath(abs_path)
+    real_root = os.path.realpath(repo_root)
+    if not real_abs.startswith(real_root + os.sep) and real_abs != real_root:
+        return ""
+    try:
+        lines = Path(real_abs).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    start = max(0, center_line - window_lines - 1)
+    end = min(len(lines), center_line + window_lines)
+    return "\n".join(lines[start:end])
+
+
+def _is_doc_query(query: str) -> bool:
+    """Return True when the query intent is architecture/overview/documentation."""
+    return bool(_DOC_INTENT_PATTERN.search(query))
+
+
+def _autosave_context(result: dict) -> None:
+    """Write context_pack result to ~/.cognirepo/<repo>/last_context.json (best-effort)."""
+    try:
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
+        import datetime  # pylint: disable=import-outside-toplevel
+        config_path = get_path("config.json")
+        if not os.path.exists(config_path):
+            return
+        with open(config_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        if not cfg.get("autosave_context", True):
+            return
+        repo_name = cfg.get("project_name", os.path.basename(os.getcwd()))
+        # Cross-agent handoff path: intentionally outside .cognirepo/ so sibling agents can read it
+        save_dir = os.path.join(os.path.expanduser("~"), ".cognirepo", repo_name)
+        os.makedirs(save_dir, exist_ok=True)
+        org_graph_summary = None
+        try:
+            from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
+            org_graph_summary = get_org_graph().summary()
+        except Exception:  # pylint: disable=broad-except
+            pass
+        out = {
+            "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "agent": "cognirepo",
+            "repo": repo_name,
+            "org_graph_summary": org_graph_summary,
+            **result,
+        }
+        with store_lock():
+            with open(os.path.join(save_dir, "last_context.json"), "w", encoding="utf-8") as f:
+                json.dump(out, f, indent=2)
+    except Exception:  # pylint: disable=broad-except
+        pass  # autosave is always best-effort
+
+
+def save_query_context(query: str, tool: str = "search") -> None:
+    """
+    Write a minimal query snapshot to last_context.json for cross-session handoff.
+
+    Called by search_docs, retrieve_memory, and episodic_search so that any
+    meaningful query populates last_focus.query — not just context_pack() calls.
+
+    If a richer snapshot (with sections) already exists from this session's
+    context_pack() call, it is kept and only the query field is updated so
+    the file context is not lost.
+    """
+    try:
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
+        import datetime  # pylint: disable=import-outside-toplevel
+        config_path = get_path("config.json")
+        if not os.path.exists(config_path):
+            return
+        with open(config_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        if not cfg.get("autosave_context", True):
+            return
+        repo_name = cfg.get("project_name", os.path.basename(os.getcwd()))
+        save_dir = os.path.join(os.path.expanduser("~"), ".cognirepo", repo_name)
+        os.makedirs(save_dir, exist_ok=True)
+        ctx_path = os.path.join(save_dir, "last_context.json")
+
+        # Load existing snapshot; keep richer sections if already written by context_pack
+        existing: dict = {}
+        if os.path.exists(ctx_path):
+            try:
+                with open(ctx_path, encoding="utf-8") as f:
+                    existing = json.load(f)
+            except Exception:  # pylint: disable=broad-except
+                existing = {}
+
+        out = {
+            **existing,
+            "query": query,
+            "tool": tool,
+            "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "agent": existing.get("agent", "cognirepo"),
+            "repo": existing.get("repo", repo_name),
+            # Preserve sections from context_pack if present; default to empty
+            "sections": existing.get("sections", []),
+        }
+        with store_lock():
+            with open(ctx_path, "w", encoding="utf-8") as f:
+                json.dump(out, f, indent=2)
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
+def context_pack(
+    query: str,
+    max_tokens: int = 2000,
+    include_episodic: bool = True,
+    include_symbols: bool = True,
+    window_lines: int = 15,
+    file: str = "",
+    repo_root: str | None = None,
+) -> dict:
+    """
+    Pack the most relevant code/episodic context into a token-bounded block.
+    Call this BEFORE reading any source file to avoid wasting tokens on raw file reads.
+    Query is auto-enhanced using your interaction history before retrieval.
+
+    Parameters
+    ----------
+    query          : Natural-language question or intent
+    max_tokens     : Hard budget for the combined output (default 2000)
+    include_episodic: Whether to include episodic memory hits
+    include_symbols : Whether to include AST/symbol hits with file windows
+    window_lines   : Lines of code context above/below each hit
+    file           : Optional file path — returns full file-scoped context
+
+    Returns
+    -------
+    Always returns all 5 base keys:
+    {
+        "query": str,
+        "status": "ok" | "no_confident_match" | "index_empty",
+        "token_count": int,
+        "sections": [{"type", "source", "score", "content"}, ...],
+        "truncated": bool
+    }
+
+    On no confident match, additionally includes:
+        "best_score": float,
+        "suggestion": str
+
+    On index_empty, additionally includes:
+        "suggestion": str
+
+    Optional keys when query enhancement fires:
+        "enhanced_query": str,
+        "enhancement_method": str
+    """
+    # ── file-mode: return all indexed context for a specific file ────────────
+    if file:
+        return _file_mode_context(file, max_tokens, window_lines, repo_root=repo_root)
+
+    if len(query) > MAX_QUERY_LEN:
+        raise ValueError(
+            f"Query too long ({len(query):,} chars > {MAX_QUERY_LEN:,}). "
+            "Truncate or set COGNIREPO_MAX_QUERY_LEN env var."
+        )
+
+    sections: list[dict] = []
+    token_budget = max_tokens
+    truncated = False
+    _cold_index = False
+
+    # ── 0. pre-call query enhancement ────────────────────────────────────────
+    _enhanced = None
+    try:
+        from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+        from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+        _bt = BehaviourTracker(KnowledgeGraph())
+        _enhanced = enhance_query(query, _bt)
+        retrieval_query = _enhanced.text
+    except Exception:  # pylint: disable=broad-except
+        retrieval_query = query
+
+    # ── 1. hybrid retrieval (semantic + AST) — two-bucket architecture ──────
+    _retrieval_mode = "hybrid"
+    if include_symbols:
+        candidates = hybrid_retrieve(retrieval_query, top_k=20)
+
+        _cold_index = not candidates and is_index_cold()
+
+        # Two-bucket split: code_index vs doc_index
+        # code_hits: AST symbols (source == "ast") — always returned for code queries
+        # other_hits: semantic memory, docs — returned only for doc-intent queries
+        code_hits = [c for c in candidates if c.get("source") == "ast"]
+        other_hits = [c for c in candidates if c.get("source") != "ast"]
+
+        # ── confidence gate ────────────────────────────────────────────────
+        # If no code hit clears the threshold, return structured failure.
+        # This prevents README noise from being returned for code queries.
+        best_score = max((c.get("final_score", 0.0) for c in code_hits), default=0.0)
+        doc_intent = _is_doc_query(query)
+
+        # ── BM25 boost: re-rank when FAISS confidence is in the low-confidence gap ──
+        # When best_score is in the 0.20–0.35 range, always attempt a BM25 re-rank
+        # and take the MAX of the BM25 and FAISS scores. Previously this only fired
+        # when BM25 beat FAISS — but BM25 scores are never stored in final_score
+        # under normal hybrid flow (BM25 is only used in bm25_fallback mode), so the
+        # condition was almost never true. Now we re-rank unconditionally in the gap.
+        _BM25_BOOST_THRESHOLD = 0.35
+        if code_hits and _MIN_CODE_CONFIDENCE <= best_score < _BM25_BOOST_THRESHOLD:
+            for c in code_hits:
+                bm25_s = c.get("bm25_score", 0.0)
+                faiss_s = c.get("vector_score", c.get("final_score", 0.0))
+                if bm25_s > 0:
+                    # Mix BM25 and FAISS, then take the max with the existing score
+                    blended = 0.7 * bm25_s + 0.3 * faiss_s
+                    c["final_score"] = max(c.get("final_score", 0.0), blended)
+            code_hits.sort(key=lambda x: x.get("final_score", 0.0), reverse=True)
+            best_score = max((c.get("final_score", 0.0) for c in code_hits), default=0.0)
+            _retrieval_mode = "bm25_boosted"
+
+        if code_hits and best_score < _MIN_CODE_CONFIDENCE and not doc_intent:
+            # No confident code hit — check if any semantic hit is better
+            best_semantic = max(
+                (c.get("final_score", 0.0) for c in other_hits),
+                default=0.0,
+            )
+            if best_semantic < _MIN_CODE_CONFIDENCE:
+                result = {
+                    "query": query,
+                    "status": "no_confident_match",
+                    "token_count": 0,
+                    "sections": [],
+                    "truncated": False,
+                    "best_score": round(max(best_score, best_semantic), 4),
+                    "suggestion": (
+                        "run `cognirepo index-repo .` or use a more specific symbol name. "
+                        "If the repo is freshly initialised, try `cognirepo seed --from-git` first."
+                    ),
+                }
+                _autosave_context(result)
+                return result
+
+        # For doc-intent queries, allow other_hits up to 40% budget
+        # For code queries, cap other_hits at 20%
+        doc_cap = int(max_tokens * (0.40 if doc_intent else 0.20))
+        doc_spent = 0
+
+        def _process_candidate(cand: dict, is_code: bool) -> bool:
+            """Append one candidate to sections. Returns False when budget is spent."""
+            nonlocal token_budget, doc_spent, truncated
+
+            text = cand.get("text", "")
+            score = cand.get("final_score", 0.0)
+            source_label = cand.get("source", "semantic")
+
+            file_ref: Optional[str] = None
+            window_text: Optional[str] = None
+
+            if source_label == "ast" and " in " in text:
+                # format: "FUNCTION foo in src/bar.py:42 — docstring"
+                try:
+                    location_part = text.split(" in ", 1)[1].split(" — ")[0]
+                    if ":" in location_part:
+                        fpath, lineno_str = location_part.rsplit(":", 1)
+                        lineno = int(lineno_str)
+                        window_text = _read_window(fpath, lineno, window_lines, repo_root)
+                        file_ref = f"{fpath}:{lineno}"
+                except (ValueError, IndexError):
+                    pass
+
+            content = window_text if window_text else text
+            tok = _count_tokens(content)
+
+            if tok > token_budget:
+                if window_text:
+                    lines = window_text.splitlines()
+                    while lines and _count_tokens("\n".join(lines)) > token_budget:
+                        lines.pop()
+                    content = "\n".join(lines)
+                    tok = _count_tokens(content)
+
+            if tok > token_budget:
+                truncated = True
+                return False
+
+            if not is_code:
+                if doc_spent + tok > doc_cap:
+                    return True  # skip this doc hit but keep iterating
+                doc_spent += tok
+
+            # Label code vs doc hits for agent routing
+            hit_type = "symbol" if source_label == "ast" else "doc_hit"
+            sections.append({
+                "type": hit_type,
+                "source": file_ref or "memory",
+                "score": round(score, 4),
+                "content": content,
+                "bucket": "code" if source_label == "ast" else "doc",
+            })
+            token_budget -= tok
+            return True
+
+        # ── relative-score noise gate ──────────────────────────────────────
+        # A pack where the top hit scores 0.60 should not carry along 0.15
+        # BM25 stragglers — they read as authoritative context but are noise
+        # (observed: 6 of 10 irrelevant sections on broad queries). Keep only
+        # hits within _REL_NOISE_RATIO of the best hit in the same bucket.
+        if code_hits and best_score > 0:
+            _rel_floor = best_score * _REL_NOISE_RATIO
+            code_hits = [c for c in code_hits if c.get("final_score", 0.0) >= _rel_floor]
+        if other_hits:
+            _best_other = max((c.get("final_score", 0.0) for c in other_hits), default=0.0)
+            if _best_other > 0:
+                _rel_floor_o = _best_other * _REL_NOISE_RATIO
+                other_hits = [c for c in other_hits if c.get("final_score", 0.0) >= _rel_floor_o]
+
+        for cand in code_hits:
+            if not _process_candidate(cand, is_code=True):
+                break
+        for cand in other_hits:
+            if token_budget <= 0:
+                truncated = True
+                break
+            _process_candidate(cand, is_code=False)
+
+    # ── 2. episodic hits ─────────────────────────────────────────────────────
+    if include_episodic and token_budget > 0:
+        try:
+            ep_hits = episodic_bm25_filter(query, top_k=5)
+            for ep in ep_hits:
+                event_text = ep.get("event", "")
+                metadata = ep.get("metadata", {})
+                meta_str = "; ".join(f"{k}={v}" for k, v in metadata.items())
+                content = f"{event_text}" + (f" [{meta_str}]" if meta_str else "")
+                tok = _count_tokens(content)
+                if tok > token_budget:
+                    truncated = True
+                    break
+                sections.append({
+                    "type": "episodic",
+                    "source": ep.get("time", ""),
+                    "score": 0.0,
+                    "content": content,
+                    "bucket": "episodic",
+                })
+                token_budget -= tok
+        except Exception as exc:  # pylint: disable=broad-except
+            _logger.warning("episodic BM25 query failed: %s", exc)
+
+    total_tokens = max_tokens - token_budget
+    result: dict = {
+        "query": query,
+        "status": "ok",
+        "token_count": total_tokens,
+        "sections": sections,
+        "truncated": truncated,
+    }
+    if _retrieval_mode != "hybrid":
+        result["retrieval_mode"] = _retrieval_mode
+    if _enhanced and _enhanced.was_enhanced:
+        result["enhanced_query"] = _enhanced.text
+        result["enhancement_method"] = _enhanced.method
+    if include_symbols and _cold_index and not sections:
+        result["status"] = "index_empty"
+        result["suggestion"] = "run `cognirepo index-repo .` first"
+    _autosave_context(result)
+    return result
+
+
+def _file_mode_context(file_path: str, max_tokens: int, window_lines: int, repo_root: str | None = None) -> dict:
+    """Return all indexed context for a specific file (Cursor-style file mode)."""
+    from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+    from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+
+    sections = []
+    token_budget = max_tokens
+
+    try:
+        indexer = ASTIndexer(KnowledgeGraph())
+        indexer.load()
+        # Normalize path
+        rel_path = file_path
+        if os.path.isabs(file_path):
+            _root = repo_root or os.environ.get("COGNIREPO_ROOT", os.getcwd())
+            rel_path = os.path.relpath(file_path, _root)
+
+        file_data = indexer.index_data.get("files", {}).get(rel_path, {})
+        symbols = file_data.get("symbols", [])
+
+        for sym in symbols:
+            content = _read_window(rel_path, sym["start_line"], window_lines, repo_root)
+            if not content:
+                continue
+            tok = _count_tokens(content)
+            if tok > token_budget:
+                break
+            sections.append({
+                "type": "symbol",
+                "source": f"{rel_path}:{sym['start_line']}",
+                "score": 1.0,
+                "content": content,
+                "bucket": "code",
+                "symbol_name": sym["name"],
+                "symbol_type": sym["type"],
+            })
+            token_budget -= tok
+    except Exception as exc:  # pylint: disable=broad-except
+        _logger.warning("_file_mode_context failed: %s", exc)
+
+    result = {
+        "query": f"file:{file_path}",
+        "token_count": max_tokens - token_budget,
+        "sections": sections,
+        "truncated": token_budget <= 0,
+    }
+    _autosave_context(result)
+    return result
+
+
+if __name__ == "__main__":
+    import sys
+
+    q = " ".join(sys.argv[1:]) or "authentication logic"
+    _result = context_pack(q)
+    print(json.dumps(_result, indent=2))

@@ -50,7 +50,7 @@ def sync_pyproject(version: str, *, check: bool) -> bool:
 
 
 def sync_manifest_json(version: str, *, check: bool) -> bool:
-    path = REPO_ROOT / "server" / "manifest.json"
+    path = REPO_ROOT / "interface" / "server" / "manifest.json"
     data = json.loads(path.read_text())
     if data.get("version") == version:
         print(f"  server/manifest.json — already {version}")

@@ -9,13 +9,13 @@ import os
 import pytest
 import json
 from unittest.mock import MagicMock, patch
-from indexer.summarizer import SummarizationEngine
+from intelligence.indexer.summarizer import SummarizationEngine
 
 def test_summarize_file_logic(isolated_cognirepo):  # pylint: disable=unused-argument
     engine = SummarizationEngine()
     
     # Mock ASTIndexer to return some dummy data
-    with patch("indexer.ast_indexer.ASTIndexer") as mock_indexer_cls:
+    with patch("intelligence.indexer.ast_indexer.ASTIndexer") as mock_indexer_cls:
         mock_indexer = mock_indexer_cls.return_value
         mock_indexer.index_data = {
             "files": {
@@ -40,7 +40,7 @@ def test_run_full_summarization(isolated_cognirepo, tmp_path):  # pylint: disabl
     engine = SummarizationEngine(project_root=str(tmp_path))
     
     # Mock ASTIndexer
-    with patch("indexer.ast_indexer.ASTIndexer") as mock_indexer_cls:
+    with patch("intelligence.indexer.ast_indexer.ASTIndexer") as mock_indexer_cls:
         mock_indexer = mock_indexer_cls.return_value
         mock_indexer.index_data = {
             "files": {
@@ -60,7 +60,7 @@ def test_run_full_summarization(isolated_cognirepo, tmp_path):  # pylint: disabl
         mock_indexer._ensure_faiss = MagicMock()
         
         # Mock embeddings to avoid real model load
-        with patch("memory.embeddings.get_model") as mock_get_model:
+        with patch("data.memory.embeddings.get_model") as mock_get_model:
             mock_model = mock_get_model.return_value
             mock_model.encode.return_value = MagicMock(astype=lambda x: MagicMock())
             
