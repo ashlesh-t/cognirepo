@@ -2,7 +2,7 @@
 
 ---
 
-## Package Layer Hierarchy (v1.2.0+)
+## Package Layer Hierarchy (v2.0.0+)
 
 Six dependency-ordered layers with downward-only coupling enforced by `scripts/check_circular_deps.py`:
 
