@@ -22,7 +22,7 @@ Run modes
   --archive      Move pruned entries to .cognirepo/archive/ instead of deleting
 
 Schedule via cron (add to crontab -e):
-  0 3 * * * cd /your/project && venv/bin/python -m cron.prune_memory
+  0 3 * * * cd /your/project && venv/bin/python -m ops.cron.prune_memory
 
 Or via the CLI:
   cognirepo prune --dry-run

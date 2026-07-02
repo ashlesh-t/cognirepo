@@ -9,7 +9,7 @@ CogniRepo BM25 package — transparent C++/Python backend selection.
 
 Import this package instead of importing either backend directly::
 
-    from _bm25 import BM25, Document, BACKEND
+    from core._bm25 import BM25, Document, BACKEND
 
 At import time the package tries to load the compiled C++ extension
 (_bm25_ext).  If it is absent (no cmake build performed), it silently

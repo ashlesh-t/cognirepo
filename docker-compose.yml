@@ -39,7 +39,7 @@ services:
     command: >
       sh -c "while true; do
                echo '[pruner] running at $(date)';
-               python -m cron.prune_memory --archive;
+               python -m ops.cron.prune_memory --archive;
                sleep 86400;
              done"
     profiles:

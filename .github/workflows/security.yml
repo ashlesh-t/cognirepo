@@ -23,7 +23,7 @@ jobs:
 
       - name: Run Bandit (HIGH + CRITICAL only)
         run: |
-          bandit -r core/ data/ intelligence/ interface/ cron/ \
+          bandit -r core/ data/ intelligence/ interface/ ops/ \
                  -x tests/ \
                  -ll
 
