@@ -2510,7 +2510,7 @@ def _build_manifest() -> dict:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "limit": {"type": "integer", "description": "Max sessions to return", "default": 5},
+                        "limit": {"type": "integer", "description": "Max sessions to return", "default": 10},
                     },
                 },
             },
@@ -2571,6 +2571,45 @@ def _build_manifest() -> dict:
                     "properties": {
                         "min_count": {"type": "integer", "description": "Only return errors seen at least this many times", "default": 1},
                         "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
+                    },
+                },
+            },
+            {
+                "name": "find_symbol_path",
+                "description": (
+                    "Find the shortest call-graph path between two symbols, crossing service "
+                    "boundaries via the org graph when needed."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "from_symbol": {"type": "string", "description": "Name of the source symbol"},
+                        "to_symbol": {"type": "string", "description": "Name of the destination symbol"},
+                        "from_repo": {
+                            "type": "string",
+                            "description": "Absolute path to source repo (auto-detected if omitted)",
+                            "default": "",
+                        },
+                        "to_repo": {
+                            "type": "string",
+                            "description": "Absolute path to destination repo (auto-detected if omitted)",
+                            "default": "",
+                        },
+                    },
+                    "required": ["from_symbol", "to_symbol"],
+                },
+            },
+            {
+                "name": "get_service_endpoints",
+                "description": "Return the HTTP endpoint registry for a service (from endpoints.json).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "repo_path": {
+                            "type": "string",
+                            "description": "Absolute path to the target repo (defaults to current project)",
+                            "default": "",
+                        },
                     },
                 },
             },
