@@ -1,0 +1,28 @@
+# Root JIRA registry — read this FIRST in any new session (see /skill.md).
+project: cognirepo
+active_epic: COGNIREPO-100
+epics:
+  - id: COGNIREPO-100
+    name: ReliabilityGate
+    status: not-started
+    blocked_by: []
+  - id: COGNIREPO-200
+    name: KGEpisodicHardening
+    status: not-started
+    blocked_by: [COGNIREPO-100]
+  - id: COGNIREPO-300
+    name: RepoInsights
+    status: not-started
+    blocked_by: [COGNIREPO-200]
+  - id: COGNIREPO-400
+    name: MoodPersonaLayer
+    status: not-started
+    blocked_by: [COGNIREPO-200]
+  - id: COGNIREPO-500
+    name: SubagentEnrichment
+    status: not-started
+    blocked_by: [COGNIREPO-200]
+  - id: COGNIREPO-600
+    name: OSSGrowth
+    status: not-started
+    blocked_by: []   # only COGNIREPO-101 within EPIC-100; showcase sub-task additionally needs EPIC-300
