@@ -4,7 +4,7 @@ active_epic: COGNIREPO-100
 epics:
   - id: COGNIREPO-100
     name: ReliabilityGate
-    status: not-started
+    status: in-progress
     blocked_by: []
   - id: COGNIREPO-200
     name: KGEpisodicHardening

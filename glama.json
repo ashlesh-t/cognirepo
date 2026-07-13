@@ -568,7 +568,7 @@
           "limit": {
             "type": "integer",
             "description": "Max sessions to return",
-            "default": 5
+            "default": 10
           }
         }
       }
@@ -678,6 +678,48 @@
             "type": "string",
             "description": "Absolute path to target repository (optional)",
             "default": null
+          }
+        }
+      }
+    },
+    {
+      "name": "find_symbol_path",
+      "description": "Find the shortest call-graph path between two symbols, crossing service boundaries via the org graph when needed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from_symbol": {
+            "type": "string",
+            "description": "Name of the source symbol"
+          },
+          "to_symbol": {
+            "type": "string",
+            "description": "Name of the destination symbol"
+          },
+          "from_repo": {
+            "type": "string",
+            "description": "Absolute path to source repo (auto-detected if omitted)",
+            "default": ""
+          },
+          "to_repo": {
+            "type": "string",
+            "description": "Absolute path to destination repo (auto-detected if omitted)",
+            "default": ""
+          }
+        },
+        "required": ["from_symbol", "to_symbol"]
+      }
+    },
+    {
+      "name": "get_service_endpoints",
+      "description": "Return the HTTP endpoint registry for a service (from endpoints.json).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "repo_path": {
+            "type": "string",
+            "description": "Absolute path to the target repo (defaults to current project)",
+            "default": ""
           }
         }
       }
