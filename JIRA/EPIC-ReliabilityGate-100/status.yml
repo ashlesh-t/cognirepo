@@ -38,7 +38,7 @@ defects:
     pr: https://github.com/ashlesh-t/cognirepo/pull/32
     test_status: pass
   - id: COGNIREPO-D02
-    status: in-review
+    status: signed-off
     branch: defect/COGNIREPO-D02
     pr: https://github.com/ashlesh-t/cognirepo/pull/34
     test_status: pass
