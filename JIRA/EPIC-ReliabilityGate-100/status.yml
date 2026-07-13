@@ -33,7 +33,7 @@ stories:
     test_status: not-run
 defects:
   - id: COGNIREPO-D01
-    status: in-review
+    status: signed-off
     branch: defect/COGNIREPO-D01
     pr: https://github.com/ashlesh-t/cognirepo/pull/32
     test_status: pass
