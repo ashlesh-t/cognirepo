@@ -25,3 +25,14 @@ all live+archived IDs unique; prev chain references resolvable.
 2. prev chain never points at an ambiguous ID for newly written events.
 3. Existing stores load unchanged (no migration rewrite of old entries).
 4. Fixed BEFORE EPIC-200's 204/205 (timeline refs and embedding-cache keys use these IDs).
+
+## Resolution (2026-07-13)
+Evidence re-verified at HEAD: `data/memory/episodic_memory.py:150` (`f"e_{len(data)}"`) unchanged
+since the 2026-07-11 audit. Fix: `log_event` now assigns IDs via `_next_event_id()`, which scans
+both the live list and the archive file (`_archive_path()`) for the highest `e_<N>` suffix and
+returns one past it — a monotonic, store-lifetime-unique counter, recomputed on each write rather
+than persisted separately (no schema/header changes, no migration of existing entries). Added
+`_warn_on_duplicate_ids()`, called from `_load()`, which logs a warning (not raised — data isn't
+mutated) if the loaded store already contains duplicate IDs from before this fix.
+No changes needed to `search_episodes`'s `id_to_entry` dict or the `prev` chain — both already
+correctly assume unique IDs; they just needed IDs to actually be unique.
