@@ -268,19 +268,11 @@ class TestManifestFormat:
             assert "name" in tool
             assert "description" in tool
 
-    def test_openai_spec_export(self):
-        from interface.server.mcp_server import _write_manifest
-        _write_manifest()
+    def test_openai_spec_export(self, tmp_path):
+        # MANIFEST_PATH is resolved from openai_spec.py's own location, not CWD,
+        # so this works regardless of pytest's isolated tmp_path CWD.
         from interface.adapters.openai_spec import export
-        # _write_manifest writes next to mcp_server.py; openai_spec reads from there
-        import interface.server.mcp_server as _mod
-        import interface.adapters.openai_spec as _spec
-        orig = _spec.MANIFEST_PATH
-        _spec.MANIFEST_PATH = os.path.join(os.path.dirname(_mod.__file__), "manifest.json")
-        try:
-            paths = export(out_dir="adapters")
-        finally:
-            _spec.MANIFEST_PATH = orig
+        paths = export(out_dir=str(tmp_path))
         assert os.path.exists(paths["openai_tools"])
         with open(paths["openai_tools"], encoding="utf-8") as f:
             tools = json.load(f)
