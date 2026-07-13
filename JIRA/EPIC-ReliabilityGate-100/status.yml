@@ -38,10 +38,10 @@ defects:
     pr: https://github.com/ashlesh-t/cognirepo/pull/32
     test_status: pass
   - id: COGNIREPO-D02
-    status: not-started
+    status: in-review
     branch: defect/COGNIREPO-D02
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/34
+    test_status: pass
   - id: COGNIREPO-D03
     status: signed-off
     branch: defect/COGNIREPO-D03
