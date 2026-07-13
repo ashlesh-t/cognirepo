@@ -43,7 +43,7 @@ defects:
     pr: null
     test_status: not-run
   - id: COGNIREPO-D03
-    status: in-review
+    status: signed-off
     branch: defect/COGNIREPO-D03
     pr: https://github.com/ashlesh-t/cognirepo/pull/33
     test_status: pass
