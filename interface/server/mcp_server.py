@@ -9,6 +9,7 @@ Real MCP server for CogniRepo — stdio transport, works with Claude Desktop
 and any stdio MCP client.
 """
 # pylint: disable=duplicate-code
+import asyncio
 import contextlib
 import json
 import logging
@@ -2083,536 +2084,56 @@ def record_error(
     return {"recorded": True, "error_type": error_type, "prevention_hint": hint}
 
 
+def _clean_tool_description(raw: str | None) -> str:
+    """First paragraph of a tool's docstring, whitespace-collapsed to one line."""
+    if not raw:
+        return ""
+    first_para = raw.strip().split("\n\n")[0]
+    return " ".join(first_para.split())
+
+
+def _clean_tool_schema(schema: dict) -> dict:
+    """
+    Normalize FastMCP's pydantic-derived inputSchema to the compact convention
+    used across manifest.json/glama.json: drop 'title' keys, flatten
+    Optional[X] 'anyOf' unions to a plain {type, default}, and always include
+    an explicit 'required' list (even when empty).
+    """
+    schema = json.loads(json.dumps(schema))  # deep copy, drop non-JSON artifacts
+    schema.pop("title", None)
+    for prop in schema.get("properties", {}).values():
+        prop.pop("title", None)
+        if "anyOf" in prop:
+            non_null = [t for t in prop["anyOf"] if t.get("type") != "null"]
+            if non_null:
+                prop.update(non_null[0])
+            prop.pop("anyOf", None)
+    schema.setdefault("required", [])
+    return schema
+
+
 def _build_manifest() -> dict:
-    """Return the tool-schema manifest so non-MCP clients can read it."""
+    """
+    Return the tool-schema manifest so non-MCP clients can read it.
+
+    Single source of truth: introspects the live FastMCP tool registry
+    (the @mcp.tool()-decorated functions above) rather than a hand-maintained
+    copy, so a tool's signature/docstring is the only place its schema is
+    written. See scripts/gen_tool_specs.py for the generator that also syncs
+    glama.json and openai_tools.json from this same manifest.
+    """
+    tools = asyncio.run(mcp.list_tools())
     return {
         "name": "cognirepo",
         "version": _APP_VERSION,
         "transport": "stdio",
         "tools": [
             {
-                "name": "store_memory",
-                "description": "Store a semantic memory with an optional source label.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "text":   {"type": "string", "description": "Memory text to store"},
-                        "source": {
-                            "type": "string",
-                            "description": "Origin label (file, url, …)",
-                            "default": ""
-                        },
-                        "repo_path": {
-                            "type": "string",
-                            "description": "Absolute path to target repository (optional, defaults to server's project dir)",
-                            "default": None,
-                        },
-                    },
-                    "required": ["text"],
-                },
-            },
-            {
-                "name": "retrieve_memory",
-                "description": "Retrieve the top-k memories most similar to the query.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Search query"},
-                        "top_k": {
-                            "type": "integer",
-                            "description": "Number of results",
-                            "default": 5
-                        },
-                        "include_org": {
-                            "type": "boolean",
-                            "description": "Search across all repos in the organization",
-                            "default": False
-                        },
-                        "repo_path": {
-                            "type": "string",
-                            "description": "Absolute path to target repository (optional)",
-                            "default": None,
-                        },
-                    },
-                    "required": ["query"],
-                },
-            },
-            {
-                "name": "org_search",
-                "description": "Semantic search across all repositories in the organization.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Search query"},
-                        "top_k": {"type": "integer", "default": 5},
-                    },
-                    "required": ["query"],
-                },
-            },
-            {
-                "name": "org_dependencies",
-                "description": "Return the bidirectional inter-repo dependency graph for the current organization.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "depth": {"type": "integer", "description": "Max hops to traverse (default 2)", "default": 2},
-                    },
-                },
-            },
-            {
-                "name": "search_docs",
-                "description": (
-                    "Search all markdown documentation files for the given query string."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Text to search for in .md files"
-                        },
-                    },
-                    "required": ["query"],
-                },
-            },
-            {
-                "name": "log_episode",
-                "description": "Append an episodic event with optional metadata to the event log.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "event":    {"type": "string", "description": "Event description"},
-                        "metadata": {
-                            "type": "object",
-                            "description": "Arbitrary key-value metadata",
-                            "default": {}
-                        },
-                    },
-                    "required": ["event"],
-                },
-            },
-            {
-                "name": "lookup_symbol",
-                "description": (
-                    "Return all locations where a symbol is defined or called, "
-                    "with file, line, and type."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "Symbol name to look up"},
-                        "include_org": {
-                            "type": "boolean",
-                            "description": "Search across sibling repos in the organization",
-                            "default": False
-                        },
-                        "repo_path": {
-                            "type": "string",
-                            "description": "Absolute path to target repository (optional)",
-                            "default": None,
-                        },
-                    },
-                    "required": ["name"],
-                },
-            },
-            {
-                "name": "who_calls",
-                "description": "Return every caller of a function across the indexed repo.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "function_name": {
-                            "type": "string",
-                            "description": "Name of the function to look up callers for"
-                        },
-                        "repo_path": {
-                            "type": "string",
-                            "description": "Absolute path to target repository (optional)",
-                            "default": None,
-                        },
-                    },
-                    "required": ["function_name"],
-                },
-            },
-            {
-                "name": "subgraph",
-                "description": (
-                    "Return the local neighbourhood of a concept or symbol as {nodes, edges}."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "entity": {
-                            "type": "string",
-                            "description": "Entity name or node ID to centre the subgraph on"
-                        },
-                        "depth":  {"type": "integer", "description": "BFS radius", "default": 2},
-                        "repo_path": {
-                            "type": "string",
-                            "description": "Absolute path to target repository (optional)",
-                            "default": None,
-                        },
-                    },
-                    "required": ["entity"],
-                },
-            },
-            {
-                "name": "episodic_search",
-                "description": "Return past episodic events matching a keyword query.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "Keyword to search for in event log"
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum number of results",
-                            "default": 10
-                        },
-                    },
-                    "required": ["query"],
-                },
-            },
-            {
-                "name": "graph_stats",
-                "description": "Return a health summary of the current graph state.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                },
-            },
-            {
-                "name": "semantic_search_code",
-                "description": "Semantic vector search over code symbols only (no episodic entries).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query":    {"type": "string", "description": "Search query"},
-                        "top_k":    {"type": "integer", "default": 5},
-                        "language": {"type": "string", "description": "Optional language filter: python, typescript, go, etc.", "default": None},
-                        "repo_path": {
-                            "type": "string",
-                            "description": "Absolute path to target repository (optional)",
-                            "default": None,
-                        },
-                    },
-                    "required": ["query"],
-                },
-            },
-            {
-                "name": "dependency_graph",
-                "description": "Return import/dependency relationships for a module.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "module":    {"type": "string", "description": "Relative file path"},
-                        "direction": {"type": "string", "default": "both", "description": "imports | imported_by | both"},
-                        "depth":     {"type": "integer", "default": 2},
-                    },
-                    "required": ["module"],
-                },
-            },
-            {
-                "name": "explain_change",
-                "description": "Explain recent changes to a file or function via git + episodic memory.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "target":      {"type": "string", "description": "File path or function name"},
-                        "since":       {"type": "string", "default": "7d", "description": "7d, 30d, or ISO date"},
-                        "max_commits": {"type": "integer", "default": 10},
-                    },
-                    "required": ["target"],
-                },
-            },
-            {
-                "name": "architecture_overview",
-                "description": "Retrieve pre-computed high-level architectural summaries.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "scope": {
-                            "type": "string",
-                            "description": "Scope: 'root' for repo, a directory path, or a file path.",
-                            "default": "root"
-                        },
-                    },
-                },
-            },
-            {
-                "name": "context_pack",
-                "description": (
-                    "Budget-pack the most relevant code + episodic context into a "
-                    "token-bounded block for prompt injection.  Call this BEFORE "
-                    "reading any source file."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Search intent or question"},
-                        "max_tokens": {
-                            "type": "integer",
-                            "description": "Hard token budget for output",
-                            "default": 2000,
-                        },
-                        "include_episodic": {
-                            "type": "boolean",
-                            "description": "Include episodic memory hits",
-                            "default": True,
-                        },
-                        "include_symbols": {
-                            "type": "boolean",
-                            "description": "Include AST/symbol hits with code windows",
-                            "default": True,
-                        },
-                        "window_lines": {
-                            "type": "integer",
-                            "description": "Lines of code context above/below each hit",
-                            "default": 15,
-                        },
-                        "repo_path": {
-                            "type": "string",
-                            "description": "Absolute path to target repository (optional, defaults to server's project dir)",
-                            "default": None,
-                        },
-                    },
-                    "required": ["query"],
-                },
-            },
-            # ── 16 tools added in v1.1.0 ─────────────────────────────────────
-            {
-                "name": "org_wide_search",
-                "description": "PRIMARY cross-repo search. Semantic search across ALL registered repos in the org.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Search query"},
-                        "top_k": {"type": "integer", "default": 5},
-                    },
-                    "required": ["query"],
-                },
-            },
-            {
-                "name": "cross_repo_search",
-                "description": "Search memories scoped to a project or the full org.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Search query"},
-                        "scope": {"type": "string", "description": "project | org", "default": "project"},
-                        "top_k": {"type": "integer", "default": 5},
-                    },
-                    "required": ["query"],
-                },
-            },
-            {
-                "name": "cross_repo_traverse",
-                "description": "Walk the org dependency graph from a starting repo, annotating each hop with symbol locations.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "symbol":      {"type": "string", "description": "Symbol to look up in each repo"},
-                        "start_repo":  {"type": "string", "description": "Absolute path to starting repo"},
-                        "direction":   {"type": "string", "description": "dependencies | dependents | both", "default": "both"},
-                        "depth":       {"type": "integer", "default": 2},
-                    },
-                    "required": [],
-                },
-            },
-            {
-                "name": "list_org_context",
-                "description": "Return org, project, and sibling repo metadata for the current repo.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                },
-            },
-            {
-                "name": "link_repos",
-                "description": "Record an inter-repo dependency edge. Auto-detected: IMPORTS only. CALLS_API and SHARES_SCHEMA must be declared manually.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "src_repo":      {"type": "string", "description": "Absolute path to source repo"},
-                        "dst_repo":      {"type": "string", "description": "Absolute path to destination repo"},
-                        "relationship":  {"type": "string", "description": "imports | calls_api | shares_schema | discovered | child_of", "default": "imports"},
-                        "note":          {"type": "string", "description": "Optional note about the relationship", "default": ""},
-                        "service_type":  {"type": "string", "description": "Optional service type for destination (rest_api, grpc, worker, frontend, library)", "default": ""},
-                        "port":          {"type": "integer", "description": "Optional port the destination service listens on", "default": 0},
-                        "api_base_url":  {"type": "string", "description": "Optional API base URL/path prefix for destination service", "default": ""},
-                    },
-                    "required": ["src_repo", "dst_repo"],
-                },
-            },
-            {
-                "name": "record_decision",
-                "description": "Record an architectural decision with rationale to episodic memory.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "summary":        {"type": "string", "description": "One-line decision summary"},
-                        "rationale":      {"type": "string", "description": "Why this decision was made", "default": ""},
-                        "affected_files": {"type": "array", "items": {"type": "string"}, "description": "Files changed by this decision", "default": []},
-                        "repo_path":      {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
-                    },
-                    "required": ["summary"],
-                },
-            },
-            {
-                "name": "supersede_learning",
-                "description": "Deprecate an outdated memory entry and replace it with corrected text in one call.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "old_id":    {"type": "string", "description": "ID of the memory entry to replace (from store_memory conflicts list)"},
-                        "new_text":  {"type": "string", "description": "Replacement memory text"},
-                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
-                    },
-                    "required": ["old_id", "new_text"],
-                },
-            },
-            {
-                "name": "search_token",
-                "description": "Fast BM25 token search over symbol names and docs — no embedding needed.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "word":      {"type": "string", "description": "Word or identifier fragment to search"},
-                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
-                    },
-                    "required": ["word"],
-                },
-            },
-            {
-                "name": "get_session_brief",
-                "description": "Return architecture summary, hot symbols, entry points, and index health. Call at session start.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
-                    },
-                },
-            },
-            {
-                "name": "get_last_context",
-                "description": "Return what the last agent was looking at — resume from cross-agent handoff.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                },
-            },
-            {
-                "name": "get_session_history",
-                "description": "Return recent session records with message counts and last exchange snippets.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "limit": {"type": "integer", "description": "Max sessions to return", "default": 10},
-                    },
-                },
-            },
-            {
-                "name": "get_agent_bootstrap",
-                "description": "Single-call session bootstrap. Replaces get_session_brief + get_last_context + get_user_profile + get_error_patterns (~300 tokens vs ~900). Call ONCE at session start.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
-                    },
-                },
-            },
-            {
-                "name": "get_user_profile",
-                "description": "Return interaction style profile: depth preference, framing hints, top terminology. Apply framing_hints to all responses.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
-                    },
-                },
-            },
-            {
-                "name": "record_user_preference",
-                "description": "Store an explicit user preference or query-rewrite correction for future sessions.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "preference_key":   {"type": "string", "description": "Preference label (e.g. response_format) or 'query_rewrite'"},
-                        "preference_value": {"type": "string", "description": "Value of the preference"},
-                        "context":          {"type": "string", "description": "Extra context (used for query_rewrite intent)", "default": ""},
-                        "repo_path":        {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
-                    },
-                    "required": ["preference_key", "preference_value"],
-                },
-            },
-            {
-                "name": "record_error",
-                "description": "Log a recurring error with message so get_error_patterns can surface prevention hints.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "error_type":    {"type": "string", "description": "Error class name (e.g. ImportError)"},
-                        "message":       {"type": "string", "description": "Error message or description", "default": ""},
-                        "file_path":     {"type": "string", "description": "Source file where the error occurred", "default": ""},
-                        "query_context": {"type": "string", "description": "Query or action that triggered the error", "default": ""},
-                        "repo_path":     {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
-                    },
-                    "required": ["error_type"],
-                },
-            },
-            {
-                "name": "get_error_patterns",
-                "description": "Return recurring errors with counts and prevention hints. Check before proposing a fix.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "min_count": {"type": "integer", "description": "Only return errors seen at least this many times", "default": 1},
-                        "repo_path": {"type": "string", "description": "Absolute path to target repository (optional)", "default": None},
-                    },
-                },
-            },
-            {
-                "name": "find_symbol_path",
-                "description": (
-                    "Find the shortest call-graph path between two symbols, crossing service "
-                    "boundaries via the org graph when needed."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "from_symbol": {"type": "string", "description": "Name of the source symbol"},
-                        "to_symbol": {"type": "string", "description": "Name of the destination symbol"},
-                        "from_repo": {
-                            "type": "string",
-                            "description": "Absolute path to source repo (auto-detected if omitted)",
-                            "default": "",
-                        },
-                        "to_repo": {
-                            "type": "string",
-                            "description": "Absolute path to destination repo (auto-detected if omitted)",
-                            "default": "",
-                        },
-                    },
-                    "required": ["from_symbol", "to_symbol"],
-                },
-            },
-            {
-                "name": "get_service_endpoints",
-                "description": "Return the HTTP endpoint registry for a service (from endpoints.json).",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "repo_path": {
-                            "type": "string",
-                            "description": "Absolute path to the target repo (defaults to current project)",
-                            "default": "",
-                        },
-                    },
-                },
-            },
+                "name": t.name,
+                "description": _clean_tool_description(t.description),
+                "parameters": _clean_tool_schema(t.inputSchema),
+            }
+            for t in sorted(tools, key=lambda tool: tool.name)
         ],
     }
 
