@@ -515,8 +515,11 @@ class BehaviourTracker:
         self._observer = create_watcher(path, indexer, self.graph, self, session_id)
 
     def stop_watching(self) -> None:
-        """Stop and join the file watcher thread."""
+        """Stop and join the file watcher thread, flushing any pending debounced events first."""
         if self._observer is not None:
+            handler = getattr(self._observer, "_cognirepo_handler", None)
+            if handler is not None:
+                handler.flush()
             self._observer.stop()
             self._observer.join()
             self._observer = None

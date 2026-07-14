@@ -28,3 +28,46 @@ tests/test_stale_cleanup.py for the move case.
 - Timer thread must be a daemon and flush on stop_watching() so no events are lost on shutdown.
 - 500 ms default is a guess — validate on the medium test repo with an editor burst.
 - COGNIREPO-103 touches the same file; merge this first.
+
+## Resolution
+
+`intelligence/indexer/file_watcher.py`:
+- `RepoFileHandler` gained a `debounce_ms` constructor param (default: read from
+  `.cognirepo/config.json` → `indexing.debounce_ms`, falling back to 500) plus a per-path
+  `_pending` dict guarded by a `threading.Lock` and a single `threading.Timer` (daemon=True).
+  `on_modified`/`on_created`/`on_deleted` now call `_queue(action, path)`, which either processes
+  the event synchronously (debounce_ms <= 0 — preserves the pre-102 behavior) or dedupes it into
+  `_pending` (last action for a path wins) and (re)arms the timer.
+- New `on_moved(event)` handler queues `"remove"` for `src_path` and `"reindex"` for `dest_path`,
+  each gated by `is_supported()`.
+- `flush()` drains `_pending` and processes every entry via new mutate-only helpers
+  (`_reindex_mutate`/`_remove_mutate` — same logic as `_reindex`/`_remove` minus the
+  save/side-effect tail), then does exactly one `indexer._build_reverse_index()` +
+  `indexer.save()` + `graph.save()` for the whole batch, one `behaviour.save()` if anything was
+  reindexed, per-removed-path `mark_stale()` calls, and one `invalidate_hybrid_cache()` if
+  anything changed.
+- `create_watcher()` attaches the handler to the returned `Observer` as `_cognirepo_handler` so
+  callers can reach it for a shutdown flush.
+- `data/graph/behaviour_tracker.py`'s `stop_watching()` now calls `handler.flush()` (via
+  `_cognirepo_handler`) before `observer.stop()`/`.join()`, so no queued events are lost on
+  shutdown per the ticket's risk note.
+
+Docs: added `indexing.debounce_ms` (default `500`, `0` disables batching) to
+`docs/CONFIGURATION.md`'s field table and example config block.
+
+Tests:
+- `tests/test_watcher_debounce.py` (new) — AC1 (5 modifies collapse to one `index_file`/save/
+  graph.save/behaviour.save), AC3 (debounce_ms=0 synchronous passthrough; a custom window is
+  honored; `flush()` is a no-op with nothing pending and processes immediately when called
+  directly, e.g. from `stop_watching()`).
+- `tests/test_stale_cleanup.py` — `TestFileWatcherRemove._make_handler` now passes
+  `debounce_ms=0` so the existing per-event assertions keep testing synchronous behavior (AC4);
+  added `test_on_moved_removes_src_and_reindexes_dest` for the move case (AC2).
+- `tests/test_multilang_indexer.py` — `TestWatchdogCoverage._make_handler` likewise passes
+  `debounce_ms=0` (its tests assert `on_modified` calls `_reindex` synchronously via
+  `patch.object`).
+- Full suite: `venv/bin/python -m pytest tests/ -q` → 1217 passed, 5 skipped.
+
+Manual TEST_SUITE: both TC-102-1 and TC-102-2 executed live against
+`cognirepo_test_repo/medium/celery` with `cognirepo watch --ensure-running` — PASS (see
+TEST_SUITE.md for on-disk mtime/index evidence).
