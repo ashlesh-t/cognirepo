@@ -185,6 +185,7 @@ class TestFileWatcherRemove:
             graph=kg,
             behaviour=behaviour,
             session_id="test",
+            debounce_ms=0,
         )
         return handler, indexer, kg
 
@@ -226,6 +227,32 @@ class TestFileWatcherRemove:
         indexer.index_file = MagicMock(return_value=_make_file_record("auth_v2.py", "verify_token_v2"))
         handler.on_created(FileCreatedEvent(str(new_file)))
         indexer.index_file.assert_called_once()
+
+    def test_on_moved_removes_src_and_reindexes_dest(self, tmp_path):
+        """A git-mv style rename: on_moved() removes the src path and re-indexes dest path."""
+        from watchdog.events import FileMovedEvent
+
+        handler, indexer, kg = self._make_handler(tmp_path)
+
+        old_file = tmp_path / "auth.py"
+        new_file = tmp_path / "auth_v2.py"
+        old_file.write_text("def verify_token(): pass")
+        new_file.write_text("def verify_token_v2(): pass")
+
+        indexer.index_file = MagicMock(
+            side_effect=lambda rel_path, abs_path: indexer.index_data["files"].__setitem__(
+                rel_path, _make_file_record(rel_path, "verify_token_v2")
+            )
+        )
+        kg.nodes_for_file = MagicMock(return_value=[])
+        kg.remove_node_edges = MagicMock()
+        kg.remove_file_nodes = MagicMock()
+
+        handler.on_moved(FileMovedEvent(str(old_file), str(new_file)))
+
+        assert "auth.py" not in indexer.index_data["files"]
+        assert "auth_v2.py" in indexer.index_data["files"]
+        indexer.index_file.assert_called_once_with("auth_v2.py", str(new_file))
 
 
 # ── helpers (raw JSON I/O, bypass encryption) ─────────────────────────────────

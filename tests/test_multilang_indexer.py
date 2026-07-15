@@ -248,6 +248,7 @@ class TestWatchdogCoverage:
             graph=graph,
             behaviour=behaviour,
             session_id="test",
+            debounce_ms=0,
         )
 
     @pytest.mark.parametrize("ext", [".ts", ".tsx", ".go", ".rs", ".java", ".py"])
