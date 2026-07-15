@@ -71,3 +71,18 @@ Tests:
 Manual TEST_SUITE: both TC-102-1 and TC-102-2 executed live against
 `cognirepo_test_repo/medium/celery` with `cognirepo watch --ensure-running` — PASS (see
 TEST_SUITE.md for on-disk mtime/index evidence).
+
+### PR review — round 1 (unrelated CI failure)
+Reviewer flagged CI's `pip-audit` failing on `setuptools==81.0.0` (PYSEC-2026-3447, fixed in
+83.0.0) — a pre-existing vulnerable pin unrelated to this story's code changes, surfaced only
+because it's on the PR's CI run. Fixed:
+- `requirements.txt`: `setuptools` 81.0.0 → 83.0.0.
+- `.github/workflows/security.yml`'s "pyproject install" pip-audit job: explicitly upgrades
+  `setuptools>=83.0.0` before `pip install .`, since that job's base-image setuptools was never
+  otherwise upgraded (pyproject.toml's `requires = ["setuptools>=61.0"]` is a loose floor, not an
+  upgrade instruction).
+- Re-running `pip-audit -r requirements.txt` after the setuptools bump surfaced a second,
+  independently-disclosed CVE — `httplib2==0.31.2` (PYSEC-2026-3444, fixed in 0.32.0) — bumped to
+  0.32.0 so the CI gate passes cleanly rather than trading one red check for another.
+- Verified: `pip-audit -r requirements.txt` (with the 3 existing documented ignores) →
+  "No known vulnerabilities found, 1 ignored". Full suite re-run: 1217 passed, 5 skipped.
