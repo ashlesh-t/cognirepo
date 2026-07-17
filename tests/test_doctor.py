@@ -308,3 +308,29 @@ class TestDoctorVerbose:
         _run_doctor(capsys, monkeypatch, verbose=True)
         out = capsys.readouterr().out
         assert "Optional" in out or "cryptography" in out or "keyring" in out
+
+
+class TestDoctorGraphQuarantine:
+    """COGNIREPO-103 AC3: doctor lists quarantined graph.pkl.corrupt-* files."""
+
+    def test_quarantined_file_is_listed(self, capsys, monkeypatch):
+        from core.config.paths import get_path
+
+        graph_dir = get_path("graph")
+        os.makedirs(graph_dir, exist_ok=True)
+        quarantine_name = "graph.pkl.corrupt-1784120946"
+        with open(os.path.join(graph_dir, quarantine_name), "w", encoding="utf-8") as f:
+            f.write("corrupt")
+
+        code = _run_doctor(capsys, monkeypatch)
+        out = capsys.readouterr().out
+
+        assert quarantine_name in out
+        assert code >= 1  # warning-level, not a hard failure
+
+    def test_no_quarantine_files_no_warning(self, capsys, monkeypatch):
+        code = _run_doctor(capsys, monkeypatch)
+        out = capsys.readouterr().out
+
+        assert "corrupt-" not in out
+        assert code == 0

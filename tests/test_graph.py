@@ -88,6 +88,45 @@ class TestKnowledgeGraph:
         assert kg.G.number_of_nodes() == 1
 
 
+class TestKnowledgeGraphCorruptionQuarantine:
+    """COGNIREPO-103 AC2: a corrupt graph.pkl is quarantined, not silently overwritten."""
+
+    def test_corrupt_pickle_is_quarantined_on_load(self, tmp_path):
+        import glob
+        from data.graph.knowledge_graph import KnowledgeGraph, _graph_file
+
+        path = _graph_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(b"not a valid pickle stream")
+
+        kg = KnowledgeGraph()  # must not raise
+
+        assert kg.G.number_of_nodes() == 0  # started fresh
+        assert not os.path.exists(path)  # original corrupt file moved, not left in place
+        quarantined = glob.glob(path + ".corrupt-*")
+        assert len(quarantined) == 1
+
+    def test_server_starts_and_quarantine_warning_names_the_file(self, tmp_path):
+        import glob
+        import warnings
+        from data.graph.knowledge_graph import KnowledgeGraph, _graph_file
+
+        path = _graph_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(b"garbage")
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            KnowledgeGraph()
+
+        quarantined = glob.glob(path + ".corrupt-*")
+        assert len(quarantined) == 1
+        msgs = [str(w.message) for w in caught]
+        assert any(os.path.basename(quarantined[0]) in m for m in msgs)
+
+
 class TestGraphUtils:
     def test_extract_entities_snake_case(self):
         from data.graph.graph_utils import extract_entities_from_text

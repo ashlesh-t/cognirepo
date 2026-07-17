@@ -255,6 +255,53 @@ class TestFileWatcherRemove:
         indexer.index_file.assert_called_once_with("auth_v2.py", str(new_file))
 
 
+# ── COGNIREPO-103 AC1: orphan-node cleanup on re-index (modify path) ─────────
+
+class TestFileWatcherReindexOrphanCleanup:
+    def test_removed_function_leaves_no_orphan_node(self, tmp_path):
+        """Editing a file to remove a function must not leave a dangling graph node for it."""
+        from intelligence.indexer.file_watcher import RepoFileHandler
+        from data.graph.knowledge_graph import KnowledgeGraph, NodeType
+        import networkx as nx
+
+        kg = KnowledgeGraph.__new__(KnowledgeGraph)
+        kg.G = nx.DiGraph()
+        kg.G.add_node("mod.py", type=NodeType.FILE)
+        kg.G.add_node("mod.py::foo", type=NodeType.FUNCTION, file="mod.py")
+        kg.G.add_node("mod.py::bar", type=NodeType.FUNCTION, file="mod.py")
+
+        indexer = MagicMock()
+        indexer.faiss_index = None
+        indexer.index_data = {"files": {}, "reverse_index": {}}
+
+        def _reindex_side_effect(rel_path, abs_path):
+            # Simulate re-indexing after `bar` was deleted from the file — only
+            # the FILE node and the surviving `foo` symbol get re-added.
+            kg.G.add_node(rel_path, type=NodeType.FILE)
+            kg.G.add_node(f"{rel_path}::foo", type=NodeType.FUNCTION, file=rel_path)
+
+        indexer.index_file = MagicMock(side_effect=_reindex_side_effect)
+        behaviour = MagicMock()
+
+        handler = RepoFileHandler(
+            repo_root=str(tmp_path),
+            indexer=indexer,
+            graph=kg,
+            behaviour=behaviour,
+            session_id="test",
+            debounce_ms=0,
+        )
+
+        mod_file = tmp_path / "mod.py"
+        mod_file.write_text("def foo(): pass")
+
+        handler._reindex_mutate(str(mod_file))
+
+        assert "mod.py::bar" not in kg.G  # orphan removed
+        assert "mod.py::foo" in kg.G  # surviving symbol still present
+        assert "mod.py" in kg.G  # FILE node re-added
+
+
 # ── helpers (raw JSON I/O, bypass encryption) ─────────────────────────────────
 
 def _raw_save(tmp_path: Path, data: list) -> None:
