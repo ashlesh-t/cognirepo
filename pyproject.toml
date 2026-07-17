@@ -27,7 +27,7 @@ dependencies = [
     # Same model (all-MiniLM-L6-v2, dim=384) as before.
     "fastembed>=0.3.6",
     # MCP server
-    "mcp[cli]==1.27.0",
+    "mcp[cli]==1.28.1",
     # REST API + Server
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",
