@@ -61,7 +61,7 @@ kubernetes==35.0.0
 loguru==0.7.3
 markdown-it-py==4.0.0
 MarkupSafe==3.0.3
-mcp==1.27.0
+mcp==1.28.1
 mdurl==0.1.2
 mmh3==5.2.1
 more-itertools==10.8.0
