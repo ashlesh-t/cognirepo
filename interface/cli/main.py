@@ -863,6 +863,27 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     except Exception as _exc:  # pylint: disable=broad-except
         logger.debug("doctor: org CALLS_API check failed: %s", _exc)
 
+    # ── Check 21: quarantined knowledge-graph files ──────────────────────────
+    # A corrupt graph.pkl is quarantined as graph.pkl.corrupt-<unix_ts> by
+    # KnowledgeGraph._load() instead of being silently overwritten by the next
+    # save(). Surface any quarantine files here so they aren't missed.
+    try:
+        _graph_dir = get_path("graph")
+        if os.path.isdir(_graph_dir):
+            _quarantined = sorted(
+                f for f in os.listdir(_graph_dir) if ".corrupt-" in f
+            )
+            if _quarantined:
+                _warn(
+                    f"Knowledge graph — {len(_quarantined)} quarantined file(s): "
+                    f"{', '.join(_quarantined)}",
+                    "Run: cognirepo index-repo . (rebuilds graph.pkl from scratch)",
+                )
+            elif verbose:
+                _ok("Knowledge graph — no quarantined files")
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: graph quarantine check failed: %s", _exc)
+
     # ── Check N: AI tool MCP configs (informational, not failures) ───────────
     _tool_checks = [
         ("Claude Code", ".claude/settings.json", "mcpServers"),

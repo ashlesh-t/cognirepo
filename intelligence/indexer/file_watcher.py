@@ -190,9 +190,10 @@ class RepoFileHandler(FileSystemEventHandler):
     def _reindex_mutate(self, abs_path: str) -> bool:
         """Re-index one file's graph nodes + AST entry, without saving. Returns True on success."""
         rel_path = os.path.relpath(abs_path, self.repo_root)
-        stale_nodes = self.graph.nodes_for_file(rel_path)
-        for node_id in stale_nodes:
-            self.graph.remove_node_edges(node_id)
+        # remove_file_nodes (not remove_node_edges) so symbols deleted from the file
+        # don't leave orphaned nodes behind — index_file() below re-adds the FILE
+        # node and any surviving symbols.
+        self.graph.remove_file_nodes(rel_path)
         self.indexer.index_file(rel_path, abs_path)
         self.behaviour.record_file_edit(rel_path, self.session_id)
         return True

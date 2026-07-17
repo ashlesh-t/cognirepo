@@ -12,11 +12,14 @@ Node types  : FILE, FUNCTION, CLASS, CONCEPT, QUERY, SESSION, USER_ACTION
 Edge types  : RELATES_TO, DEFINED_IN, CALLED_BY, QUERIED_WITH, CO_OCCURS
 
 Persistence : pickle to .cognirepo/graph/graph.pkl
-              Falls back to an empty graph on load failure (version drift etc.)
+              On load failure (corruption, version drift, etc.) the unreadable file is
+              quarantined to graph.pkl.corrupt-<unix_ts> and an empty graph is started —
+              mirrors ast_indexer.py's ast_index.json .corrupt self-heal.
 """
 import os
 import pickle
 import sys
+import time
 import warnings
 from typing import Any
 
@@ -130,9 +133,19 @@ class KnowledgeGraph:
                     pass
             self.G = pickle.loads(raw)  # nosec B301
         except Exception as exc:  # pylint: disable=broad-except
+            quarantine_path = f"{_graph_file()}.corrupt-{int(time.time())}"
+            try:
+                os.replace(_graph_file(), quarantine_path)
+            except OSError:
+                quarantine_path = None
             warnings.warn(
                 f"KnowledgeGraph: could not load {_graph_file()} ({exc}). "
-                "Starting with an empty graph. Re-run `cognirepo index-repo` to rebuild.",
+                + (
+                    f"Quarantined the corrupt file to {quarantine_path}. "
+                    if quarantine_path
+                    else ""
+                )
+                + "Starting with an empty graph. Re-run `cognirepo index-repo` to rebuild.",
                 stacklevel=2,
             )
             self.G = nx.DiGraph()
