@@ -12,7 +12,7 @@ stories:
     pr: https://github.com/ashlesh-t/cognirepo/pull/36
     test_status: pass
   - id: COGNIREPO-103
-    status: in-review
+    status: signed-off
     branch: story/COGNIREPO-103
     pr: https://github.com/ashlesh-t/cognirepo/pull/37
     test_status: pass
