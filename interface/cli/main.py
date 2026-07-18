@@ -139,13 +139,15 @@ def _direct_search(query):
     return search_docs(query)
 
 
-def _cmd_verify_index() -> int:
+def _cmd_verify_index(verbose: bool = False) -> int:
     """
     Verify AST index integrity against manifest.json.
 
     Exit codes:
       0 — index is OK and matches the current git HEAD
-      1 — index is STALE (source changed since last index) or CORRUPTED
+      1 — index is STALE (source changed since last index) or CORRUPTED, or the
+          working tree has uncommitted edits to indexed sources newer than the
+          index (DIRTY)
       2 — manifest not found (run `cognirepo index-repo .` first)
     """
     # pylint: disable=import-outside-toplevel
@@ -240,6 +242,45 @@ def _cmd_verify_index() -> int:
                 issues += 1
         except Exception:  # pylint: disable=broad-except
             print(f"  OK             index at commit {manifest_commit[:12]} (no git to compare)")
+
+    # ── Working-tree staleness (uncommitted edits to indexed sources) ──────
+    if not corrupted:
+        try:
+            import subprocess as _sp  # pylint: disable=import-outside-toplevel
+            from datetime import datetime as _datetime  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.language_registry import is_supported  # pylint: disable=import-outside-toplevel
+
+            indexed_at_raw = manifest.get("indexed_at", "")
+            indexed_at_ts = _datetime.fromisoformat(indexed_at_raw).timestamp()
+
+            status_out = _sp.check_output(
+                ["git", "status", "--porcelain"], stderr=_sp.DEVNULL
+            ).decode()
+
+            dirty = []
+            for line in status_out.splitlines():
+                rel_path = line[3:].strip()
+                if " -> " in rel_path:  # renamed entries: "old -> new"
+                    rel_path = rel_path.split(" -> ", 1)[1]
+                if not is_supported(rel_path) or not os.path.exists(rel_path):
+                    continue
+                if os.path.getmtime(rel_path) > indexed_at_ts + 2:  # ±2s clock-skew tolerance
+                    dirty.append(rel_path)
+
+            if dirty:
+                print(
+                    f"  DIRTY          {len(dirty)} uncommitted indexed source file(s) "
+                    "newer than index"
+                )
+                shown = dirty if verbose else dirty[:5]
+                for p in shown:
+                    print(f"                   {p}")
+                if not verbose and len(dirty) > 5:
+                    print(f"                   ... and {len(dirty) - 5} more (use -v to list all)")
+                print("  → Re-run `cognirepo index-repo .` to update, or commit/stash the edits.")
+                issues += 1
+        except Exception:  # pylint: disable=broad-except
+            pass  # non-git directory or unparsable indexed_at — degrade gracefully, no DIRTY check
 
     return 1 if issues else 0
 
@@ -3171,9 +3212,15 @@ def _main():
     )
 
     # verify-index — check index integrity against manifest
-    sub.add_parser(
+    p_verify_index = sub.add_parser(
         "verify-index",
         help="Verify that the AST index is fresh and untampered (checks manifest.json)",
+    )
+    p_verify_index.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        default=False,
+        help="List all dirty indexed files, not just the first 5.",
     )
 
     # coverage — show per-directory symbol counts
@@ -3813,7 +3860,7 @@ def _main():
         return
 
     if args.command == "verify-index":
-        sys.exit(_cmd_verify_index())
+        sys.exit(_cmd_verify_index(verbose=args.verbose))
 
     if args.command == "summarize":
         from intelligence.indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
