@@ -168,6 +168,7 @@ class TestFramingHintsLifecycle:
         from unittest.mock import Mock
         from data.graph.knowledge_graph import KnowledgeGraph
         from data.graph.behaviour_tracker import BehaviourTracker
+        from interface.tools.store_memory import store_memory
 
         cog_dir = tmp_path / ".cognirepo" / "graph"
         cog_dir.mkdir(parents=True, exist_ok=True)
@@ -175,7 +176,10 @@ class TestFramingHintsLifecycle:
         g = KnowledgeGraph()
         # Inject store_fn directly (mechanical DI, COGNIREPO-105) rather than patching
         # the module-level store_memory import that behaviour_tracker.py no longer makes.
-        store_fn = Mock(return_value=None)
+        # spec=store_memory (COGNIREPO-D04): a loosely-mocked callable would accept any
+        # kwargs and mask a signature mismatch like the pre-fix `importance=0.8` call —
+        # this asserts the call site actually matches store_memory()'s real signature.
+        store_fn = Mock(spec=store_memory, return_value={"conflicts": []})
         bt = BehaviourTracker(g, store_fn=store_fn)
         # Force patterns to a known state without triggering auto-summarize
         for i in range(9):
@@ -189,6 +193,10 @@ class TestFramingHintsLifecycle:
         assert result is True
         assert bt.data["interaction_style"]["query_patterns"] == []
         store_fn.assert_called_once()
+        # COGNIREPO-D04 AC2: framing_hints/last_summarized are actually populated —
+        # not silently skipped by a swallowed exception from a bad store_fn call.
+        assert hint != ""
+        assert bt.data["interaction_style"].get("last_summarized")
 
 
 # ── Symbol weights / hot symbols ─────────────────────────────────────────────
