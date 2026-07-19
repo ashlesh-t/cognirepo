@@ -129,6 +129,116 @@ class TestLocalVectorDB:
         assert adapter.metadata[0]["behaviour_score"] == 0.5
 
 
+# ── COGNIREPO-D06: breaker_factory / cleanup_queue_factory DI ────────────────
+# core/vector_db/local_vector_db.py no longer lazily imports
+# data.memory.circuit_breaker / data.memory.cleanup_queue (core→data upward
+# import). Callers now inject these via optional factories — these tests
+# confirm save()/suppress_row() behave identically to the pre-refactor
+# behavior when the real factories are wired (exercised through
+# get_vector_adapter(), not just direct LocalVectorDB() construction).
+
+class TestLocalVectorDBBreakerAndCleanupDI:
+    def _make_adapter(self, tmp_path, monkeypatch, **kwargs):
+        monkeypatch.setattr(
+            "core.vector_db.local_vector_db._index_file",
+            lambda: str(tmp_path / "semantic.index"),
+        )
+        monkeypatch.setattr(
+            "core.vector_db.local_vector_db._meta_file",
+            lambda: str(tmp_path / "semantic_metadata.json"),
+        )
+        monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
+        from core.vector_db.local_vector_db import LocalVectorDB
+        return LocalVectorDB(dim=4, **kwargs)
+
+    def test_save_checks_breaker_and_records_success(self, tmp_path, monkeypatch):
+        breaker = MagicMock()
+        adapter = self._make_adapter(tmp_path, monkeypatch, breaker_factory=lambda: breaker)
+        adapter.save()
+        breaker.check.assert_called_once()
+        breaker.record_success.assert_called_once()
+
+    def test_save_still_blocks_when_breaker_tripped(self, tmp_path, monkeypatch):
+        """Circuit breaker still trips exactly as before the D06 refactor."""
+        from data.memory.circuit_breaker import CircuitOpenError
+
+        breaker = MagicMock()
+        breaker.check.side_effect = CircuitOpenError("tripped")
+        adapter = self._make_adapter(tmp_path, monkeypatch, breaker_factory=lambda: breaker)
+        with pytest.raises(CircuitOpenError):
+            adapter.save()
+        breaker.record_success.assert_not_called()
+
+    def test_save_without_breaker_factory_is_a_noop_skip(self, tmp_path, monkeypatch):
+        """No factory injected (e.g. a raw LocalVectorDB()) — save() still succeeds."""
+        adapter = self._make_adapter(tmp_path, monkeypatch)
+        adapter.save()  # must not raise
+
+    def test_suppress_row_enqueues_cleanup_when_factory_set(self, tmp_path, monkeypatch):
+        queue = MagicMock()
+        adapter = self._make_adapter(
+            tmp_path, monkeypatch,
+            breaker_factory=lambda: MagicMock(),
+            cleanup_queue_factory=lambda: queue,
+        )
+        monkeypatch.setattr(adapter, "save", MagicMock())
+        vec = np.array([0.1, 0.2, 0.3, 0.4], dtype="float32")
+        adapter.add(vec, "dup text", importance=0.5, source="memory")
+
+        ok = adapter.suppress_row(0, reason="auto_superseded", similarity=0.92)
+
+        assert ok is True
+        assert adapter.metadata[0]["suppressed"] is True
+        queue.push.assert_called_once()
+        _, kwargs = queue.push.call_args
+        assert kwargs["entry_id"] == 0
+        assert kwargs["store"] == "semantic"
+        assert kwargs["similarity_score"] == 0.92
+
+    def test_suppress_row_without_cleanup_factory_still_suppresses(self, tmp_path, monkeypatch):
+        """No cleanup_queue_factory injected — row is still suppressed, just not enqueued."""
+        adapter = self._make_adapter(tmp_path, monkeypatch)
+        monkeypatch.setattr(adapter, "save", MagicMock())
+        vec = np.array([0.1, 0.2, 0.3, 0.4], dtype="float32")
+        adapter.add(vec, "dup text", importance=0.5, source="memory")
+
+        ok = adapter.suppress_row(0)
+
+        assert ok is True
+        assert adapter.metadata[0]["suppressed"] is True
+
+    def test_get_vector_adapter_wires_real_breaker_and_cleanup_queue(self, tmp_path, monkeypatch):
+        """AC3: going through get_vector_adapter() with real factories behaves like before."""
+        from data.memory.circuit_breaker import get_breaker
+        from data.memory.cleanup_queue import CleanupQueue
+        from core.vector_db.local_vector_db import LocalVectorDB
+
+        monkeypatch.setattr(
+            "core.vector_db.factory._find_config",
+            lambda: None,
+        )
+        monkeypatch.setattr("core.vector_db.factory._read_backend", lambda: "faiss")
+        monkeypatch.setattr(
+            "core.vector_db.local_vector_db._index_file",
+            lambda: str(tmp_path / "semantic.index"),
+        )
+        monkeypatch.setattr(
+            "core.vector_db.local_vector_db._meta_file",
+            lambda: str(tmp_path / "semantic_metadata.json"),
+        )
+        monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
+
+        from core.vector_db.factory import get_vector_adapter
+        adapter = get_vector_adapter(
+            breaker_factory=get_breaker,
+            cleanup_queue_factory=CleanupQueue,
+        )
+        assert isinstance(adapter, LocalVectorDB)
+        assert adapter._breaker_factory is get_breaker
+        assert adapter._cleanup_queue_factory is CleanupQueue
+        adapter.save()  # exercises the real breaker end-to-end, must not raise
+
+
 # ── ChromaDBAdapter ───────────────────────────────────────────────────────────
 
 class TestChromaDBAdapter:

@@ -10,6 +10,8 @@ Module for managing and retrieving semantic memories using vector embeddings.
 import logging
 
 from core.vector_db.factory import get_vector_adapter
+from data.memory.circuit_breaker import get_breaker
+from data.memory.cleanup_queue import CleanupQueue
 from data.memory.embeddings import encode_with_timeout
 
 logger = logging.getLogger(__name__)
@@ -23,7 +25,11 @@ class SemanticMemory:
         """
         Initialize the vector database.
         """
-        self.db = get_vector_adapter(dim=384)
+        self.db = get_vector_adapter(
+            dim=384,
+            breaker_factory=get_breaker,
+            cleanup_queue_factory=CleanupQueue,
+        )
 
     def compute_importance(self, text):
         """
