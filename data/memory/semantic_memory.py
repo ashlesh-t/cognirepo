@@ -47,7 +47,7 @@ class SemanticMemory:
 
         return min(length_score + keyword_score, 1)
 
-    def store(self, text):
+    def store(self, text, source: str = "memory"):
         """
         Store a text memory with its calculated importance.
         """
@@ -55,7 +55,7 @@ class SemanticMemory:
 
         importance = self.compute_importance(text)
 
-        self.db.add(vector, text, importance)
+        self.db.add(vector, text, importance, source=source)
 
         logger.debug("Stored semantic memory with importance: %s", importance)
 
