@@ -165,21 +165,30 @@ class TestFramingHintsLifecycle:
         assert isinstance(hint, str)
 
     def test_summarize_interaction_style_direct_call(self, tmp_path, monkeypatch):
-        from unittest.mock import patch as _patch
-        bt = _make_bt(tmp_path, monkeypatch)
+        from unittest.mock import Mock
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from data.graph.behaviour_tracker import BehaviourTracker
+
+        cog_dir = tmp_path / ".cognirepo" / "graph"
+        cog_dir.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
+        g = KnowledgeGraph()
+        # Inject store_fn directly (mechanical DI, COGNIREPO-105) rather than patching
+        # the module-level store_memory import that behaviour_tracker.py no longer makes.
+        store_fn = Mock(return_value=None)
+        bt = BehaviourTracker(g, store_fn=store_fn)
         # Force patterns to a known state without triggering auto-summarize
         for i in range(9):
             bt.record_query(f"q{i}", f"how does routing work in this middleware {i}", [])
         # Manually add one more pattern to reach the threshold without auto-trigger
         bt.data["interaction_style"]["query_patterns"].append("how does routing work in this middleware 9")
-        # Manually call summarize with store_memory mocked to ensure it succeeds
-        with _patch("interface.tools.store_memory.store_memory", return_value=None):
-            result = bt.summarize_interaction_style()
+        result = bt.summarize_interaction_style()
         hint = bt.data["interaction_style"].get("framing_hints", "")
         assert isinstance(hint, str)
         # After successful summarization, patterns are cleared
         assert result is True
         assert bt.data["interaction_style"]["query_patterns"] == []
+        store_fn.assert_called_once()
 
 
 # ── Symbol weights / hot symbols ─────────────────────────────────────────────

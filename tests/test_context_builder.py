@@ -135,7 +135,7 @@ def _patch_build_sources(monkeypatch):
     )
     monkeypatch.setattr(
         "intelligence.orchestrator.context_builder._load_manifest",
-        lambda: [],
+        lambda manifest_writer=None: [],
     )
     monkeypatch.setattr(
         "intelligence.orchestrator.context_builder.extract_entities_from_text",

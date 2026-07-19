@@ -340,7 +340,7 @@ def _behaviour_record_query(query: str, result) -> None:
         from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         from core.vector_db.local_vector_db import LocalVectorDB as _LVDB  # pylint: disable=import-outside-toplevel
         g = _get_graph()
-        bt = BehaviourTracker(g, db_adapter=_LVDB())
+        bt = BehaviourTracker(g, db_adapter=_LVDB(), store_fn=_store_memory)
         symbols: list[str] = []
         if isinstance(result, list):
             symbols = [r.get("name", "") or r.get("file", "") for r in result if isinstance(r, dict)]
@@ -1338,11 +1338,15 @@ def find_symbol_path(
     Returns {path, hops, crosses_services, services_traversed} or {error}.
     """
     from data.graph.cross_service_path import find_symbol_path as _find_path  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.ast_indexer import ASTIndexer as _ASTIndexer  # pylint: disable=import-outside-toplevel
+    from intelligence.retrieval.cross_repo import CrossRepoRouter as _CrossRepoRouter  # pylint: disable=import-outside-toplevel
     return _find_path(
         from_symbol=from_symbol,
         to_symbol=to_symbol,
         from_repo=from_repo or None,
         to_repo=to_repo or None,
+        indexer_factory=_ASTIndexer,
+        router_factory=_CrossRepoRouter,
     )
 
 
@@ -1825,7 +1829,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
             try:
                 from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
                 g = _get_graph()
-                bt = BehaviourTracker(g)
+                bt = BehaviourTracker(g, store_fn=_store_memory)
                 sw = bt.data.get("symbol_weights", {})
                 top = sorted(sw.items(), key=lambda x: x[1].get("hit_count", 0), reverse=True)[:8]
                 hot_symbols = [sym for sym, _ in top]
@@ -1975,7 +1979,7 @@ def get_user_profile(repo_path: str | None = None) -> dict:
         if not _behaviour_enabled():
             return {"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
         from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
-        bt = BehaviourTracker(g)
+        bt = BehaviourTracker(g, store_fn=_store_memory)
     return bt.get_user_profile()
 
 
@@ -2014,7 +2018,7 @@ def record_user_preference(
         if not _behaviour_enabled():
             return {"recorded": False, "behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
         from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
-        bt = BehaviourTracker(g)
+        bt = BehaviourTracker(g, store_fn=_store_memory)
         if preference_key == "query_rewrite":
             return bt.record_query_rewrite(preference_value, context or preference_value)
         return bt.record_user_preference(preference_key, preference_value)
@@ -2039,7 +2043,7 @@ def get_error_patterns(min_count: int = 1, repo_path: str | None = None) -> list
         if not _behaviour_enabled():
             return [{"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}]
         from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
-        bt = BehaviourTracker(g)
+        bt = BehaviourTracker(g, store_fn=_store_memory)
     return bt.get_error_patterns(min_count=min_count)
 
 
@@ -2068,7 +2072,7 @@ def record_error(
         if not _behaviour_enabled():
             return {"recorded": False, "behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
         from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
-        bt = BehaviourTracker(g)
+        bt = BehaviourTracker(g, store_fn=_store_memory)
         bt.record_error(
             error_type=error_type,
             file_path=file_path,

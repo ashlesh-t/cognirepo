@@ -39,7 +39,8 @@ def _load_profile(project_dir: str) -> dict | None:
                 return None
         from data.graph.knowledge_graph import KnowledgeGraph
         from data.graph.behaviour_tracker import BehaviourTracker
-        bt = BehaviourTracker(KnowledgeGraph())
+        from interface.tools.store_memory import store_memory
+        bt = BehaviourTracker(KnowledgeGraph(), store_fn=store_memory)
         return bt.get_user_profile()
     except Exception:  # pylint: disable=broad-except
         return None
@@ -57,7 +58,8 @@ def _record_query(project_dir: str, query_text: str) -> None:
                 return
         from data.graph.knowledge_graph import KnowledgeGraph
         from data.graph.behaviour_tracker import BehaviourTracker
-        bt = BehaviourTracker(KnowledgeGraph())
+        from interface.tools.store_memory import store_memory
+        bt = BehaviourTracker(KnowledgeGraph(), store_fn=store_memory)
         bt.record_query(
             query_id=str(abs(hash(query_text + str(os.getpid())))),
             query_text=query_text,

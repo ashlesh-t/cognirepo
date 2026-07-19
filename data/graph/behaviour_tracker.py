@@ -17,13 +17,10 @@ import json
 import os
 import re
 from datetime import datetime, timezone, timedelta
-from typing import TYPE_CHECKING
+from typing import Any, Callable
 
 from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
 from data.graph.graph_utils import make_node_id
-
-if TYPE_CHECKING:
-    from intelligence.indexer.ast_indexer import ASTIndexer
 
 from core.config.paths import get_path
 
@@ -87,9 +84,20 @@ class BehaviourTracker:
     # Number of queries to buffer before auto-summarising interaction style
     _STYLE_SUMMARIZE_EVERY = 10
 
-    def __init__(self, graph: KnowledgeGraph, db_adapter=None) -> None:
+    def __init__(
+        self,
+        graph: KnowledgeGraph,
+        db_adapter=None,
+        *,
+        store_fn: Callable[..., Any] | None = None,
+    ) -> None:
         self.graph = graph
         self._db_adapter = db_adapter  # VectorStorageAdapter | None
+        # Interface-layer callback for persisting interaction-style summaries as
+        # semantic memory (interface.tools.store_memory.store_memory). Injected
+        # by callers to keep this module free of upward `data → interface`
+        # imports — see IMPROVEMENTS.md item 1 / COGNIREPO-105.
+        self._store_fn = store_fn
         self.data: dict = {
             "version": 2,
             "updated_at": _now(),
@@ -115,7 +123,6 @@ class BehaviourTracker:
                 "framing_hints": "",
             },
         }
-        self._observer = None
         self._load()
 
     # ── persistence ───────────────────────────────────────────────────────────
@@ -501,29 +508,6 @@ class BehaviourTracker:
         """Returns {symbol_id: hit_count} for all tracked symbols."""
         return {k: float(v["hit_count"]) for k, v in self.data["symbol_weights"].items()}
 
-    # ── file watcher lifecycle ────────────────────────────────────────────────
-
-    def start_watching(
-        self,
-        path: str,
-        session_id: str,
-        indexer: "ASTIndexer",
-    ) -> None:
-        """Start a watchdog Observer for the given repo path."""
-        from intelligence.indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
-
-        self._observer = create_watcher(path, indexer, self.graph, self, session_id)
-
-    def stop_watching(self) -> None:
-        """Stop and join the file watcher thread, flushing any pending debounced events first."""
-        if self._observer is not None:
-            handler = getattr(self._observer, "_cognirepo_handler", None)
-            if handler is not None:
-                handler.flush()
-            self._observer.stop()
-            self._observer.join()
-            self._observer = None
-
     # ── interaction style summariser ──────────────────────────────────────────
 
     def summarize_interaction_style(self) -> bool:
@@ -538,9 +522,10 @@ class BehaviourTracker:
         patterns: list = style.get("query_patterns", [])
         if len(patterns) < self._STYLE_SUMMARIZE_EVERY:
             return False
+        if self._store_fn is None:
+            return False  # no interface-layer store callback injected — best-effort no-op
 
         try:
-            from interface.tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
             # top 5 terms by frequency
             terms: dict = style.get("terminology", {})
             top_terms = sorted(terms, key=lambda k: terms[k], reverse=True)[:5]
@@ -555,7 +540,7 @@ class BehaviourTracker:
                 f"Common terminology: {', '.join(top_terms) if top_terms else 'N/A'}. "
                 f"Recent query examples: {' | '.join(q[:80] for q in sample_queries)}."
             )
-            store_memory(summary, source="interaction_style", importance=0.8)
+            self._store_fn(summary, source="interaction_style", importance=0.8)
             # Build framing hints snapshot for get_user_profile()
             hints_parts = []
             if depth != "unknown":
