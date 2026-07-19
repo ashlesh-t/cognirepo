@@ -42,6 +42,20 @@ from core.config.paths import get_path
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
+def _flush_and_stop_observer(obs) -> None:
+    """Flush any pending debounced watcher events, then stop/join the observer.
+
+    COGNIREPO-D05: create_watcher() sets observer._cognirepo_handler so any
+    file change still sitting in the debounce window at shutdown gets flushed
+    (indexed/graph-saved) instead of silently dropped.
+    """
+    handler = getattr(obs, "_cognirepo_handler", None)
+    if handler is not None:
+        handler.flush()
+    obs.stop()
+    obs.join()
+
+
 def _print_results(results):
     if isinstance(results, list):
         for r in results:
@@ -2152,8 +2166,7 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
         return create_watcher(abs_path, indexer, kg, behaviour, session_id)
 
     def _stop_observer(obs):
-        obs.stop()
-        obs.join()
+        _flush_and_stop_observer(obs)
 
     def _stop(signum, frame):  # pylint: disable=unused-argument
         raise KeyboardInterrupt
@@ -2202,8 +2215,7 @@ def _start_watcher_bg(path: str) -> None:
                 return create_watcher(abs_path, _indexer, _kg, _bt, _session_id)
 
             def _stop(obs):
-                obs.stop()
-                obs.join()
+                _flush_and_stop_observer(obs)
 
             run_watcher_with_crash_guard(
                 create_fn=_make,
