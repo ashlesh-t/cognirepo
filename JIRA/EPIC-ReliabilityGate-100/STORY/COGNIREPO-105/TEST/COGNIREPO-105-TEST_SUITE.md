@@ -66,6 +66,37 @@ TC-105-1: PASS
 Full suite green throughout: `venv/bin/python -m pytest tests/ -q` — 1249 passed, 5 skipped
 (baseline before this branch: 1227 passed, 5 skipped).
 
+### Live re-verification against the running cognirepo-ansible MCP server — parallel-call race found (COGNIREPO-D09)
+
+Pulled `story/COGNIREPO-105` (post D04–D08) into the venv actually backing the live
+`cognirepo-ansible` MCP server and reran TC-105-1 for real, not just against an isolated
+pytest fixture. First attempt fired the 10 warm-up `retrieve_memory` queries in a single
+**parallel** tool-call batch (the natural pattern for an agentic client) — `retrieve_memory
+('interaction style')` still came back empty of any `source="interaction_style"` hit, and
+`.cognirepo/graph/behaviour.json` showed `interaction_style.last_summarized: null` with
+`query_patterns` stuck at its 50-entry cap, even though `query_history` kept growing normally.
+
+Isolated the cause to `BehaviourTracker.save()` being a plain last-write-wins
+read-modify-write: `_behaviour_record_query()` constructs a fresh `BehaviourTracker` per MCP
+call, so concurrent calls each load the same on-disk snapshot and whichever `save()` runs last
+overwrites the others' updates outright — including a concurrent request's own successful
+`summarize_interaction_style()` reset. Filed and fixed as **COGNIREPO-D09** (see
+`JIRA/EPIC-ReliabilityGate-100/DEFECT/COGNIREPO-D09/`): `save()` now acquires a dedicated
+`behaviour.json`-scoped file lock and re-reads + additively merges concurrent on-disk state
+(`query_history` union, `symbol_weights` keep-max, `interaction_style` adopt-newer-summary)
+before writing — mirroring the existing `OrgGraph.save()` compose-on-save pattern.
+
+Re-ran the same 10-query batch **sequentially** post-fix (and added a unit-level equivalent —
+two independently-loaded `BehaviourTracker` instances racing on `save()`, see
+`tests/test_behaviour_tracker.py::TestBehaviourTrackerConcurrentSave`) — a genuine
+auto-generated `source="interaction_style"` memory was retrievable, `last_summarized` was set,
+and `query_patterns` reset correctly. Full suite: `venv/bin/python -m pytest tests/ -q` — 1253
+passed, 5 skipped.
+
+TC-105-1: **PASS** (parallel-call path was previously unverified and in fact broken —
+COGNIREPO-D09 closes that gap; the injected `store_fn` path itself, D04/D07/D08's target, was
+already correct).
+
 - Verdict (re-verified): **PASS**
 
 ## TC-105-2: Guard self-test

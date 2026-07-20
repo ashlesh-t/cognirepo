@@ -72,4 +72,9 @@ defects:
     branch: defect/COGNIREPO-D04_D05_D06
     pr: https://github.com/ashlesh-t/cognirepo/pull/40
     test_status: pass
+  - id: COGNIREPO-D09
+    status: in-review
+    branch: story/COGNIREPO-105
+    pr: https://github.com/ashlesh-t/cognirepo/pull/39
+    test_status: pass  # found + fixed live-re-verifying TC-105-1; see its TEST_SUITE.md
 epic_test_suite_status: not-run

@@ -26,6 +26,26 @@ from core.config.paths import get_path
 
 def _behaviour_file() -> str:
     return get_path("graph/behaviour.json")
+
+
+def _behaviour_lock():
+    """
+    Cross-process/cross-thread file lock scoped to behaviour.json only.
+
+    A dedicated lock (not core.config.lock.store_lock) avoids nesting with the
+    vector-DB write lock acquired downstream by store_fn() during
+    summarize_interaction_style() — see COGNIREPO-D09.
+    """
+    try:
+        from filelock import FileLock  # pylint: disable=import-outside-toplevel
+        return FileLock(_behaviour_file() + ".lock", timeout=15.0)
+    except ImportError as exc:
+        raise ImportError(
+            "filelock is required for concurrent write safety. "
+            "Run: pip install filelock"
+        ) from exc
+
+
 _USEFUL_WINDOW = timedelta(minutes=5)
 
 
@@ -124,13 +144,19 @@ class BehaviourTracker:
             },
         }
         self._load()
+        # Snapshot of interaction_style as of load time — used by save() to tell
+        # apart "this instance's own new queries" from "another writer already
+        # summarized and reset the ring buffer since we loaded" (COGNIREPO-D09).
+        style = self.data.get("interaction_style", {})
+        self._loaded_query_patterns: list = list(style.get("query_patterns", []))
+        self._loaded_last_summarized = style.get("last_summarized")
 
     # ── persistence ───────────────────────────────────────────────────────────
 
-    def _load(self) -> None:
-        path = _behaviour_file()
+    def _read_raw(self, path: str) -> dict | None:
+        """Read+decrypt behaviour.json from disk without touching self.data."""
         if not os.path.exists(path):
-            return
+            return None
         try:
             raw = open(path, "rb").read()
             try:
@@ -141,25 +167,84 @@ class BehaviourTracker:
                     raw = decrypt_bytes(raw, get_or_create_key(project_id))
             except Exception:  # pylint: disable=broad-except
                 pass  # encryption not configured — treat as plaintext
-            self.data = json.loads(raw)
+            return json.loads(raw)
         except (json.JSONDecodeError, OSError, ValueError):
-            pass  # start fresh
+            return None  # start fresh
+
+    def _load(self) -> None:
+        disk = self._read_raw(_behaviour_file())
+        if disk is not None:
+            self.data = disk
+
+    def _merge_from_disk(self, disk: dict) -> None:
+        """
+        Additively fold concurrently-written disk state into self.data right
+        before overwriting it, so a stale in-memory snapshot loaded by one
+        request never clobbers another concurrent request's update.
+
+        Fixes COGNIREPO-D09: parallel MCP tool calls each construct their own
+        BehaviourTracker (load → mutate → save) with no synchronization; the
+        last save() to run used to win outright, silently reverting whichever
+        other call had just cleared query_patterns/set last_summarized inside
+        summarize_interaction_style() — auto-summarization looked permanently
+        stuck (query_patterns capped at 50, last_summarized never set) even
+        though summarize_interaction_style() itself was fixed and working.
+        """
+        # query_history is keyed by a fresh uuid per query — union is always safe.
+        disk_history = disk.get("query_history", {})
+        history = self.data.setdefault("query_history", {})
+        for qid, entry in disk_history.items():
+            history.setdefault(qid, entry)
+
+        # symbol_weights: keep whichever side saw the higher hit_count per symbol.
+        disk_weights = disk.get("symbol_weights", {})
+        weights = self.data.setdefault("symbol_weights", {})
+        for sym, dv in disk_weights.items():
+            wv = weights.get(sym)
+            if wv is None or dv.get("hit_count", 0) > wv.get("hit_count", 0):
+                weights[sym] = dv
+
+        # interaction_style: if disk was summarized more recently than what this
+        # instance loaded, another writer already reset the ring buffer — adopt
+        # disk's post-summarize state and replay only the query text(s) *this*
+        # instance appended since its own load (so they aren't lost).
+        disk_style = disk.get("interaction_style", {})
+        my_style = self.data.setdefault("interaction_style", {})
+        disk_summarized = disk_style.get("last_summarized")
+        if disk_summarized and disk_summarized != self._loaded_last_summarized:
+            appended = my_style.get("query_patterns", [])[len(self._loaded_query_patterns):]
+            my_style["query_patterns"] = disk_style.get("query_patterns", []) + appended
+            my_style["terminology"] = disk_style.get("terminology", {})
+            my_style["question_types"] = disk_style.get("question_types", {})
+            my_style["preferred_depth"] = disk_style.get("preferred_depth", my_style.get("preferred_depth"))
+            my_style["framing_hints"] = disk_style.get("framing_hints", my_style.get("framing_hints"))
+            my_style["last_summarized"] = disk_summarized
 
     def save(self) -> None:
-        """Persist behaviour data; encrypts if encryption is configured."""
-        os.makedirs(os.path.dirname(_behaviour_file()), exist_ok=True)
-        self.data["updated_at"] = _now()
-        raw = json.dumps(self.data, indent=2).encode()
-        try:
-            from core.security.storage import get_storage_config  # pylint: disable=import-outside-toplevel
-            encrypt, project_id = get_storage_config()
-            if encrypt:
-                from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
-                raw = encrypt_bytes(raw, get_or_create_key(project_id))
-        except Exception:  # pylint: disable=broad-except
-            pass  # best-effort encryption
-        with open(_behaviour_file(), "wb") as f:
-            f.write(raw)
+        """Persist behaviour data; encrypts if encryption is configured.
+
+        Re-reads and merges concurrent on-disk state under a dedicated file
+        lock (see _merge_from_disk) so parallel MCP tool calls don't lose each
+        other's query_history/interaction_style updates — COGNIREPO-D09.
+        """
+        path = _behaviour_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with _behaviour_lock():
+            disk = self._read_raw(path)
+            if disk is not None:
+                self._merge_from_disk(disk)
+            self.data["updated_at"] = _now()
+            raw = json.dumps(self.data, indent=2).encode()
+            try:
+                from core.security.storage import get_storage_config  # pylint: disable=import-outside-toplevel
+                encrypt, project_id = get_storage_config()
+                if encrypt:
+                    from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+                    raw = encrypt_bytes(raw, get_or_create_key(project_id))
+            except Exception:  # pylint: disable=broad-except
+                pass  # best-effort encryption
+            with open(path, "wb") as f:
+                f.write(raw)
 
     # ── query tracking ────────────────────────────────────────────────────────
 

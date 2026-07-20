@@ -199,6 +199,81 @@ class TestFramingHintsLifecycle:
         assert bt.data["interaction_style"].get("last_summarized")
 
 
+# ── Concurrent save() race (COGNIREPO-D09) ───────────────────────────────────
+
+class TestBehaviourTrackerConcurrentSave:
+    def test_concurrent_instances_do_not_lose_query_history(self, tmp_path, monkeypatch):
+        """
+        Two independently-loaded BehaviourTracker instances (as happens when
+        parallel MCP tool calls each build their own instance in
+        _behaviour_record_query) must not clobber each other's query_history
+        on save() — a plain last-write-wins save() silently drops one side.
+        """
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from data.graph.behaviour_tracker import BehaviourTracker
+
+        cog_dir = tmp_path / ".cognirepo" / "graph"
+        cog_dir.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
+
+        bt_a = BehaviourTracker(KnowledgeGraph())
+        bt_a.record_query("qa", "how does routing work", [])
+
+        # bt_b loads before bt_a has saved — simulates two concurrent requests.
+        bt_b = BehaviourTracker(KnowledgeGraph())
+        bt_b.record_query("qb", "how does auth work", [])
+
+        bt_a.save()
+        bt_b.save()  # used to overwrite bt_a's qa entry entirely
+
+        bt_c = BehaviourTracker(KnowledgeGraph())
+        assert "qa" in bt_c.data["query_history"], "bt_b.save() clobbered bt_a's query_history"
+        assert "qb" in bt_c.data["query_history"]
+
+    def test_concurrent_summarize_reset_is_not_reverted(self, tmp_path, monkeypatch):
+        """
+        If one instance's save() has already recorded a fresh
+        last_summarized/cleared query_patterns, a second, stale in-memory
+        instance's later save() must adopt that reset instead of overwriting
+        it with its own pre-summarize (stale) buffer — the exact failure mode
+        observed live: query_patterns stuck at the 50-entry cap and
+        last_summarized permanently null despite summarize_interaction_style()
+        itself working correctly in isolation.
+        """
+        from unittest.mock import Mock
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from data.graph.behaviour_tracker import BehaviourTracker
+        from interface.tools.store_memory import store_memory
+
+        cog_dir = tmp_path / ".cognirepo" / "graph"
+        cog_dir.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
+
+        store_fn = Mock(spec=store_memory, return_value={"conflicts": []})
+
+        # bt_a and bt_b both load the same (empty) on-disk state concurrently.
+        bt_a = BehaviourTracker(KnowledgeGraph(), store_fn=store_fn)
+        bt_b = BehaviourTracker(KnowledgeGraph(), store_fn=store_fn)
+
+        for i in range(10):
+            bt_a.record_query(f"a{i}", f"how does routing work in this middleware {i}", [])
+        assert bt_a.data["interaction_style"]["last_summarized"]
+        bt_a.save()  # disk now has last_summarized set + empty query_patterns
+
+        # bt_b is still holding its stale pre-summarize snapshot (loaded before
+        # bt_a summarized) and appends one more query of its own.
+        bt_b.record_query("b0", "how does caching work", [])
+        bt_b.save()
+
+        bt_c = BehaviourTracker(KnowledgeGraph())
+        assert bt_c.data["interaction_style"]["last_summarized"], (
+            "bt_b.save() reverted bt_a's summarize reset — last_summarized lost"
+        )
+        # bt_b's own new query must still be present, just replayed onto the
+        # post-summarize buffer rather than lost.
+        assert any("caching" in q for q in bt_c.data["interaction_style"]["query_patterns"])
+
+
 # ── Symbol weights / hot symbols ─────────────────────────────────────────────
 
 class TestBehaviourSymbolWeights:
