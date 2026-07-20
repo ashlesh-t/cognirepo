@@ -70,3 +70,25 @@ small helper) before `obs.stop()`, mirroring the intended `stop_watching()` sequ
   replacement helper in `file_watcher.py` itself (e.g. `create_watcher()` returning a
   `(observer, stop_fn)` pair) rather than duplicating the flush-then-stop sequence at each
   call site.
+
+## Corrections found during implementation
+- **The initial fix (patching `_stop_observer`/`_stop` to call `_flush_and_stop_observer`) was
+  not sufficient on its own.** The backstory above already named
+  `run_watcher_with_crash_guard()` (`interface/cli/daemon.py`) as never calling `flush()`, but
+  the first pass assumed patching the `stop_fn` closures was enough without checking that
+  `run_watcher_with_crash_guard()` actually *calls* `stop_fn` on every exit path. It doesn't:
+  `except KeyboardInterrupt:` (the branch SIGTERM/Ctrl+C actually take, since the installed
+  signal handler raises `KeyboardInterrupt`) printed "stopped by user" and broke out of the loop
+  without ever calling `stop_fn(observer)` — only the crash-recovery `except Exception:` branch
+  did. This was caught by a genuine live TC-D05-1 walkthrough (real `cognirepo watch`, real
+  edit, real `SIGTERM`, direct inspection of `ast_index.json`'s per-file `sha256`) that
+  reproduced the exact data-loss bug even with the first patch applied. Fixed by also calling
+  `stop_fn(observer)` in the `KeyboardInterrupt` branch, mirroring the crash branch's
+  try/except-around-`stop_fn`. Re-ran the live walkthrough after this correction: PASS.
+- **`cognirepo verify-index` is not a valid check for "was this edit flushed."** Its DIRTY
+  detection compares source-file mtime against `manifest.json`'s `indexed_at`, which is only
+  updated by full `index-repo` runs — not by the watcher's incremental `flush()` — so it
+  reports DIRTY regardless of whether the watcher actually flushed the edit in time. TC-D05-1's
+  own "then run cognirepo verify-index" step needs to be read as "then confirm the AST index
+  reflects the edit" (e.g. via `ast_index.json`'s `sha256`/symbol list), not literally
+  `verify-index`'s exit code.
