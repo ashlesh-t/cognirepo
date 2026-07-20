@@ -100,13 +100,15 @@ class DocIngester:
 
         try:
             from data.memory.embeddings import get_model          # pylint: disable=import-outside-toplevel
+            from data.memory.circuit_breaker import get_breaker    # pylint: disable=import-outside-toplevel
+            from data.memory.cleanup_queue import CleanupQueue     # pylint: disable=import-outside-toplevel
             from core.vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
         except ImportError as exc:
             log.warning("DocIngester: cannot import dependencies (%s) — skipping", exc)
             return {"chunks": 0, "files": 0}
 
         model = get_model()
-        db = get_vector_adapter()
+        db = get_vector_adapter(breaker_factory=get_breaker, cleanup_queue_factory=CleanupQueue)
 
         # Cap total chunks to avoid OOM on very large repos
         if len(chunks) > _MAX_TOTAL_CHUNKS:

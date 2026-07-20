@@ -68,8 +68,18 @@ def _heal_crashed_chroma(path: Path) -> None:
     quarantine_chroma_store(path)
 
 
-def get_vector_adapter(dim: int = 384) -> VectorStorageAdapter:
-    """Return FAISS or ChromaDB adapter based on config.json storage.vector_backend."""
+def get_vector_adapter(
+    dim: int = 384,
+    *,
+    breaker_factory=None,
+    cleanup_queue_factory=None,
+) -> VectorStorageAdapter:
+    """Return FAISS or ChromaDB adapter based on config.json storage.vector_backend.
+
+    breaker_factory / cleanup_queue_factory — forwarded to LocalVectorDB only
+    (the faiss backend); ChromaDBAdapter has no circuit-breaker/cleanup-queue
+    integration. See COGNIREPO-D06.
+    """
     backend = _read_backend()
     if backend == "chroma":
         try:
@@ -96,7 +106,11 @@ def get_vector_adapter(dim: int = 384) -> VectorStorageAdapter:
             )
     _log.debug("vector backend: faiss")
     from core.vector_db.local_vector_db import LocalVectorDB  # pylint: disable=import-outside-toplevel
-    return LocalVectorDB(dim=dim)
+    return LocalVectorDB(
+        dim=dim,
+        breaker_factory=breaker_factory,
+        cleanup_queue_factory=cleanup_queue_factory,
+    )
 
 
 def _read_backend() -> str:

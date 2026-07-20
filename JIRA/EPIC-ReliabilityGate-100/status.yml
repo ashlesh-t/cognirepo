@@ -25,7 +25,7 @@ stories:
     status: in-review
     branch: story/COGNIREPO-105
     pr: https://github.com/ashlesh-t/cognirepo/pull/39
-    test_status: pass
+    test_status: pass  # TC-105-1 originally FAILed; re-verified pass via defect/COGNIREPO-D04_D05_D06 (see its TEST_SUITE.md)
   - id: COGNIREPO-106
     status: not-started
     branch: story/COGNIREPO-106
@@ -48,18 +48,28 @@ defects:
     pr: https://github.com/ashlesh-t/cognirepo/pull/33
     test_status: pass
   - id: COGNIREPO-D04
-    status: not-started
-    branch: defect/COGNIREPO-D04
-    pr: null
-    test_status: not-run
+    status: in-review
+    branch: defect/COGNIREPO-D04_D05_D06
+    pr: https://github.com/ashlesh-t/cognirepo/pull/40
+    test_status: pass
   - id: COGNIREPO-D05
-    status: not-started
-    branch: defect/COGNIREPO-D05
-    pr: null
-    test_status: not-run
+    status: in-review
+    branch: defect/COGNIREPO-D04_D05_D06
+    pr: https://github.com/ashlesh-t/cognirepo/pull/40
+    test_status: pass
   - id: COGNIREPO-D06
-    status: not-started
-    branch: defect/COGNIREPO-D06
-    pr: null
-    test_status: not-run
+    status: in-review
+    branch: defect/COGNIREPO-D04_D05_D06
+    pr: https://github.com/ashlesh-t/cognirepo/pull/40
+    test_status: pass
+  - id: COGNIREPO-D07
+    status: in-review
+    branch: defect/COGNIREPO-D04_D05_D06
+    pr: https://github.com/ashlesh-t/cognirepo/pull/40
+    test_status: pass
+  - id: COGNIREPO-D08
+    status: in-review
+    branch: defect/COGNIREPO-D04_D05_D06
+    pr: https://github.com/ashlesh-t/cognirepo/pull/40
+    test_status: pass
 epic_test_suite_status: not-run

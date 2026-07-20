@@ -179,7 +179,11 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
             results.append({
                 "text": r.get("text", ""),
                 "importance": r.get("importance", 0.5),
-                "source": "semantic",
+                # COGNIREPO-D07: preserve the real stored metadata source
+                # (e.g. "memory", "interaction_style", "symbol", "init_doc")
+                # instead of the previous hardcoded "semantic" label, which
+                # discarded it for every vector-backend hit.
+                "source": r.get("source", "memory"),
                 "vector_score": max(0.0, 1.0 - dist / 2.0),
                 "_id": r.get("text", ""),  # dedup key
             })

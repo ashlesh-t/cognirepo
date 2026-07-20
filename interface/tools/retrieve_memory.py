@@ -100,7 +100,12 @@ def _structure_results(results: list) -> dict:
         score = r.get("final_score", r.get("importance", 0.0))
         source = r.get("source", "")
 
-        if source == "ast" or (source == "semantic" and " in " in text and ":" in text):
+        # COGNIREPO-D07: hybrid.py's vector retrieval now reports the real
+        # stored source (previously hardcoded "semantic" for every vector
+        # hit, which this used to approximate via a text-shape heuristic).
+        # AST/code entries are labeled "ast" (graph reverse-index) or
+        # "symbol" (embedded AST symbols in the semantic vector store).
+        if source in ("ast", "symbol"):
             # AST hit: extract symbol + file:line
             symbol = ""
             file_path = ""

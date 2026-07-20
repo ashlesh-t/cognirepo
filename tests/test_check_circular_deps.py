@@ -101,7 +101,8 @@ class TestCheckCircularDeps:
     def test_head_import_graph_has_only_known_deferred_violations(self):
         """Guards against silent regression of build_import_graph.py's INTERNAL_PACKAGES
         (COGNIREPO-105 fixed a stale set that made this check always trivially pass).
-        The only allowed violations at HEAD are the two deferred to COGNIREPO-D06."""
+        COGNIREPO-D06 resolved the two core/vector_db/local_vector_db.py core→data
+        violations that were deferred here — HEAD must now have zero layer violations."""
         mod = _load_check_module()
         graph_path = REPO_ROOT / "restructure" / "import-graph.json"
         if not graph_path.exists():
@@ -126,11 +127,4 @@ class TestCheckCircularDeps:
                     continue
                 violations.append(f"{filepath}:{imp.get('lineno')}")
 
-        known_deferred = {
-            "core/vector_db/local_vector_db.py:167",
-            "core/vector_db/local_vector_db.py:265",
-        }
-        assert set(violations) == known_deferred, (
-            f"Unexpected layer violations (not in COGNIREPO-D06's known set): "
-            f"{set(violations) - known_deferred}"
-        )
+        assert not violations, f"Unexpected layer violations at HEAD: {violations}"

@@ -514,7 +514,8 @@ class BehaviourTracker:
         """
         When query_patterns buffer reaches _STYLE_SUMMARIZE_EVERY entries,
         build a natural-language summary and store it as a semantic memory
-        with importance=0.8 and source="interaction_style".
+        with source="interaction_style" (importance is computed internally by
+        store_memory() via SemanticMemory.compute_importance()).
 
         Returns True if a memory was stored, False otherwise.
         """
@@ -540,7 +541,7 @@ class BehaviourTracker:
                 f"Common terminology: {', '.join(top_terms) if top_terms else 'N/A'}. "
                 f"Recent query examples: {' | '.join(q[:80] for q in sample_queries)}."
             )
-            self._store_fn(summary, source="interaction_style", importance=0.8)
+            self._store_fn(summary, source="interaction_style")
             # Build framing hints snapshot for get_user_profile()
             hints_parts = []
             if depth != "unknown":
