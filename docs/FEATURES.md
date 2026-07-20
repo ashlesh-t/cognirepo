@@ -301,7 +301,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | JWT authentication (REST) | ✅ | `api/auth.py` |
 | Bcrypt password hashing | ✅ | Used for API password verification |
 | MIT license headers | ✅ | All source files have SPDX headers |
-| CI security gates | ✅ | Bandit (HIGH), TruffleHog (--only-verified), Trivy (CRITICAL/HIGH), Snyk (CRITICAL) |
+| CI security gates | ✅ | Bandit (HIGH), TruffleHog (--only-verified), Trivy (CRITICAL/HIGH), pip-audit |
 | Secret scanning in CI | ✅ | TruffleHog on full git history |
 
 ---
@@ -325,6 +325,11 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ## 15. Test Coverage
 
+89 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+for the current test-function count). This table is representative, not exhaustive — see
+`tests/` for the full list. The 89-file count is pinned against `tests/test_docs_sync.py`,
+which fails if this number drifts from the real glob count.
+
 | Test File | What it Covers |
 |-----------|---------------|
 | `test_memory.py` | FAISS store/retrieve, SemanticMemory |
@@ -335,15 +340,16 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | `test_cursor_vscode.py` | MCP config generation, idempotency |
 | `test_proto_freshness.py` | .proto committed, pb2 importable |
 | `test_api_cache.py` | Redis cache round-trip, graceful degradation |
-| `test_tool_first_workflow.py` | CLAUDE.md + GEMINI/COGNIREPO.md content |
 | `test_doctor_expanded.py` | Doctor health checks |
 | `test_ci_security.py` | CI security gate configuration |
 | `test_ftx.py` | Init flow idempotency, non-interactive, ready summary |
-| `test_documentation.py` | All docs exist with required content |
+| `test_docs_sync.py` | Classifier thresholds, edge type names, and this table's count match code |
 | `test_classifier.py` | Tier classification heuristics |
 | `test_hybrid_retrieval.py` | Signal merge, weights, cache |
 | `test_context_builder.py` | Context bundle construction |
 | `test_indexer_multilang.py` | Multi-language AST indexing |
+| `test_behaviour_tracker.py` | Query tracking, interaction-style summarization, concurrent-save merge |
+| `test_check_circular_deps.py` | Layer-invariant import-graph checker |
 
 ---
 
@@ -359,8 +365,8 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | CogniRepo Cloud sync | 🔲 | All storage is strictly local |
 | Fine-tuned embeddings | 🔲 | Uses `all-MiniLM-L6-v2` (general purpose); no project-specific fine-tuning |
 | Plugin system | 🔲 | No plugin API; extend by forking |
-| Automatic CALLS_API edge detection | 🔲 | CogniRepo detects **IMPORTS edges only** (pyproject.toml, package.json, go.mod, Cargo.toml, requirements.txt). CALLS_API and SHARES_SCHEMA must be declared manually via `link_repos()` MCP tool or `cognirepo org link-repos`. |
-| Automatic SHARES_SCHEMA detection | 🔲 | Same as above — manual declaration required. |
+| Automatic CALLS_API edge detection | ⚠️ | Auto-detected by `intelligence/indexer/http_call_scanner.py`, which scans outbound HTTP client calls (requests/httpx/aiohttp, fetch/axios, Go `net/http`) and matches URLs against registered sibling-service endpoints. Run `cognirepo org rewire` after indexing each child to build the edges; `cognirepo doctor` warns if children are registered but no CALLS_API edges exist yet. Manual declaration via `link_repos()` / `cognirepo org link-repos` still works as a fallback for calls the scanner's patterns miss. |
+| Automatic SHARES_SCHEMA detection | 🔲 | Not implemented — must be declared manually via `link_repos()` MCP tool or `cognirepo org link-repos`. |
 
 ---
 
@@ -372,11 +378,13 @@ Register a microservice and its relationships:
 # Register child repo with metadata
 cognirepo init --parent-repo /path/to/monorepo --service-type rest_api --port 8080 --api-base-url /api/v1
 
-# Declare edges manually (CALLS_API/SHARES_SCHEMA are never auto-detected)
+# CALLS_API is auto-detected — run after indexing each child:
+cognirepo org rewire
+# SHARES_SCHEMA has no scanner yet — declare manually:
 # Via MCP tool:
-link_repos(src="/path/to/api", dst="/path/to/auth", relationship="calls_api")
+link_repos(src="/path/to/api", dst="/path/to/auth", relationship="shares_schema")
 # Via CLI:
-cognirepo org link-repos /path/to/api /path/to/auth --type CALLS_API
+cognirepo org link-repos /path/to/api /path/to/auth --type SHARES_SCHEMA
 ```
 
 **Edge type auto-detection table:**
@@ -384,7 +392,7 @@ cognirepo org link-repos /path/to/api /path/to/auth --type CALLS_API
 | Edge Type | Auto-detected? | How |
 |-----------|---------------|-----|
 | `IMPORTS` | ✅ Yes | Scans pyproject.toml, package.json, go.mod, Cargo.toml, requirements.txt |
-| `CALLS_API` | ❌ No | Must call `link_repos()` manually |
+| `CALLS_API` | ⚠️ Partial | `http_call_scanner.py` matches outbound HTTP calls to sibling endpoints via `cognirepo org rewire`; `link_repos()` remains a manual fallback for calls it misses |
 | `SHARES_SCHEMA` | ❌ No | Must call `link_repos()` manually |
 | `CHILD_OF` | ✅ Yes | Set via `cognirepo init --parent-repo` |
 | `DISCOVERED` | ✅ Yes | Added by AI agents dynamically via `link_repos()` |

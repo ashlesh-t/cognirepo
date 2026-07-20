@@ -27,10 +27,10 @@ stories:
     pr: https://github.com/ashlesh-t/cognirepo/pull/39
     test_status: pass  # TC-105-1 originally FAILed; re-verified pass via defect/COGNIREPO-D04_D05_D06 + COGNIREPO-D09 (see its TEST_SUITE.md). Merged to development.
   - id: COGNIREPO-106
-    status: not-started
+    status: in-review
     branch: story/COGNIREPO-106
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/41
+    test_status: pass
 defects:
   - id: COGNIREPO-D01
     status: signed-off

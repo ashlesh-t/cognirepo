@@ -23,6 +23,17 @@ intelligence.indexer.docs_index; add a CHANGELOG "Removed" entry). Extend
 tests/test_documentation.py to pin FEATURES §15's count to the tests/ glob so it can't rot
 again.
 
+**Correction (found during Analyze, 2026-07-21):** `tests/test_documentation.py` no longer
+exists — it was deliberately deleted in commit `f17d467` ("prune 76 theatre tests... zero
+behavioral signal") along with `test_tool_first_workflow.py`, both of which FEATURES.md §15
+still lists as if current (more drift than the ticket's own audit caught). Recreating that
+file to satisfy this AC would reverse a reasoned prior decision. The count-pin assertion is
+added to `tests/test_docs_sync.py` instead (the still-live, behavioral doc-sync test file),
+and §15's table is corrected to drop the two dead filenames and stop claiming to be
+exhaustive. Also found live: `docs/MCP_TOOLS.md`'s `org_wide_search` return type
+(`list`→`dict`) and `retrieve_memory`'s signature missing `include_org`/`repo_path` — folded
+into the "spot-fix defaults" bullet.
+
 ## Acceptance criteria
 1. Each bullet above corrected; grep proofs in the PR (e.g. no "v0.3.0" under Future Plans, no
    Snyk in SECURITY.md gate table, shim file absent).

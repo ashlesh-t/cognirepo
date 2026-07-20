@@ -201,7 +201,6 @@ Before submitting a pull request:
 
 | Secret | Description |
 |--------|-------------|
-| `SNYK_TOKEN` | Snyk dependency scanning |
 | `COGNIREPO_JWT_SECRET` | JWT signing secret for API tests |
 | `COGNIREPO_PASSWORD_HASH` | Bcrypt password hash for API tests |
 

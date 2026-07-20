@@ -8,6 +8,12 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Removed
+- **`interface.cli.docs_index` backward-compat shim** — deleted. It re-exported
+  `intelligence.indexer.docs_index` and had warned `DeprecationWarning: ... Removed in v2.0`
+  since the v2.0.0 restructure; no in-repo code imported it anymore. Update any external
+  `from interface.cli.docs_index import ...` to `from intelligence.indexer.docs_index import ...`.
+
 ---
 
 ## [2.0.0] — 2026-07-02

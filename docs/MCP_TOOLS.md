@@ -105,9 +105,11 @@ Return the local knowledge graph neighbourhood around an entity.
 
 ## retrieve_memory
 
-**Signature:** `retrieve_memory(query: str, top_k: int = 5) → list[dict]`
+**Signature:** `retrieve_memory(query: str, top_k: int = 5, include_org: bool = False, repo_path: str | None = None) → list[dict]`
 
-Semantic similarity search over stored memories.
+Semantic similarity search over stored memories. `include_org=True` also queries sibling
+repositories in the same organization. `repo_path` targets a repository other than the
+server's configured project directory.
 
 **Input:**
 ```json
@@ -352,7 +354,7 @@ Returns org/project membership and sibling repos for the current repository.
 
 ## org_wide_search *(replaces deprecated `org_search`)*
 
-**Signature:** `org_wide_search(query: str, top_k: int = 5) → list`
+**Signature:** `org_wide_search(query: str, top_k: int = 5) → dict`
 
 Search memories across ALL repositories in the organization. Prefer `cross_repo_search(scope="project")` for project-scoped queries.
 
