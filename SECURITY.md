@@ -115,7 +115,7 @@ CogniRepo's CI pipeline runs four automated security tools on every push:
 | Tool | What it checks |
 |------|---------------|
 | **Bandit** | Python SAST — HIGH and CRITICAL severity only |
-| **Snyk** | Dependency vulnerabilities |
+| **pip-audit** | Dependency vulnerabilities (pyproject install + requirements.txt pins) |
 | **Trivy** | Container image and filesystem scanning |
 | **TruffleHog** | Secrets accidentally committed to git history |
 
