@@ -42,6 +42,20 @@ from core.config.paths import get_path
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 
+def _flush_and_stop_observer(obs) -> None:
+    """Flush any pending debounced watcher events, then stop/join the observer.
+
+    COGNIREPO-D05: create_watcher() sets observer._cognirepo_handler so any
+    file change still sitting in the debounce window at shutdown gets flushed
+    (indexed/graph-saved) instead of silently dropped.
+    """
+    handler = getattr(obs, "_cognirepo_handler", None)
+    if handler is not None:
+        handler.flush()
+    obs.stop()
+    obs.join()
+
+
 def _print_results(results):
     if isinstance(results, list):
         for r in results:
@@ -1013,10 +1027,11 @@ def _cmd_status() -> None:
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         from intelligence.retrieval.hybrid import _load_weights  # pylint: disable=import-outside-toplevel
+        from interface.tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
 
         weights = _load_weights()
         kg = KnowledgeGraph()
-        bt = BehaviourTracker(kg)
+        bt = BehaviourTracker(kg, store_fn=store_memory)
 
         g_nodes = kg.G.number_of_nodes()
         g_edges = kg.G.number_of_edges()
@@ -1393,8 +1408,9 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
             try:
                 from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
                 from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+                from interface.tools.bg_progress import TaskProgress  # pylint: disable=import-outside-toplevel
                 _kg = KnowledgeGraph()
-                _idx = ASTIndexer(graph=_kg)
+                _idx = ASTIndexer(graph=_kg, progress_factory=TaskProgress)
                 _idx.index_repo(parent_path)
                 print("  ✓  Re-index complete.")
 
@@ -1646,7 +1662,11 @@ def _cmd_ask_local(query: str, verbose: bool = False, top_k: int = 5) -> None:
 
     # Build a minimal context bundle (no episode retrieval — local only)
     try:
-        bundle = build_context(query, top_k=top_k, episode_limit=0, tier="STANDARD")
+        from interface.server.mcp_server import _write_manifest  # pylint: disable=import-outside-toplevel
+        bundle = build_context(
+            query, top_k=top_k, episode_limit=0, tier="STANDARD",
+            manifest_writer=_write_manifest,
+        )
     except Exception:  # pylint: disable=broad-except
         bundle = None
 
@@ -1856,8 +1876,9 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
         sys.exit(1)
     from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
     from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+    from interface.tools.bg_progress import TaskProgress  # pylint: disable=import-outside-toplevel
     kg = KnowledgeGraph()
-    indexer = ASTIndexer(graph=kg)
+    indexer = ASTIndexer(graph=kg, progress_factory=TaskProgress)
 
     rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     t0 = time.time()
@@ -1887,7 +1908,10 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
     if embed:
         try:
             from intelligence.indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
-            _engine = SummarizationEngine()
+            from interface.tools.bg_progress import TaskProgress, launch_progress_ui  # pylint: disable=import-outside-toplevel
+            _engine = SummarizationEngine(
+                progress_factory=TaskProgress, launch_progress_ui_fn=launch_progress_ui,
+            )
             _sum_result = _engine.run_full_summarization()
             _n_sum = len(_sum_result.get("files", {}))
             if _n_sum > 0:
@@ -2091,6 +2115,7 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
     import os  # pylint: disable=import-outside-toplevel
     from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
     from intelligence.indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
+    from interface.tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
 
     abs_path = os.path.abspath(path)
 
@@ -2129,7 +2154,7 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
             return
         # child (grandchild) continues below
 
-    behaviour = BehaviourTracker(graph=kg)
+    behaviour = BehaviourTracker(graph=kg, store_fn=store_memory)
 
     # ── TASK-008: Crash-recovery loop ─────────────────────────────────────────
     from interface.cli.daemon import run_watcher_with_crash_guard  # pylint: disable=import-outside-toplevel
@@ -2141,8 +2166,7 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
         return create_watcher(abs_path, indexer, kg, behaviour, session_id)
 
     def _stop_observer(obs):
-        obs.stop()
-        obs.join()
+        _flush_and_stop_observer(obs)
 
     def _stop(signum, frame):  # pylint: disable=unused-argument
         raise KeyboardInterrupt
@@ -2191,8 +2215,7 @@ def _start_watcher_bg(path: str) -> None:
                 return create_watcher(abs_path, _indexer, _kg, _bt, _session_id)
 
             def _stop(obs):
-                obs.stop()
-                obs.join()
+                _flush_and_stop_observer(obs)
 
             run_watcher_with_crash_guard(
                 create_fn=_make,
@@ -3864,7 +3887,10 @@ def _main():
 
     if args.command == "summarize":
         from intelligence.indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
-        engine = SummarizationEngine()
+        from interface.tools.bg_progress import TaskProgress, launch_progress_ui  # pylint: disable=import-outside-toplevel
+        engine = SummarizationEngine(
+            progress_factory=TaskProgress, launch_progress_ui_fn=launch_progress_ui,
+        )
         scope = getattr(args, "scope", None)
         embed_only = getattr(args, "embed_only", False)
         if embed_only:

@@ -25,11 +25,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 
 INTERNAL_PACKAGES = {
-    "config", "security", "vector_db", "_bm25",
-    "memory", "graph",
-    "indexer", "retrieval", "orchestrator",
-    "tools", "server", "adapters", "cli",
-    "cron",
+    # Post-2.0.0 top-level package roots (see IMPROVEMENTS.md item 3 for the
+    # old flat-layout names this replaced — those no longer exist as import
+    # roots at HEAD, so matching on them here always missed every real
+    # import and silently produced an empty graph. Fixed under COGNIREPO-105.)
+    "core", "data", "intelligence", "interface", "ops",
     "cognirepo",
 }
 

@@ -22,6 +22,7 @@ import os
 import logging
 from collections import defaultdict
 from pathlib import Path
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -245,8 +246,19 @@ def _build_repo_summary(repo_name: str, dir_summaries: list[dict], file_summarie
 
 
 class SummarizationEngine:
-    def __init__(self, project_root: str = "."):
+    def __init__(
+        self,
+        project_root: str = ".",
+        *,
+        progress_factory: Callable[[str, str, int], Any] | None = None,
+        launch_progress_ui_fn: Callable[[], None] | None = None,
+    ):
         self.project_root = os.path.abspath(project_root)
+        # Interface-layer callbacks (interface.tools.bg_progress.TaskProgress /
+        # launch_progress_ui) injected by callers to keep this module free of
+        # upward `intelligence → interface` imports — see COGNIREPO-105.
+        self._progress_factory = progress_factory
+        self._launch_progress_ui_fn = launch_progress_ui_fn
 
     def summarize_file(
         self,
@@ -392,8 +404,8 @@ class SummarizationEngine:
                 pass
             # edge: launch progress window (failure never blocks summarization)
             try:
-                from interface.tools.bg_progress import launch_progress_ui  # pylint: disable=import-outside-toplevel
-                launch_progress_ui()
+                if self._launch_progress_ui_fn is not None:
+                    self._launch_progress_ui_fn()
             except Exception:  # pylint: disable=broad-except
                 pass
         if _do_embed:
@@ -446,10 +458,10 @@ class SummarizationEngine:
             # ── edge 1: set up progress tracker (failure → bare tqdm/silent) ──
             _prog = None
             try:
-                import time as _time  # pylint: disable=import-outside-toplevel
-                _task_id = f"embed_summaries_{int(_time.time())}"
-                from interface.tools.bg_progress import TaskProgress  # pylint: disable=import-outside-toplevel
-                _prog = TaskProgress(_task_id, "Embedding summaries", total)
+                if self._progress_factory is not None:
+                    import time as _time  # pylint: disable=import-outside-toplevel
+                    _task_id = f"embed_summaries_{int(_time.time())}"
+                    _prog = self._progress_factory(_task_id, "Embedding summaries", total)
             except Exception:  # pylint: disable=broad-except
                 pass  # progress UI unavailable — continue without it
 

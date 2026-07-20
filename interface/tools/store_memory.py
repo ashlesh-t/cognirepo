@@ -76,7 +76,10 @@ def store_memory(text: str, source: str = "") -> dict:
         logger.warning("conflict detection failed: %s", _cf_exc)
 
     try:
-        mem.store(text)
+        # COGNIREPO-D08: forward the caller's source label to storage instead
+        # of silently discarding it. An empty/unspecified source (CLI default
+        # `--source ""`) still lands as "memory", matching pre-fix behavior.
+        mem.store(text, source=source or "memory")
         MEMORY_OPS_TOTAL.labels(op="store", result="ok").inc()
     except Exception:
         MEMORY_OPS_TOTAL.labels(op="store", result="error").inc()

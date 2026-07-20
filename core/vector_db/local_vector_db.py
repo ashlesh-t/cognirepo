@@ -36,12 +36,21 @@ class LocalVectorDB(VectorStorageAdapter):
     Local vector database using FAISS for storing and searching semantic embeddings.
     """
 
-    def __init__(self, dim=384):
+    def __init__(self, dim=384, *, breaker_factory=None, cleanup_queue_factory=None):
         """
         Initializes the LocalVectorDB with the specified dimensionality.
+
+        breaker_factory / cleanup_queue_factory — optional zero-arg callables
+        supplied by the caller (e.g. get_vector_adapter()) that return a
+        circuit breaker / CleanupQueue instance. Keeps this core-layer module
+        free of upward `core → data` imports (COGNIREPO-D06) — callers in
+        data/intelligence/interface wire in data.memory.circuit_breaker.get_breaker
+        and data.memory.cleanup_queue.CleanupQueue.
         """
         import logging  # pylint: disable=import-outside-toplevel
         self.dim = dim
+        self._breaker_factory = breaker_factory
+        self._cleanup_queue_factory = cleanup_queue_factory
         if os.path.exists(_index_file()):
             try:
                 self.index = faiss.read_index(_index_file())
@@ -164,14 +173,15 @@ class LocalVectorDB(VectorStorageAdapter):
         (e.g. Claude + Gemini both calling store_memory at the same time)
         do not corrupt the FAISS binary or metadata JSON.
         """
-        from data.memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
-        breaker = get_breaker()
-        breaker.check()
+        breaker = self._breaker_factory() if self._breaker_factory is not None else None
+        if breaker is not None:
+            breaker.check()
         with store_lock():
             faiss.write_index(self.index, _index_file())
             self._save_meta()
         self._loaded_disk_mtime = self._disk_mtime()
-        breaker.record_success()
+        if breaker is not None:
+            breaker.record_success()
 
     def add(self, vector, text, importance, source: str = "memory", behaviour_score: float = 0.0):
         """
@@ -261,17 +271,17 @@ class LocalVectorDB(VectorStorageAdapter):
         entry["suppressed_at"] = _now_iso()
         self._save_meta()
         # Enqueue for priority-queue cleanup
-        try:
-            from data.memory.cleanup_queue import CleanupQueue  # pylint: disable=import-outside-toplevel
-            CleanupQueue().push(
-                entry_id=faiss_row,
-                store="semantic",
-                importance=float(entry.get("importance", 0.5)),
-                suppressed_at=entry["suppressed_at"],
-                similarity_score=float(similarity),
-            )
-        except Exception:  # pylint: disable=broad-except
-            pass  # queue is best-effort
+        if self._cleanup_queue_factory is not None:
+            try:
+                self._cleanup_queue_factory().push(
+                    entry_id=faiss_row,
+                    store="semantic",
+                    importance=float(entry.get("importance", 0.5)),
+                    suppressed_at=entry["suppressed_at"],
+                    similarity_score=float(similarity),
+                )
+            except Exception:  # pylint: disable=broad-except
+                pass  # queue is best-effort
         return True
 
     def search(self, vector, top_k=5, source: str | None = None):

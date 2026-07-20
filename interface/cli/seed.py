@@ -267,7 +267,8 @@ def seed_from_git_log(
     if tracker is None:
         from data.graph.knowledge_graph import KnowledgeGraph        # pylint: disable=import-outside-toplevel
         from data.graph.behaviour_tracker import BehaviourTracker    # pylint: disable=import-outside-toplevel
-        tracker = BehaviourTracker(graph=KnowledgeGraph())
+        from interface.tools.store_memory import store_memory        # pylint: disable=import-outside-toplevel
+        tracker = BehaviourTracker(graph=KnowledgeGraph(), store_fn=store_memory)
 
     # idempotent guard
     if tracker.data.get("symbol_weights"):

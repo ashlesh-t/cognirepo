@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import Any, Callable
 
 import networkx as nx
 
@@ -55,16 +55,21 @@ def _load_kg(repo_abs: str) -> "nx.DiGraph | None":
         return None
 
 
-def _find_symbol_in_repo(symbol: str, repo_abs: str) -> "str | None":
+def _find_symbol_in_repo(
+    symbol: str,
+    repo_abs: str,
+    indexer_factory: Callable[["Any"], "Any"] | None,
+) -> "str | None":
     """Return the KG node ID for symbol in repo_abs, or None."""
+    if indexer_factory is None:
+        return None
     try:
         from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
-        from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         sib_dir = get_cognirepo_dir_for_repo(repo_abs)
         token = _CTX_DIR.set(sib_dir)
         try:
-            idx = ASTIndexer(KnowledgeGraph())
+            idx = indexer_factory(KnowledgeGraph())
             idx.load()
             locs = idx.lookup_symbol(symbol)
             if locs:
@@ -92,6 +97,9 @@ def find_symbol_path(
     to_symbol: str,
     from_repo: str | None = None,
     to_repo: str | None = None,
+    *,
+    indexer_factory: Callable[["Any"], "Any"] | None = None,
+    router_factory: Callable[[], "Any"] | None = None,
 ) -> dict[str, Any]:
     """
     Find the shortest path between two symbols, crossing service boundaries
@@ -103,6 +111,13 @@ def find_symbol_path(
     to_symbol   : Name of the destination symbol.
     from_repo   : Absolute path to the source repo (auto-detected if omitted).
     to_repo     : Absolute path to the destination repo (auto-detected if omitted).
+    indexer_factory : Callable(KnowledgeGraph) -> ASTIndexer-like, injected by the interface-layer
+        caller (e.g. intelligence.indexer.ast_indexer.ASTIndexer) so this data-layer module stays
+        free of upward `data → intelligence` imports — see COGNIREPO-105. Without it, symbol
+        lookup is skipped and both symbols resolve to "not found".
+    router_factory : Callable() -> CrossRepoRouter-like, injected the same way. Without it,
+        cross-repo auto-detection (from_repo/to_repo omitted) is skipped — only the given/cwd
+        repo is searched.
 
     Returns
     -------
@@ -123,25 +138,24 @@ def find_symbol_path(
     _from_repo = os.path.abspath(from_repo) if from_repo else cwd
     _to_repo = os.path.abspath(to_repo) if to_repo else cwd
 
-    # If repos not specified, search across org
-    if not from_repo or not to_repo:
-        from intelligence.retrieval.cross_repo import CrossRepoRouter  # pylint: disable=import-outside-toplevel
-        router = CrossRepoRouter()
+    # If repos not specified, search across org (requires router_factory)
+    if (not from_repo or not to_repo) and router_factory is not None:
+        router = router_factory()
         all_repos = [cwd] + router.get_sibling_repos()
         for repo in all_repos:
             if not from_repo:
-                node = _find_symbol_in_repo(from_symbol, repo)
+                node = _find_symbol_in_repo(from_symbol, repo, indexer_factory)
                 if node:
                     _from_repo = repo
             if not to_repo:
-                node = _find_symbol_in_repo(to_symbol, repo)
+                node = _find_symbol_in_repo(to_symbol, repo, indexer_factory)
                 if node:
                     _to_repo = repo
             if from_repo and to_repo:
                 break
 
-    from_node = _find_symbol_in_repo(from_symbol, _from_repo)
-    to_node = _find_symbol_in_repo(to_symbol, _to_repo)
+    from_node = _find_symbol_in_repo(from_symbol, _from_repo, indexer_factory)
+    to_node = _find_symbol_in_repo(to_symbol, _to_repo, indexer_factory)
 
     if not from_node:
         return {"error": f"Symbol '{from_symbol}' not found in indexed repos", "path": [], "hops": -1}

@@ -8,23 +8,29 @@ worth addressing in a future cycle.
 
 ## 1. `data.graph.behaviour_tracker` → `interface.tools.store_memory` (upward callback)
 
-**File:** `data/graph/behaviour_tracker.py` (lazy import at line ~540)
+**RESOLVED by COGNIREPO-105.** `BehaviourTracker.__init__` now takes an optional
+keyword-only `store_fn: Callable[..., Any] | None = None`; `summarize_interaction_style()`
+calls `self._store_fn(...)` instead of lazily importing `interface.tools.store_memory`,
+and returns `False` (no-op) when no callback was injected. All production
+construction sites (`interface/cli/main.py`, `interface/cli/seed.py`,
+`interface/tools/context_pack.py`, `interface/tools/behaviour_hook.py`,
+`interface/server/mcp_server.py`) now wire `store_fn=store_memory`. The unrelated
+`start_watching()`/`stop_watching()` methods (which also lazily imported
+`intelligence.indexer.ast_indexer`, another upward dep) were deleted as dead code —
+zero production callers existed for either. See `scripts/check_circular_deps.py`
+(now a hard-failure check on both toplevel and lazy upward imports, not just
+toplevel) and `JIRA/EPIC-ReliabilityGate-100/STORY/COGNIREPO-105/`.
 
-**Issue:** `BehaviourTracker.auto_summarize()` does a lazy import of
-`interface.tools.store_memory` to persist summarized interaction style. This is
-a `data → interface` upward call in the dependency graph. It is currently safe
-because the import is lazy (inside a function body), but it violates the layer
-invariant.
-
-**Suggested fix:** Extract the auto-store callback as an injectable dependency
-(pass a `store_fn: Callable[[str], None] | None = None` parameter to
-`BehaviourTracker.__init__`). The caller at the interface layer supplies the
-real store function; in unit tests, pass `None` or a mock. This eliminates the
-upward dep without changing behavior.
+A related upward-import finding in `core/vector_db/local_vector_db.py`
+(`core → data.memory.circuit_breaker`/`cleanup_queue`) was surfaced by the same
+audit but could not be resolved via the same mechanical-DI pattern without a real
+behavior regression — deferred to `JIRA/EPIC-ReliabilityGate-100/DEFECT/COGNIREPO-D06/`.
 
 ---
 
 ## 2. Four MCP tools missing from `_build_manifest()` (server/manifest.json)
+
+**RESOLVED** — see `COGNIREPO-D01`/`COGNIREPO-101`.
 
 **File:** `interface/server/mcp_server.py`
 

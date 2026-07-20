@@ -54,6 +54,48 @@ class TestSemanticMemory:
         results = sm.retrieve("code topics", top_k=3)
         assert len(results) <= 3
 
+    # ── COGNIREPO-D08: SemanticMemory.store() must forward source ───────────
+
+    def test_store_forwards_real_source(self):
+        from data.memory.semantic_memory import SemanticMemory
+        sm = SemanticMemory()
+        sm.store("interaction style summary text", source="interaction_style")
+        results = sm.retrieve("interaction style summary text", top_k=1)
+        assert results[0]["source"] == "interaction_style"
+
+    def test_store_default_source_is_memory(self):
+        from data.memory.semantic_memory import SemanticMemory
+        sm = SemanticMemory()
+        sm.store("plain stored memory with no explicit source")
+        results = sm.retrieve("plain stored memory with no explicit source", top_k=1)
+        assert results[0]["source"] == "memory"
+
+
+class TestStoreMemoryToolSourceForwarding:
+    """COGNIREPO-D08: interface.tools.store_memory.store_memory()'s `source`
+    argument was accepted but silently discarded before storage — every
+    memory ended up with source="memory" regardless of what the caller
+    passed. These exercise the real (unmocked) store_memory() → storage
+    round trip, not just SemanticMemory directly."""
+
+    def test_real_source_is_persisted(self):
+        from interface.tools.store_memory import store_memory
+        from data.memory.semantic_memory import SemanticMemory
+
+        store_memory("a memory with a real source label", source="benchmark")
+        sm = SemanticMemory()
+        results = sm.retrieve("a memory with a real source label", top_k=1)
+        assert results[0]["source"] == "benchmark"
+
+    def test_empty_source_still_defaults_to_memory(self):
+        from interface.tools.store_memory import store_memory
+        from data.memory.semantic_memory import SemanticMemory
+
+        store_memory("a memory with no source label")
+        sm = SemanticMemory()
+        results = sm.retrieve("a memory with no source label", top_k=1)
+        assert results[0]["source"] == "memory"
+
 
 class TestEpisodicMemory:
     def test_log_and_retrieve(self):

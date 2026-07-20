@@ -118,3 +118,40 @@ class TestDebounceBatching:
 
         indexer.index_file.assert_called_once()
         indexer.save.assert_called_once()
+
+
+class TestShutdownFlush:
+    """COGNIREPO-D05: a pending debounced event must be flushed before the
+    observer stops — both real shutdown call sites (foreground `cognirepo
+    watch` and the MCP-launched background watcher) delegate to the same
+    interface.cli.main._flush_and_stop_observer() helper.
+    """
+
+    def test_flush_and_stop_observer_flushes_pending_before_stop(self, tmp_path):
+        from interface.cli.main import _flush_and_stop_observer
+
+        handler, indexer, kg, behaviour = _make_handler(tmp_path, debounce_ms=5000)
+        f = tmp_path / "auth.py"
+        f.write_text("def verify_token(): pass")
+        handler.on_modified(FileModifiedEvent(str(f)))
+        assert indexer.index_file.call_count == 0  # still inside the debounce window
+
+        obs = MagicMock()
+        obs._cognirepo_handler = handler
+
+        _flush_and_stop_observer(obs)
+
+        # The queued edit was indexed (flushed) before the observer was stopped.
+        indexer.index_file.assert_called_once()
+        indexer.save.assert_called_once()
+        obs.stop.assert_called_once()
+        obs.join.assert_called_once()
+
+    def test_flush_and_stop_observer_tolerates_missing_handler(self):
+        """An observer without _cognirepo_handler (e.g. a bare test double) still stops cleanly."""
+        from interface.cli.main import _flush_and_stop_observer
+
+        obs = MagicMock(spec=["stop", "join"])
+        _flush_and_stop_observer(obs)
+        obs.stop.assert_called_once()
+        obs.join.assert_called_once()

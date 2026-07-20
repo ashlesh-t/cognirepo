@@ -36,6 +36,7 @@ import subprocess
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Callable
 
 import faiss
 import numpy as np
@@ -1054,8 +1055,17 @@ class ASTIndexer:
     the stdlib-ast fallback even without the tree-sitter-python grammar.
     """
 
-    def __init__(self, graph: KnowledgeGraph) -> None:
+    def __init__(
+        self,
+        graph: KnowledgeGraph,
+        *,
+        progress_factory: Callable[[str, str, int], Any] | None = None,
+    ) -> None:
         self.graph = graph
+        # Interface-layer callback (interface.tools.bg_progress.TaskProgress) for
+        # Tier-2 indexing progress, injected by callers to keep this module free
+        # of upward `intelligence → interface` imports — see COGNIREPO-105.
+        self._progress_factory = progress_factory
         self._model = None  # lazy: loaded only when embedding is actually performed
         self.faiss_index: faiss.Index | None = None
         self.faiss_meta: list[dict] = []
@@ -1907,9 +1917,11 @@ class ASTIndexer:
         # edge: set up progress tracker — failure falls back to tqdm-only silently
         _t2_prog = None
         try:
-            import time as _t2time  # pylint: disable=import-outside-toplevel
-            from interface.tools.bg_progress import TaskProgress as _TP  # pylint: disable=import-outside-toplevel
-            _t2_prog = _TP(f"tier2_index_{int(_t2time.time())}", "Tier 2 indexing", len(_pending))
+            if self._progress_factory is not None:
+                import time as _t2time  # pylint: disable=import-outside-toplevel
+                _t2_prog = self._progress_factory(
+                    f"tier2_index_{int(_t2time.time())}", "Tier 2 indexing", len(_pending)
+                )
         except Exception:  # pylint: disable=broad-except
             pass
 

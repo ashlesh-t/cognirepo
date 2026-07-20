@@ -8,9 +8,12 @@ Reads the import-graph.json produced by build_import_graph.py, maps each
 package to its target layer, and verifies no layer imports from a layer
 above it in the dependency stack.
 
-Only TOP-LEVEL imports are checked for violations. Lazy (inside functions)
-and TYPE_CHECKING imports are reported as informational but never as failures,
-since they don't create runtime import cycles.
+Both top-level AND lazy (inside function/class bodies) upward imports are hard
+failures — a lazy import doesn't create a runtime import *cycle*, but it's
+still a `data → interface`-shaped dependency an interface-layer caller has to
+inject instead (see COGNIREPO-105 / IMPROVEMENTS.md item 1). Only
+TYPE_CHECKING-guarded imports are allowlisted, since those have zero runtime
+effect.
 
 Layer order (lowest to highest):
   0: core        — config, security, vector_db, _bm25
@@ -44,6 +47,8 @@ LAYER_NAMES = {0: "core", 1: "data", 2: "intelligence", 3: "interface", 4: "ops"
 
 def _pkg_of_file(filepath: str) -> str:
     parts = filepath.replace("\\", "/").split("/")
+    if len(parts) >= 2 and parts[0] == "interface" and parts[1] == "cli":
+        return "cli"
     return parts[0] if parts else ""
 
 
@@ -56,7 +61,7 @@ def check(graph_path: str, verbose: bool) -> bool:
         graph = json.load(f)
 
     violations: list[str] = []      # toplevel upward deps — hard failures
-    lazy_upward: list[str] = []     # lazy upward deps — informational only
+    lazy_violations: list[str] = []  # lazy upward deps — also hard failures (COGNIREPO-105)
     type_check_upward: list[str] = []  # TYPE_CHECKING upward — no runtime impact
 
     for filepath, info in graph["files"].items():
@@ -83,7 +88,7 @@ def check(graph_path: str, verbose: bool) -> bool:
             if kind == "type_check":
                 type_check_upward.append(msg)
             elif kind == "lazy":
-                lazy_upward.append(msg)
+                lazy_violations.append(msg)
             else:  # toplevel — hard violation
                 violations.append(msg)
 
@@ -92,28 +97,29 @@ def check(graph_path: str, verbose: bool) -> bool:
         for msg in violations:
             print(f"  ✗ {msg}")
 
-    if verbose and lazy_upward:
-        print(f"\n[LAZY UPWARD — informational] {len(lazy_upward)} lazy cross-layer calls:")
-        for msg in lazy_upward:
-            print(f"  ~ {msg}")
+    if lazy_violations:
+        print(f"[HARD VIOLATION — lazy upward import] {len(lazy_violations)} found:")
+        for msg in lazy_violations:
+            print(f"  ✗ {msg}")
 
     if verbose and type_check_upward:
         print(f"\n[TYPE_CHECKING — no runtime impact] {len(type_check_upward)}:")
         for msg in type_check_upward:
             print(f"  i {msg}")
 
-    if violations:
+    total_violations = len(violations) + len(lazy_violations)
+    if total_violations:
         print(
-            f"\n✗ {len(violations)} hard violation(s). "
-            f"({len(lazy_upward)} lazy, {len(type_check_upward)} type-check noted.)",
+            f"\n✗ {total_violations} hard violation(s) "
+            f"({len(violations)} toplevel, {len(lazy_violations)} lazy). "
+            f"({len(type_check_upward)} type-check noted, informational.)",
             file=sys.stderr,
         )
         return False
 
     print(
-        f"✓ No hard toplevel violations. "
-        f"({len(lazy_upward)} lazy cross-layer calls, "
-        f"{len(type_check_upward)} TYPE_CHECKING — all informational.)"
+        f"✓ No hard violations (toplevel or lazy). "
+        f"({len(type_check_upward)} TYPE_CHECKING — informational.)"
     )
     return True
 

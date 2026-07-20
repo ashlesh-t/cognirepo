@@ -33,6 +33,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
+from typing import Callable
 
 from data.graph.graph_utils import extract_entities_from_text, format_subgraph_for_context
 from data.graph.knowledge_graph import KnowledgeGraph
@@ -118,9 +119,16 @@ def build(
     top_k: int = 5,
     episode_limit: int = 10,
     tier: str = "COMPLEX",
+    *,
+    manifest_writer: Callable[[], None] | None = None,
 ) -> ContextBundle:
     """
     Build a ContextBundle for the given query, trimmed to the tier's token budget.
+
+    manifest_writer: optional callback (e.g. interface.server.mcp_server._write_manifest)
+    that regenerates server/manifest.json when it's missing. Injected by interface-layer
+    callers to keep this module free of upward `intelligence → interface` imports — see
+    COGNIREPO-105. When omitted, a missing manifest just yields an empty tool_manifest.
     """
     # pylint: disable=too-many-locals
     bundle = ContextBundle(
@@ -198,7 +206,7 @@ def build(
         bundle.ast_hits = []
 
     # ── 5. tool manifest ─────────────────────────────────────────────────────
-    bundle.tool_manifest = _load_manifest()
+    bundle.tool_manifest = _load_manifest(manifest_writer)
 
     # ── 6. assemble + trim to budget ─────────────────────────────────────────
     bundle.system_prompt = bundle.to_system_prompt()
@@ -263,12 +271,13 @@ def _trim_to_budget(bundle: ContextBundle) -> None:
     bundle.system_prompt = bundle.to_system_prompt()
 
 
-def _load_manifest() -> list[dict]:
-    """Load tool schemas from server/manifest.json, generating it if absent."""
+def _load_manifest(manifest_writer: Callable[[], None] | None = None) -> list[dict]:
+    """Load tool schemas from server/manifest.json, generating it via manifest_writer if absent."""
     if not os.path.exists(MANIFEST_PATH):
+        if manifest_writer is None:
+            return []
         try:
-            from interface.server.mcp_server import _write_manifest  # pylint: disable=import-outside-toplevel
-            _write_manifest()
+            manifest_writer()
         except Exception:  # pylint: disable=broad-except
             return []
     try:
