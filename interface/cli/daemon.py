@@ -215,6 +215,15 @@ def run_watcher_with_crash_guard(
             break  # clean exit — don't restart
         except KeyboardInterrupt:
             print(f"[watcher:{session_id}] stopped by user.", flush=True)
+            # COGNIREPO-D05: this is the primary real-world shutdown path
+            # (Ctrl+C / SIGTERM both raise KeyboardInterrupt here) — without
+            # calling stop_fn(), _flush_and_stop_observer()'s flush() never
+            # runs and any debounced-but-unflushed edit is silently dropped.
+            if observer is not None:
+                try:
+                    stop_fn(observer)
+                except Exception:  # pylint: disable=broad-except
+                    pass
             break
         except Exception as exc:  # pylint: disable=broad-except
             print(

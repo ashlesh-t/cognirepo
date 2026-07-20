@@ -63,3 +63,61 @@ def test_daemon_start_friendly_error_on_unsupported_os(monkeypatch, tmp_path, ca
     assert "Linux only" in captured.err or "linux" in captured.err.lower(), (
         f"Expected friendly 'Linux only' message in stderr, got: {captured.err!r}"
     )
+
+
+class TestRunWatcherWithCrashGuardKeyboardInterrupt:
+    """COGNIREPO-D05: the KeyboardInterrupt branch (Ctrl+C / SIGTERM — the
+    primary real-world shutdown path, both raise KeyboardInterrupt via the
+    installed SIGTERM handler) must call stop_fn(observer) before breaking
+    out of the loop. Without this, _flush_and_stop_observer()'s flush()
+    never runs on a real shutdown and any debounced-but-unflushed edit is
+    silently dropped — confirmed by a live cognirepo watch + SIGTERM +
+    index-content check before this fix, which reproduced the exact D05
+    data-loss bug even with _stop_observer()/_stop() already patched."""
+
+    def test_stop_fn_called_on_keyboard_interrupt(self, monkeypatch):
+        from interface.cli import daemon as daemon_mod
+        from unittest.mock import MagicMock
+
+        observer = MagicMock()
+        observer.is_alive.return_value = True
+
+        def _sleep_raises(_seconds):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(daemon_mod.time, "sleep", _sleep_raises)
+        monkeypatch.setattr(daemon_mod, "start_heartbeat_thread", MagicMock())
+
+        stop_fn = MagicMock()
+        daemon_mod.run_watcher_with_crash_guard(
+            create_fn=lambda: observer,
+            stop_fn=stop_fn,
+            watcher_path="/tmp/does-not-matter",
+            session_id="test-session",
+        )
+
+        stop_fn.assert_called_once_with(observer)
+
+    def test_stop_fn_exception_does_not_propagate(self, monkeypatch):
+        """A broken stop_fn must not crash the shutdown path."""
+        from interface.cli import daemon as daemon_mod
+        from unittest.mock import MagicMock
+
+        observer = MagicMock()
+        observer.is_alive.return_value = True
+
+        def _sleep_raises(_seconds):
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(daemon_mod.time, "sleep", _sleep_raises)
+        monkeypatch.setattr(daemon_mod, "start_heartbeat_thread", MagicMock())
+
+        stop_fn = MagicMock(side_effect=RuntimeError("boom"))
+        daemon_mod.run_watcher_with_crash_guard(
+            create_fn=lambda: observer,
+            stop_fn=stop_fn,
+            watcher_path="/tmp/does-not-matter",
+            session_id="test-session",
+        )  # must not raise
+
+        stop_fn.assert_called_once_with(observer)
