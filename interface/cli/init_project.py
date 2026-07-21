@@ -679,21 +679,12 @@ def _seed_learnings_from_docs(repo_root: str) -> int:
     Returns the number of sections stored.
     """
     from data.memory.learning_store import ProjectLearningStore  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
     store = ProjectLearningStore()
-    md_candidates = [
-        "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md",
-        "docs/architecture/SPECIFICATION.md", "docs/ARCHITECTURE.md",
-        "docs/USAGE.md", "docs/FEATURES.md", "docs/DEVELOPER_GUIDE.md",
-        "docs",
-    ]
-    files: list[Path] = []
-    for name in md_candidates:
-        p = Path(repo_root) / name
-        if p.is_file():
-            files.append(p)
-        elif p.is_dir():
-            files.extend(sorted(p.rglob("*.md"))[:10])
-    files = files[:20]  # higher cap to include moved docs
+    # Reuse DocIngester's repo-wide walk instead of a fixed candidate list —
+    # not every repo keeps docs at README.md/docs/ARCHITECTURE.md; the walk
+    # finds .md/.rst anywhere while still skipping venv/node_modules/.github/etc.
+    files = [Path(p) for p in DocIngester(repo_root)._find_doc_files()[:20]]  # pylint: disable=protected-access
 
     stored = 0
     for md_file in files:

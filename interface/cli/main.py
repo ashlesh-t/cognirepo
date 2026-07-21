@@ -1398,6 +1398,27 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
         print(f"  ✗ init failed: {exc}")
         sys.exit(1)
 
+    # ── 2b. No changelog file or git tags found — offer to seed release notes ──
+    if sys.stdin.isatty():
+        try:
+            from intelligence.indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
+            if not DocIngester(parent_path).has_changelog_source():
+                print("\n  No CHANGELOG file or git release tags found.")
+                _notes = input(
+                    "  Paste release notes to seed context (optional, Enter to skip): "
+                ).strip()
+                if _notes:
+                    from data.memory.learning_store import ProjectLearningStore  # pylint: disable=import-outside-toplevel
+                    ProjectLearningStore().store_learning(
+                        learning_type="documentation",
+                        text=_notes[:2000],
+                        context_summary="from user-provided release notes",
+                        tags=["auto-seeded", "changelog"],
+                    )
+                    print("  ✓  Release notes stored.")
+        except Exception:  # pylint: disable=broad-except
+            pass  # non-fatal — changelog seeding is best-effort
+
     # ── 3. Orchestrator: doc-seed parent (no AST index of source) ────────────
     if orchestrator_mode:
         from interface.cli.init_project import _seed_learnings_from_docs  # pylint: disable=import-outside-toplevel

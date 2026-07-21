@@ -75,6 +75,12 @@ _MAX_CHUNKS_PER_FILE = 30
 # Maximum git log lines to embed
 _GIT_LOG_LINES = 120
 
+# Basenames recognized as an existing changelog (case-insensitive)
+_CHANGELOG_BASENAMES = {"changelog.md", "changelog.rst", "changes.md", "changes.rst", "history.md"}
+
+# Maximum tags to derive release notes from
+_MAX_RELEASE_TAGS = 10
+
 
 class DocIngester:
     """
@@ -153,13 +159,18 @@ class DocIngester:
 
     def _collect_chunks(self) -> list[dict]:
         chunks: list[dict] = []
-        chunks.extend(self._doc_chunks())
+        doc_files = self._find_doc_files()
+        chunks.extend(self._doc_chunks(doc_files))
+        # Only derive release notes from git tags when no changelog file exists —
+        # a real CHANGELOG.md is always preferred over reconstructing one from tags.
+        if not self._has_changelog_file(doc_files):
+            chunks.extend(self._git_release_notes_chunks())
         chunks.extend(self._git_chunks())
         return chunks
 
-    def _doc_chunks(self) -> list[dict]:
+    def _doc_chunks(self, doc_files: list[str] | None = None) -> list[dict]:
         chunks: list[dict] = []
-        for path in self._find_doc_files():
+        for path in (doc_files if doc_files is not None else self._find_doc_files()):
             try:
                 text = Path(path).read_text(encoding="utf-8", errors="ignore")
                 rel = os.path.relpath(path, self.root)
@@ -167,6 +178,59 @@ class DocIngester:
                     chunks.append({"text": chunk_text, "source": rel})
             except OSError:
                 pass
+        return chunks
+
+    @staticmethod
+    def _has_changelog_file(doc_files: list[str]) -> bool:
+        return any(os.path.basename(p).lower() in _CHANGELOG_BASENAMES for p in doc_files)
+
+    def has_changelog_source(self) -> bool:
+        """True if a changelog file exists OR git tags exist to derive release notes from."""
+        if self._has_changelog_file(self._find_doc_files()):
+            return True
+        return bool(self._list_release_tags())
+
+    def _list_release_tags(self) -> list[str]:
+        try:
+            result = subprocess.run(
+                ["git", "-C", self.root, "tag", "--sort=-creatordate"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return []
+            return [t for t in result.stdout.strip().splitlines() if t.strip()][:_MAX_RELEASE_TAGS]
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+
+    def _git_release_notes_chunks(self) -> list[dict]:
+        """Reconstruct release-notes-style chunks from git tags when no CHANGELOG exists."""
+        tags = self._list_release_tags()
+        if not tags:
+            return []
+
+        chunks: list[dict] = []
+        # tags are newest-first; pair each tag with the one before it chronologically
+        ordered = list(reversed(tags))
+        for i, tag in enumerate(ordered):
+            prev = ordered[i - 1] if i > 0 else None
+            rev_range = f"{prev}..{tag}" if prev else tag
+            try:
+                result = subprocess.run(
+                    ["git", "-C", self.root, "log", rev_range, "--pretty=format:- %s"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode != 0 or not result.stdout.strip():
+                    continue
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            chunks.append({
+                "text": f"Release notes (derived from git tag {tag}):\n{result.stdout.strip()}",
+                "source": "git:release-notes",
+            })
         return chunks
 
     def _git_chunks(self) -> list[dict]:
