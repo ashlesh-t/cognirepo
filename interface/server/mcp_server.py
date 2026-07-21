@@ -167,21 +167,47 @@ def _index_is_stale() -> bool | None:
 
 
 def _watcher_alive() -> bool:
-    """True only if watcher.pid exists AND the process is actually running.
+    """True if a watcher process is currently running for this repo.
 
-    A dead watcher's leftover PID file used to permanently suppress
-    staleness detection.
+    Reads the heartbeat file (.cognirepo/watchers/heartbeat), which
+    run_watcher_with_crash_guard() refreshes every 30 s for BOTH the
+    `cognirepo watch` daemon and the in-process auto-watcher that `serve`
+    starts. Falls back to the per-PID registry.
+
+    This previously read `.cognirepo/watcher.pid` — a path nothing in the
+    codebase has ever written (the daemon registers under
+    .cognirepo/watchers/<pid>.json via daemon._pid_file). The function
+    therefore always returned False, which silently disabled the
+    "a live watcher means the index is not stale" guard in graph_stats and
+    let it spawn a competing `index-repo --changed-only` process against a
+    repo an active watcher was already writing. See COGNIREPO-D16.
     """
     try:
-        from core.config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
-        pid_file = _gp("watcher.pid")
-        if not os.path.exists(pid_file):
-            return False
-        with open(pid_file, encoding="utf-8") as _f:
-            pid = int(_f.read().strip())
-        os.kill(pid, 0)  # signal 0 = existence check
-        return True
-    except (OSError, ValueError):
+        from interface.cli.daemon import (  # pylint: disable=import-outside-toplevel
+            _HEARTBEAT_STALE_THRESHOLD,
+            _is_alive,
+            is_watcher_running_for_path,
+            read_heartbeat,
+        )
+
+        hb = read_heartbeat()
+        if hb:
+            pid = int(hb.get("pid", -1))
+            if _is_alive(pid):
+                import datetime as _dt  # pylint: disable=import-outside-toplevel
+                raw = str(hb.get("timestamp", "")).rstrip("Z")
+                # write_heartbeat() stamps a naive UTC isoformat + "Z".
+                beat = _dt.datetime.fromisoformat(raw).replace(tzinfo=_dt.timezone.utc)
+                age = (_dt.datetime.now(_dt.timezone.utc) - beat).total_seconds()
+                if age < _HEARTBEAT_STALE_THRESHOLD:
+                    return True
+
+        # Heartbeat missing/stale — fall back to the PID registry, which also
+        # prunes dead entries as a side effect.
+        from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
+        repo_root = os.path.dirname(os.path.abspath(get_cognirepo_dir()))
+        return is_watcher_running_for_path(repo_root) is not None
+    except Exception:  # pylint: disable=broad-except
         return False
 
 
@@ -1500,20 +1526,32 @@ def graph_stats(repo_path: str | None = None) -> dict:
         ]
         top_concepts = sorted(concept_nodes, key=g.G.degree, reverse=True)[:5]
         last_indexed = None
+        full_indexed_at = None
         index_age_minutes = None
         index_stale = None
+        # Resolved inside _repo_ctx so a repo_path-scoped call reads THAT
+        # repo's heartbeat, not the server's default .cognirepo dir.
+        watcher_alive = _watcher_alive()
         from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
         ast_index_path = get_path("index/ast_index.json")
         if os.path.exists(ast_index_path):
             with open(ast_index_path, encoding="utf-8") as f:
-                last_indexed = json.load(f).get("indexed_at")
+                _idx = json.load(f)
+            # `indexed_at` is now stamped by every ASTIndexer.save(), so it
+            # tracks the same event as index_age_minutes (the file mtime).
+            # Before COGNIREPO-D14 it only moved on a full index_repo(), so
+            # this dict could report last_indexed="2h ago" alongside
+            # index_age_minutes=0 — two clocks in one payload.
+            # `full_indexed_at` carries the last complete sweep separately.
+            last_indexed = _idx.get("indexed_at")
+            full_indexed_at = _idx.get("full_indexed_at")
             try:
                 import datetime as _dt  # pylint: disable=import-outside-toplevel
                 mtime = os.path.getmtime(ast_index_path)
                 age_s = time.time() - mtime
                 index_age_minutes = int(age_s // 60)
                 # Stale if >60 min old; only a LIVE watcher suppresses staleness
-                index_stale = index_age_minutes > 60 and not _watcher_alive()
+                index_stale = index_age_minutes > 60 and not watcher_alive
                 # Age says stale, but if git HEAD still matches the last
                 # indexed SHA the CONTENT is current — reporting stale + not
                 # triggering a reindex read as contradictory to agents.
@@ -1537,9 +1575,11 @@ def graph_stats(repo_path: str | None = None) -> dict:
         "edge_count": stats["edges"],
         "top_concepts": top_concepts,
         "last_indexed": last_indexed,
+        "full_indexed_at": full_indexed_at,
         "index_age_minutes": index_age_minutes,
         "index_stale": index_stale,
         "stale_reindexing_triggered": stale_reindexing_triggered,
+        "watcher_alive": watcher_alive,
     }
 
 

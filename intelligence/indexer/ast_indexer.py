@@ -33,6 +33,7 @@ import logging
 import os
 import platform
 import subprocess
+import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,6 +69,26 @@ def _ast_meta_file() -> str:
 
 def _manifest_file() -> str:
     return get_path("index/manifest.json")
+
+
+def _store_lock_or_null():
+    """Return the cross-process store lock, or a no-op context if unavailable.
+
+    store_lock() hard-raises ImportError when filelock is missing. filelock is
+    a declared dependency, but save() runs on the watcher's hot path where a
+    hard failure loses the whole batch — so a minimal install degrades to
+    unlocked writes with a warning instead of crashing the watcher.
+    """
+    try:
+        from core.config.lock import store_lock  # pylint: disable=import-outside-toplevel
+        return store_lock()
+    except ImportError:
+        log.warning(
+            "filelock unavailable — index writes are NOT protected against "
+            "concurrent processes. Run: pip install filelock"
+        )
+        import contextlib  # pylint: disable=import-outside-toplevel
+        return contextlib.nullcontext()
 
 _SKIP_DIRS: frozenset[str] = frozenset({
     # Version control
@@ -1245,6 +1266,11 @@ class ASTIndexer:
         repo_root = os.path.abspath(repo_root)
         self.index_data["repo_root"] = repo_root
         self.index_data["indexed_at"] = _now()
+        # `indexed_at` is refreshed by every save() (including the watcher's
+        # incremental path); `full_indexed_at` marks only a complete
+        # index_repo() sweep, so agents can still tell "everything was
+        # rebuilt" from "one file was touched". See COGNIREPO-D14.
+        self.index_data["full_indexed_at"] = self.index_data["indexed_at"]
 
         skip_dirs = _effective_skip_dirs()
 
@@ -2065,6 +2091,7 @@ class ASTIndexer:
             "files": {}, "reverse_index": {},
             "repo_root": self.index_data.get("repo_root", ""),
             "indexed_at": self.index_data.get("indexed_at", ""),
+            "full_indexed_at": self.index_data.get("full_indexed_at", ""),
         }
         self._pending_embeds = []  # pylint: disable=attribute-defined-outside-init
         gc.collect()
@@ -2073,18 +2100,66 @@ class ASTIndexer:
 
     @staticmethod
     def _atomic_json_dump(obj, path: str) -> None:
-        """Write JSON to a tmp file then os.replace() into place.
+        """Write JSON to a unique tmp file then os.replace() into place.
 
-        A crash or concurrent reindex mid-write can no longer leave a
-        truncated/corrupt JSON file behind (observed as a parse error at
-        char 73M on a large-monorepo ast_index.json).
+        The tmp filename MUST be unique per writer. A deterministic
+        `path + ".tmp"` is shared by every concurrent writer — two watcher
+        flush threads, a second `cognirepo serve`, or the background
+        `index-repo --changed-only` that graph_stats spawns — which produced
+        two distinct failures (COGNIREPO-D13):
+
+          1. loud: writer B's os.replace() raises FileNotFoundError because
+             writer A already renamed the shared tmp away;
+          2. silent: writer B's open(tmp, "w") truncates the file A is
+             mid-json.dump() into, and A then fsyncs and promotes a partial
+             JSON into place — the "parse error at char 73M on a
+             large-monorepo ast_index.json" this function was written to fix.
+
+        mkstemp() in the destination directory gives every writer its own
+        scratch file, so the only shared operation is the atomic rename.
+        Callers that need the *group* of index files to be mutually
+        consistent must additionally hold store_lock() — see save().
         """
-        tmp_path = path + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(obj, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
+        directory = os.path.dirname(path) or "."
+        fd, tmp_path = tempfile.mkstemp(
+            dir=directory, prefix=os.path.basename(path) + ".", suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(obj, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+        except BaseException:
+            # Never leave an orphaned scratch file behind on failure.
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+    @staticmethod
+    def _sweep_stale_tmp(path: str) -> None:
+        """Delete orphaned `<path>.*.tmp` scratch files left by a crashed write.
+
+        _atomic_json_dump() cleans up its own tmp on failure, but a SIGKILL
+        or power loss mid-write can still strand one. They are never valid
+        index state, so removing them on load() keeps the index dir clean.
+        Also removes the legacy fixed-name `<path>.tmp` from before D13.
+        """
+        directory = os.path.dirname(path) or "."
+        base = os.path.basename(path)
+        try:
+            entries = os.listdir(directory)
+        except OSError:
+            return
+        for name in entries:
+            if name == base + ".tmp" or (name.startswith(base + ".") and name.endswith(".tmp")):
+                try:
+                    os.unlink(os.path.join(directory, name))
+                    log.debug("removed orphaned index scratch file %s", name)
+                except OSError:
+                    pass
 
     @staticmethod
     def _load_json_self_heal(path: str, default):
@@ -2108,18 +2183,33 @@ class ASTIndexer:
         """Persist AST index, FAISS index, and metadata to disk.
         Also writes manifest.json with git SHA, platform info, and checksums
         so `cognirepo verify-index` can detect staleness or corruption later.
-        """
-        os.makedirs(os.path.dirname(_ast_index_file()), exist_ok=True)
-        self._atomic_json_dump(self.index_data, _ast_index_file())
-        if self.faiss_index is not None:
-            faiss.write_index(self.faiss_index, _ast_faiss_file())
-        self._atomic_json_dump(self.faiss_meta, _ast_meta_file())
 
-        # Write integrity manifest after all index files are on disk
-        repo_root = self.index_data.get("repo_root") or None
-        file_count = len(self.index_data.get("files", {}))
-        symbol_count = self.index_data.get("total_symbols", len(self.faiss_meta))
-        _write_manifest(repo_root=repo_root, symbol_count=symbol_count, file_count=file_count)
+        Holds store_lock() across the whole group (ast_index.json, ast.index,
+        ast_metadata.json, manifest.json). Per-file atomic renames alone are
+        not enough: without the lock, two processes can interleave their four
+        renames and leave manifest.json's checksums describing a different
+        ast_index.json than the one on disk, so `verify-index` reports
+        corruption that never actually happened. KnowledgeGraph.save() has
+        always taken this lock; ASTIndexer.save() did not. See COGNIREPO-D13.
+        """
+        with _store_lock_or_null():
+            os.makedirs(os.path.dirname(_ast_index_file()), exist_ok=True)
+            # Stamp every persist, not just full index_repo() runs. Without
+            # this the watcher's incremental path leaves `indexed_at` frozen
+            # at the last full index while the file mtime advances, so
+            # graph_stats reported "last indexed 2h ago" and
+            # "index_age_minutes: 0" in the same payload. See COGNIREPO-D14.
+            self.index_data["indexed_at"] = _now()
+            self._atomic_json_dump(self.index_data, _ast_index_file())
+            if self.faiss_index is not None:
+                faiss.write_index(self.faiss_index, _ast_faiss_file())
+            self._atomic_json_dump(self.faiss_meta, _ast_meta_file())
+
+            # Write integrity manifest after all index files are on disk
+            repo_root = self.index_data.get("repo_root") or None
+            file_count = len(self.index_data.get("files", {}))
+            symbol_count = self.index_data.get("total_symbols", len(self.faiss_meta))
+            _write_manifest(repo_root=repo_root, symbol_count=symbol_count, file_count=file_count)
 
     def load(self) -> None:
         """Load existing index from disk. Silently does nothing if not present.
@@ -2154,6 +2244,10 @@ class ASTIndexer:
                     return
             except (OSError, json.JSONDecodeError):
                 pass  # manifest absent or unreadable — proceed normally
+
+        # Clear scratch files stranded by a hard kill mid-write (COGNIREPO-D13).
+        self._sweep_stale_tmp(_ast_index_file())
+        self._sweep_stale_tmp(_ast_meta_file())
 
         if os.path.exists(_ast_index_file()):
             loaded = self._load_json_self_heal(_ast_index_file(), None)
