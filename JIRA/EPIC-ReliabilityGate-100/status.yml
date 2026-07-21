@@ -80,16 +80,16 @@ defects:
   - id: COGNIREPO-D10
     status: in-review
     branch: defect/COGNIREPO-D10_D11_D12
-    pr: PLACEHOLDER_PR_URL
+    pr: https://github.com/ashlesh-t/cognirepo/pull/43
     test_status: pass  # automated cases pass; live E2E-100-1 re-verification left for the user
   - id: COGNIREPO-D11
     status: in-review
     branch: defect/COGNIREPO-D10_D11_D12
-    pr: PLACEHOLDER_PR_URL
+    pr: https://github.com/ashlesh-t/cognirepo/pull/43
     test_status: pass  # automated cases pass; live E2E-100-1 re-verification left for the user
   - id: COGNIREPO-D12
     status: in-review
     branch: defect/COGNIREPO-D10_D11_D12
-    pr: PLACEHOLDER_PR_URL
+    pr: https://github.com/ashlesh-t/cognirepo/pull/43
     test_status: pass  # automated cases pass; live E2E-100-1 re-verification left for the user
 epic_test_suite_status: fail  # E2E-100-1 FAILed (1/5); see COGNIREPO-100-TEST_SUITE.md and D10/D11/D12
