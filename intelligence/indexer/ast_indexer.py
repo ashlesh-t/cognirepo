@@ -1705,7 +1705,7 @@ class ASTIndexer:
 
         return file_record
 
-    def _resolve_call_stubs(self) -> None:
+    def _resolve_call_stubs(self, names: set[str] | None = None) -> None:
         """
         Second-pass stub resolution: for each ``symbol::fn`` node, look up fn in
         the complete reverse_index.  When exactly one definition exists, redirect
@@ -1713,6 +1713,13 @@ class ASTIndexer:
         multiple definitions exist (ambiguous), keep the stub and tag it
         ``ambiguous=True``.  Unresolved stubs (no definition found) are tagged
         ``unresolved=True`` so ``who_calls`` can still surface them.
+
+        names: when given, only reconcile ``symbol::{n}`` for ``n in names``
+        instead of scanning every stub node in the graph — used by the
+        watcher's incremental ``flush()`` to keep per-save cost proportional
+        to the batch size rather than the whole graph (COGNIREPO-D10). The
+        full-reindex path (`index_repo()`) keeps calling this with no
+        argument to sweep everything.
 
         Must be called AFTER ``_build_reverse_index()`` so the index is complete.
         Skipped when the graph is empty (graph indexing was disabled).
@@ -1723,7 +1730,12 @@ class ASTIndexer:
             return
 
         rev = self.index_data.get("reverse_index", {})
-        stub_nodes = [n for n in list(self.graph.G.nodes()) if n.startswith("symbol::")]
+        if names is not None:
+            stub_nodes = [
+                f"symbol::{n}" for n in names if self.graph.G.has_node(f"symbol::{n}")
+            ]
+        else:
+            stub_nodes = [n for n in list(self.graph.G.nodes()) if n.startswith("symbol::")]
 
         for stub in stub_nodes:
             fn_name = stub[len("symbol::"):]

@@ -147,22 +147,39 @@ class RepoFileHandler(FileSystemEventHandler):
             return
 
         any_reindexed = False
+        reindexed_rel_paths: list[str] = []
         removed_rel_paths: list[str] = []
+        touched_symbol_names: set[str] = set()
         for abs_path, action in pending.items():
             try:
                 if action == "reindex":
-                    if self._reindex_mutate(abs_path):
+                    reindexed, names = self._reindex_mutate(abs_path)
+                    if reindexed:
                         any_reindexed = True
+                        reindexed_rel_paths.append(os.path.relpath(abs_path, self.repo_root))
+                    touched_symbol_names |= names
                 else:
-                    rel_path = self._remove_mutate(abs_path)
+                    rel_path, names = self._remove_mutate(abs_path)
                     if rel_path is not None:
                         removed_rel_paths.append(rel_path)
+                    touched_symbol_names |= names
             except Exception as exc:  # pylint: disable=broad-except
                 print(f"[watcher] error processing {action} for {abs_path}: {exc}")
 
         self.indexer._build_reverse_index()  # pylint: disable=protected-access
+        # Scoped stub resolution: reconcile only the symbols this batch touched
+        # (added or removed) instead of a full-graph sweep — keeps orphaned
+        # symbol::* stubs from surviving deletion and total_symbols in sync
+        # with the live index, without index_repo()'s O(all stubs) cost on
+        # every debounced save. See COGNIREPO-D10.
+        if touched_symbol_names:
+            self.indexer._resolve_call_stubs(names=touched_symbol_names)  # pylint: disable=protected-access
+        self.indexer.index_data["total_symbols"] = sum(
+            len(f.get("symbols", [])) for f in self.indexer.index_data["files"].values()
+        )
         self.indexer.save()
         self.graph.save()
+        self._write_last_watcher_reindex(reindexed_rel_paths, removed_rel_paths)
 
         if any_reindexed:
             self.behaviour.save()
@@ -185,23 +202,65 @@ class RepoFileHandler(FileSystemEventHandler):
         for rel_path in removed_rel_paths:
             print(f"[watcher] removed {rel_path} from index")
 
+    def _write_last_watcher_reindex(self, reindexed: list[str], removed: list[str]) -> None:
+        """
+        Overwrite `.cognirepo/index/last_watcher_reindex.json` with this batch's
+        activity — a durable, mode-independent trail of watcher-driven reindex
+        events. Without this, `flush()`'s only "logging" was a bare `print()`,
+        invisible unless `cognirepo watch` happened to be running in daemon
+        mode (which redirects stdout to a log file). Last-write-wins by
+        design — no unbounded growth. See COGNIREPO-D12.
+        """
+        try:
+            from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+
+            record = {
+                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                "session_id": self.session_id,
+                "reindexed": reindexed,
+                "removed": removed,
+            }
+            path = os.path.join(get_cognirepo_dir_for_repo(self.repo_root), "index", "last_watcher_reindex.json")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(record, f, indent=2)
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"[watcher] failed to write last_watcher_reindex.json: {exc}")
+
     # ── mutate-only helpers (no save/side-effects — used by flush()'s batch) ──
 
-    def _reindex_mutate(self, abs_path: str) -> bool:
-        """Re-index one file's graph nodes + AST entry, without saving. Returns True on success."""
+    def _reindex_mutate(self, abs_path: str) -> tuple[bool, set[str]]:
+        """
+        Re-index one file's graph nodes + AST entry, without saving.
+
+        Returns (True on success, the union of symbol names defined in the
+        file before and after re-indexing — i.e. everything added or removed
+        by this mutation, for scoped call-stub resolution in flush()).
+        """
         rel_path = os.path.relpath(abs_path, self.repo_root)
+        old_names = {
+            s["name"] for s in
+            self.indexer.index_data.get("files", {}).get(rel_path, {}).get("symbols", [])
+        }
         # remove_file_nodes (not remove_node_edges) so symbols deleted from the file
         # don't leave orphaned nodes behind — index_file() below re-adds the FILE
         # node and any surviving symbols.
         self.graph.remove_file_nodes(rel_path)
-        self.indexer.index_file(rel_path, abs_path)
+        file_record = self.indexer.index_file(rel_path, abs_path)
+        new_names = {s["name"] for s in (file_record or {}).get("symbols", [])}
         self.behaviour.record_file_edit(rel_path, self.session_id)
-        return True
+        return True, old_names | new_names
 
-    def _remove_mutate(self, abs_path: str) -> str | None:
-        """Remove one file's FAISS vectors + graph nodes + index_data entry. Returns rel_path, or None on error."""
+    def _remove_mutate(self, abs_path: str) -> tuple[str | None, set[str]]:
+        """
+        Remove one file's FAISS vectors + graph nodes + index_data entry.
+
+        Returns (rel_path or None on error, the symbol names that were
+        defined in the file — for scoped call-stub resolution in flush()).
+        """
         rel_path = os.path.relpath(abs_path, self.repo_root)
         existing = self.indexer.index_data.get("files", {}).get(rel_path, {})
+        old_names = {s["name"] for s in existing.get("symbols", [])}
         old_ids = [
             s["faiss_id"]
             for s in existing.get("symbols", [])
@@ -217,7 +276,7 @@ class RepoFileHandler(FileSystemEventHandler):
 
         self.graph.remove_file_nodes(rel_path)
         self.indexer.index_data["files"].pop(rel_path, None)
-        return rel_path
+        return rel_path, old_names
 
     # ── synchronous single-event helpers (debounce_ms=0, or direct calls) ────
 
@@ -232,11 +291,16 @@ class RepoFileHandler(FileSystemEventHandler):
         5. Invalidate the hybrid-retrieve TTL cache.
         """
         try:
-            rel_path = self._remove_mutate(abs_path)
+            rel_path, names = self._remove_mutate(abs_path)
             if rel_path is None:
                 return
 
             self.indexer._build_reverse_index()  # pylint: disable=protected-access
+            if names:
+                self.indexer._resolve_call_stubs(names=names)  # pylint: disable=protected-access
+            self.indexer.index_data["total_symbols"] = sum(
+                len(f.get("symbols", [])) for f in self.indexer.index_data["files"].values()
+            )
             self.indexer.save()
             self.graph.save()
 
@@ -268,10 +332,15 @@ class RepoFileHandler(FileSystemEventHandler):
         5. Notify behaviour tracker (triggers co-occurrence + auto-useful heuristic).
         """
         try:
-            self._reindex_mutate(abs_path)
+            _, names = self._reindex_mutate(abs_path)
 
             rel_path = os.path.relpath(abs_path, self.repo_root)
             self.indexer._build_reverse_index()  # pylint: disable=protected-access
+            if names:
+                self.indexer._resolve_call_stubs(names=names)  # pylint: disable=protected-access
+            self.indexer.index_data["total_symbols"] = sum(
+                len(f.get("symbols", [])) for f in self.indexer.index_data["files"].values()
+            )
             self.indexer.save()
             self.graph.save()
             self.behaviour.save()

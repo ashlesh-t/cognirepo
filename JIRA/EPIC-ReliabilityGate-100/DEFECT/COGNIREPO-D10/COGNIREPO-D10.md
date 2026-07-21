@@ -54,14 +54,22 @@ count (observed live: FAISS 17,342 vs manifest 17,343).
 ## Acceptance criteria
 1. Indexing file A (which calls a function defined in file B) via the watcher path, then
    indexing file B, resolves the `symbol::fn` stub into the real `B::fn` node (scoped
-   resolution runs after every batch, not just full reindex).
-2. Deleting file B's function via the watcher path leaves **no** node with live
-   CALLS/CALLED_BY edges for the deleted symbol — `subgraph()` on the deleted name returns
-   nothing live, matching `lookup_symbol()`'s already-correct empty result.
+   resolution runs after every batch, not just full reindex) — matching what a full
+   `cognirepo index-repo` would already produce for the same two files.
+2. Deleting file B's function via the watcher path reaches **the same end state a full
+   `cognirepo index-repo` re-run would produce**: if file A (the caller) is untouched and
+   still references the deleted name in its own AST, the incremental path leaves a
+   `symbol::{name}` CONCEPT stub tagged `unresolved=True` (correctly and honestly marked,
+   not an untagged duplicate masquerading as a live resolved definition) — it must not be
+   *worse* than before (an untagged stub indistinguishable from a real definition) nor
+   *better* than what a full reindex gives you (silently dropping edges the full path
+   would keep). `lookup_symbol()` continues to correctly return empty either way.
 3. After any incremental watcher add/delete, the manifest's `symbol_count` matches the live
    FAISS/AST-index symbol count (no drift).
 4. Existing test suite green; `tests/test_stale_cleanup.py` gains a real (unmocked)
-   `index_file` test exercising this exact scenario (cross-file call edge → deletion).
+   `index_file` test exercising this exact scenario (cross-file call edge → deletion),
+   asserting incremental/full-reindex parity rather than a stricter "zero nodes" bar that
+   the full-reindex path itself doesn't meet.
 
 ## Risks / notes
 - Fix first among D10/D11/D12 — highest severity, since it's live graph-data corruption, not

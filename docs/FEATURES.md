@@ -340,7 +340,7 @@ which fails if this number drifts from the real glob count.
 | `test_cursor_vscode.py` | MCP config generation, idempotency |
 | `test_proto_freshness.py` | .proto committed, pb2 importable |
 | `test_api_cache.py` | Redis cache round-trip, graceful degradation |
-| `test_doctor_expanded.py` | Doctor health checks |
+| `test_doctor.py` | Doctor health checks, working-tree dirty warning |
 | `test_ci_security.py` | CI security gate configuration |
 | `test_ftx.py` | Init flow idempotency, non-interactive, ready summary |
 | `test_docs_sync.py` | Classifier thresholds, edge type names, and this table's count match code |

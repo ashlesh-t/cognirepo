@@ -259,44 +259,73 @@ def _cmd_verify_index(verbose: bool = False) -> int:
 
     # ── Working-tree staleness (uncommitted edits to indexed sources) ──────
     if not corrupted:
-        try:
-            import subprocess as _sp  # pylint: disable=import-outside-toplevel
-            from datetime import datetime as _datetime  # pylint: disable=import-outside-toplevel
-            from intelligence.indexer.language_registry import is_supported  # pylint: disable=import-outside-toplevel
-
-            indexed_at_raw = manifest.get("indexed_at", "")
-            indexed_at_ts = _datetime.fromisoformat(indexed_at_raw).timestamp()
-
-            status_out = _sp.check_output(
-                ["git", "status", "--porcelain"], stderr=_sp.DEVNULL
-            ).decode()
-
-            dirty = []
-            for line in status_out.splitlines():
-                rel_path = line[3:].strip()
-                if " -> " in rel_path:  # renamed entries: "old -> new"
-                    rel_path = rel_path.split(" -> ", 1)[1]
-                if not is_supported(rel_path) or not os.path.exists(rel_path):
-                    continue
-                if os.path.getmtime(rel_path) > indexed_at_ts + 2:  # ±2s clock-skew tolerance
-                    dirty.append(rel_path)
-
-            if dirty:
-                print(
-                    f"  DIRTY          {len(dirty)} uncommitted indexed source file(s) "
-                    "newer than index"
-                )
-                shown = dirty if verbose else dirty[:5]
-                for p in shown:
-                    print(f"                   {p}")
-                if not verbose and len(dirty) > 5:
-                    print(f"                   ... and {len(dirty) - 5} more (use -v to list all)")
-                print("  → Re-run `cognirepo index-repo .` to update, or commit/stash the edits.")
-                issues += 1
-        except Exception:  # pylint: disable=broad-except
-            pass  # non-git directory or unparsable indexed_at — degrade gracefully, no DIRTY check
+        dirty = _check_working_tree_dirty(manifest)
+        if dirty:
+            print(
+                f"  DIRTY          {len(dirty)} uncommitted indexed source file(s) "
+                "newer than index"
+            )
+            shown = dirty if verbose else dirty[:5]
+            for p in shown:
+                print(f"                   {p}")
+            if not verbose and len(dirty) > 5:
+                print(f"                   ... and {len(dirty) - 5} more (use -v to list all)")
+            print("  → Re-run `cognirepo index-repo .` to update, or commit/stash the edits.")
+            issues += 1
 
     return 1 if issues else 0
+
+
+def _check_working_tree_dirty(manifest: dict) -> list[str]:
+    """
+    Return the list of indexed source paths with uncommitted working-tree changes.
+
+    Authoritative signal is `git status --porcelain` — any tracked/untracked
+    supported path it reports is dirty *unconditionally*, independent of file
+    mtime. This matters because a live `cognirepo watch`/`serve` process
+    re-indexes each mutation immediately, stamping the manifest's `indexed_at`
+    to "now" on every save — so an mtime-vs-indexed_at comparison is always
+    defeated by the very watcher activity it's meant to catch (COGNIREPO-D11).
+
+    Falls back to a repo-wide mtime-vs-indexed_at scan only when git itself is
+    unavailable (non-git directory), since porcelain has no equivalent there.
+    Returns an empty list (degrades gracefully) if neither signal is usable.
+    """
+    from intelligence.indexer.language_registry import is_supported  # pylint: disable=import-outside-toplevel
+    import subprocess as _sp  # pylint: disable=import-outside-toplevel
+
+    try:
+        status_out = _sp.check_output(
+            ["git", "status", "--porcelain"], stderr=_sp.DEVNULL
+        ).decode()
+    except Exception:  # pylint: disable=broad-except
+        # Non-git directory (or git unavailable) — fall back to a repo-wide
+        # mtime scan against indexed_at, the only signal available here.
+        # manifest.json has no per-file listing, so read it from ast_index.json.
+        try:
+            from datetime import datetime as _datetime  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.ast_indexer import _ast_index_file  # pylint: disable=import-outside-toplevel
+
+            indexed_at_ts = _datetime.fromisoformat(manifest.get("indexed_at", "")).timestamp()
+            with open(_ast_index_file(), encoding="utf-8") as f:
+                indexed_files = json.load(f).get("files", {})
+            dirty = []
+            for rel_path in indexed_files:
+                if os.path.exists(rel_path) and os.path.getmtime(rel_path) > indexed_at_ts + 2:
+                    dirty.append(rel_path)
+            return dirty
+        except Exception:  # pylint: disable=broad-except
+            return []  # unparsable indexed_at or unreadable index — degrade gracefully
+
+    dirty = []
+    for line in status_out.splitlines():
+        rel_path = line[3:].strip()
+        if " -> " in rel_path:  # renamed entries: "old -> new"
+            rel_path = rel_path.split(" -> ", 1)[1]
+        if not is_supported(rel_path) or not os.path.exists(rel_path):
+            continue
+        dirty.append(rel_path)
+    return dirty
 
 
 def _cmd_coverage() -> int:
@@ -572,6 +601,25 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     except Exception as exc:  # pylint: disable=broad-except
         if verbose:
             print(f"  ○  Index manifest — skipped ({exc})")
+
+    # ── Check 4c: Working-tree staleness (uncommitted edits) ─────────────────
+    # Shares _check_working_tree_dirty with `verify-index` (COGNIREPO-D11) so
+    # doctor surfaces the same finding instead of missing it entirely.
+    try:
+        _mf2 = get_path("index/manifest.json")
+        if os.path.exists(_mf2):
+            with open(_mf2, encoding="utf-8") as _mfh2:
+                _mdata2 = json.load(_mfh2)
+            _dirty = _check_working_tree_dirty(_mdata2)
+            if _dirty:
+                _warn(
+                    f"Working tree — {len(_dirty)} uncommitted indexed source file(s) "
+                    "(index may be stale)",
+                    "Run: cognirepo verify-index  for details",
+                )
+    except Exception as exc:  # pylint: disable=broad-except
+        if verbose:
+            print(f"  ○  Working-tree staleness — skipped ({exc})")
 
     # ── Check 5: Episodic log (lightweight — no decrypt attempt) ─────────────
     _ep_path = get_path("memory/episodic.json")

@@ -8,8 +8,15 @@
 - Prompt: n/a — automated via a new `file_watcher` test.
 - Expected results: file exists with a fresh timestamp, session id, and the reindexed/removed
   path lists matching the batch; a second flush overwrites (not appends).
-- Obtained results:
-- Verdict:
+- Obtained results: `TestLastWatcherReindexAuditTrail::test_flush_writes_last_watcher_reindex_json`
+  — one modify + one delete event in the same batch produces
+  `.cognirepo/index/last_watcher_reindex.json` with `session_id="test"`, a `timestamp` key,
+  the modified path in `reindexed`, and the deleted path in `removed`.
+  `test_second_flush_overwrites_not_appends` — two separate flushes each with a different
+  file; the file only reflects the second batch (`two.py`, not `one.py`) — confirms
+  last-write-wins, no unbounded growth. `venv/bin/python -m pytest
+  tests/test_watcher_debounce.py -q` — 9 passed (was 7 before this ticket's 2 new tests).
+- Verdict: PASS
 
 ## TC-D12-2: Live re-run of E2E-100-1's failing sub-check (#1)
 - Test repo: /home/ashlesh/my_works/cognirepo_test_repo/medium

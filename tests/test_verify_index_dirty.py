@@ -15,7 +15,6 @@ import json
 import os
 import platform
 import subprocess
-import time
 from datetime import datetime, timezone
 
 import faiss
@@ -98,8 +97,6 @@ class TestVerifyIndexDirtyDetection:
 
         # index built "in the past" so the edit below is unambiguously newer
         _write_manifest(indexed_at=datetime.now(tz=timezone.utc).isoformat())
-        time.sleep(2.5)  # clear the ±2s clock-skew tolerance window
-
         with open("mod.py", "a", encoding="utf-8") as f:
             f.write("def bar(): pass\n")
 
@@ -122,7 +119,6 @@ class TestVerifyIndexDirtyDetection:
         _sh("commit", "-q", "-m", "init")
 
         _write_manifest()
-        time.sleep(2.5)
 
         with open("README.md", "a", encoding="utf-8") as f:
             f.write("more docs\n")
@@ -156,7 +152,6 @@ class TestVerifyIndexDirtyDetection:
         _sh("commit", "-q", "-m", "init")
 
         _write_manifest()
-        time.sleep(2.5)
 
         for i in range(7):
             with open(f"mod{i}.py", "a", encoding="utf-8") as f:
@@ -168,6 +163,35 @@ class TestVerifyIndexDirtyDetection:
         assert code == 1
         for i in range(7):
             assert f"mod{i}.py" in out
+
+    def test_dirty_flagged_even_when_watcher_just_refreshed_indexed_at(self, capsys):
+        """
+        COGNIREPO-D11 regression: a live `cognirepo watch`/`serve` process
+        re-indexes each mutation immediately and stamps indexed_at to "now" —
+        so an mtime-vs-indexed_at check is always defeated by the exact
+        scenario it should catch. Simulate that here by writing the manifest
+        (indexed_at = now) *immediately after* the mutation, no sleep at all —
+        the old mtime-based check would have missed this; the porcelain-based
+        check must not.
+        """
+        from interface.cli.main import _cmd_verify_index
+
+        _init_git_repo()
+        with open("mod.py", "w", encoding="utf-8") as f:
+            f.write("def foo(): pass\n")
+        _sh("add", "-A")
+        _sh("commit", "-q", "-m", "init")
+
+        with open("mod.py", "a", encoding="utf-8") as f:
+            f.write("def bar(): pass\n")
+        _write_manifest()  # indexed_at stamped to "now", right after the edit
+
+        code = _cmd_verify_index()
+        out = capsys.readouterr().out
+
+        assert code == 1
+        assert "DIRTY" in out
+        assert "mod.py" in out
 
 
 def _write_manifest_no_git():

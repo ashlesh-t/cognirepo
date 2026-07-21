@@ -217,12 +217,20 @@ class KnowledgeGraph:
         - Symbol/function/class nodes whose 'file' attribute == file_path
         - The FILE node whose node_id == file_path (convention from make_node_id)
 
-        NetworkX automatically removes all incident edges when a node is removed.
+        Before a FUNCTION/CLASS node is dropped, any live call/inherit edges it
+        participates in are preserved onto a `symbol::{name}` CONCEPT stub (see
+        `_redirect_edges_to_stub`) rather than silently discarded by NetworkX's
+        automatic incident-edge removal — COGNIREPO-D10. A later
+        `ASTIndexer._resolve_call_stubs()` pass reconciles the stub: merges it
+        back into a real node if one still exists elsewhere, or leaves it
+        correctly tagged `unresolved=True` if the symbol is genuinely gone.
+
         Returns the list of removed node IDs.
         """
         removed: list[str] = []
         for nid in self.nodes_for_file(file_path):
             if self.G.has_node(nid):
+                self._redirect_edges_to_stub(nid)
                 self.G.remove_node(nid)
                 removed.append(nid)
         # FILE node's node_id == rel_path (see make_node_id("FILE", name) → name)
@@ -230,6 +238,48 @@ class KnowledgeGraph:
             self.G.remove_node(file_path)
             removed.append(file_path)
         return removed
+
+    def _redirect_edges_to_stub(self, nid: str) -> None:
+        """
+        Preserve a FUNCTION/CLASS node's call/inherit edges onto a
+        `symbol::{name}` CONCEPT stub before the node itself is removed.
+
+        Without this, deleting a symbol that still has live callers (CALLED_BY
+        predecessors) or an inheriting subclass (INHERITS predecessors) would
+        silently drop those edges when NetworkX removes the node's incident
+        edges — the callers' own unchanged AST records still say they call/
+        inherit from it, so that information is real and worth keeping
+        discoverable via `who_calls`/`subgraph`, tagged as unresolved rather
+        than deleted outright. Mirrors `_resolve_call_stubs()`'s edge-copy
+        pattern in reverse. See COGNIREPO-D10.
+        """
+        node_data = self.G.nodes.get(nid, {})
+        if node_data.get("type") not in (NodeType.FUNCTION, NodeType.CLASS):
+            return  # only symbol nodes participate in call/inherit stub edges
+
+        predecessors = list(self.G.predecessors(nid))
+        successors = list(self.G.successors(nid))
+        if not predecessors and not successors:
+            return  # nothing referenced this node — safe to just drop it
+
+        name = nid.rsplit("::", 1)[-1]
+        stub = f"symbol::{name}"
+        if stub == nid:
+            return  # node IS the stub (shouldn't happen for a file-scoped node)
+        self.add_node(stub, NodeType.CONCEPT, unresolved=True)
+
+        for pred in predecessors:
+            if pred == stub:
+                continue
+            edge_data = dict(self.G[pred][nid])
+            if not self.G.has_edge(pred, stub):
+                self.G.add_edge(pred, stub, **edge_data)
+        for succ in successors:
+            if succ == stub:
+                continue
+            edge_data = dict(self.G[nid][succ])
+            if not self.G.has_edge(stub, succ):
+                self.G.add_edge(stub, succ, **edge_data)
 
     # ── queries ───────────────────────────────────────────────────────────────
 
