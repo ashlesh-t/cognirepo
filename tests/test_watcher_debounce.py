@@ -155,3 +155,59 @@ class TestShutdownFlush:
         _flush_and_stop_observer(obs)
         obs.stop.assert_called_once()
         obs.join.assert_called_once()
+
+
+class TestLastWatcherReindexAuditTrail:
+    """COGNIREPO-D12: flush() must leave a durable, mode-independent trail of
+    watcher-driven reindex activity — previously only a bare print(), invisible
+    outside daemon mode."""
+
+    def test_flush_writes_last_watcher_reindex_json(self, tmp_path):
+        import os
+        import json
+        from watchdog.events import FileDeletedEvent
+
+        # get_cognirepo_dir_for_repo() prefers a LOCAL .cognirepo/ under
+        # repo_root over the global fallback — create it so the write lands
+        # in the isolated tmp_path, not the real ~/.cognirepo/.
+        (tmp_path / ".cognirepo").mkdir(exist_ok=True)
+
+        handler, indexer, kg, behaviour = _make_handler(tmp_path, debounce_ms=100)
+        f = tmp_path / "auth.py"
+        f.write_text("def verify_token(): pass")
+        g = tmp_path / "old.py"
+        g.write_text("def stale(): pass")
+
+        handler.on_modified(FileModifiedEvent(str(f)))
+        handler.on_deleted(FileDeletedEvent(str(g)))
+        time.sleep(0.3)
+
+        log_path = tmp_path / ".cognirepo" / "index" / "last_watcher_reindex.json"
+        assert log_path.exists()
+        record = json.loads(log_path.read_text(encoding="utf-8"))
+        assert record["session_id"] == "test"
+        assert "timestamp" in record
+        assert os.path.relpath(str(f), str(tmp_path)) in record["reindexed"]
+        assert os.path.relpath(str(g), str(tmp_path)) in record["removed"]
+
+    def test_second_flush_overwrites_not_appends(self, tmp_path):
+        import json
+
+        (tmp_path / ".cognirepo").mkdir(exist_ok=True)
+
+        handler, indexer, kg, behaviour = _make_handler(tmp_path, debounce_ms=100)
+        f1 = tmp_path / "one.py"
+        f1.write_text("def one(): pass")
+        f2 = tmp_path / "two.py"
+        f2.write_text("def two(): pass")
+
+        handler.on_modified(FileModifiedEvent(str(f1)))
+        time.sleep(0.3)
+        handler.on_modified(FileModifiedEvent(str(f2)))
+        time.sleep(0.3)
+
+        log_path = tmp_path / ".cognirepo" / "index" / "last_watcher_reindex.json"
+        record = json.loads(log_path.read_text(encoding="utf-8"))
+        # Only the most recent batch — not both, and not growing unbounded.
+        assert any("two.py" in p for p in record["reindexed"])
+        assert not any("one.py" in p for p in record["reindexed"])

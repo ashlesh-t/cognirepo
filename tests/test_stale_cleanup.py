@@ -302,6 +302,78 @@ class TestFileWatcherReindexOrphanCleanup:
         assert "mod.py" in kg.G  # FILE node re-added
 
 
+# ── COGNIREPO-D10: incremental stub resolution must match full-reindex parity ─
+
+class TestIncrementalStubResolutionParity:
+    def test_cross_file_call_edge_resolves_and_survives_deletion_correctly(self, isolated_cognirepo):
+        """
+        Real (unmocked) index_file — a call edge from file A to a function in
+        file B must merge into the real node incrementally (not just on a full
+        `cognirepo index-repo`), and deleting that function via the watcher
+        path must reach the exact same end state a full reindex would produce:
+        an `unresolved=True` symbol::name stub (since file A's own AST still
+        calls it), not an untagged duplicate that survives forever.
+        """
+        import os
+        from pathlib import Path
+        from unittest.mock import MagicMock
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from intelligence.indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.file_watcher import RepoFileHandler
+
+        repo_dir = Path(os.getcwd()) / "src"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        file_a = repo_dir / "caller.py"
+        file_b = repo_dir / "callee.py"
+        file_a.write_text("def caller():\n    count_terms()\n", encoding="utf-8")
+        file_b.write_text("def count_terms():\n    pass\n", encoding="utf-8")
+
+        kg = KnowledgeGraph()
+        idx = ASTIndexer(graph=kg)
+        idx.index_repo(str(repo_dir))
+        idx.save()
+
+        # Sanity: full index_repo() already merges the stub — this part isn't new.
+        assert "symbol::count_terms" not in kg.G
+        real_node = next((n for n in kg.G.nodes if n.endswith("::count_terms")), None)
+        assert real_node is not None, "expected count_terms to have a real graph node"
+        assert list(kg.G.predecessors(real_node)), "expected a CALLED_BY predecessor from caller()"
+
+        # Now delete count_terms via the watcher's incremental batch path —
+        # caller.py is untouched, so it still calls a now-nonexistent function.
+        file_b.write_text("# count_terms removed\n", encoding="utf-8")
+        handler = RepoFileHandler(
+            repo_root=str(repo_dir),
+            indexer=idx,
+            graph=kg,
+            behaviour=MagicMock(),
+            session_id="test",
+            debounce_ms=1000,
+        )
+        handler._pending = {str(file_b): "reindex"}
+        handler.flush()
+
+        # Already-correct pre-fix: the AST/reverse index no longer has it.
+        assert idx.lookup_symbol("count_terms") == []
+
+        # The actual bug: pre-fix, an UNTAGGED duplicate `symbol::count_terms`
+        # stub (created back when caller.py was indexed, never merged) would
+        # survive indefinitely, indistinguishable from a live resolved symbol.
+        # Post-fix, if any node remains it must be correctly tagged unresolved
+        # — matching what a full `index_repo()` re-run would also produce,
+        # since caller.py's own unchanged AST still calls this name.
+        stub_nodes = [n for n in kg.G.nodes if n.endswith("count_terms")]
+        for n in stub_nodes:
+            assert kg.G.nodes[n].get("unresolved") is True, (
+                f"{n} survived deletion but isn't tagged unresolved=True — "
+                "looks like a live resolved definition, which is exactly the bug"
+            )
+
+        # manifest symbol_count must not have drifted (COGNIREPO-D10 bonus fix)
+        live_count = sum(len(f.get("symbols", [])) for f in idx.index_data["files"].values())
+        assert idx.index_data["total_symbols"] == live_count
+
+
 # ── helpers (raw JSON I/O, bypass encryption) ─────────────────────────────────
 
 def _raw_save(tmp_path: Path, data: list) -> None:
