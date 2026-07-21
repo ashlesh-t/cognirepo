@@ -77,4 +77,19 @@ defects:
     branch: story/COGNIREPO-105
     pr: https://github.com/ashlesh-t/cognirepo/pull/39
     test_status: pass  # found + fixed live-re-verifying TC-105-1; see its TEST_SUITE.md. Merged to development.
-epic_test_suite_status: not-run
+  - id: COGNIREPO-D10
+    status: in-progress
+    branch: defect/COGNIREPO-D10_D11_D12
+    pr: null
+    test_status: not-run  # found running E2E-100-1 live; see its TEST_SUITE.md
+  - id: COGNIREPO-D11
+    status: in-progress
+    branch: defect/COGNIREPO-D10_D11_D12
+    pr: null
+    test_status: not-run  # found running E2E-100-1 live; see its TEST_SUITE.md
+  - id: COGNIREPO-D12
+    status: in-progress
+    branch: defect/COGNIREPO-D10_D11_D12
+    pr: null
+    test_status: not-run  # found running E2E-100-1 live; see its TEST_SUITE.md
+epic_test_suite_status: fail  # E2E-100-1 FAILed (1/5); see COGNIREPO-100-TEST_SUITE.md and D10/D11/D12
