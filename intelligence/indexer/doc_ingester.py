@@ -27,6 +27,7 @@ Usage (called automatically by `cognirepo init`):
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -153,7 +154,36 @@ class DocIngester:
         stored = db.add_batch(batch)
         files_seen = len({c["source"] for c in chunks})
         log.info("DocIngester: stored %d chunks from %d source(s)", stored, files_seen)
+        self._write_receipt(stored, files_seen)
         return {"chunks": stored, "files": files_seen}
+
+    @staticmethod
+    def _write_receipt(chunks: int, files: int) -> None:
+        """Record what this run ingested, independent of the vector backend.
+
+        Chunks go wherever get_vector_adapter() points — ChromaDB when
+        config.storage.vector_backend is "chroma", which is the default for
+        `cognirepo init`. `doctor` used to count doc chunks by reading
+        memory/semantic_metadata.json, a file only the *local* FAISS backend
+        writes, so on every chroma-backed project it saw 0 and printed
+        "repo has docs but no doc chunks are indexed" forever — the docs were
+        indexed and searchable the whole time. A backend-agnostic receipt gives
+        doctor something true to read. See COGNIREPO-D-F.
+        """
+        try:
+            from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
+            import datetime as _dt  # pylint: disable=import-outside-toplevel
+            path = get_path("index/doc_ingest.json")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            payload = {
+                "chunks": chunks,
+                "files": files,
+                "ingested_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            }
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+        except Exception as exc:  # pylint: disable=broad-except
+            log.debug("DocIngester: could not write ingest receipt (%s)", exc)
 
     # ── collection ────────────────────────────────────────────────────────────
 

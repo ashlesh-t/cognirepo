@@ -9,6 +9,65 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Fixed
+- **COGNIREPO-D-A — the MCP server served symbol lookups frozen at server-start
+  state for the whole session.** `_INDEXER` / `_GRAPH` are module-level
+  singletons `.load()`ed once at startup with no revalidation, and the watcher
+  reindexes in a *separate process*, so the `lookup_symbol.cache_clear()` calls
+  it makes never crossed the process boundary. After a `git mv` or a deleted
+  function the index on disk was correct and a fresh interpreter answered
+  correctly, while the long-lived server kept returning the pre-edit path —
+  and `graph_stats` read the file mtime directly, certifying the stale answer
+  with `index_age_minutes: 0` and `index_stale: false`. `ASTIndexer` and
+  `KnowledgeGraph` now carry a `(mtime_ns, size)` disk stamp and a
+  `reload_if_changed()` that reloads and clears the lookup caches; `_get_indexer()`
+  / `_get_graph()` call it on every access (one `os.stat` when nothing changed).
+  Reloads are refused when a `_repo_ctx()` has repointed `get_path()` at another
+  repository, so a repo-scoped tool call cannot swap the default singleton's
+  contents. `KnowledgeGraph.save()` now promotes `graph.pkl` with `os.replace()`
+  instead of writing in place — readers take no lock, and a mid-write reader
+  would otherwise see a short pickle and quarantine a healthy graph as
+  `.corrupt-<ts>`. `_evict_singletons()` also clears the `lru_cache`, whose
+  entries hold a strong reference to the indexer and previously made the
+  eviction free nothing.
+- **COGNIREPO-D-B — `ast_metadata.json` grew without bound.** `faiss_meta` is
+  positional (`faiss_id` *is* the list index, and `semantic_search_code` resolves
+  a hit as `faiss_meta[fid]`), so records for renamed-away or deleted symbols
+  could not be popped and accumulated on every reindex — ~9% dead records and
+  climbing on a medium repo. New `ASTIndexer.compact_faiss()` rebuilds the index
+  and metadata from live symbols only, recovering vectors via
+  `IndexIDMap2.reconstruct()` (no re-embedding) and renumbering `faiss_id`
+  densely; `index_repo()` runs it before saving. `faiss_meta_stats()` reports
+  live/retained/dead/dangling, and symbols citing an unreachable id now have that
+  reference cleared instead of carried.
+- **COGNIREPO-D-C — the heartbeat file had no per-daemon identity.** A `serve` or
+  `watch` process rooted at a different tree could stamp this repo's
+  `.cognirepo/watchers/heartbeat`, which is how `watch --status` printed
+  "Daemon: not running" directly above "Heartbeat: OK (10s ago)" and doctor
+  credited liveness (and the wrong PID) to a process watching somewhere else.
+  New `read_heartbeat_for_path()` / `heartbeat_age_seconds_for_path()` match on
+  the recorded `path`; `_watcher_alive()`, `watch --status`, `watch
+  --ensure-running` and doctor all use them, and a heartbeat held by a foreign
+  path is now reported as such rather than silently trusted.
+- **COGNIREPO-D-D — six commands were advertised in `--help` but rejected by
+  argparse.** `mcp-setup`, `episodic-search`, `lookup-symbol`, `who-calls`,
+  `subgraph` and `graph-stats` all exited 2 with "invalid choice". They are now
+  registered and dispatch to the same functions the MCP tools use, so the CLI and
+  MCP surfaces cannot drift.
+- **COGNIREPO-D-E — a stopped watcher left its PID file behind.** `watch --stop`
+  sends SIGTERM, but nothing installed a handler in the daemonized process, so
+  Python's default killed it outright: `stop_fn()`'s final flush never ran and
+  `.cognirepo/watchers/<pid>.json` outlived the daemon. The watcher now
+  translates SIGTERM into the `KeyboardInterrupt` its loop already handles and
+  removes both its PID file and its own heartbeat in a `finally`.
+- **COGNIREPO-D-F — `doctor` claimed docs were unindexed on every ChromaDB
+  project.** The doc-chunk check counted rows in `memory/semantic_metadata.json`,
+  a file only the *local* FAISS backend writes. With `vector_backend: "chroma"`
+  (the `cognirepo init` default) the chunks live in ChromaDB and that file stays
+  `[]`, so the warning "repo has docs but no doc chunks are indexed" was
+  permanent no matter how often you re-indexed — while the docs were ingested and
+  searchable the whole time. `DocIngester` now writes a backend-agnostic receipt
+  to `.cognirepo/index/doc_ingest.json` and doctor reads that, falling back to
+  the old count for indexes built before the receipt existed.
 - **COGNIREPO-D13 — concurrent index writes could crash the watcher or promote
   truncated JSON.** `ASTIndexer._atomic_json_dump()` derived its scratch filename
   from the target path (`ast_index.json.tmp`), so every concurrent writer — two
