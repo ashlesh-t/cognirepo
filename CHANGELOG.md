@@ -8,6 +8,51 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Fixed
+- **COGNIREPO-D13 — concurrent index writes could crash the watcher or promote
+  truncated JSON.** `ASTIndexer._atomic_json_dump()` derived its scratch filename
+  from the target path (`ast_index.json.tmp`), so every concurrent writer — two
+  watcher flush threads, a second `cognirepo serve`, or the background
+  `index-repo --changed-only` that `graph_stats` spawns — shared one file. The
+  loser of the rename race raised `FileNotFoundError`; worse, an interleaved
+  `open(tmp, "w")` truncated a file another writer was mid-`json.dump()` into, and
+  that partial JSON was then `os.replace()`d into place. Scratch files now come
+  from `tempfile.mkstemp()` and are unlinked if the write fails. `ASTIndexer.save()`
+  additionally holds `store_lock()` across the whole group (`ast_index.json`,
+  `ast.index`, `ast_metadata.json`, `manifest.json`) so two processes cannot
+  interleave their renames and leave `manifest.json`'s checksums describing a
+  different index than the one on disk — `KnowledgeGraph.save()` has always taken
+  this lock; `ASTIndexer.save()` did not. `load()` sweeps scratch files stranded
+  by a hard kill, including the legacy fixed-name `.tmp`.
+- **COGNIREPO-D14 — `graph_stats` reported two clocks in one payload.**
+  `indexed_at` was stamped only by a full `index_repo()` run, never by the
+  watcher's incremental `save()`, so a repo kept current by the watcher returned
+  an hours-old `last_indexed` alongside `index_age_minutes: 0`. `save()` now
+  stamps `indexed_at` on every persist, and a new `full_indexed_at` field carries
+  the last complete sweep separately. `graph_stats` returns both, plus
+  `watcher_alive`.
+- **COGNIREPO-D15 — overlapping watcher flushes; a failed save abandoned the
+  batch.** `threading.Timer.cancel()` is a no-op once the timer has fired, so a
+  burst outlasting the debounce window scheduled a second `flush()` while the
+  first was still inside the seconds-long index+save section; both threads then
+  mutated shared `indexer.index_data` / `graph.G` and called `save()` at once.
+  `flush()` is now serialized by a dedicated lock (as is the `debounce_ms=0`
+  synchronous path). Separately, `indexer.save()` sat outside any handler, so a
+  raise from it skipped `graph.save()`, the D12 audit trail, episodic
+  `mark_stale()`, and `invalidate_hybrid_cache()` — leaving the graph, index and
+  retrieval cache mutually inconsistent with no record. Each step is now
+  independently guarded, and `last_watcher_reindex.json` gained an `error` field
+  so a partially-applied batch is no longer indistinguishable from a clean one.
+- **COGNIREPO-D16 — `_watcher_alive()` was hardwired to `False`.** It read
+  `.cognirepo/watcher.pid`, a path nothing in the codebase has ever written (the
+  daemon registers under `.cognirepo/watchers/<pid>.json`). The
+  "a live watcher means the index is not stale" guard in `graph_stats` was
+  therefore dead, letting it spawn a competing `index-repo --changed-only`
+  against a repo an active watcher was already writing — feeding D13 a third
+  concurrent writer. Now reads the heartbeat that `run_watcher_with_crash_guard()`
+  refreshes for both the daemon and the in-process auto-watcher, with the PID
+  registry as fallback.
+
 ### Removed
 - **`interface.cli.docs_index` backward-compat shim** — deleted. It re-exported
   `intelligence.indexer.docs_index` and had warned `DeprecationWarning: ... Removed in v2.0`

@@ -73,6 +73,12 @@ class RepoFileHandler(FileSystemEventHandler):
         self._lock = threading.Lock()
         self._pending: dict[str, str] = {}  # abs_path -> "reindex" | "remove"
         self._timer: threading.Timer | None = None
+        # Serializes the *body* of flush(). self._lock only guards _pending /
+        # _timer and is released before the expensive index+save section, so
+        # two Timer threads could previously run that section concurrently and
+        # mutate shared indexer.index_data / graph.G unsynchronized.
+        # See COGNIREPO-D15 and the note in flush().
+        self._flush_lock = threading.RLock()
 
     def _load_debounce_ms(self) -> int:
         """Read indexing.debounce_ms from this repo's config.json (default 500)."""
@@ -117,10 +123,13 @@ class RepoFileHandler(FileSystemEventHandler):
     def _queue(self, action: str, abs_path: str) -> None:
         if self.debounce_ms <= 0:
             # Disabled: process this single event immediately (pre-debounce behavior).
-            if action == "reindex":
-                self._reindex(abs_path)
-            else:
-                self._remove(abs_path)
+            # Still takes _flush_lock so a shutdown flush() can never overlap
+            # with a synchronous save on the emitter thread (COGNIREPO-D15).
+            with self._flush_lock:
+                if action == "reindex":
+                    self._reindex(abs_path)
+                else:
+                    self._remove(abs_path)
             return
         with self._lock:
             self._pending[abs_path] = action  # last action for a path wins; dedupes bursts
@@ -136,7 +145,20 @@ class RepoFileHandler(FileSystemEventHandler):
         graph.save() + invalidate_hybrid_cache() for the whole batch, not per
         event. Called by the debounce timer, and by stop_watching() on
         shutdown so no queued events are lost.
+
+        Serialized by self._flush_lock. threading.Timer.cancel() in _queue()
+        is a no-op once the timer has already fired, so under a burst that
+        outlasts the debounce window (5 saves over ~1 s at debounce_ms=500,
+        with each editor save emitting several modify events) a second timer
+        is scheduled while the first flush is still inside the seconds-long
+        index+save section. Both threads then hit ASTIndexer.save() at once.
+        See COGNIREPO-D15.
         """
+        with self._flush_lock:
+            self._flush_locked()
+
+    def _flush_locked(self) -> None:
+        """flush() body — callers must hold self._flush_lock."""
         with self._lock:
             pending = self._pending
             self._pending = {}
@@ -177,12 +199,33 @@ class RepoFileHandler(FileSystemEventHandler):
         self.indexer.index_data["total_symbols"] = sum(
             len(f.get("symbols", [])) for f in self.indexer.index_data["files"].values()
         )
-        self.indexer.save()
-        self.graph.save()
-        self._write_last_watcher_reindex(reindexed_rel_paths, removed_rel_paths)
+        # Persist + notify. Each step is independently guarded: previously
+        # indexer.save() sat outside any handler, so a raise from it skipped
+        # graph.save(), the D12 audit trail, episodic mark_stale(), AND
+        # invalidate_hybrid_cache() — leaving the graph, the index and the
+        # retrieval cache mutually inconsistent with no record that a batch
+        # was ever attempted. That is precisely the cross-store divergence
+        # E2E-100-1 exists to detect. See COGNIREPO-D15.
+        save_error: str | None = None
+        try:
+            self.indexer.save()
+        except Exception as exc:  # pylint: disable=broad-except
+            save_error = f"indexer.save failed: {exc}"
+            print(f"[watcher] {save_error}")
+
+        try:
+            self.graph.save()
+        except Exception as exc:  # pylint: disable=broad-except
+            save_error = f"{save_error + '; ' if save_error else ''}graph.save failed: {exc}"
+            print(f"[watcher] graph.save failed: {exc}")
+
+        self._write_last_watcher_reindex(reindexed_rel_paths, removed_rel_paths, error=save_error)
 
         if any_reindexed:
-            self.behaviour.save()
+            try:
+                self.behaviour.save()
+            except Exception as exc:  # pylint: disable=broad-except
+                print(f"[watcher] behaviour.save failed: {exc}")
 
         for rel_path in removed_rel_paths:
             try:
@@ -192,6 +235,8 @@ class RepoFileHandler(FileSystemEventHandler):
                 import logging as _logging  # pylint: disable=import-outside-toplevel
                 _logging.getLogger(__name__).warning("episodic mark_stale failed for %s: %s", rel_path, _exc)
 
+        # Must run even when a save failed: the in-memory stores were already
+        # mutated, so a surviving TTL cache entry would serve pre-edit results.
         if any_reindexed or removed_rel_paths:
             try:
                 from intelligence.retrieval.hybrid import invalidate_hybrid_cache  # pylint: disable=import-outside-toplevel
@@ -202,7 +247,9 @@ class RepoFileHandler(FileSystemEventHandler):
         for rel_path in removed_rel_paths:
             print(f"[watcher] removed {rel_path} from index")
 
-    def _write_last_watcher_reindex(self, reindexed: list[str], removed: list[str]) -> None:
+    def _write_last_watcher_reindex(
+        self, reindexed: list[str], removed: list[str], error: str | None = None,
+    ) -> None:
         """
         Overwrite `.cognirepo/index/last_watcher_reindex.json` with this batch's
         activity — a durable, mode-independent trail of watcher-driven reindex
@@ -219,6 +266,10 @@ class RepoFileHandler(FileSystemEventHandler):
                 "session_id": self.session_id,
                 "reindexed": reindexed,
                 "removed": removed,
+                # None on a clean batch; a message when a persist step failed,
+                # so a partially-applied batch is visible to `doctor` and to
+                # anyone reading the trail, instead of looking like a success.
+                "error": error,
             }
             path = os.path.join(get_cognirepo_dir_for_repo(self.repo_root), "index", "last_watcher_reindex.json")
             os.makedirs(os.path.dirname(path), exist_ok=True)
