@@ -19,6 +19,7 @@ Persistence : pickle to .cognirepo/graph/graph.pkl
 import os
 import pickle
 import sys
+import tempfile
 import time
 import warnings
 from typing import Any
@@ -106,14 +107,49 @@ class KnowledgeGraph:
 
     def __init__(self) -> None:
         self.G: nx.DiGraph = nx.DiGraph()  # pylint: disable=invalid-name
+        # (mtime_ns, size) of graph.pkl as of the last _load()/save(), plus the
+        # path it refers to — _graph_file() is ContextVar-scoped, so the same
+        # call inside a _repo_ctx() block names a different repo's graph.
+        self._disk_stamp: tuple[int, int] | None = None
+        self._disk_path: str | None = _graph_file()
         self._load()
 
     # ── persistence ───────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _stat_stamp(path: str) -> tuple[int, int] | None:
+        """Return (mtime_ns, size) for *path*, or None if it does not exist."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
+    def reload_if_changed(self) -> bool:
+        """Re-read graph.pkl when another process has rewritten it.
+
+        Counterpart to ASTIndexer.reload_if_changed(): the MCP server holds this
+        object as a process-lifetime singleton while the watcher mutates the
+        graph from a different process, so without revalidation who_calls() and
+        subgraph() answer from the graph as it existed at server start.
+        Safe against torn reads because save() now promotes via os.replace().
+        See COGNIREPO-D-A.
+        """
+        path = _graph_file()
+        if self._disk_path is not None and path != self._disk_path:
+            return False  # a _repo_ctx() has repointed get_path() at another repo
+        current = self._stat_stamp(path)
+        if current == self._disk_stamp:
+            return False
+        self._load()
+        return True
+
     def _load(self) -> None:
         """Load graph from disk; decrypt if needed."""
         if not os.path.exists(_graph_file()):
+            self._disk_stamp = None
             return
+        stamp = self._stat_stamp(_graph_file())
         try:
             with open(_graph_file(), "rb") as f:
                 raw = f.read()
@@ -132,6 +168,7 @@ class KnowledgeGraph:
                     # load below and is handled by the outer except.
                     pass
             self.G = pickle.loads(raw)  # nosec B301
+            self._disk_stamp = stamp
         except Exception as exc:  # pylint: disable=broad-except
             quarantine_path = f"{_graph_file()}.corrupt-{int(time.time())}"
             try:
@@ -149,6 +186,7 @@ class KnowledgeGraph:
                 stacklevel=2,
             )
             self.G = nx.DiGraph()
+            self._disk_stamp = None
 
     def load(self) -> None:
         """Public alias for reloading the graph from disk."""
@@ -171,8 +209,29 @@ class KnowledgeGraph:
             from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
             raw = encrypt_bytes(raw, get_or_create_key(project_id))
         with store_lock():
-            with open(_graph_file(), "wb") as f:
-                f.write(raw)
+            # Atomic promote. A plain open("wb") leaves graph.pkl truncated for
+            # the duration of the write, and readers (MCP server revalidation,
+            # doctor, a second serve) take no lock — one of them reading mid-write
+            # sees a short pickle, fails to unpickle, and quarantines a perfectly
+            # good graph as .corrupt-<ts>. os.replace() makes the swap indivisible.
+            directory = os.path.dirname(_graph_file()) or "."
+            fd, tmp_path = tempfile.mkstemp(
+                dir=directory, prefix=os.path.basename(_graph_file()) + ".", suffix=".tmp",
+            )
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(raw)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, _graph_file())
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        self._disk_stamp = self._stat_stamp(_graph_file())
+        self._disk_path = _graph_file()
         breaker.record_success()
 
     # ── mutation ──────────────────────────────────────────────────────────────

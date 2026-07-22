@@ -325,7 +325,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ## 15. Test Coverage
 
-90 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+91 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
 for the current test-function count). This table is representative, not exhaustive — see
 `tests/` for the full list. The 89-file count is pinned against `tests/test_docs_sync.py`,
 which fails if this number drifts from the real glob count.

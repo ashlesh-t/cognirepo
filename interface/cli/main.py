@@ -703,11 +703,29 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
 
     # ── Check 8: Daemon heartbeat ─────────────────────────────────────────────
     try:
-        from interface.cli.daemon import heartbeat_age_seconds, read_heartbeat, _is_alive  # pylint: disable=import-outside-toplevel
-        _hb_age = heartbeat_age_seconds()
-        _hb = read_heartbeat()
+        from interface.cli.daemon import (  # pylint: disable=import-outside-toplevel
+            heartbeat_age_seconds_for_path,
+            read_heartbeat,
+            read_heartbeat_for_path,
+            _is_alive,
+        )
+        from core.config.paths import get_cognirepo_dir as _gcd_hb  # pylint: disable=import-outside-toplevel
+        _repo_root_hb = os.path.dirname(os.path.abspath(_gcd_hb()))
+        # Only credit a heartbeat that names this repo — doctor used to report
+        # liveness (and the wrong PID) for a daemon watching another tree that
+        # happened to own the slot. See COGNIREPO-D-C.
+        _hb_age = heartbeat_age_seconds_for_path(_repo_root_hb)
+        _hb = read_heartbeat_for_path(_repo_root_hb)
         if _hb_age is None:
-            _ok("Daemon heartbeat — no watcher running (optional; start with: cognirepo watch .)")
+            _foreign_hb = read_heartbeat()
+            if _foreign_hb:
+                _warn(
+                    f"Daemon heartbeat — held by PID {_foreign_hb.get('pid', '?')} "
+                    f"watching {_foreign_hb.get('path', '?')}, not this repo",
+                    "Start a watcher here with: cognirepo watch .",
+                )
+            else:
+                _ok("Daemon heartbeat — no watcher running (optional; start with: cognirepo watch .)")
         else:
             _pid = _hb.get("pid", -1) if _hb else -1
             if not _is_alive(_pid):
@@ -922,18 +940,33 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             for f in os.listdir(".")
             if os.path.isfile(f)
         )
-        _meta_p = get_path("memory/semantic_metadata.json")
+        # Prefer DocIngester's backend-agnostic receipt. Counting rows in
+        # memory/semantic_metadata.json only works for the local FAISS backend;
+        # with vector_backend="chroma" (the `cognirepo init` default) the chunks
+        # live in ChromaDB and that file stays "[]", so this check reported 0
+        # doc chunks on every chroma project no matter how often you reindexed.
+        # See COGNIREPO-D-F.
         _doc_chunks = 0
-        if os.path.exists(_meta_p):
+        _receipt_p = get_path("index/doc_ingest.json")
+        if os.path.exists(_receipt_p):
             try:
-                with open(_meta_p, encoding="utf-8") as _mf:
-                    _doc_chunks = sum(
-                        1 for _e in json.load(_mf)
-                        if str(_e.get("source", "")).endswith((".md", ".rst"))
-                        or _e.get("source") in ("doc", "init_doc")
-                    )
+                with open(_receipt_p, encoding="utf-8") as _rf:
+                    _doc_chunks = int(json.load(_rf).get("chunks", 0))
             except Exception:  # pylint: disable=broad-except
-                _doc_chunks = -1  # encrypted or unreadable — skip silently
+                _doc_chunks = 0
+        if _doc_chunks == 0:
+            # Fallback for indexes built before the receipt existed.
+            _meta_p = get_path("memory/semantic_metadata.json")
+            if os.path.exists(_meta_p):
+                try:
+                    with open(_meta_p, encoding="utf-8") as _mf:
+                        _doc_chunks = sum(
+                            1 for _e in json.load(_mf)
+                            if str(_e.get("source", "")).endswith((".md", ".rst"))
+                            or _e.get("source") in ("doc", "init_doc")
+                        )
+                except Exception:  # pylint: disable=broad-except
+                    _doc_chunks = -1  # encrypted or unreadable — skip silently
         if _md_present and _doc_chunks == 0:
             _warn(
                 "Doc search — repo has docs but no doc chunks are indexed",
@@ -3134,6 +3167,35 @@ def _main():
     p_hist = sub.add_parser("history", help="Print recent episodic events")
     p_hist.add_argument("--limit", type=int, default=20)
 
+    # ── graph / symbol queries (COGNIREPO-D-D) ────────────────────────────────
+    # These six were advertised in the CLI banner but never registered, so every
+    # one of them exited 2 with "invalid choice". They dispatch to the exact
+    # functions the MCP tools use, so CLI and MCP cannot drift.
+    p_epi = sub.add_parser("episodic-search", help="Keyword search in episodic event history")
+    p_epi.add_argument("query")
+    p_epi.add_argument("--limit", type=int, default=10)
+
+    p_lsym = sub.add_parser("lookup-symbol", help="Find where a function/class is defined")
+    p_lsym.add_argument("name")
+    p_lsym.add_argument("--include-org", action="store_true",
+                        help="Also search sibling repos in the same organization")
+
+    p_who = sub.add_parser("who-calls", help="Trace callers of a function in the call graph")
+    p_who.add_argument("function")
+
+    p_sub = sub.add_parser("subgraph", help="Knowledge-graph neighbourhood for an entity")
+    p_sub.add_argument("entity")
+    p_sub.add_argument("--depth", type=int, default=2)
+
+    sub.add_parser("graph-stats", help="Node/edge count and health of the knowledge graph")
+
+    p_mcpset = sub.add_parser("mcp-setup", help="Re-run MCP integration (Claude / Gemini / Cursor)")
+    p_mcpset.add_argument("--target", action="append", dest="targets",
+                          choices=["claude", "gemini", "cursor", "vscode"],
+                          help="Repeatable; defaults to claude")
+    p_mcpset.add_argument("--global", dest="global_scope", action="store_true",
+                          help="Also register the server user-wide, not just this project")
+
     # index-repo
     p_idx = sub.add_parser("index-repo", help="AST-index a codebase for hybrid retrieval")
     p_idx.add_argument(
@@ -4146,23 +4208,35 @@ def _main():
             )
             sys.exit(2)
         from interface.cli.daemon import (  # pylint: disable=import-outside-toplevel
-            heartbeat_age_seconds,
+            heartbeat_age_seconds_for_path,
             read_heartbeat,
+            read_heartbeat_for_path,
             is_watcher_running_for_path,
         )
         abs_watch_path = os.path.abspath(args.path)
 
         if args.status:
-            hb = read_heartbeat()
+            # Path-scoped: an unrelated process rooted elsewhere can own the
+            # heartbeat slot, which is how "Daemon: not running" used to print
+            # next to "Heartbeat: OK". See COGNIREPO-D-C.
+            hb = read_heartbeat_for_path(abs_watch_path)
             running = is_watcher_running_for_path(abs_watch_path)
             if running:
                 print(f"  Daemon     : running (PID {running['pid']}, name: {running['name']})")
                 print(f"  Started    : {running.get('started', 'unknown')}")
             else:
                 print("  Daemon     : not running")
-            age = heartbeat_age_seconds()
+            age = heartbeat_age_seconds_for_path(abs_watch_path)
             if age is None:
-                print("  Heartbeat  : no heartbeat file")
+                _foreign = read_heartbeat()
+                if _foreign and not hb:
+                    print(
+                        f"  Heartbeat  : none for this path "
+                        f"(slot held by PID {_foreign.get('pid', '?')} "
+                        f"watching {_foreign.get('path', '?')})"
+                    )
+                else:
+                    print("  Heartbeat  : no heartbeat file")
             elif age < 60:
                 print(f"  Heartbeat  : OK ({age:.0f}s ago)")
             else:
@@ -4172,7 +4246,7 @@ def _main():
             return
 
         if args.ensure_running:
-            age = heartbeat_age_seconds()
+            age = heartbeat_age_seconds_for_path(abs_watch_path)
             running = is_watcher_running_for_path(abs_watch_path)
             if running and (age is None or age < 60):
                 print(f"[cognirepo] Watcher already running (PID {running['pid']}).")
@@ -4292,6 +4366,41 @@ def _main():
 
         elif args.command == "history":
             _print_results(_direct_history(args.limit))
+
+        # ── graph / symbol queries (COGNIREPO-D-D) ────────────────────────────
+        elif args.command in (
+            "episodic-search", "lookup-symbol", "who-calls", "subgraph", "graph-stats",
+        ):
+            # Import here: mcp_server pulls FastMCP + the embedding stack, which
+            # every other subcommand would otherwise pay for at startup.
+            from interface.server import mcp_server as _srv  # pylint: disable=import-outside-toplevel
+            if args.command == "episodic-search":
+                _print_results(_srv.episodic_search(args.query, limit=args.limit))
+            elif args.command == "lookup-symbol":
+                _locs = _srv.lookup_symbol(args.name, include_org=args.include_org)
+                if not _locs:
+                    print(f"No definition found for: {args.name!r}")
+                    _maybe_tip_index_repo()
+                else:
+                    for _loc in _locs:
+                        print(f"  {_loc.get('file')}:{_loc.get('line')}  "
+                              f"[{_loc.get('type', 'UNKNOWN')}]")
+            elif args.command == "who-calls":
+                _print_results(_srv.who_calls(args.function))
+            elif args.command == "subgraph":
+                _print_results(_srv.subgraph(args.entity, depth=args.depth))
+            else:  # graph-stats
+                _print_results(_srv.graph_stats())
+
+        elif args.command == "mcp-setup":
+            from interface.cli.init_project import setup_mcp  # pylint: disable=import-outside-toplevel
+            _proj_path = os.path.abspath(".")
+            setup_mcp(
+                targets=args.targets or ["claude"],
+                project_name=os.path.basename(_proj_path),
+                project_path=_proj_path,
+                global_scope=args.global_scope,
+            )
 
 
 if __name__ == "__main__":

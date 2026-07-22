@@ -1101,6 +1101,66 @@ class ASTIndexer:
             "total_symbols": 0,
         }
         self._loaded = False
+        # (mtime_ns, size) of ast_index.json as of the last load()/save().
+        # None means "never synced with disk". See reload_if_changed().
+        self._disk_stamp: tuple[int, int] | None = None
+        # Absolute path this instance is synced against. get_path() is
+        # ContextVar-scoped (_CTX_DIR), so the same call inside a
+        # `_repo_ctx(other_repo)` block resolves to a different repo's index —
+        # recording it lets reload_if_changed() refuse a cross-repo reload.
+        self._disk_path: str | None = None
+
+    # ── disk freshness ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _stat_stamp(path: str) -> tuple[int, int] | None:
+        """Return (mtime_ns, size) for *path*, or None if it does not exist."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
+    def reload_if_changed(self) -> bool:
+        """Re-read the index from disk when another process has rewritten it.
+
+        Long-lived readers — chiefly the MCP server, which holds ASTIndexer as
+        a module-level singleton for the life of the process — otherwise serve
+        whatever was on disk at startup forever. The watcher runs in a separate
+        process, so its in-process ``lookup_symbol.cache_clear()`` calls never
+        reach the server: after a rename or a symbol deletion the server kept
+        answering from the pre-edit reverse_index while ``graph_stats`` read the
+        file mtime directly and reported ``index_age_minutes: 0``, certifying
+        the stale answer as fresh. See COGNIREPO-D-A.
+
+        Returns True if a reload actually happened. Cheap when nothing changed:
+        one os.stat() against ast_index.json.
+        """
+        if not self._loaded:
+            return False
+        path = _ast_index_file()
+        if self._disk_path is not None and path != self._disk_path:
+            # Called while a _repo_ctx() has repointed get_path() at another
+            # repo. Reloading here would silently swap this instance's contents
+            # for a different repository's index.
+            log.debug(
+                "reload_if_changed: path context changed (%s != %s) — skipping",
+                path, self._disk_path,
+            )
+            return False
+        current = self._stat_stamp(path)
+        if current == self._disk_stamp:
+            return False
+        log.debug(
+            "ast_index.json changed on disk (%s -> %s) — reloading",
+            self._disk_stamp, current,
+        )
+        self.load()
+        # lru_cache lives on the class, so this clears entries for every
+        # instance — required, since the cached lists are pre-reload paths.
+        type(self).lookup_symbol.cache_clear()
+        type(self).lookup_word.cache_clear()
+        return True
 
     # ── embedding model (lazy) ────────────────────────────────────────────────
 
@@ -1460,6 +1520,19 @@ class ASTIndexer:
             len(f.get("symbols", [])) for f in self.index_data["files"].values()
         )
         self.index_data["total_symbols"] = total_symbols
+        # Drop metadata records for symbols that were renamed away or deleted
+        # since the last full index. Only safe here, where every faiss_id in
+        # index_data is about to be rewritten anyway. See COGNIREPO-D-B.
+        try:
+            _compaction = self.compact_faiss()
+            if _compaction.get("compacted"):
+                _b, _a = _compaction["before"], _compaction["after"]
+                print(
+                    f"  FAISS compaction: {_b['retained']} → {_a['retained']} "
+                    f"metadata records ({_b['dead']} stale dropped)"
+                )
+        except Exception as _exc:  # pylint: disable=broad-except
+            log.warning("compact_faiss failed (index still valid): %s", _exc)
         self.save()
 
         # ── summary output ────────────────────────────────────────────────────
@@ -2073,6 +2146,102 @@ class ASTIndexer:
         results.sort(key=lambda x: x["file"])
         return results
 
+    def faiss_meta_stats(self) -> dict:
+        """Report live-vs-retained FAISS metadata records.
+
+        ``faiss_meta`` is positional: ``faiss_id`` IS the list index, and
+        ``semantic_search_code`` resolves a hit as ``faiss_meta[fid]``. That
+        makes the list append-only — entries for renamed-away or deleted
+        symbols cannot be popped without renumbering every id after them, so
+        they accumulate on every reindex. The vectors are removed (via
+        ``remove_ids``) so the dead records are unreachable, not incorrect, but
+        they grow ast_metadata.json without bound. See COGNIREPO-D-B.
+        """
+        live = {
+            s["faiss_id"]
+            for f in self.index_data.get("files", {}).values()
+            for s in f.get("symbols", [])
+            if s.get("faiss_id", -1) >= 0
+        }
+        retained = len(self.faiss_meta)
+        # Count only ids that actually address a retained record. A symbol can
+        # carry a faiss_id past the end of the list (a dangling reference left
+        # by a partial write); counting it as live would mask real dead records.
+        addressable = {fid for fid in live if 0 <= fid < retained}
+        dead = retained - len(addressable)
+        dangling = len(live) - len(addressable)
+        ntotal = int(self.faiss_index.ntotal) if self.faiss_index is not None else 0
+        return {
+            "live": len(addressable),
+            "retained": retained,
+            "ntotal": ntotal,
+            "dead": dead,
+            "dangling": dangling,
+            "dead_ratio": round(dead / retained, 4) if retained else 0.0,
+        }
+
+    def compact_faiss(self) -> dict:
+        """Rebuild the FAISS index + metadata keeping only live symbol records.
+
+        Renumbers ``faiss_id`` densely from 0 and rewrites each symbol's
+        ``faiss_id`` in ``index_data`` so the positional invariant
+        ``faiss_meta[fid]`` still holds. Vectors are recovered with
+        ``reconstruct()`` — IndexIDMap2 stores them, so no re-embedding is
+        needed and compaction costs no model time.
+
+        Returns the before/after stats. A no-op (and cheap) when nothing is dead.
+        """
+        before = self.faiss_meta_stats()
+        if self.faiss_index is None or (before["dead"] == 0 and before["dangling"] == 0):
+            return {"before": before, "after": before, "compacted": False}
+
+        # old_id -> the symbol dicts that point at it (usually exactly one)
+        holders: dict[int, list[dict]] = {}
+        for file_data in self.index_data.get("files", {}).values():
+            for sym in file_data.get("symbols", []):
+                fid = sym.get("faiss_id", -1)
+                if fid >= 0:
+                    holders.setdefault(int(fid), []).append(sym)
+
+        inner = faiss.IndexFlatL2(384)
+        new_index = faiss.IndexIDMap2(inner)
+        new_meta: list[dict] = []
+        dropped = 0
+
+        for old_id in sorted(holders):
+            if old_id >= len(self.faiss_meta):
+                # Dangling: addresses past the end of the metadata list.
+                for sym in holders[old_id]:
+                    sym["faiss_id"] = -1
+                dropped += 1
+                continue
+            try:
+                vec = self.faiss_index.reconstruct(int(old_id))
+            except Exception:  # pylint: disable=broad-except
+                # Vector already removed (remove_ids) but a symbol still cites
+                # the id — drop the reference rather than carry a dangling one.
+                for sym in holders[old_id]:
+                    sym["faiss_id"] = -1
+                dropped += 1
+                continue
+            new_id = len(new_meta)
+            new_index.add_with_ids(
+                np.array([vec], dtype="float32"),
+                np.array([new_id], dtype=np.int64),
+            )
+            new_meta.append(self.faiss_meta[old_id])
+            for sym in holders[old_id]:
+                sym["faiss_id"] = new_id
+
+        self.faiss_index = new_index
+        self.faiss_meta = new_meta
+        after = self.faiss_meta_stats()
+        log.info(
+            "compact_faiss: %d -> %d metadata records (%d dangling id(s) cleared)",
+            before["retained"], after["retained"], dropped,
+        )
+        return {"before": before, "after": after, "compacted": True, "dropped": dropped}
+
     def get_symbol_table(self, file_path: str) -> SymbolTable:
         """Return a SymbolTable for bisect-based line-range queries."""
         return build_symbol_table_from_index(file_path, self.index_data)
@@ -2211,6 +2380,11 @@ class ASTIndexer:
             symbol_count = self.index_data.get("total_symbols", len(self.faiss_meta))
             _write_manifest(repo_root=repo_root, symbol_count=symbol_count, file_count=file_count)
 
+            # Adopt our own write as the freshness baseline so reload_if_changed()
+            # doesn't bounce the writer's in-memory state back off disk.
+            self._disk_stamp = self._stat_stamp(_ast_index_file())
+            self._disk_path = _ast_index_file()
+
     def load(self) -> None:
         """Load existing index from disk. Silently does nothing if not present.
 
@@ -2241,9 +2415,17 @@ class ASTIndexer:
                             pass
                     self._ensure_faiss()
                     self._loaded = True
+                    self._disk_stamp = self._stat_stamp(_ast_index_file())
+                    self._disk_path = _ast_index_file()
                     return
             except (OSError, json.JSONDecodeError):
                 pass  # manifest absent or unreadable — proceed normally
+
+        # Sample the stamp BEFORE reading. If a writer lands mid-load we adopt
+        # the older stamp and reload_if_changed() picks up the newer file on the
+        # next call, rather than caching a half-read state as current.
+        stamp = self._stat_stamp(_ast_index_file())
+        self._disk_path = _ast_index_file()
 
         # Clear scratch files stranded by a hard kill mid-write (COGNIREPO-D13).
         self._sweep_stale_tmp(_ast_index_file())
@@ -2273,3 +2455,4 @@ class ASTIndexer:
         if os.path.exists(_ast_meta_file()):
             self.faiss_meta = self._load_json_self_heal(_ast_meta_file(), [])
         self._loaded = True
+        self._disk_stamp = stamp

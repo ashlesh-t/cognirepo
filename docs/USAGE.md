@@ -161,6 +161,40 @@ cognirepo serve --project-dir /abs/path/to/project
 
 ---
 
+### Graph & symbol queries from the terminal
+
+The same functions the MCP tools call, available without an MCP client.
+Useful for scripting, CI checks, and verifying what an agent would actually see.
+
+```bash
+cognirepo lookup-symbol parse_config      # where a function/class is defined
+cognirepo lookup-symbol Foo --include-org # also search sibling repos in the org
+cognirepo who-calls parse_config          # callers, from the call graph
+cognirepo subgraph interface/cli/main.py  # graph neighbourhood (--depth N)
+cognirepo graph-stats                     # node/edge counts + index freshness
+cognirepo episodic-search "watcher crash" # keyword search over the event log
+```
+
+`graph-stats` reports both clocks — `last_indexed` (any save, including the
+watcher's incremental path) and `full_indexed_at` (the last complete sweep) —
+plus `watcher_alive`, so "the index is fresh" and "something is keeping it
+fresh" are separate answers.
+
+---
+
+### `cognirepo mcp-setup`
+
+Re-run MCP integration without re-running the whole `init` wizard. Rewrites the
+client config files for the tools you name.
+
+```bash
+cognirepo mcp-setup                              # Claude Code (default)
+cognirepo mcp-setup --target claude --target cursor
+cognirepo mcp-setup --global                     # also register user-wide
+```
+
+---
+
 ### `cognirepo org`
 
 Manage local repository organizations for cross-repo context sharing.

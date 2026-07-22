@@ -84,9 +84,60 @@ def read_heartbeat() -> dict | None:
         return None
 
 
+def read_heartbeat_for_path(repo_path: str) -> dict | None:
+    """Return the heartbeat only if it was written by a watcher for *repo_path*.
+
+    The heartbeat file is a single slot per `.cognirepo/` dir, but nothing
+    stopped a `serve --project-dir <other>` process whose `.cognirepo`
+    resolution walked up into this repo from stamping its own PID and path
+    here. `watch --status` then printed the contradiction "Daemon: not running"
+    alongside "Heartbeat: OK (10s ago)", and doctor credited liveness to a
+    process watching a completely different tree. Matching on the recorded
+    `path` makes the file self-identifying. See COGNIREPO-D-C.
+    """
+    hb = read_heartbeat()
+    if hb is None:
+        return None
+    recorded = hb.get("path")
+    if not recorded:
+        return None  # pre-D-C heartbeat with no identity — cannot be trusted
+    try:
+        if os.path.abspath(recorded) != os.path.abspath(repo_path):
+            return None
+    except (TypeError, ValueError):
+        return None
+    return hb
+
+
+def clear_heartbeat_if_owned(pid: int) -> None:
+    """Remove the heartbeat file if *pid* is the process that last wrote it.
+
+    Leaving our own heartbeat behind on shutdown is what let a dead watcher
+    keep reporting "Heartbeat: OK" for the next two minutes.
+    """
+    hb = read_heartbeat()
+    if hb is not None and hb.get("pid") == pid:
+        try:
+            _heartbeat_file().unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def heartbeat_age_seconds_for_path(repo_path: str) -> float | None:
+    """Seconds since the last heartbeat *for repo_path*, else None.
+
+    Path-scoped counterpart to heartbeat_age_seconds(). See COGNIREPO-D-C.
+    """
+    return _heartbeat_age(read_heartbeat_for_path(repo_path))
+
+
 def heartbeat_age_seconds() -> float | None:
     """Return seconds since the last heartbeat, or None if no heartbeat file."""
-    hb = read_heartbeat()
+    return _heartbeat_age(read_heartbeat())
+
+
+def _heartbeat_age(hb: dict | None) -> float | None:
+    """Seconds since *hb* was stamped, or None if absent/unparseable."""
     if hb is None:
         return None
     try:
@@ -204,6 +255,32 @@ def run_watcher_with_crash_guard(
     pid = os.getpid()
     start_heartbeat_thread(pid, watcher_path)
 
+    # Translate SIGTERM into the KeyboardInterrupt this loop already handles.
+    # `watch --stop` sends SIGTERM; without a handler Python's default killed
+    # the process outright, so neither stop_fn()'s final flush nor the cleanup
+    # below ever ran and .cognirepo/watchers/<pid>.json survived the daemon.
+    # Installed here (in the daemonized process itself) rather than in the
+    # parent, which a double-fork does not propagate. See COGNIREPO-D-E.
+    def _on_sigterm(_signum, _frame):
+        raise KeyboardInterrupt
+
+    try:
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except (ValueError, OSError):
+        pass  # not on the main thread — the parent's handler still applies
+
+    try:
+        _run_watcher_loop(create_fn, stop_fn, watcher_path, session_id, restart_delay, pid)
+    finally:
+        try:
+            _pid_file(pid).unlink(missing_ok=True)
+        except OSError:
+            pass
+        clear_heartbeat_if_owned(pid)
+
+
+def _run_watcher_loop(create_fn, stop_fn, watcher_path, session_id, restart_delay, pid) -> None:
+    """Crash-recovery loop body — see run_watcher_with_crash_guard()."""
     while True:
         observer = None
         try:

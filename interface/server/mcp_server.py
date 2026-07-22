@@ -95,18 +95,45 @@ def _record_mcp_tool_call(tool_name: str, query_summary: str, result_summary: st
 
 
 def _get_graph():
-    """Lazily load KnowledgeGraph (double-checked locking for thread safety)."""
+    """Lazily load KnowledgeGraph (double-checked locking for thread safety).
+
+    Revalidates against graph.pkl on every call — see _get_indexer().
+    """
     global _GRAPH  # pylint: disable=global-statement
     if _GRAPH is None:
         with _SINGLETON_LOCK:
             if _GRAPH is None:
                 from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
                 _GRAPH = KnowledgeGraph()
+                return _GRAPH
+    _revalidate(_GRAPH)
     return _GRAPH
 
 
+def _revalidate(obj) -> bool:
+    """Call obj.reload_if_changed(), swallowing any failure.
+
+    A transient stat/read error must degrade to "serve what we have" rather
+    than failing the tool call outright.
+    """
+    try:
+        return bool(obj.reload_if_changed())
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.debug("singleton revalidation failed (serving cached state): %s", exc)
+        return False
+
+
 def _get_indexer():
-    """Lazily load ASTIndexer (double-checked locking for thread safety)."""
+    """Lazily load ASTIndexer (double-checked locking for thread safety).
+
+    Revalidates the singleton against ast_index.json's (mtime, size) on every
+    call. The watcher reindexes in a *separate process*, so nothing in this
+    process ever learned that the index had moved on: symbol lookups stayed
+    frozen at server-start state for the life of the session while graph_stats
+    read the file mtime directly and reported the index as fresh. Revalidating
+    here (one os.stat when nothing changed) is the single choke point both
+    lookup_symbol and the retrieval layer already go through. See COGNIREPO-D-A.
+    """
     global _INDEXER  # pylint: disable=global-statement
     if _INDEXER is None:
         # Initialize graph BEFORE acquiring _SINGLETON_LOCK to avoid self-deadlock:
@@ -118,6 +145,12 @@ def _get_indexer():
                 from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
                 _INDEXER = ASTIndexer(graph)
                 _INDEXER.load()
+                return _INDEXER
+    # Graph first (it revalidates itself): the indexer holds a reference to it,
+    # and a reindex writes both files, so refreshing them together keeps the
+    # pair consistent.
+    _get_graph()
+    _revalidate(_INDEXER)
     return _INDEXER
 
 
@@ -126,6 +159,16 @@ def _evict_singletons() -> None:
     global _GRAPH, _INDEXER  # pylint: disable=global-statement
     with _SINGLETON_LOCK:
         if _GRAPH is not None or _INDEXER is not None:
+            # ASTIndexer.lookup_symbol/lookup_word are @lru_cache'd on the class,
+            # so every cached entry holds a strong ref to `self`. Dropping the
+            # module global alone leaves the whole index reachable — the eviction
+            # freed nothing. Clear the caches first.
+            try:
+                from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+                ASTIndexer.lookup_symbol.cache_clear()
+                ASTIndexer.lookup_word.cache_clear()
+            except Exception:  # pylint: disable=broad-except
+                pass
             _GRAPH = None
             _INDEXER = None
             logger.info("idle: graph and indexer evicted from memory")
@@ -187,10 +230,15 @@ def _watcher_alive() -> bool:
             _HEARTBEAT_STALE_THRESHOLD,
             _is_alive,
             is_watcher_running_for_path,
-            read_heartbeat,
+            read_heartbeat_for_path,
         )
+        from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
 
-        hb = read_heartbeat()
+        repo_root = os.path.dirname(os.path.abspath(get_cognirepo_dir()))
+        # Path-scoped: a serve/watch process rooted at a *different* tree can
+        # stamp this repo's heartbeat file, which previously read as liveness
+        # for a watcher that was never watching us. See COGNIREPO-D-C.
+        hb = read_heartbeat_for_path(repo_root)
         if hb:
             pid = int(hb.get("pid", -1))
             if _is_alive(pid):
@@ -202,10 +250,8 @@ def _watcher_alive() -> bool:
                 if age < _HEARTBEAT_STALE_THRESHOLD:
                     return True
 
-        # Heartbeat missing/stale — fall back to the PID registry, which also
-        # prunes dead entries as a side effect.
-        from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
-        repo_root = os.path.dirname(os.path.abspath(get_cognirepo_dir()))
+        # Heartbeat missing/stale/foreign — fall back to the PID registry,
+        # which also prunes dead entries as a side effect.
         return is_watcher_running_for_path(repo_root) is not None
     except Exception:  # pylint: disable=broad-except
         return False
