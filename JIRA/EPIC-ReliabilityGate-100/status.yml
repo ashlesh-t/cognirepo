@@ -1,5 +1,5 @@
 epic_id: COGNIREPO-100
-status: in-progress
+status: signed-off  # 2026-07-31 — all stories + defects signed off, E2E-100-1/2/3 pass. See COGNIREPO-100.md sign-off note.
 stories:
   - id: COGNIREPO-101
     status: signed-off
@@ -78,18 +78,68 @@ defects:
     pr: https://github.com/ashlesh-t/cognirepo/pull/39
     test_status: pass  # found + fixed live-re-verifying TC-105-1; see its TEST_SUITE.md. Merged to development.
   - id: COGNIREPO-D10
-    status: in-review
+    status: signed-off
     branch: defect/COGNIREPO-D10_D11_D12
     pr: https://github.com/ashlesh-t/cognirepo/pull/43
-    test_status: pass  # automated cases pass; live E2E-100-1 re-verification left for the user
+    test_status: pass  # confirmed via E2E-100-1 live retest post-merge
   - id: COGNIREPO-D11
-    status: in-review
+    status: signed-off
     branch: defect/COGNIREPO-D10_D11_D12
     pr: https://github.com/ashlesh-t/cognirepo/pull/43
-    test_status: pass  # automated cases pass; live E2E-100-1 re-verification left for the user
+    test_status: pass  # confirmed via E2E-100-1 live retest post-merge
   - id: COGNIREPO-D12
-    status: in-review
+    status: signed-off
     branch: defect/COGNIREPO-D10_D11_D12
     pr: https://github.com/ashlesh-t/cognirepo/pull/43
-    test_status: pass  # automated cases pass; live E2E-100-1 re-verification left for the user
-epic_test_suite_status: fail  # E2E-100-1 FAILed (1/5); see COGNIREPO-100-TEST_SUITE.md and D10/D11/D12
+    test_status: pass  # confirmed via E2E-100-1 live retest post-merge
+  - id: COGNIREPO-D13
+    status: signed-off
+    branch: defect/COGNIREPO-D13_D14_D15_D16
+    pr: https://github.com/ashlesh-t/cognirepo/pull/44
+    test_status: pass
+  - id: COGNIREPO-D14
+    status: signed-off
+    branch: defect/COGNIREPO-D13_D14_D15_D16
+    pr: https://github.com/ashlesh-t/cognirepo/pull/44
+    test_status: pass
+  - id: COGNIREPO-D15
+    status: signed-off
+    branch: defect/COGNIREPO-D13_D14_D15_D16
+    pr: https://github.com/ashlesh-t/cognirepo/pull/44
+    test_status: pass
+  - id: COGNIREPO-D16
+    status: signed-off
+    branch: defect/COGNIREPO-D13_D14_D15_D16
+    pr: https://github.com/ashlesh-t/cognirepo/pull/44
+    test_status: pass
+  - id: COGNIREPO-D-A
+    status: signed-off
+    branch: defect/COGNIREPO-DA_DF
+    pr: https://github.com/ashlesh-t/cognirepo/pull/45
+    test_status: pass  # confirmed via E2E-100-1 live retest post-merge (rename/delete resolve correctly via MCP)
+  - id: COGNIREPO-D-B
+    status: signed-off
+    branch: defect/COGNIREPO-DA_DF
+    pr: https://github.com/ashlesh-t/cognirepo/pull/45
+    test_status: pass  # follow-up: watcher never called compact_faiss() incrementally — fixed post-merge, see COGNIREPO-100-TEST_SUITE.md
+  - id: COGNIREPO-D-C
+    status: signed-off
+    branch: defect/COGNIREPO-DA_DF
+    pr: https://github.com/ashlesh-t/cognirepo/pull/45
+    test_status: pass  # follow-up: heartbeat file itself could still land in the wrong repo's .cognirepo/ — fixed post-merge, see COGNIREPO-100-TEST_SUITE.md
+  - id: COGNIREPO-D-D
+    status: signed-off
+    branch: defect/COGNIREPO-DA_DF
+    pr: https://github.com/ashlesh-t/cognirepo/pull/45
+    test_status: pass
+  - id: COGNIREPO-D-E
+    status: signed-off
+    branch: defect/COGNIREPO-DA_DF
+    pr: https://github.com/ashlesh-t/cognirepo/pull/45
+    test_status: pass
+  - id: COGNIREPO-D-F
+    status: signed-off
+    branch: defect/COGNIREPO-DA_DF
+    pr: https://github.com/ashlesh-t/cognirepo/pull/45
+    test_status: pass
+epic_test_suite_status: pass  # E2E-100-1/2/3 all PASS (100-1 with caveats, both fixed post-merge — see COGNIREPO-100-TEST_SUITE.md); E2E-100-3's crash-restart gap is by-design (serve's lifecycle belongs to the MCP client, not watch --ensure-running), not a defect.

@@ -342,7 +342,7 @@ class TestWatcherAlive:
 
         watchers = tmp_path / ".cognirepo" / "watchers"
         watchers.mkdir(parents=True)
-        monkeypatch.setattr(daemon, "_watchers_dir", lambda: watchers)
+        monkeypatch.setattr(daemon, "_watchers_dir", lambda repo_path=None: watchers)
 
         assert _watcher_alive() is False  # nothing running
 
@@ -363,7 +363,7 @@ class TestWatcherAlive:
 
         watchers = tmp_path / ".cognirepo" / "watchers"
         watchers.mkdir(parents=True)
-        monkeypatch.setattr(daemon, "_watchers_dir", lambda: watchers)
+        monkeypatch.setattr(daemon, "_watchers_dir", lambda repo_path=None: watchers)
 
         old = _dt.datetime.utcnow() - _dt.timedelta(seconds=daemon._HEARTBEAT_STALE_THRESHOLD + 60)
         (watchers / "heartbeat").write_text(_json.dumps({

@@ -15,7 +15,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).parent.parent
+_REPO_ROOT = Path(__file__).parent.parent.parent
 
 
 @lru_cache(maxsize=1)

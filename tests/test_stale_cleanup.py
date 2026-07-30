@@ -374,6 +374,94 @@ class TestIncrementalStubResolutionParity:
         assert idx.index_data["total_symbols"] == live_count
 
 
+# ── COGNIREPO-D-B follow-up: incremental FAISS reclaim ────────────────────────
+
+class TestWatcherFaissReclaim:
+    def test_rename_does_not_leave_symbol_searchable_after_compaction(self, isolated_cognirepo):
+        """
+        Renaming a symbol within an otherwise-still-existing file must not
+        leave the old name resolvable once compaction has run — index_file()
+        already removes the file's old FAISS ids on every reindex, so the old
+        vector is never live/searchable; compact_faiss() (triggered via
+        _maybe_compact_faiss()) then reclaims the now-dead metadata record.
+        """
+        import os
+        from pathlib import Path
+        from unittest.mock import MagicMock
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from intelligence.indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.file_watcher import RepoFileHandler
+
+        repo_dir = Path(os.getcwd()) / "src"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        f = repo_dir / "mod.py"
+        f.write_text("def old_name():\n    pass\n", encoding="utf-8")
+
+        kg = KnowledgeGraph()
+        idx = ASTIndexer(graph=kg)
+        idx.index_repo(str(repo_dir))
+        idx.save()
+
+        f.write_text("def new_name():\n    pass\n", encoding="utf-8")
+        handler = RepoFileHandler(
+            repo_root=str(repo_dir), indexer=idx, graph=kg,
+            behaviour=MagicMock(), session_id="test", debounce_ms=1000,
+        )
+        handler._pending = {str(f): "reindex"}
+        handler.flush()
+
+        assert idx.lookup_symbol("old_name") == []
+        assert idx.lookup_symbol("new_name") != []
+
+        # compact_faiss() must fully reclaim the dead record left by the
+        # rename, regardless of the compaction threshold.
+        idx.compact_faiss()
+        stats = idx.faiss_meta_stats()
+        assert stats["dead"] == 0
+        assert stats["ntotal"] == stats["live"] == len(idx.faiss_meta)
+
+    def test_compaction_triggers_after_threshold_dead_records(self, isolated_cognirepo, monkeypatch):
+        """
+        ast_metadata.json must shrink once enough dead/dangling records
+        accumulate across incremental watcher edits — pre-fix, compact_faiss()
+        only ever ran at the end of a full `index-repo`, so it grew without
+        bound across a long-lived watch session.
+        """
+        import os
+        from pathlib import Path
+        from unittest.mock import MagicMock
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from intelligence.indexer.ast_indexer import ASTIndexer
+        from intelligence.indexer.file_watcher import RepoFileHandler
+        import intelligence.indexer.file_watcher as fw
+
+        monkeypatch.setattr(fw, "_FAISS_COMPACT_DEAD_THRESHOLD", 2)
+
+        repo_dir = Path(os.getcwd()) / "src"
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        f = repo_dir / "mod.py"
+        f.write_text("def fn_0():\n    pass\n", encoding="utf-8")
+
+        kg = KnowledgeGraph()
+        idx = ASTIndexer(graph=kg)
+        idx.index_repo(str(repo_dir))
+        idx.save()
+
+        handler = RepoFileHandler(
+            repo_root=str(repo_dir), indexer=idx, graph=kg,
+            behaviour=MagicMock(), session_id="test", debounce_ms=1000,
+        )
+
+        for i in range(1, 4):
+            f.write_text(f"def fn_{i}():\n    pass\n", encoding="utf-8")
+            handler._pending = {str(f): "reindex"}
+            handler.flush()
+
+        stats = idx.faiss_meta_stats()
+        assert stats["dead"] == 0, "compaction should have reclaimed dead records once threshold crossed"
+        assert len(idx.faiss_meta) == stats["live"]
+
+
 # ── helpers (raw JSON I/O, bypass encryption) ─────────────────────────────────
 
 def _raw_save(tmp_path: Path, data: list) -> None:

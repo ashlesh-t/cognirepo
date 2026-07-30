@@ -37,3 +37,13 @@ Suggested order: D01 → D03 → D02 → 101 → 102 → 103 → 104 → 105 →
 ## Notes
 - Version: 2.0.1. Base branch: development. Conventions: /skill.md.
 - Epic sign-off requires all stories+defects signed off AND COGNIREPO-100-TEST_SUITE.md pass.
+
+## Sign-off — 2026-07-31
+
+All 6 stories and 15 defects (D01–D09, D10–D12, D13–D16, D-A–D-F) signed off; all merged to
+`development`. E2E-100-1/2/3 all PASS — 100-1's two live-retest caveats (doctor cross-repo
+heartbeat collision; `ast_metadata.json` not pruned incrementally) were root-caused and fixed
+in this pass (see COGNIREPO-100-TEST_SUITE.md RESOLUTION note). The E2E-100-3 crash-restart
+gap was investigated and found to be by design — `serve`'s process lifecycle belongs to the
+MCP client, not `watch --ensure-running` — not a defect. Full test suite: 1312 passed, 5
+skipped. Epic gate cleared; cut as v2.0.1.

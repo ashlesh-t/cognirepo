@@ -6,9 +6,58 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [Unreleased]
+## [2.0.1] — 2026-07-31
 
 ### Fixed
+- **`core/config/version.py` never actually found `version.yml`.** `_REPO_ROOT`
+  was computed as `Path(__file__).parent.parent` — two levels up from
+  `core/config/version.py` lands on `core/`, not the repo root — so
+  `version.yml` was silently unreadable and every import of `__version__` (and
+  `APP_NAME`/`MCP_NAME`/etc.) fell back to the hardcoded default, "2.0.0",
+  regardless of what `version.yml` actually said. Caught while cutting this
+  release: `scripts/sync_version.py` correctly bumped `pyproject.toml`,
+  `manifest.json`, and `server.json` to 2.0.1, but the *live* MCP manifest
+  (`_build_manifest()`, which imports `__version__` directly) kept reporting
+  2.0.0. Fixed to three `.parent`s.
+- **Follow-up to COGNIREPO-D-C — the heartbeat file itself could still land in
+  the wrong repo's `.cognirepo/`.** D-C's path-matching (`read_heartbeat_for_path`)
+  correctly rejected a foreign heartbeat once read, but the file it read from
+  was still chosen by `daemon._find_cognirepo_dir()` walking up from the
+  current process's cwd to the nearest ancestor `.cognirepo/` — ignoring the
+  actual repo path being watched. A `serve --project-dir <parent>` process
+  whose cwd sat inside a child repo could walk past the child's own
+  `.cognirepo/` and stamp its heartbeat there, colliding with and overwriting
+  that repo's own watcher heartbeat (live E2E-100-1 retest against the merged
+  D-C fix still showed doctor crediting a different repo's PID). All
+  PID/heartbeat resolution in `interface/cli/daemon.py` now resolves directly
+  against `core.config.paths.get_cognirepo_dir_for_repo()` (or
+  `get_cognirepo_dir()` for the no-path/cwd case) — the same resolution
+  FAISS/AST/graph storage already uses — and never walks ancestors.
+- **Follow-up to COGNIREPO-D-B — `ast_metadata.json` still grew unbounded
+  under a live watcher.** `compact_faiss()` only ever ran at the end of a full
+  `index-repo` pass; the watcher's debounced incremental reindexes only ever
+  appended, so a long-lived `watch`/`serve` session accumulated dead/dangling
+  records with no reclamation path. `RepoFileHandler` now calls
+  `_maybe_compact_faiss()` before every persist (both the debounced batch path
+  and the `debounce_ms=0` synchronous path), threshold-gated (25 dead+dangling
+  records) so a full index rebuild isn't paid on every keystroke-triggered save.
+- **COGNIREPO-D10 — a deleted symbol's live call edges vanished instead of
+  becoming an unresolved stub, and `total_symbols` drifted from the live
+  index.** `file_watcher.py`'s `flush()` never called `_resolve_call_stubs()`
+  or recomputed `total_symbols`, unlike the full `index_repo()` path.
+  `_resolve_call_stubs()` now takes an optional scoped `names` set (batch-sized,
+  not whole-graph) and `KnowledgeGraph.remove_file_nodes()` redirects a removed
+  symbol's live `CALLS`/`CALLED_BY` edges onto an `unresolved=True`
+  `symbol::name` stub instead of silently dropping them — matching what a full
+  `index_repo()` re-run would produce.
+- **COGNIREPO-D11 — `verify-index`/`doctor` were blind to uncommitted changes
+  under a live watcher.** The old check compared file mtime against
+  `indexed_at`, which a live watcher's own saves continuously refresh. Both now
+  use `git status --porcelain` as the authoritative dirty signal (mtime kept
+  only as a non-git fallback).
+- **COGNIREPO-D12 — no persistent trail of watcher-driven reindex activity.**
+  `flush()` only `print()`'d, invisible outside daemon mode. It now
+  writes/overwrites `.cognirepo/index/last_watcher_reindex.json` every batch.
 - **COGNIREPO-D-A — the MCP server served symbol lookups frozen at server-start
   state for the whole session.** `_INDEXER` / `_GRAPH` are module-level
   singletons `.load()`ed once at startup with no revalidation, and the watcher

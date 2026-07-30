@@ -1,10 +1,10 @@
 # Root JIRA registry — read this FIRST in any new session (see /skill.md).
 project: cognirepo
-active_epic: COGNIREPO-100
+active_epic: COGNIREPO-200
 epics:
   - id: COGNIREPO-100
     name: ReliabilityGate
-    status: in-progress
+    status: signed-off  # 2026-07-31, v2.0.1
     blocked_by: []
   - id: COGNIREPO-200
     name: KGEpisodicHardening

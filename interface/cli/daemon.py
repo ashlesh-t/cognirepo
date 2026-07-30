@@ -22,6 +22,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from core.config.paths import get_cognirepo_dir, get_cognirepo_dir_for_repo
+
 # fcntl is Linux/macOS only — imported lazily inside functions that need it
 # so that importing this module on Windows does not raise ImportError.
 
@@ -30,25 +32,35 @@ from pathlib import Path
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _find_cognirepo_dir() -> Path:
-    """Walk up from cwd to find the nearest .cognirepo/ directory."""
-    here = Path.cwd()
-    for parent in [here, *here.parents]:
-        candidate = parent / ".cognirepo"
-        if candidate.is_dir():
-            return candidate
-    # Fall back to cwd/.cognirepo (will be created if needed)
-    return here / ".cognirepo"
+def _find_cognirepo_dir(repo_path: str | None = None) -> Path:
+    """Resolve the .cognirepo/ directory for *repo_path*, or for cwd if None.
+
+    Previously this walked up from cwd looking for the nearest ancestor
+    .cognirepo/, ignoring any explicit repo path the caller already had (e.g.
+    the watcher's own watch_path, or --project-dir). A `serve --project-dir
+    <parent>` process whose cwd sat inside a child repo would walk up past
+    the child's own .cognirepo/ into an unrelated tree — or, worse, land on
+    the child's .cognirepo/ while believing it belonged to the parent it was
+    told to watch — so its PID/heartbeat file was written into the wrong
+    repo's watchers/ dir, colliding with and overwriting that repo's own
+    watcher heartbeat. Resolving directly against get_cognirepo_dir_for_repo()
+    (or get_cognirepo_dir() for the no-path/cwd case) matches the storage
+    resolution already used for FAISS/AST/graph, and never walks ancestors.
+    See COGNIREPO-D-C follow-up.
+    """
+    if repo_path is not None:
+        return Path(get_cognirepo_dir_for_repo(repo_path))
+    return Path(get_cognirepo_dir())
 
 
-def _watchers_dir() -> Path:
-    d = _find_cognirepo_dir() / "watchers"
+def _watchers_dir(repo_path: str | None = None) -> Path:
+    d = _find_cognirepo_dir(repo_path) / "watchers"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def _pid_file(pid: int) -> Path:
-    return _watchers_dir() / f"{pid}.json"
+def _pid_file(pid: int, repo_path: str | None = None) -> Path:
+    return _watchers_dir(repo_path) / f"{pid}.json"
 
 
 # ---------------------------------------------------------------------------
@@ -59,8 +71,8 @@ _HEARTBEAT_INTERVAL = 30  # seconds between heartbeat writes
 _HEARTBEAT_STALE_THRESHOLD = 120  # seconds before doctor warns
 
 
-def _heartbeat_file() -> Path:
-    return _watchers_dir() / "heartbeat"
+def _heartbeat_file(repo_path: str | None = None) -> Path:
+    return _watchers_dir(repo_path) / "heartbeat"
 
 
 def write_heartbeat(pid: int, watcher_path: str) -> None:
@@ -70,12 +82,12 @@ def write_heartbeat(pid: int, watcher_path: str) -> None:
         "path": watcher_path,
         "timestamp": datetime.utcnow().isoformat() + "Z",
     }
-    _heartbeat_file().write_text(json.dumps(data))
+    _heartbeat_file(watcher_path).write_text(json.dumps(data))
 
 
-def read_heartbeat() -> dict | None:
+def read_heartbeat(repo_path: str | None = None) -> dict | None:
     """Return parsed heartbeat dict, or None if the file is absent/corrupt."""
-    hb = _heartbeat_file()
+    hb = _heartbeat_file(repo_path)
     if not hb.exists():
         return None
     try:
@@ -87,15 +99,13 @@ def read_heartbeat() -> dict | None:
 def read_heartbeat_for_path(repo_path: str) -> dict | None:
     """Return the heartbeat only if it was written by a watcher for *repo_path*.
 
-    The heartbeat file is a single slot per `.cognirepo/` dir, but nothing
-    stopped a `serve --project-dir <other>` process whose `.cognirepo`
-    resolution walked up into this repo from stamping its own PID and path
-    here. `watch --status` then printed the contradiction "Daemon: not running"
-    alongside "Heartbeat: OK (10s ago)", and doctor credited liveness to a
-    process watching a completely different tree. Matching on the recorded
-    `path` makes the file self-identifying. See COGNIREPO-D-C.
+    The heartbeat file now lives under that repo's own resolved storage dir
+    (get_cognirepo_dir_for_repo(repo_path)/watchers/heartbeat), so a foreign
+    process watching a different tree can no longer land in the same slot in
+    the first place. The recorded-`path` match is kept as a defense-in-depth
+    check against stale/pre-fix heartbeat files. See COGNIREPO-D-C.
     """
-    hb = read_heartbeat()
+    hb = read_heartbeat(repo_path)
     if hb is None:
         return None
     recorded = hb.get("path")
@@ -109,16 +119,16 @@ def read_heartbeat_for_path(repo_path: str) -> dict | None:
     return hb
 
 
-def clear_heartbeat_if_owned(pid: int) -> None:
+def clear_heartbeat_if_owned(pid: int, repo_path: str | None = None) -> None:
     """Remove the heartbeat file if *pid* is the process that last wrote it.
 
     Leaving our own heartbeat behind on shutdown is what let a dead watcher
     keep reporting "Heartbeat: OK" for the next two minutes.
     """
-    hb = read_heartbeat()
+    hb = read_heartbeat(repo_path)
     if hb is not None and hb.get("pid") == pid:
         try:
-            _heartbeat_file().unlink(missing_ok=True)
+            _heartbeat_file(repo_path).unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -131,9 +141,9 @@ def heartbeat_age_seconds_for_path(repo_path: str) -> float | None:
     return _heartbeat_age(read_heartbeat_for_path(repo_path))
 
 
-def heartbeat_age_seconds() -> float | None:
+def heartbeat_age_seconds(repo_path: str | None = None) -> float | None:
     """Return seconds since the last heartbeat, or None if no heartbeat file."""
-    return _heartbeat_age(read_heartbeat())
+    return _heartbeat_age(read_heartbeat(repo_path))
 
 
 def _heartbeat_age(hb: dict | None) -> float | None:
@@ -181,7 +191,7 @@ def is_watcher_running_for_path(repo_path: str) -> dict | None:
     Stale PID files (process dead after reboot) are deleted automatically.
     """
     abs_path = os.path.abspath(repo_path)
-    for f in sorted(_watchers_dir().glob("*.json")):
+    for f in sorted(_watchers_dir(repo_path).glob("*.json")):
         try:
             rec = json.loads(f.read_text())
         except (json.JSONDecodeError, OSError):
@@ -213,7 +223,7 @@ def flock_register_watcher(pid: int, name: str, path: str, log_path: str) -> Non
         "started": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "log": log_path,
     }
-    pid_path = _pid_file(pid)
+    pid_path = _pid_file(pid, path)
     # Open with O_CREAT|O_WRONLY; flock blocks until we hold exclusive lock
     fd = os.open(str(pid_path), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
     try:
@@ -273,10 +283,10 @@ def run_watcher_with_crash_guard(
         _run_watcher_loop(create_fn, stop_fn, watcher_path, session_id, restart_delay, pid)
     finally:
         try:
-            _pid_file(pid).unlink(missing_ok=True)
+            _pid_file(pid, watcher_path).unlink(missing_ok=True)
         except OSError:
             pass
-        clear_heartbeat_if_owned(pid)
+        clear_heartbeat_if_owned(pid, watcher_path)
 
 
 def _run_watcher_loop(create_fn, stop_fn, watcher_path, session_id, restart_delay, pid) -> None:
@@ -352,7 +362,7 @@ def write_systemd_unit(repo_path: str) -> Path:
     Write the systemd unit file to ``.cognirepo/cognirepo-watcher.service``.
     Returns the path to the written file.
     """
-    cognirepo_dir = _find_cognirepo_dir()
+    cognirepo_dir = _find_cognirepo_dir(repo_path)
     unit_path = cognirepo_dir / "cognirepo-watcher.service"
     unit_path.write_text(generate_systemd_unit(repo_path))
     return unit_path
@@ -453,7 +463,7 @@ def register_watcher(pid: int, name: str, path: str, log_path: str) -> None:
         "started": datetime.now().isoformat(timespec="seconds"),
         "log": log_path,
     }
-    _pid_file(pid).write_text(json.dumps(record, indent=2))
+    _pid_file(pid, path).write_text(json.dumps(record, indent=2))
 
 
 def _is_alive(pid: int) -> bool:

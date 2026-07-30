@@ -21,7 +21,7 @@ def daemon_tmp(tmp_path, monkeypatch):
     import interface.cli.daemon as daemon_mod
     cog_dir = tmp_path / ".cognirepo"
     cog_dir.mkdir(exist_ok=True)
-    monkeypatch.setattr(daemon_mod, "_find_cognirepo_dir", lambda: cog_dir)
+    monkeypatch.setattr(daemon_mod, "_find_cognirepo_dir", lambda repo_path=None: cog_dir)
     return tmp_path, cog_dir, daemon_mod
 
 

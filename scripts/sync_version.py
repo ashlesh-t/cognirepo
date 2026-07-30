@@ -59,7 +59,12 @@ def sync_manifest_json(version: str, *, check: bool) -> bool:
         print(f"  DRIFT  server/manifest.json — expected {version}, got {data.get('version')}")
         return False
     data["version"] = version
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    # ensure_ascii=True (json.dump's default) and no trailing newline, matching
+    # _write_manifest() — sync_version.py previously used ensure_ascii=False + a
+    # trailing newline here, so running it re-escaped every non-ASCII character
+    # in every tool description into literal unicode and churned the whole file
+    # on every version bump, even though nothing but the version had changed.
+    path.write_text(json.dumps(data, indent=2))
     print(f"  UPDATED  server/manifest.json → {version}")
     return True
 

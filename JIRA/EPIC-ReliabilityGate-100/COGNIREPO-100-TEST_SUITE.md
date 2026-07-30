@@ -18,124 +18,102 @@ Story-level suites cover each fix in isolation; these verify the epic works as a
 Obtained results (verified against filesystem/pickle, not just tool text):
 E2E-100-1 — Obtained Results
 
-Setup deviation (required before the test was valid)
+Working repo: .../medium/ansible (the git+.cognirepo root; the MCP server cognirepo-ansible is scoped here). Watcher PID 330459 live. Choices: burst=color.py, rename=deduplicate_list (helpers.py→helpers_moved.py), delete=md5s (hashing.py).
 
-The watcher daemon found running (PID 13408) had started 2026-07-21 23:39, but the epic fix commit 6e4a833 (D13–D16) landed 2026-07-22 01:09. Since pipx installs cognirepo editable against /home/ashlesh/my_works/cognirepo, the on-disk code was current but the daemon held pre-fix code in memory — its log showed the exact crash D13–D16 fixes (FileNotFoundError … ast_index.json.tmp in _atomic_json_dump, ast_indexer.py:2087). I stopped it and started a fresh watcher (PID 330459) on the merged code. All results below are from the merged build.
+#: 1
+Check: Burst-save color.py 5× (0.002s)
+Expected: one reindex
+Obtained: Watcher reindexed color.py; no crash/partial. Only a single-slot marker
+exists (last_watcher_reindex.json), so I can't prove exactly-one event from logs —
+but no duplicate/burst multiplication at the query layer.
+Verdict: ⚠︎ Pass (weak evidence)
+────────────────────────────────────────
+#: 2
+Check: git mv → renamed symbol
+Expected: new path only
+Obtained: lookup_symbol(deduplicate_list) → helpers_moved.py:44 only.
+Verdict: ✅ Pass
+────────────────────────────────────────
+#: 3
+Check: Delete md5s
+Expected: absent + no orphan node
+Obtained: lookup_symbol(md5s) → no output. who_calls(md5s) → no definition,
+local_callers=[], no orphan graph node. (The "called in some files" note is a false
+substring match on md5sum/module.md5 — grep confirms zero real md5s( callers.)
+Verdict: ✅ Pass
+────────────────────────────────────────
+#: 4
+Check: verify-index w/ dirty edit
+Expected: exit 1 + DIRTY
+Obtained: EXIT 1; DIRTY 3 uncommitted… listing color.py, hashing.py, helpers_moved.py.
+Verdict: ✅ Pass
+────────────────────────────────────────
+#: 5
+Check: doctor
+Expected: green except dirty warning
+Obtained: EXIT 1, 3 warnings — see below.
+Verdict: ❌ Deviation
 
-Step-by-step obtained results
+graph_stats: 17592→17598 nodes, 96434→96444 edges, watcher_alive:true, index_stale:false.
 
-┌─────┬─────────────────────┬─────────────────────────────────────────┬──────────┐
-│  #  │        Step         │                Obtained                 │ Verdict  │
-├─────┼─────────────────────┼─────────────────────────────────────────┼──────────┤
-│     │                     │ 5 writes in 0.001 s → exactly one       │          │
-│ 1   │ Burst-save color.py │ reindex; last_watcher_reindex.json      │ PASS     │
-│     │  5×                 │ lists 1 file, "error": null; single     │          │
-│     │                     │ index mtime 00:51:45; no exceptions     │          │
-├─────┼─────────────────────┼─────────────────────────────────────────┼──────────┤
-│     │                     │                                         │ PASS     │
-│ 2   │ git mv hashing.py → │ Audit: reindexed:[hashing_renamed.py],  │ (disk) / │
-│     │  hashing_renamed.py │ removed:[hashing.py]                    │  FAIL    │
-│     │                     │                                         │ (MCP)    │
-├─────┼─────────────────────┼─────────────────────────────────────────┼──────────┤
-│     │ Delete              │                                         │ PASS     │
-│ 3   │ deduplicate_list    │ Reindexed, error: null                  │ (disk) / │
-│     │ from helpers.py     │                                         │  FAIL    │
-│     │                     │                                         │ (MCP)    │
-├─────┼─────────────────────┼─────────────────────────────────────────┼──────────┤
-│ 4   │ verify-index with   │ Exit 1, DIRTY 3 uncommitted indexed     │ PASS     │
-│     │ dirty tree          │ source file(s) + file list              │          │
-├─────┼─────────────────────┼─────────────────────────────────────────┼──────────┤
-│     │                     │ 3 warnings, no errors — dirty warning   │          │
-│ 5   │ doctor              │ present, but 2 extra warnings + wrong   │ PARTIAL  │
-│     │                     │ PID                                     │          │
-└─────┴─────────────────────┴─────────────────────────────────────────┴──────────┘
+Two real deviations (verified against files, not just tool text)
 
-The specified MCP prompt — what the index actually returned
-
-lookup_symbol("secure_hash_s")   → lib/ansible/utils/hashing.py:34      ← STALE (renamed-away path)
-lookup_symbol("deduplicate_list")→ lib/ansible/utils/helpers.py:44      ← STALE (deleted function)
-graph_stats → nodes 17593, edges 96427, index_age_minutes 0,
-              index_stale false, watcher_alive true
-
-Both expected results failed through MCP. But verification against disk proves the pipeline is correct:
-
-On-disk ast_index.json (authoritative):
-- hashing.py in files dict: False (purged) ✓
-- reverse_index["secure_hash_s"] → [["lib/ansible/utils/hashing_renamed.py", 34]] — new path only ✓
-- reverse_index["deduplicate_list"] → null ✓
-
-Decrypted graph.pkl (Fernet gAAAAA…, decrypted via core.security.encryption):
-- helpers.py::deduplicate_list node gone; only legit test_helpers.py::test_deduplicate_list remains ✓
-- All hashing.py::* nodes purged; only hashing_renamed.py::* present ✓
-- True orphans (degree 0): 0; nodes referencing nonexistent files: 0 ✓
-
-Fresh-process lookup (same API, new interpreter):
-lookup_symbol('secure_hash_s')    → [{'file': 'lib/ansible/utils/hashing_renamed.py', 'line': 34}]
-lookup_symbol('deduplicate_list') → []
-Correct. Only the long-lived MCP server is wrong.
-
-Defects found
-
-D-A — Critical: MCP never reloads the index after a watcher reindex.
-interface/server/mcp_server.py:108 — _INDEXER is a module-level singleton .load()ed once at startup with no mtime revalidation; it's only dropped by _evict_singletons() on idle. ASTIndexer.lookup_symbol is additionally @functools.lru_cache(maxsize=512) (ast_indexer.py:2050); the cache_clear() calls at ast_indexer.py:1729/1816 run in the watcher process, so invalidation never crosses to the server. Result: symbol lookups are frozen at server-start state for the session's lifetime. Made deceptive by graph_stats reading file mtime directly (mcp_server.py:1550) and reporting index_age_minutes: 0, index_stale: false while serving 15-hour-old symbol data.
-
-D-B — High: FAISS/metadata misalignment and unbounded metadata growth.
-ast_metadata.json is a positional faiss_id → record map, but is append-only: ntotal 19061 vs 19076 records vs 17514 live symbols — misaligned by 15, so semantic hits past the divergence resolve to the wrong record. It retains renamed-away and deleted symbols (hashing.py's 7 entries survived removal; deduplicate_list survived deletion) and duplicates per reindex (color.py: 12 entries for 6 symbols). ~9% pollution and growing.
-
-D-C — Medium: heartbeat has no per-daemon identity.
-A serve process on a different project dir (PID 327278, --project-dir …/cognirepo_test_repo) overwrites ansible/.cognirepo/watchers/heartbeat. With the watcher killed, watch --status printed the contradiction Daemon: not running + Heartbeat: OK (10s ago) and a wrong Watch path. doctor credits the heartbeat to PID 327278, not the live watcher 330459. (The D16 dead-daemon probe itself works correctly.)
-
-D-D — Low: CLI banner advertises 6 nonexistent commands — mcp-setup, episodic-search, lookup-symbol, who-calls, subgraph, graph-stats are in --help but rejected by argparse.
-
-D-E — Low: stale pidfile 13408.json not removed on SIGTERM.
-
-D-F — Low/Medium: doctor warns docs exist (66 .md) but .cognirepo/docs/ is empty — DocIngester never produced chunks despite the index-repo prerequisite.
+1. doctor is not "green apart from dirty". Besides the intentional ⚠ Working tree (dirty) warning, it emits ⚠ Daemon heartbeat — held by PID 438467 watching …/cognirepo_test_repo, not this repo — i.e. a cross-repo heartbeat collision: the parent-dir serve process owns the heartbeat file, so doctor cannot see this repo's live watcher (330459). Plus a benign ⚠ Model API keys — none (environmental).
+2. ast_metadata.json is not pruned on incremental reindex. The plaintext side-file holds 19,111 rows with duplicates and 2 orphan file paths (helpers.py from this run's rename + hashing_renamed.py from a prior test) — md5s and old-path deduplicate_list still listed there. The query layer hides all of it: lookup_symbol, who_calls, verify-index, doctor, and graph_stats all consistently report the clean 17,514 sym / 17,596 nodes. So it's a stale-cache/orphan artifact in the raw metadata, not a query-correctness failure.
 
 Verdict
 
-FAIL — on the test's own acceptance criteria, evaluated through the interface the test specifies (MCP).
-
-- Indexing/watcher core (102 + 103 + 104): PASS. Debounce coalesced 5 saves into one reindex; rename and deletion are handled exactly right on disk; zero orphan nodes; verify-index exits 1 with DIRTY as required.
-- Serving layer (D02-adjacent): FAIL. Two of five expected results — "renamed symbol found at new path only" and "deleted function absent from lookup" — are not met via MCP. The index is right; the server hands out stale answers and simultaneously reports itself fresh, which is worse than a plain miss because graph_stats actively certifies the staleness as healthy.
-- Doctor: PARTIAL — not green apart from the dirty warning; the doc-chunk warning is a genuine gap and the daemon PID attribution is wrong.
-
-Fixing D-A is the gate: revalidate _INDEXER against ast_index.json mtime (or the manifest checksum) inside _get_indexer() and clear the lookup caches on reload. D-B needs a rebuild of ast_metadata.json in lockstep with the FAISS index rather than append-on-reindex.
+PASS with caveats. All core index-consistency behaviors hold at the query/graph layer: rename resolves to the new path only, the deleted function is absent with no orphan graph node, and verify-index correctly flags DIRTY (exit 1). Two genuine issues fall short of the spec: (a) doctor shows an extra heartbeat-ownership collision warning (cross-repo watcher bug), so it's not green-except-dirty; and (b) the incremental watcher does not prune ast_metadata.json, leaving stale duplicate/orphan rows (masked from queries but real on disk). Repo restored to clean state afterward.
 
 ---
 
-### RESOLUTION — branch `defect/COGNIREPO-DA_DF`
+### RESOLUTION — both caveats fixed (2026-07-31, on `development`, targets v2.0.1)
 
-All six defects fixed. What each one actually was:
+**(a) Heartbeat collision — root cause was one level deeper than D-C's fix reached.**
+D-C's `read_heartbeat_for_path()` correctly rejects a heartbeat once read if its recorded
+`path` doesn't match the caller's repo — but *which file* gets read was still decided by
+`daemon._find_cognirepo_dir()`, which walked up from the current process's cwd to the
+nearest ancestor `.cognirepo/`, ignoring the actual repo path being watched entirely. A
+`serve --project-dir <parent>` process could walk past a child repo's own `.cognirepo/`
+and stamp its heartbeat there, physically colliding with that child's own watcher heartbeat
+— which is exactly what the retest above caught. Fix: all PID/heartbeat resolution in
+`interface/cli/daemon.py` (`_watchers_dir`, `_pid_file`, `_heartbeat_file`, and every
+reader/writer that touches them) now resolves directly against
+`core.config.paths.get_cognirepo_dir_for_repo(repo_path)` — the same resolution
+FAISS/AST/graph storage already uses — instead of walking cwd's ancestors. No collision
+is possible now: two repos' watcher state can no longer share a file.
 
-| ID | Diagnosis (confirmed, not inferred) | Fix |
-|----|--------------------------------------|-----|
-| D-A | `_INDEXER`/`_GRAPH` are process-lifetime singletons `.load()`ed once; the watcher reindexes in a **different process**, so its `lookup_symbol.cache_clear()` never crosses the boundary. Two independent layers of staleness: the singleton's `index_data` **and** the class-level `lru_cache`. | `(mtime_ns, size)` disk stamp + `reload_if_changed()` on `ASTIndexer` and `KnowledgeGraph`, called from `_get_indexer()`/`_get_graph()`. Reload clears both lookup caches. Refused when `_repo_ctx()` has repointed `get_path()` at another repo. |
-| D-B | Not a misalignment — `faiss_meta` is **positional** (`faiss_id` IS the list index; `semantic_search_code` resolves `faiss_meta[fid]`), so dead records are unreachable, not wrong. The real defect is that they can never be reclaimed: `ntotal < len(faiss_meta)` is expected, monotonic growth is not. | `compact_faiss()` rebuilds index+meta from live symbols via `IndexIDMap2.reconstruct()` (no re-embedding) and renumbers `faiss_id`; runs at the end of `index_repo()`. `faiss_meta_stats()` exposes live/retained/dead/dangling. |
-| D-C | The heartbeat is one slot per `.cognirepo/` with a `path` field nobody checked. | `read_heartbeat_for_path()` / `heartbeat_age_seconds_for_path()`; used by `_watcher_alive()`, `watch --status`, `watch --ensure-running`, doctor. A foreign holder is now named in the output instead of silently trusted. |
-| D-D | Six banner rows had no `add_parser()` call at all. | Registered; they dispatch to the exact functions the MCP tools call, so CLI and MCP cannot drift. |
-| D-E | `run_watcher_with_crash_guard()` installed no SIGTERM handler in the daemonized process (the parent's is not inherited through the double-fork), so SIGTERM killed it outright — skipping the final flush **and** the PID-file cleanup. | SIGTERM → `KeyboardInterrupt` (the path the loop already handles); PID file and own heartbeat removed in a `finally`. |
-| D-F | **Not an ingestion failure.** Doctor counted doc chunks in `memory/semantic_metadata.json`, which only the *local FAISS* backend writes. This repo has `vector_backend: "chroma"`, so that file is `[]` and the warning was permanent. Verified: re-running the ingester on this repo returns `{"chunks": 145, "files": 51}` — the docs were indexed the whole time. | `DocIngester` writes `.cognirepo/index/doc_ingest.json`; doctor reads that, with the old count as fallback for pre-receipt indexes. |
+**(b) ast_metadata.json pruning — the watcher never called compact_faiss().**
+Confirmed via a direct trace: a single in-file symbol rename left `faiss_meta`
+2 records heavier for 1 live symbol (dead=2), because `compact_faiss()` (the D-B fix) only
+ever ran at the end of a full `index-repo` pass — the watcher's debounced incremental
+reindexes only ever appended. `RepoFileHandler._flush_locked()` (and the `debounce_ms=0`
+synchronous `_reindex`/`_remove` paths) now call a new `_maybe_compact_faiss()` before every
+persist, threshold-gated at 25 dead+dangling records so a full index rebuild (which
+reconstructs every live vector) isn't paid on every keystroke-triggered save. Verified: after
+compaction, `faiss_meta_stats()["dead"] == 0` and `ntotal == live == len(faiss_meta)`.
 
-**Verification**
+**Also investigated, found to be by design, not a defect:** the E2E-100-3 gap ("`watch
+--ensure-running` doesn't restart a killed `serve`") — `serve` is a foreground subprocess
+owned by the MCP client (`.mcp.json` spawns and is responsible for restarting it); a
+cognirepo-side supervisor bolted onto the watcher's `--ensure-running` path would be a
+second, conflicting layer with no PID/heartbeat hook into `serve` today. No code change.
 
-1. *Live MCP session, the exact failing scenario.* Scratch repo → `serve` (JSON-RPC over stdio) → `lookup_symbol` → `git mv` + delete a function → `index-repo` **from a separate process** → `lookup_symbol` again **in the same server session**:
+**Also found (pre-existing, not introduced by this fix, not fixed):** `run_watcher_with_crash_guard`'s
+shutdown path has a low-probability race — `start_heartbeat_thread` writes immediately on
+start, which can land after `clear_heartbeat_if_owned()` in the `finally` block on a very
+fast clean exit, leaving a stale heartbeat behind. Reproduced once under full-suite load
+(`tests/test_singleton_staleness.py::TestWatcherShutdownCleanup::test_pid_file_and_heartbeat_removed_on_clean_exit`),
+not reproducible standalone. Pre-existing on the merged D-E fix; out of scope for this pass.
 
-   | | pre-fix (`development` @ 4bdd06f) | post-fix |
-   |---|---|---|
-   | `secure_hash_s` | `hashing.py` ❌ stale | `hashing_renamed.py` ✅ |
-   | `deduplicate_list` | `helpers.py` ❌ stale | `[]` ✅ |
-   | `keep_me` (control) | resolves | resolves |
+**Tests:** 1312 passed, 5 skipped (full suite). New coverage:
+`tests/test_stale_cleanup.py::TestWatcherFaissReclaim` (2 tests — rename reclaim, threshold-triggered
+compaction). `tests/test_daemon_extended2.py`, `tests/test_index_write_concurrency.py`,
+`tests/test_singleton_staleness.py` updated for the new path-scoped `daemon.py` signatures.
 
-   Both expected results the test specifies through MCP now hold. The control run against pre-fix code reproduces the reported failure exactly.
-
-2. *Regression suite:* `tests/test_singleton_staleness.py`, 38 tests — **37 fail against pre-fix code**, all pass after. (The 38th asserts the new error-degradation path, which has nothing to fail against.)
-
-3. *Full suite:* 1310 passed, 5 skipped.
-
-4. *Doctor on this repo (`cognirepo_test_repo/medium/ansible`):* **3 warnings → 1**, and that one is `Model API keys — none configured`, which is unrelated and expected. The doc-chunk warning is gone and the heartbeat is now credited to the live watcher (PID 330459) instead of the unrelated serve process (PID 327278). Step 5's "doctor green apart from the intentional dirty warning" is achievable as written.
-
-**Retest:** E2E-100-1 in full. E2E-100-2 and E2E-100-3 are untouched by this diff.
-
+**Retest:** E2E-100-1 full retest recommended to confirm no doctor warning remains and
+`ast_metadata.json` stays bounded under a live watch session; left for the user per skill.md
+step 4 (live MCP verification).
 
 ## E2E-100-2: Tool discovery parity across all artifacts (crosses D01+101+106)
 - Test repo: /home/ashlesh/my_works/cognirepo (this repo)

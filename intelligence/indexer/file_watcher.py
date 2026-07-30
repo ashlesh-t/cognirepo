@@ -49,6 +49,13 @@ if TYPE_CHECKING:
 
 _DEFAULT_DEBOUNCE_MS = 500
 
+# Dead + dangling ast_metadata.json/faiss_meta records to accumulate before a
+# debounced flush pays for compact_faiss()'s full index rebuild. compact_faiss()
+# itself no-ops cheaply when nothing is dead, but a full compaction reconstructs
+# every live vector — too costly to run after every single keystroke-triggered
+# save. See COGNIREPO-D-B follow-up.
+_FAISS_COMPACT_DEAD_THRESHOLD = 25
+
 
 class RepoFileHandler(FileSystemEventHandler):
     """Watchdog handler that re-indexes any changed file whose extension is supported."""
@@ -206,6 +213,8 @@ class RepoFileHandler(FileSystemEventHandler):
         # retrieval cache mutually inconsistent with no record that a batch
         # was ever attempted. That is precisely the cross-store divergence
         # E2E-100-1 exists to detect. See COGNIREPO-D15.
+        self._maybe_compact_faiss()
+
         save_error: str | None = None
         try:
             self.indexer.save()
@@ -246,6 +255,25 @@ class RepoFileHandler(FileSystemEventHandler):
 
         for rel_path in removed_rel_paths:
             print(f"[watcher] removed {rel_path} from index")
+
+    def _maybe_compact_faiss(self) -> None:
+        """Reclaim dead/dangling ast_metadata.json rows once enough have piled up.
+
+        compact_faiss() previously only ran at the end of a full `index-repo`
+        pass — the watcher's debounced reindexes only ever appended, so
+        ast_metadata.json grew without bound across a long-lived watch
+        session, even though the dead records were already unreachable via
+        FAISS. Gated on a threshold (not every flush) since compact_faiss()
+        reconstructs every live vector to rebuild the index — cheap to skip,
+        not cheap to run on every keystroke-triggered save. See COGNIREPO-D-B
+        follow-up.
+        """
+        try:
+            stats = self.indexer.faiss_meta_stats()
+            if stats["dead"] + stats["dangling"] >= _FAISS_COMPACT_DEAD_THRESHOLD:
+                self.indexer.compact_faiss()
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"[watcher] compact_faiss failed: {exc}")
 
     def _write_last_watcher_reindex(
         self, reindexed: list[str], removed: list[str], error: str | None = None,
@@ -295,7 +323,11 @@ class RepoFileHandler(FileSystemEventHandler):
         }
         # remove_file_nodes (not remove_node_edges) so symbols deleted from the file
         # don't leave orphaned nodes behind — index_file() below re-adds the FILE
-        # node and any surviving symbols.
+        # node and any surviving symbols. index_file() itself already removes this
+        # file's old FAISS ids (all of them, unconditionally) before re-embedding,
+        # so a renamed-away symbol's vector is not left live/searchable — only the
+        # ast_metadata.json record lingers as dead until compact_faiss() reclaims
+        # it (see _maybe_compact_faiss()).
         self.graph.remove_file_nodes(rel_path)
         file_record = self.indexer.index_file(rel_path, abs_path)
         new_names = {s["name"] for s in (file_record or {}).get("symbols", [])}
@@ -352,6 +384,7 @@ class RepoFileHandler(FileSystemEventHandler):
             self.indexer.index_data["total_symbols"] = sum(
                 len(f.get("symbols", [])) for f in self.indexer.index_data["files"].values()
             )
+            self._maybe_compact_faiss()
             self.indexer.save()
             self.graph.save()
 
@@ -392,6 +425,7 @@ class RepoFileHandler(FileSystemEventHandler):
             self.indexer.index_data["total_symbols"] = sum(
                 len(f.get("symbols", [])) for f in self.indexer.index_data["files"].values()
             )
+            self._maybe_compact_faiss()
             self.indexer.save()
             self.graph.save()
             self.behaviour.save()

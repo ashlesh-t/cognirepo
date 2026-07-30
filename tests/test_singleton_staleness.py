@@ -412,11 +412,20 @@ class TestHeartbeatIdentity:
     def test_foreign_heartbeat_is_not_credited_to_this_repo(self, tmp_path):
         from interface.cli import daemon
 
-        daemon.write_heartbeat(os.getpid(), str(tmp_path / "some" / "other" / "repo"))
+        this_repo = tmp_path / "this_repo"
+        other_repo = tmp_path / "some" / "other" / "repo"
+        (this_repo / ".cognirepo").mkdir(parents=True)
+        (other_repo / ".cognirepo").mkdir(parents=True)
 
-        assert daemon.read_heartbeat() is not None  # the raw slot is occupied
-        assert daemon.read_heartbeat_for_path(str(tmp_path)) is None
-        assert daemon.heartbeat_age_seconds_for_path(str(tmp_path)) is None
+        daemon.write_heartbeat(os.getpid(), str(other_repo))
+
+        # The foreign repo's own heartbeat slot is occupied...
+        assert daemon.read_heartbeat(str(other_repo)) is not None
+        # ...but a repo-scoped heartbeat file (post COGNIREPO-D-C-follow-up)
+        # means it never lands in this repo's slot in the first place.
+        assert daemon.read_heartbeat(str(this_repo)) is None
+        assert daemon.read_heartbeat_for_path(str(this_repo)) is None
+        assert daemon.heartbeat_age_seconds_for_path(str(this_repo)) is None
 
     def test_own_heartbeat_is_credited(self, tmp_path):
         from interface.cli import daemon
