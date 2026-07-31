@@ -12,16 +12,22 @@ Search uses BM25Okapi (rank_bm25) for TF-IDF-weighted ranking.
 The BM25 corpus is cached in-process and invalidated on every write.
 """
 import json
+import logging
 import os
 import re
 import threading
+from collections import Counter
 from datetime import datetime
 
 from core.config.paths import get_path
 
+logger = logging.getLogger(__name__)
+
 # ── episodic memory size cap ──────────────────────────────────────────────────
 _MAX_EVENTS_DEFAULT = 10_000
 _ARCHIVE_FRACTION = 0.20  # rotate oldest 20% when cap is hit
+
+_ID_RE = re.compile(r"^e_(\d+)$")
 
 
 def _get_max_events() -> int:
@@ -93,9 +99,50 @@ def _load() -> list:
         except Exception:  # InvalidToken — file predates encryption; migrate on next save
             pass
     try:
-        return json.loads(raw)
+        data = json.loads(raw)
     except json.JSONDecodeError:
         return []
+    _warn_on_duplicate_ids(data)
+    return data
+
+
+def _warn_on_duplicate_ids(data: list) -> None:
+    """Defensive check: log a warning if the store already contains duplicate IDs."""
+    counts = Counter(e["id"] for e in data if "id" in e)
+    dupes = sorted(eid for eid, n in counts.items() if n > 1)
+    if dupes:
+        logger.warning(
+            "episodic store has %d duplicate id(s), showing up to 10: %s",
+            len(dupes), dupes[:10],
+        )
+
+
+def _max_id_num(entries: list) -> int:
+    """Highest numeric suffix among e_<N> IDs in entries, or -1 if none/malformed."""
+    best = -1
+    for entry in entries:
+        match = _ID_RE.match(str(entry.get("id", "")))
+        if match:
+            best = max(best, int(match.group(1)))
+    return best
+
+
+def _next_event_id(data: list) -> str:
+    """
+    Compute a store-lifetime-unique event ID: one past the highest e_<N> seen
+    across live entries and the archive file, so post-rotation IDs never
+    collide with a surviving (or archived) entry's ID.
+    """
+    max_num = _max_id_num(data)
+    apath = _archive_path()
+    if os.path.exists(apath):
+        try:
+            with open(apath, "rb") as f:
+                archive = json.loads(f.read())
+            max_num = max(max_num, _max_id_num(archive))
+        except (OSError, json.JSONDecodeError):
+            pass
+    return f"e_{max_num + 1}"
 
 
 def _save(data: list) -> None:
@@ -147,7 +194,7 @@ def log_event(event: str, metadata: dict = None) -> None:
     data = _load()
     data = _rotate_if_needed(data)
     entry = {
-        "id": f"e_{len(data)}",
+        "id": _next_event_id(data),
         "event": event,
         "metadata": metadata or {},
         "time": datetime.utcnow().isoformat() + "Z",

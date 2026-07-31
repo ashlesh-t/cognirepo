@@ -170,3 +170,37 @@ def test_structure_results_with_dash_section():
     }
     result = _structure_results([hit])
     assert "JWT tokens" in result["doc_hits"][0]["section"]
+
+
+# ── COGNIREPO-D07: source in ("ast", "symbol") classification ────────────────
+
+def test_structure_results_symbol_source_is_code_hit():
+    """A real vector-store AST symbol entry (source="symbol") must land in code_hits."""
+    from interface.tools.retrieve_memory import _structure_results
+    hit = {
+        "text": "FUNCTION verify_token in auth/jwt.py:88 — validates bearer token",
+        "source": "symbol",
+        "final_score": 0.7,
+    }
+    result = _structure_results([hit])
+    assert len(result["code_hits"]) == 1
+    assert result["doc_hits"] == []
+    assert result["code_hits"][0]["file"] == "auth/jwt.py"
+    assert result["code_hits"][0]["line"] == 88
+
+
+def test_structure_results_non_ast_source_with_in_colon_shape_stays_doc_hit():
+    """A real interaction_style/memory hit whose text happens to contain
+    "X in Y:Z"-shaped substrings must NOT be misclassified as a code hit —
+    only source in ("ast", "symbol") should trigger code_hits now that the
+    real stored source is available (COGNIREPO-D07)."""
+    from interface.tools.retrieve_memory import _structure_results
+    hit = {
+        "text": "User interaction style: prefers detailed answers. Common terms: auth, in, config.py:10",
+        "source": "interaction_style",
+        "final_score": 0.6,
+    }
+    result = _structure_results([hit])
+    assert result["code_hits"] == []
+    assert len(result["doc_hits"]) == 1
+    assert result["doc_hits"][0]["source"] == "interaction_style"

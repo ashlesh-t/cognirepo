@@ -37,10 +37,15 @@ Layer 5 — interface/cli/  (top-level consumer, depends on all layers)
 ```
 
 **Dependency rule:** a module in layer N may only import from layers 0…N.
-Upward imports (lower layer → higher layer) are forbidden at toplevel.
-Lazy upward imports inside function bodies are permitted but logged by the checker.
+Upward imports (lower layer → higher layer) are forbidden — both at toplevel and lazily
+inside function bodies (COGNIREPO-105: lazy upward imports are hard failures too, not
+merely logged; a lazy import doesn't create a runtime cycle, but it's still a dependency
+an upper-layer caller has to inject). Only `TYPE_CHECKING`-guarded imports are allowlisted,
+since those have zero runtime effect. Where a lower layer genuinely needs upper-layer
+behavior, thread it in as an optional keyword-only callback (e.g. `store_fn`,
+`progress_factory`) supplied by the upper-layer construction site.
 
-**Enforcement:** `scripts/check_circular_deps.py` rebuilds the import graph at every commit and fails on any upward dependency.
+**Enforcement:** `scripts/check_circular_deps.py` rebuilds the import graph at every commit and fails on any upward dependency (toplevel or lazy).
 
 ---
 

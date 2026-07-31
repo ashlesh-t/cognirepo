@@ -33,9 +33,11 @@ import logging
 import os
 import platform
 import subprocess
+import tempfile
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Callable
 
 import faiss
 import numpy as np
@@ -67,6 +69,26 @@ def _ast_meta_file() -> str:
 
 def _manifest_file() -> str:
     return get_path("index/manifest.json")
+
+
+def _store_lock_or_null():
+    """Return the cross-process store lock, or a no-op context if unavailable.
+
+    store_lock() hard-raises ImportError when filelock is missing. filelock is
+    a declared dependency, but save() runs on the watcher's hot path where a
+    hard failure loses the whole batch — so a minimal install degrades to
+    unlocked writes with a warning instead of crashing the watcher.
+    """
+    try:
+        from core.config.lock import store_lock  # pylint: disable=import-outside-toplevel
+        return store_lock()
+    except ImportError:
+        log.warning(
+            "filelock unavailable — index writes are NOT protected against "
+            "concurrent processes. Run: pip install filelock"
+        )
+        import contextlib  # pylint: disable=import-outside-toplevel
+        return contextlib.nullcontext()
 
 _SKIP_DIRS: frozenset[str] = frozenset({
     # Version control
@@ -1054,8 +1076,17 @@ class ASTIndexer:
     the stdlib-ast fallback even without the tree-sitter-python grammar.
     """
 
-    def __init__(self, graph: KnowledgeGraph) -> None:
+    def __init__(
+        self,
+        graph: KnowledgeGraph,
+        *,
+        progress_factory: Callable[[str, str, int], Any] | None = None,
+    ) -> None:
         self.graph = graph
+        # Interface-layer callback (interface.tools.bg_progress.TaskProgress) for
+        # Tier-2 indexing progress, injected by callers to keep this module free
+        # of upward `intelligence → interface` imports — see COGNIREPO-105.
+        self._progress_factory = progress_factory
         self._model = None  # lazy: loaded only when embedding is actually performed
         self.faiss_index: faiss.Index | None = None
         self.faiss_meta: list[dict] = []
@@ -1070,6 +1101,66 @@ class ASTIndexer:
             "total_symbols": 0,
         }
         self._loaded = False
+        # (mtime_ns, size) of ast_index.json as of the last load()/save().
+        # None means "never synced with disk". See reload_if_changed().
+        self._disk_stamp: tuple[int, int] | None = None
+        # Absolute path this instance is synced against. get_path() is
+        # ContextVar-scoped (_CTX_DIR), so the same call inside a
+        # `_repo_ctx(other_repo)` block resolves to a different repo's index —
+        # recording it lets reload_if_changed() refuse a cross-repo reload.
+        self._disk_path: str | None = None
+
+    # ── disk freshness ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _stat_stamp(path: str) -> tuple[int, int] | None:
+        """Return (mtime_ns, size) for *path*, or None if it does not exist."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
+    def reload_if_changed(self) -> bool:
+        """Re-read the index from disk when another process has rewritten it.
+
+        Long-lived readers — chiefly the MCP server, which holds ASTIndexer as
+        a module-level singleton for the life of the process — otherwise serve
+        whatever was on disk at startup forever. The watcher runs in a separate
+        process, so its in-process ``lookup_symbol.cache_clear()`` calls never
+        reach the server: after a rename or a symbol deletion the server kept
+        answering from the pre-edit reverse_index while ``graph_stats`` read the
+        file mtime directly and reported ``index_age_minutes: 0``, certifying
+        the stale answer as fresh. See COGNIREPO-D-A.
+
+        Returns True if a reload actually happened. Cheap when nothing changed:
+        one os.stat() against ast_index.json.
+        """
+        if not self._loaded:
+            return False
+        path = _ast_index_file()
+        if self._disk_path is not None and path != self._disk_path:
+            # Called while a _repo_ctx() has repointed get_path() at another
+            # repo. Reloading here would silently swap this instance's contents
+            # for a different repository's index.
+            log.debug(
+                "reload_if_changed: path context changed (%s != %s) — skipping",
+                path, self._disk_path,
+            )
+            return False
+        current = self._stat_stamp(path)
+        if current == self._disk_stamp:
+            return False
+        log.debug(
+            "ast_index.json changed on disk (%s -> %s) — reloading",
+            self._disk_stamp, current,
+        )
+        self.load()
+        # lru_cache lives on the class, so this clears entries for every
+        # instance — required, since the cached lists are pre-reload paths.
+        type(self).lookup_symbol.cache_clear()
+        type(self).lookup_word.cache_clear()
+        return True
 
     # ── embedding model (lazy) ────────────────────────────────────────────────
 
@@ -1235,6 +1326,11 @@ class ASTIndexer:
         repo_root = os.path.abspath(repo_root)
         self.index_data["repo_root"] = repo_root
         self.index_data["indexed_at"] = _now()
+        # `indexed_at` is refreshed by every save() (including the watcher's
+        # incremental path); `full_indexed_at` marks only a complete
+        # index_repo() sweep, so agents can still tell "everything was
+        # rebuilt" from "one file was touched". See COGNIREPO-D14.
+        self.index_data["full_indexed_at"] = self.index_data["indexed_at"]
 
         skip_dirs = _effective_skip_dirs()
 
@@ -1424,6 +1520,19 @@ class ASTIndexer:
             len(f.get("symbols", [])) for f in self.index_data["files"].values()
         )
         self.index_data["total_symbols"] = total_symbols
+        # Drop metadata records for symbols that were renamed away or deleted
+        # since the last full index. Only safe here, where every faiss_id in
+        # index_data is about to be rewritten anyway. See COGNIREPO-D-B.
+        try:
+            _compaction = self.compact_faiss()
+            if _compaction.get("compacted"):
+                _b, _a = _compaction["before"], _compaction["after"]
+                print(
+                    f"  FAISS compaction: {_b['retained']} → {_a['retained']} "
+                    f"metadata records ({_b['dead']} stale dropped)"
+                )
+        except Exception as _exc:  # pylint: disable=broad-except
+            log.warning("compact_faiss failed (index still valid): %s", _exc)
         self.save()
 
         # ── summary output ────────────────────────────────────────────────────
@@ -1695,7 +1804,7 @@ class ASTIndexer:
 
         return file_record
 
-    def _resolve_call_stubs(self) -> None:
+    def _resolve_call_stubs(self, names: set[str] | None = None) -> None:
         """
         Second-pass stub resolution: for each ``symbol::fn`` node, look up fn in
         the complete reverse_index.  When exactly one definition exists, redirect
@@ -1703,6 +1812,13 @@ class ASTIndexer:
         multiple definitions exist (ambiguous), keep the stub and tag it
         ``ambiguous=True``.  Unresolved stubs (no definition found) are tagged
         ``unresolved=True`` so ``who_calls`` can still surface them.
+
+        names: when given, only reconcile ``symbol::{n}`` for ``n in names``
+        instead of scanning every stub node in the graph — used by the
+        watcher's incremental ``flush()`` to keep per-save cost proportional
+        to the batch size rather than the whole graph (COGNIREPO-D10). The
+        full-reindex path (`index_repo()`) keeps calling this with no
+        argument to sweep everything.
 
         Must be called AFTER ``_build_reverse_index()`` so the index is complete.
         Skipped when the graph is empty (graph indexing was disabled).
@@ -1713,7 +1829,12 @@ class ASTIndexer:
             return
 
         rev = self.index_data.get("reverse_index", {})
-        stub_nodes = [n for n in list(self.graph.G.nodes()) if n.startswith("symbol::")]
+        if names is not None:
+            stub_nodes = [
+                f"symbol::{n}" for n in names if self.graph.G.has_node(f"symbol::{n}")
+            ]
+        else:
+            stub_nodes = [n for n in list(self.graph.G.nodes()) if n.startswith("symbol::")]
 
         for stub in stub_nodes:
             fn_name = stub[len("symbol::"):]
@@ -1907,9 +2028,11 @@ class ASTIndexer:
         # edge: set up progress tracker — failure falls back to tqdm-only silently
         _t2_prog = None
         try:
-            import time as _t2time  # pylint: disable=import-outside-toplevel
-            from interface.tools.bg_progress import TaskProgress as _TP  # pylint: disable=import-outside-toplevel
-            _t2_prog = _TP(f"tier2_index_{int(_t2time.time())}", "Tier 2 indexing", len(_pending))
+            if self._progress_factory is not None:
+                import time as _t2time  # pylint: disable=import-outside-toplevel
+                _t2_prog = self._progress_factory(
+                    f"tier2_index_{int(_t2time.time())}", "Tier 2 indexing", len(_pending)
+                )
         except Exception:  # pylint: disable=broad-except
             pass
 
@@ -2023,6 +2146,102 @@ class ASTIndexer:
         results.sort(key=lambda x: x["file"])
         return results
 
+    def faiss_meta_stats(self) -> dict:
+        """Report live-vs-retained FAISS metadata records.
+
+        ``faiss_meta`` is positional: ``faiss_id`` IS the list index, and
+        ``semantic_search_code`` resolves a hit as ``faiss_meta[fid]``. That
+        makes the list append-only — entries for renamed-away or deleted
+        symbols cannot be popped without renumbering every id after them, so
+        they accumulate on every reindex. The vectors are removed (via
+        ``remove_ids``) so the dead records are unreachable, not incorrect, but
+        they grow ast_metadata.json without bound. See COGNIREPO-D-B.
+        """
+        live = {
+            s["faiss_id"]
+            for f in self.index_data.get("files", {}).values()
+            for s in f.get("symbols", [])
+            if s.get("faiss_id", -1) >= 0
+        }
+        retained = len(self.faiss_meta)
+        # Count only ids that actually address a retained record. A symbol can
+        # carry a faiss_id past the end of the list (a dangling reference left
+        # by a partial write); counting it as live would mask real dead records.
+        addressable = {fid for fid in live if 0 <= fid < retained}
+        dead = retained - len(addressable)
+        dangling = len(live) - len(addressable)
+        ntotal = int(self.faiss_index.ntotal) if self.faiss_index is not None else 0
+        return {
+            "live": len(addressable),
+            "retained": retained,
+            "ntotal": ntotal,
+            "dead": dead,
+            "dangling": dangling,
+            "dead_ratio": round(dead / retained, 4) if retained else 0.0,
+        }
+
+    def compact_faiss(self) -> dict:
+        """Rebuild the FAISS index + metadata keeping only live symbol records.
+
+        Renumbers ``faiss_id`` densely from 0 and rewrites each symbol's
+        ``faiss_id`` in ``index_data`` so the positional invariant
+        ``faiss_meta[fid]`` still holds. Vectors are recovered with
+        ``reconstruct()`` — IndexIDMap2 stores them, so no re-embedding is
+        needed and compaction costs no model time.
+
+        Returns the before/after stats. A no-op (and cheap) when nothing is dead.
+        """
+        before = self.faiss_meta_stats()
+        if self.faiss_index is None or (before["dead"] == 0 and before["dangling"] == 0):
+            return {"before": before, "after": before, "compacted": False}
+
+        # old_id -> the symbol dicts that point at it (usually exactly one)
+        holders: dict[int, list[dict]] = {}
+        for file_data in self.index_data.get("files", {}).values():
+            for sym in file_data.get("symbols", []):
+                fid = sym.get("faiss_id", -1)
+                if fid >= 0:
+                    holders.setdefault(int(fid), []).append(sym)
+
+        inner = faiss.IndexFlatL2(384)
+        new_index = faiss.IndexIDMap2(inner)
+        new_meta: list[dict] = []
+        dropped = 0
+
+        for old_id in sorted(holders):
+            if old_id >= len(self.faiss_meta):
+                # Dangling: addresses past the end of the metadata list.
+                for sym in holders[old_id]:
+                    sym["faiss_id"] = -1
+                dropped += 1
+                continue
+            try:
+                vec = self.faiss_index.reconstruct(int(old_id))
+            except Exception:  # pylint: disable=broad-except
+                # Vector already removed (remove_ids) but a symbol still cites
+                # the id — drop the reference rather than carry a dangling one.
+                for sym in holders[old_id]:
+                    sym["faiss_id"] = -1
+                dropped += 1
+                continue
+            new_id = len(new_meta)
+            new_index.add_with_ids(
+                np.array([vec], dtype="float32"),
+                np.array([new_id], dtype=np.int64),
+            )
+            new_meta.append(self.faiss_meta[old_id])
+            for sym in holders[old_id]:
+                sym["faiss_id"] = new_id
+
+        self.faiss_index = new_index
+        self.faiss_meta = new_meta
+        after = self.faiss_meta_stats()
+        log.info(
+            "compact_faiss: %d -> %d metadata records (%d dangling id(s) cleared)",
+            before["retained"], after["retained"], dropped,
+        )
+        return {"before": before, "after": after, "compacted": True, "dropped": dropped}
+
     def get_symbol_table(self, file_path: str) -> SymbolTable:
         """Return a SymbolTable for bisect-based line-range queries."""
         return build_symbol_table_from_index(file_path, self.index_data)
@@ -2041,6 +2260,7 @@ class ASTIndexer:
             "files": {}, "reverse_index": {},
             "repo_root": self.index_data.get("repo_root", ""),
             "indexed_at": self.index_data.get("indexed_at", ""),
+            "full_indexed_at": self.index_data.get("full_indexed_at", ""),
         }
         self._pending_embeds = []  # pylint: disable=attribute-defined-outside-init
         gc.collect()
@@ -2049,18 +2269,66 @@ class ASTIndexer:
 
     @staticmethod
     def _atomic_json_dump(obj, path: str) -> None:
-        """Write JSON to a tmp file then os.replace() into place.
+        """Write JSON to a unique tmp file then os.replace() into place.
 
-        A crash or concurrent reindex mid-write can no longer leave a
-        truncated/corrupt JSON file behind (observed as a parse error at
-        char 73M on a large-monorepo ast_index.json).
+        The tmp filename MUST be unique per writer. A deterministic
+        `path + ".tmp"` is shared by every concurrent writer — two watcher
+        flush threads, a second `cognirepo serve`, or the background
+        `index-repo --changed-only` that graph_stats spawns — which produced
+        two distinct failures (COGNIREPO-D13):
+
+          1. loud: writer B's os.replace() raises FileNotFoundError because
+             writer A already renamed the shared tmp away;
+          2. silent: writer B's open(tmp, "w") truncates the file A is
+             mid-json.dump() into, and A then fsyncs and promotes a partial
+             JSON into place — the "parse error at char 73M on a
+             large-monorepo ast_index.json" this function was written to fix.
+
+        mkstemp() in the destination directory gives every writer its own
+        scratch file, so the only shared operation is the atomic rename.
+        Callers that need the *group* of index files to be mutually
+        consistent must additionally hold store_lock() — see save().
         """
-        tmp_path = path + ".tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(obj, f, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, path)
+        directory = os.path.dirname(path) or "."
+        fd, tmp_path = tempfile.mkstemp(
+            dir=directory, prefix=os.path.basename(path) + ".", suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(obj, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+        except BaseException:
+            # Never leave an orphaned scratch file behind on failure.
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+    @staticmethod
+    def _sweep_stale_tmp(path: str) -> None:
+        """Delete orphaned `<path>.*.tmp` scratch files left by a crashed write.
+
+        _atomic_json_dump() cleans up its own tmp on failure, but a SIGKILL
+        or power loss mid-write can still strand one. They are never valid
+        index state, so removing them on load() keeps the index dir clean.
+        Also removes the legacy fixed-name `<path>.tmp` from before D13.
+        """
+        directory = os.path.dirname(path) or "."
+        base = os.path.basename(path)
+        try:
+            entries = os.listdir(directory)
+        except OSError:
+            return
+        for name in entries:
+            if name == base + ".tmp" or (name.startswith(base + ".") and name.endswith(".tmp")):
+                try:
+                    os.unlink(os.path.join(directory, name))
+                    log.debug("removed orphaned index scratch file %s", name)
+                except OSError:
+                    pass
 
     @staticmethod
     def _load_json_self_heal(path: str, default):
@@ -2084,18 +2352,38 @@ class ASTIndexer:
         """Persist AST index, FAISS index, and metadata to disk.
         Also writes manifest.json with git SHA, platform info, and checksums
         so `cognirepo verify-index` can detect staleness or corruption later.
-        """
-        os.makedirs(os.path.dirname(_ast_index_file()), exist_ok=True)
-        self._atomic_json_dump(self.index_data, _ast_index_file())
-        if self.faiss_index is not None:
-            faiss.write_index(self.faiss_index, _ast_faiss_file())
-        self._atomic_json_dump(self.faiss_meta, _ast_meta_file())
 
-        # Write integrity manifest after all index files are on disk
-        repo_root = self.index_data.get("repo_root") or None
-        file_count = len(self.index_data.get("files", {}))
-        symbol_count = self.index_data.get("total_symbols", len(self.faiss_meta))
-        _write_manifest(repo_root=repo_root, symbol_count=symbol_count, file_count=file_count)
+        Holds store_lock() across the whole group (ast_index.json, ast.index,
+        ast_metadata.json, manifest.json). Per-file atomic renames alone are
+        not enough: without the lock, two processes can interleave their four
+        renames and leave manifest.json's checksums describing a different
+        ast_index.json than the one on disk, so `verify-index` reports
+        corruption that never actually happened. KnowledgeGraph.save() has
+        always taken this lock; ASTIndexer.save() did not. See COGNIREPO-D13.
+        """
+        with _store_lock_or_null():
+            os.makedirs(os.path.dirname(_ast_index_file()), exist_ok=True)
+            # Stamp every persist, not just full index_repo() runs. Without
+            # this the watcher's incremental path leaves `indexed_at` frozen
+            # at the last full index while the file mtime advances, so
+            # graph_stats reported "last indexed 2h ago" and
+            # "index_age_minutes: 0" in the same payload. See COGNIREPO-D14.
+            self.index_data["indexed_at"] = _now()
+            self._atomic_json_dump(self.index_data, _ast_index_file())
+            if self.faiss_index is not None:
+                faiss.write_index(self.faiss_index, _ast_faiss_file())
+            self._atomic_json_dump(self.faiss_meta, _ast_meta_file())
+
+            # Write integrity manifest after all index files are on disk
+            repo_root = self.index_data.get("repo_root") or None
+            file_count = len(self.index_data.get("files", {}))
+            symbol_count = self.index_data.get("total_symbols", len(self.faiss_meta))
+            _write_manifest(repo_root=repo_root, symbol_count=symbol_count, file_count=file_count)
+
+            # Adopt our own write as the freshness baseline so reload_if_changed()
+            # doesn't bounce the writer's in-memory state back off disk.
+            self._disk_stamp = self._stat_stamp(_ast_index_file())
+            self._disk_path = _ast_index_file()
 
     def load(self) -> None:
         """Load existing index from disk. Silently does nothing if not present.
@@ -2127,9 +2415,21 @@ class ASTIndexer:
                             pass
                     self._ensure_faiss()
                     self._loaded = True
+                    self._disk_stamp = self._stat_stamp(_ast_index_file())
+                    self._disk_path = _ast_index_file()
                     return
             except (OSError, json.JSONDecodeError):
                 pass  # manifest absent or unreadable — proceed normally
+
+        # Sample the stamp BEFORE reading. If a writer lands mid-load we adopt
+        # the older stamp and reload_if_changed() picks up the newer file on the
+        # next call, rather than caching a half-read state as current.
+        stamp = self._stat_stamp(_ast_index_file())
+        self._disk_path = _ast_index_file()
+
+        # Clear scratch files stranded by a hard kill mid-write (COGNIREPO-D13).
+        self._sweep_stale_tmp(_ast_index_file())
+        self._sweep_stale_tmp(_ast_meta_file())
 
         if os.path.exists(_ast_index_file()):
             loaded = self._load_json_self_heal(_ast_index_file(), None)
@@ -2155,3 +2455,4 @@ class ASTIndexer:
         if os.path.exists(_ast_meta_file()):
             self.faiss_meta = self._load_json_self_heal(_ast_meta_file(), [])
         self._loaded = True
+        self._disk_stamp = stamp

@@ -6,7 +6,166 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
-## [Unreleased]
+## [2.0.1] — 2026-07-31
+
+### Fixed
+- **`core/config/version.py` never actually found `version.yml`.** `_REPO_ROOT`
+  was computed as `Path(__file__).parent.parent` — two levels up from
+  `core/config/version.py` lands on `core/`, not the repo root — so
+  `version.yml` was silently unreadable and every import of `__version__` (and
+  `APP_NAME`/`MCP_NAME`/etc.) fell back to the hardcoded default, "2.0.0",
+  regardless of what `version.yml` actually said. Caught while cutting this
+  release: `scripts/sync_version.py` correctly bumped `pyproject.toml`,
+  `manifest.json`, and `server.json` to 2.0.1, but the *live* MCP manifest
+  (`_build_manifest()`, which imports `__version__` directly) kept reporting
+  2.0.0. Fixed to three `.parent`s.
+- **Follow-up to COGNIREPO-D-C — the heartbeat file itself could still land in
+  the wrong repo's `.cognirepo/`.** D-C's path-matching (`read_heartbeat_for_path`)
+  correctly rejected a foreign heartbeat once read, but the file it read from
+  was still chosen by `daemon._find_cognirepo_dir()` walking up from the
+  current process's cwd to the nearest ancestor `.cognirepo/` — ignoring the
+  actual repo path being watched. A `serve --project-dir <parent>` process
+  whose cwd sat inside a child repo could walk past the child's own
+  `.cognirepo/` and stamp its heartbeat there, colliding with and overwriting
+  that repo's own watcher heartbeat (live E2E-100-1 retest against the merged
+  D-C fix still showed doctor crediting a different repo's PID). All
+  PID/heartbeat resolution in `interface/cli/daemon.py` now resolves directly
+  against `core.config.paths.get_cognirepo_dir_for_repo()` (or
+  `get_cognirepo_dir()` for the no-path/cwd case) — the same resolution
+  FAISS/AST/graph storage already uses — and never walks ancestors.
+- **Follow-up to COGNIREPO-D-B — `ast_metadata.json` still grew unbounded
+  under a live watcher.** `compact_faiss()` only ever ran at the end of a full
+  `index-repo` pass; the watcher's debounced incremental reindexes only ever
+  appended, so a long-lived `watch`/`serve` session accumulated dead/dangling
+  records with no reclamation path. `RepoFileHandler` now calls
+  `_maybe_compact_faiss()` before every persist (both the debounced batch path
+  and the `debounce_ms=0` synchronous path), threshold-gated (25 dead+dangling
+  records) so a full index rebuild isn't paid on every keystroke-triggered save.
+- **COGNIREPO-D10 — a deleted symbol's live call edges vanished instead of
+  becoming an unresolved stub, and `total_symbols` drifted from the live
+  index.** `file_watcher.py`'s `flush()` never called `_resolve_call_stubs()`
+  or recomputed `total_symbols`, unlike the full `index_repo()` path.
+  `_resolve_call_stubs()` now takes an optional scoped `names` set (batch-sized,
+  not whole-graph) and `KnowledgeGraph.remove_file_nodes()` redirects a removed
+  symbol's live `CALLS`/`CALLED_BY` edges onto an `unresolved=True`
+  `symbol::name` stub instead of silently dropping them — matching what a full
+  `index_repo()` re-run would produce.
+- **COGNIREPO-D11 — `verify-index`/`doctor` were blind to uncommitted changes
+  under a live watcher.** The old check compared file mtime against
+  `indexed_at`, which a live watcher's own saves continuously refresh. Both now
+  use `git status --porcelain` as the authoritative dirty signal (mtime kept
+  only as a non-git fallback).
+- **COGNIREPO-D12 — no persistent trail of watcher-driven reindex activity.**
+  `flush()` only `print()`'d, invisible outside daemon mode. It now
+  writes/overwrites `.cognirepo/index/last_watcher_reindex.json` every batch.
+- **COGNIREPO-D-A — the MCP server served symbol lookups frozen at server-start
+  state for the whole session.** `_INDEXER` / `_GRAPH` are module-level
+  singletons `.load()`ed once at startup with no revalidation, and the watcher
+  reindexes in a *separate process*, so the `lookup_symbol.cache_clear()` calls
+  it makes never crossed the process boundary. After a `git mv` or a deleted
+  function the index on disk was correct and a fresh interpreter answered
+  correctly, while the long-lived server kept returning the pre-edit path —
+  and `graph_stats` read the file mtime directly, certifying the stale answer
+  with `index_age_minutes: 0` and `index_stale: false`. `ASTIndexer` and
+  `KnowledgeGraph` now carry a `(mtime_ns, size)` disk stamp and a
+  `reload_if_changed()` that reloads and clears the lookup caches; `_get_indexer()`
+  / `_get_graph()` call it on every access (one `os.stat` when nothing changed).
+  Reloads are refused when a `_repo_ctx()` has repointed `get_path()` at another
+  repository, so a repo-scoped tool call cannot swap the default singleton's
+  contents. `KnowledgeGraph.save()` now promotes `graph.pkl` with `os.replace()`
+  instead of writing in place — readers take no lock, and a mid-write reader
+  would otherwise see a short pickle and quarantine a healthy graph as
+  `.corrupt-<ts>`. `_evict_singletons()` also clears the `lru_cache`, whose
+  entries hold a strong reference to the indexer and previously made the
+  eviction free nothing.
+- **COGNIREPO-D-B — `ast_metadata.json` grew without bound.** `faiss_meta` is
+  positional (`faiss_id` *is* the list index, and `semantic_search_code` resolves
+  a hit as `faiss_meta[fid]`), so records for renamed-away or deleted symbols
+  could not be popped and accumulated on every reindex — ~9% dead records and
+  climbing on a medium repo. New `ASTIndexer.compact_faiss()` rebuilds the index
+  and metadata from live symbols only, recovering vectors via
+  `IndexIDMap2.reconstruct()` (no re-embedding) and renumbering `faiss_id`
+  densely; `index_repo()` runs it before saving. `faiss_meta_stats()` reports
+  live/retained/dead/dangling, and symbols citing an unreachable id now have that
+  reference cleared instead of carried.
+- **COGNIREPO-D-C — the heartbeat file had no per-daemon identity.** A `serve` or
+  `watch` process rooted at a different tree could stamp this repo's
+  `.cognirepo/watchers/heartbeat`, which is how `watch --status` printed
+  "Daemon: not running" directly above "Heartbeat: OK (10s ago)" and doctor
+  credited liveness (and the wrong PID) to a process watching somewhere else.
+  New `read_heartbeat_for_path()` / `heartbeat_age_seconds_for_path()` match on
+  the recorded `path`; `_watcher_alive()`, `watch --status`, `watch
+  --ensure-running` and doctor all use them, and a heartbeat held by a foreign
+  path is now reported as such rather than silently trusted.
+- **COGNIREPO-D-D — six commands were advertised in `--help` but rejected by
+  argparse.** `mcp-setup`, `episodic-search`, `lookup-symbol`, `who-calls`,
+  `subgraph` and `graph-stats` all exited 2 with "invalid choice". They are now
+  registered and dispatch to the same functions the MCP tools use, so the CLI and
+  MCP surfaces cannot drift.
+- **COGNIREPO-D-E — a stopped watcher left its PID file behind.** `watch --stop`
+  sends SIGTERM, but nothing installed a handler in the daemonized process, so
+  Python's default killed it outright: `stop_fn()`'s final flush never ran and
+  `.cognirepo/watchers/<pid>.json` outlived the daemon. The watcher now
+  translates SIGTERM into the `KeyboardInterrupt` its loop already handles and
+  removes both its PID file and its own heartbeat in a `finally`.
+- **COGNIREPO-D-F — `doctor` claimed docs were unindexed on every ChromaDB
+  project.** The doc-chunk check counted rows in `memory/semantic_metadata.json`,
+  a file only the *local* FAISS backend writes. With `vector_backend: "chroma"`
+  (the `cognirepo init` default) the chunks live in ChromaDB and that file stays
+  `[]`, so the warning "repo has docs but no doc chunks are indexed" was
+  permanent no matter how often you re-indexed — while the docs were ingested and
+  searchable the whole time. `DocIngester` now writes a backend-agnostic receipt
+  to `.cognirepo/index/doc_ingest.json` and doctor reads that, falling back to
+  the old count for indexes built before the receipt existed.
+- **COGNIREPO-D13 — concurrent index writes could crash the watcher or promote
+  truncated JSON.** `ASTIndexer._atomic_json_dump()` derived its scratch filename
+  from the target path (`ast_index.json.tmp`), so every concurrent writer — two
+  watcher flush threads, a second `cognirepo serve`, or the background
+  `index-repo --changed-only` that `graph_stats` spawns — shared one file. The
+  loser of the rename race raised `FileNotFoundError`; worse, an interleaved
+  `open(tmp, "w")` truncated a file another writer was mid-`json.dump()` into, and
+  that partial JSON was then `os.replace()`d into place. Scratch files now come
+  from `tempfile.mkstemp()` and are unlinked if the write fails. `ASTIndexer.save()`
+  additionally holds `store_lock()` across the whole group (`ast_index.json`,
+  `ast.index`, `ast_metadata.json`, `manifest.json`) so two processes cannot
+  interleave their renames and leave `manifest.json`'s checksums describing a
+  different index than the one on disk — `KnowledgeGraph.save()` has always taken
+  this lock; `ASTIndexer.save()` did not. `load()` sweeps scratch files stranded
+  by a hard kill, including the legacy fixed-name `.tmp`.
+- **COGNIREPO-D14 — `graph_stats` reported two clocks in one payload.**
+  `indexed_at` was stamped only by a full `index_repo()` run, never by the
+  watcher's incremental `save()`, so a repo kept current by the watcher returned
+  an hours-old `last_indexed` alongside `index_age_minutes: 0`. `save()` now
+  stamps `indexed_at` on every persist, and a new `full_indexed_at` field carries
+  the last complete sweep separately. `graph_stats` returns both, plus
+  `watcher_alive`.
+- **COGNIREPO-D15 — overlapping watcher flushes; a failed save abandoned the
+  batch.** `threading.Timer.cancel()` is a no-op once the timer has fired, so a
+  burst outlasting the debounce window scheduled a second `flush()` while the
+  first was still inside the seconds-long index+save section; both threads then
+  mutated shared `indexer.index_data` / `graph.G` and called `save()` at once.
+  `flush()` is now serialized by a dedicated lock (as is the `debounce_ms=0`
+  synchronous path). Separately, `indexer.save()` sat outside any handler, so a
+  raise from it skipped `graph.save()`, the D12 audit trail, episodic
+  `mark_stale()`, and `invalidate_hybrid_cache()` — leaving the graph, index and
+  retrieval cache mutually inconsistent with no record. Each step is now
+  independently guarded, and `last_watcher_reindex.json` gained an `error` field
+  so a partially-applied batch is no longer indistinguishable from a clean one.
+- **COGNIREPO-D16 — `_watcher_alive()` was hardwired to `False`.** It read
+  `.cognirepo/watcher.pid`, a path nothing in the codebase has ever written (the
+  daemon registers under `.cognirepo/watchers/<pid>.json`). The
+  "a live watcher means the index is not stale" guard in `graph_stats` was
+  therefore dead, letting it spawn a competing `index-repo --changed-only`
+  against a repo an active watcher was already writing — feeding D13 a third
+  concurrent writer. Now reads the heartbeat that `run_watcher_with_crash_guard()`
+  refreshes for both the daemon and the in-process auto-watcher, with the PID
+  registry as fallback.
+
+### Removed
+- **`interface.cli.docs_index` backward-compat shim** — deleted. It re-exported
+  `intelligence.indexer.docs_index` and had warned `DeprecationWarning: ... Removed in v2.0`
+  since the v2.0.0 restructure; no in-repo code imported it anymore. Update any external
+  `from interface.cli.docs_index import ...` to `from intelligence.indexer.docs_index import ...`.
 
 ---
 

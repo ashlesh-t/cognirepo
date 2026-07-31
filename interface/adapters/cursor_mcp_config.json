@@ -6,24 +6,45 @@
         "serve"
       ],
       "env": {
-        "COGNIREPO_API_URL": "http://localhost:9090"
+        "COGNIREPO_API_URL": "http://localhost:8080"
       }
     }
   },
   "_comment": "Drop this file at .cursor/mcp.json in your project root. Restart Cursor. CogniRepo tools will appear in the tool selector.",
   "_tools_preview": [
-    "store_memory",
-    "retrieve_memory",
-    "search_docs",
+    "architecture_overview",
+    "context_pack",
+    "cross_repo_search",
+    "cross_repo_traverse",
+    "dependency_graph",
+    "episodic_search",
+    "explain_change",
+    "find_symbol_path",
+    "get_agent_bootstrap",
+    "get_error_patterns",
+    "get_last_context",
+    "get_service_endpoints",
+    "get_session_brief",
+    "get_session_history",
+    "get_user_profile",
+    "graph_stats",
+    "link_repos",
+    "list_org_context",
     "log_episode",
     "lookup_symbol",
-    "who_calls",
-    "subgraph",
-    "episodic_search",
-    "graph_stats",
+    "org_dependencies",
+    "org_search",
+    "org_wide_search",
+    "record_decision",
+    "record_error",
+    "record_user_preference",
+    "retrieve_memory",
+    "search_docs",
+    "search_token",
     "semantic_search_code",
-    "dependency_graph",
-    "explain_change",
-    "context_pack"
+    "store_memory",
+    "subgraph",
+    "supersede_learning",
+    "who_calls"
   ]
 }

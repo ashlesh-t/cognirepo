@@ -11,6 +11,8 @@ tests/test_memory.py — semantic + episodic memory round-trip tests.
 """
 from __future__ import annotations
 
+import os
+
 
 class TestSemanticMemory:
     def test_store_and_retrieve(self):
@@ -51,6 +53,48 @@ class TestSemanticMemory:
             sm.store(f"memory item {i} about various topics and code")
         results = sm.retrieve("code topics", top_k=3)
         assert len(results) <= 3
+
+    # ── COGNIREPO-D08: SemanticMemory.store() must forward source ───────────
+
+    def test_store_forwards_real_source(self):
+        from data.memory.semantic_memory import SemanticMemory
+        sm = SemanticMemory()
+        sm.store("interaction style summary text", source="interaction_style")
+        results = sm.retrieve("interaction style summary text", top_k=1)
+        assert results[0]["source"] == "interaction_style"
+
+    def test_store_default_source_is_memory(self):
+        from data.memory.semantic_memory import SemanticMemory
+        sm = SemanticMemory()
+        sm.store("plain stored memory with no explicit source")
+        results = sm.retrieve("plain stored memory with no explicit source", top_k=1)
+        assert results[0]["source"] == "memory"
+
+
+class TestStoreMemoryToolSourceForwarding:
+    """COGNIREPO-D08: interface.tools.store_memory.store_memory()'s `source`
+    argument was accepted but silently discarded before storage — every
+    memory ended up with source="memory" regardless of what the caller
+    passed. These exercise the real (unmocked) store_memory() → storage
+    round trip, not just SemanticMemory directly."""
+
+    def test_real_source_is_persisted(self):
+        from interface.tools.store_memory import store_memory
+        from data.memory.semantic_memory import SemanticMemory
+
+        store_memory("a memory with a real source label", source="benchmark")
+        sm = SemanticMemory()
+        results = sm.retrieve("a memory with a real source label", top_k=1)
+        assert results[0]["source"] == "benchmark"
+
+    def test_empty_source_still_defaults_to_memory(self):
+        from interface.tools.store_memory import store_memory
+        from data.memory.semantic_memory import SemanticMemory
+
+        store_memory("a memory with no source label")
+        sm = SemanticMemory()
+        results = sm.retrieve("a memory with no source label", top_k=1)
+        assert results[0]["source"] == "memory"
 
 
 class TestEpisodicMemory:
@@ -94,3 +138,65 @@ class TestEpisodicMemory:
         ev = get_history(1)[0]
         meta = ev.get("metadata", {})
         assert meta.get("version") == "1.2.3"
+
+    def test_ids_unique_after_rotation(self, tmp_path):
+        import json
+        from core.config.paths import get_path
+        from data.memory.episodic_memory import log_event, _load, _archive_path
+
+        cfg_path = get_path("config.json")
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg["episodic_max_events"] = 20
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+
+        for i in range(25):
+            log_event(f"event {i}", {})
+
+        live = _load()
+        apath = _archive_path()
+        archive = []
+        if os.path.exists(apath):
+            with open(apath, encoding="utf-8") as f:
+                archive = json.load(f)
+
+        all_ids = [e["id"] for e in live] + [e["id"] for e in archive]
+        assert len(all_ids) == len(set(all_ids)), f"duplicate ids found: {all_ids}"
+
+    def test_prev_chain_resolvable_after_rotation(self):
+        import json
+        from core.config.paths import get_path
+        from data.memory.episodic_memory import log_event, _load, _archive_path
+
+        cfg_path = get_path("config.json")
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+        cfg["episodic_max_events"] = 10
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f)
+
+        for i in range(15):
+            log_event(f"event {i}", {})
+
+        live = _load()
+        apath = _archive_path()
+        archive = []
+        if os.path.exists(apath):
+            with open(apath, encoding="utf-8") as f:
+                archive = json.load(f)
+
+        id_set = {e["id"] for e in live} | {e["id"] for e in archive}
+        for entry in live:
+            if "prev" in entry:
+                assert entry["prev"] in id_set
+
+    def test_existing_store_ids_unchanged_on_load(self):
+        from data.memory.episodic_memory import log_event, get_history
+
+        log_event("first event", {})
+        log_event("second event", {})
+        before = [e["id"] for e in get_history(10)]
+        # loading again must not rewrite existing IDs
+        after = [e["id"] for e in get_history(10)]
+        assert before == after

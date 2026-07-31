@@ -308,3 +308,121 @@ class TestDoctorVerbose:
         _run_doctor(capsys, monkeypatch, verbose=True)
         out = capsys.readouterr().out
         assert "Optional" in out or "cryptography" in out or "keyring" in out
+
+
+class TestDoctorGraphQuarantine:
+    """COGNIREPO-103 AC3: doctor lists quarantined graph.pkl.corrupt-* files."""
+
+    def test_quarantined_file_is_listed(self, capsys, monkeypatch):
+        from core.config.paths import get_path
+
+        graph_dir = get_path("graph")
+        os.makedirs(graph_dir, exist_ok=True)
+        quarantine_name = "graph.pkl.corrupt-1784120946"
+        with open(os.path.join(graph_dir, quarantine_name), "w", encoding="utf-8") as f:
+            f.write("corrupt")
+
+        code = _run_doctor(capsys, monkeypatch)
+        out = capsys.readouterr().out
+
+        assert quarantine_name in out
+        assert code >= 1  # warning-level, not a hard failure
+
+    def test_no_quarantine_files_no_warning(self, capsys, monkeypatch):
+        code = _run_doctor(capsys, monkeypatch)
+        out = capsys.readouterr().out
+
+        assert "corrupt-" not in out
+        assert code == 0
+
+
+class TestDoctorWorkingTreeDirty:
+    """
+    COGNIREPO-D11: doctor must surface the same uncommitted-working-tree
+    finding as `verify-index`, as a non-fatal WARN. Uses a real git repo
+    (isolated_cognirepo chdirs into tmp_path) rather than _run_doctor's
+    in-process module stubs, since the check shells out to `git status`.
+    """
+
+    @staticmethod
+    def _sh(*args):
+        import subprocess
+        subprocess.run(["git", *args], check=True, capture_output=True)
+
+    def _write_manifest(self, isolated_cognirepo):  # pylint: disable=unused-argument
+        import json
+        import platform
+        import subprocess
+        from datetime import datetime, timezone
+        import faiss
+        from core.config.paths import get_path
+        from intelligence.indexer.ast_indexer import (
+            _ast_index_file, _ast_faiss_file, _ast_meta_file, _manifest_file, _sha256_file,
+        )
+
+        os.makedirs(get_path("index"), exist_ok=True)
+        for f in (_ast_index_file(), _ast_faiss_file(), _ast_meta_file()):
+            with open(f, "w", encoding="utf-8") as fh:
+                fh.write("stub")
+        git_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        manifest = {
+            "platform": {"arch": platform.machine(), "faiss": faiss.__version__},
+            "index_checksums": {
+                "ast_index.json": _sha256_file(_ast_index_file()),
+                "ast.index": _sha256_file(_ast_faiss_file()),
+                "ast_metadata.json": _sha256_file(_ast_meta_file()),
+            },
+            "git_commit": git_commit,
+            "indexed_at": datetime.now(tz=timezone.utc).isoformat(),
+            "source_file_count": 1,
+            "symbol_count": 1,
+        }
+        with open(_manifest_file(), "w", encoding="utf-8") as fh:
+            json.dump(manifest, fh)
+
+    def test_dirty_tree_produces_warn_not_hard_failure(self, isolated_cognirepo, capsys):
+        from interface.cli.main import _cmd_doctor
+
+        self._sh("init", "-q")
+        self._sh("config", "user.email", "test@example.com")
+        self._sh("config", "user.name", "Test")
+        with open("mod.py", "w", encoding="utf-8") as f:
+            f.write("def foo(): pass\n")
+        self._sh("add", "-A")
+        self._sh("commit", "-q", "-m", "init")
+
+        self._write_manifest(isolated_cognirepo)
+
+        with open("mod.py", "a", encoding="utf-8") as f:
+            f.write("def bar(): pass\n")
+
+        code = _cmd_doctor()
+        out = capsys.readouterr().out
+
+        assert "Working tree" in out
+        assert "uncommitted indexed source file" in out
+        assert "verify-index" in out
+        # WARN is non-fatal — must not be the sole reason for a nonzero exit.
+        # (Other checks may legitimately warn/fail in a bare fresh env; we
+        # only assert this specific check didn't escalate to a hard failure.)
+        assert "✗" not in out.split("Working tree")[1].split("\n")[0]
+
+    def test_clean_tree_no_working_tree_warning(self, isolated_cognirepo, capsys):
+        from interface.cli.main import _cmd_doctor
+
+        self._sh("init", "-q")
+        self._sh("config", "user.email", "test@example.com")
+        self._sh("config", "user.name", "Test")
+        with open("mod.py", "w", encoding="utf-8") as f:
+            f.write("def foo(): pass\n")
+        self._sh("add", "-A")
+        self._sh("commit", "-q", "-m", "init")
+
+        self._write_manifest(isolated_cognirepo)
+
+        _cmd_doctor()
+        out = capsys.readouterr().out
+
+        assert "Working tree" not in out

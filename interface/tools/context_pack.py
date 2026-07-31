@@ -259,7 +259,8 @@ def context_pack(
     try:
         from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-        _bt = BehaviourTracker(KnowledgeGraph())
+        from interface.tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
+        _bt = BehaviourTracker(KnowledgeGraph(), store_fn=store_memory)
         _enhanced = enhance_query(query, _bt)
         retrieval_query = _enhanced.text
     except Exception:  # pylint: disable=broad-except

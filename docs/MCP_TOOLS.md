@@ -105,9 +105,11 @@ Return the local knowledge graph neighbourhood around an entity.
 
 ## retrieve_memory
 
-**Signature:** `retrieve_memory(query: str, top_k: int = 5) → list[dict]`
+**Signature:** `retrieve_memory(query: str, top_k: int = 5, include_org: bool = False, repo_path: str | None = None) → list[dict]`
 
-Semantic similarity search over stored memories.
+Semantic similarity search over stored memories. `include_org=True` also queries sibling
+repositories in the same organization. `repo_path` targets a repository other than the
+server's configured project directory.
 
 **Input:**
 ```json
@@ -194,7 +196,8 @@ Record a significant event to the append-only episodic log.
 
 **Signature:** `graph_stats() → dict`
 
-Return node/edge count and health summary of the knowledge graph.
+Return node/edge count and health summary of the knowledge graph, plus index
+freshness.
 
 **Output:**
 ```json
@@ -202,9 +205,28 @@ Return node/edge count and health summary of the knowledge graph.
   "nodes": 1243,
   "edges": 4871,
   "node_types": { "FUNCTION": 892, "CLASS": 201, "FILE": 150 },
-  "healthy": true
+  "healthy": true,
+  "last_indexed": "2026-07-22T18:20:10+00:00",
+  "full_indexed_at": "2026-07-22T16:31:07+00:00",
+  "index_age_minutes": 0,
+  "index_stale": false,
+  "watcher_alive": true
 }
 ```
+
+**Freshness fields:**
+
+| Field | Meaning |
+|---|---|
+| `last_indexed` | Timestamp of the most recent index write of *any* kind, including a watcher's single-file incremental save. Tracks the same event as `index_age_minutes`. |
+| `full_indexed_at` | Timestamp of the last complete `index_repo()` sweep. Older than `last_indexed` whenever the watcher has applied incremental edits since. |
+| `index_age_minutes` | Age of `ast_index.json` on disk. |
+| `index_stale` | True when the index is older than 60 min, no watcher is live, and git HEAD has moved past the last indexed SHA. |
+| `watcher_alive` | True when a watcher process (either the `cognirepo watch` daemon or the in-process auto-watcher `serve` starts) has refreshed its heartbeat within the last 120 s. |
+
+Before COGNIREPO-D14, `last_indexed` only advanced on a full `index_repo()`
+run, so a repo kept current by the watcher reported a hours-old
+`last_indexed` next to `index_age_minutes: 0` — two clocks in one payload.
 
 ---
 
@@ -352,7 +374,7 @@ Returns org/project membership and sibling repos for the current repository.
 
 ## org_wide_search *(replaces deprecated `org_search`)*
 
-**Signature:** `org_wide_search(query: str, top_k: int = 5) → list`
+**Signature:** `org_wide_search(query: str, top_k: int = 5) → dict`
 
 Search memories across ALL repositories in the organization. Prefer `cross_repo_search(scope="project")` for project-scoped queries.
 

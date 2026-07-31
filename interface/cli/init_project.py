@@ -679,21 +679,12 @@ def _seed_learnings_from_docs(repo_root: str) -> int:
     Returns the number of sections stored.
     """
     from data.memory.learning_store import ProjectLearningStore  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.doc_ingester import DocIngester  # pylint: disable=import-outside-toplevel
     store = ProjectLearningStore()
-    md_candidates = [
-        "README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md",
-        "docs/architecture/SPECIFICATION.md", "docs/ARCHITECTURE.md",
-        "docs/USAGE.md", "docs/FEATURES.md", "docs/DEVELOPER_GUIDE.md",
-        "docs",
-    ]
-    files: list[Path] = []
-    for name in md_candidates:
-        p = Path(repo_root) / name
-        if p.is_file():
-            files.append(p)
-        elif p.is_dir():
-            files.extend(sorted(p.rglob("*.md"))[:10])
-    files = files[:20]  # higher cap to include moved docs
+    # Reuse DocIngester's repo-wide walk instead of a fixed candidate list —
+    # not every repo keeps docs at README.md/docs/ARCHITECTURE.md; the walk
+    # finds .md/.rst anywhere while still skipping venv/node_modules/.github/etc.
+    files = [Path(p) for p in DocIngester(repo_root)._find_doc_files()[:20]]  # pylint: disable=protected-access
 
     stored = 0
     for md_file in files:
@@ -727,6 +718,7 @@ def _index_with_progress(svc_path: str, svc_name: str):
     from interface.cli.wizard import _animate_indexing  # pylint: disable=import-outside-toplevel
     from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
     from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+    from interface.tools.bg_progress import TaskProgress  # pylint: disable=import-outside-toplevel
 
     done   = threading.Event()
     result = {}
@@ -734,7 +726,7 @@ def _index_with_progress(svc_path: str, svc_name: str):
     def _worker():
         try:
             _kg  = KnowledgeGraph()
-            _idx = ASTIndexer(graph=_kg)
+            _idx = ASTIndexer(graph=_kg, progress_factory=TaskProgress)
             _sum = _idx.index_repo(svc_path)
             _idx.free_large_objects()
             _kg.save()
@@ -1223,10 +1215,11 @@ def init_project(
 
     from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
     from intelligence.indexer.ast_indexer import ASTIndexer        # pylint: disable=import-outside-toplevel
+    from interface.tools.bg_progress import TaskProgress  # pylint: disable=import-outside-toplevel
 
     cwd = os.getcwd()
     kg = KnowledgeGraph()
-    indexer = ASTIndexer(graph=kg)
+    indexer = ASTIndexer(graph=kg, progress_factory=TaskProgress)
 
     # Show progress if tqdm is available, otherwise fall back silently
     try:
@@ -1320,7 +1313,10 @@ def init_project(
         print("\nGenerating architectural summaries …")
         try:
             from intelligence.indexer.summarizer import SummarizationEngine  # pylint: disable=import-outside-toplevel
-            _engine = SummarizationEngine()
+            from interface.tools.bg_progress import TaskProgress, launch_progress_ui  # pylint: disable=import-outside-toplevel
+            _engine = SummarizationEngine(
+                progress_factory=TaskProgress, launch_progress_ui_fn=launch_progress_ui,
+            )
             _sum_result = _engine.run_full_summarization()
             print("  Summaries saved to .cognirepo/index/summaries.json")
             if _sum_result.get("repo"):

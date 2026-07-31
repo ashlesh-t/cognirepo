@@ -608,18 +608,19 @@ cognirepo watch                 # manage background file-watcher daemon
 
 ## Future Plans
 
-Priorities drawn from the v0.3.0 benchmark findings and community feedback.
+Priorities drawn from the v0.3.0 benchmark findings and community feedback. Now at v2.0.0 —
+some items below have since landed; each is annotated where that's the case.
 
-### Near-term (v0.3.0)
-- **Go call-graph indexing** — tree-sitter-go grammar is loaded but call extraction is incomplete; Moby/Kubernetes tests (MO-3-5, K8-*) could not be completed without it. Adding Go-aware `who_calls` and IMPORTS edges is the single highest-impact unblocked item.
-- **`cognirepo ask`** — multi-model orchestrator (QUICK/STANDARD/COMPLEX/EXPERT tiers). Initial implementation stubbed in v0.2.0; orchestrator logic is implemented in `orchestrator/` and being wired to a working API key flow in v0.3.0.
-- **Incremental re-index on save** — file-watcher daemon exists (`cognirepo watch`) but re-index on write is not yet debounced correctly; large repos see spurious full re-indexes.
-- **CLAUDE.md mandatory-call relaxation** — benchmark feedback (Moby tests) flagged that forcing `context_pack` before every file read adds latency under memory pressure. Will add a `--fast` mode that skips the tool-first gate for files under 50 lines.
+### Near-term
+- **Go call-graph indexing** — *partially done:* Go IMPORTS edges (via `go.mod` scanning) and Go symbol/class indexing (tree-sitter `function_declaration`/`type_spec`) are implemented. Go-aware `who_calls`/CALLS edges are still missing — `_extract_calls()` (`intelligence/indexer/ast_indexer.py`) only walks Python's stdlib `ast`, not tree-sitter nodes, so Moby/Kubernetes call-graph tests (MO-3-5, K8-*) remain unblocked-but-incomplete for this specific edge type.
+- **`cognirepo ask`** — *done:* multi-model orchestrator (QUICK/STANDARD/COMPLEX/EXPERT tiers) is implemented and wired as a real CLI command (`_cmd_ask_local`, `interface/cli/main.py`). Streaming REPL mode (see Longer-term) is not yet built.
+- **Incremental re-index on save** — *done:* the file-watcher daemon (`cognirepo watch`) debounces writes (`config.json` → `indexing.debounce_ms`, default 500ms) and batches indexer/graph saves; `tests/test_watcher_debounce.py` covers this including flush-on-shutdown.
+- **CLAUDE.md mandatory-call relaxation** — benchmark feedback (Moby tests) flagged that forcing `context_pack` before every file read adds latency under memory pressure. A `--fast` mode that skips the tool-first gate for files under 50 lines is not yet implemented.
 
-### Medium-term (v0.4.0)
+### Medium-term
 - **Kubernetes / 2M-LOC scale validation** — K8-1 through K8-5 test suite not yet completed. Goal: full scheduling-decision trace at < 8 000 tokens with CogniRepo vs. > 50 000 without.
 - **Plugin-registry pattern detection** — Ansible AN-3/AN-4 (22-level variable precedence, strategy plugins) and Celery CE-3 (dynamic dispatch) returned NA. Plan: static heuristic pass that detects `register`, `entry_points`, and `__init_subclass__` patterns and annotates them as `DYNAMIC_DISPATCH` nodes in the graph.
-- **BM25 over symbol names** — current keyword search uses exact-word reverse index; adding BM25 TF-IDF ranking over symbol names and docstrings would improve partial-match recall (e.g. `HttpClient` matching `http_client`).
+- **BM25 over symbol names** — *partially done:* `core/_bm25.py` is used by `intelligence/retrieval/hybrid.py` as the circuit-breaker fallback ranker (and by episodic search) when embeddings are unavailable, but it isn't yet the primary ranking signal for symbol-name partial-match recall (e.g. `HttpClient` matching `http_client`) in the normal (embeddings-available) retrieval path.
 - **Cross-session memory warm-up** — Ansible benchmark noted episodic/memory retrieval is low-value on fresh sessions. `cognirepo prime` exists but is not run automatically on `init`; will make it opt-in default.
 
 ### Longer-term

@@ -27,6 +27,7 @@ Usage (called automatically by `cognirepo init`):
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -75,6 +76,12 @@ _MAX_CHUNKS_PER_FILE = 30
 # Maximum git log lines to embed
 _GIT_LOG_LINES = 120
 
+# Basenames recognized as an existing changelog (case-insensitive)
+_CHANGELOG_BASENAMES = {"changelog.md", "changelog.rst", "changes.md", "changes.rst", "history.md"}
+
+# Maximum tags to derive release notes from
+_MAX_RELEASE_TAGS = 10
+
 
 class DocIngester:
     """
@@ -100,13 +107,15 @@ class DocIngester:
 
         try:
             from data.memory.embeddings import get_model          # pylint: disable=import-outside-toplevel
+            from data.memory.circuit_breaker import get_breaker    # pylint: disable=import-outside-toplevel
+            from data.memory.cleanup_queue import CleanupQueue     # pylint: disable=import-outside-toplevel
             from core.vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
         except ImportError as exc:
             log.warning("DocIngester: cannot import dependencies (%s) — skipping", exc)
             return {"chunks": 0, "files": 0}
 
         model = get_model()
-        db = get_vector_adapter()
+        db = get_vector_adapter(breaker_factory=get_breaker, cleanup_queue_factory=CleanupQueue)
 
         # Cap total chunks to avoid OOM on very large repos
         if len(chunks) > _MAX_TOTAL_CHUNKS:
@@ -145,19 +154,53 @@ class DocIngester:
         stored = db.add_batch(batch)
         files_seen = len({c["source"] for c in chunks})
         log.info("DocIngester: stored %d chunks from %d source(s)", stored, files_seen)
+        self._write_receipt(stored, files_seen)
         return {"chunks": stored, "files": files_seen}
+
+    @staticmethod
+    def _write_receipt(chunks: int, files: int) -> None:
+        """Record what this run ingested, independent of the vector backend.
+
+        Chunks go wherever get_vector_adapter() points — ChromaDB when
+        config.storage.vector_backend is "chroma", which is the default for
+        `cognirepo init`. `doctor` used to count doc chunks by reading
+        memory/semantic_metadata.json, a file only the *local* FAISS backend
+        writes, so on every chroma-backed project it saw 0 and printed
+        "repo has docs but no doc chunks are indexed" forever — the docs were
+        indexed and searchable the whole time. A backend-agnostic receipt gives
+        doctor something true to read. See COGNIREPO-D-F.
+        """
+        try:
+            from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
+            import datetime as _dt  # pylint: disable=import-outside-toplevel
+            path = get_path("index/doc_ingest.json")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            payload = {
+                "chunks": chunks,
+                "files": files,
+                "ingested_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+            }
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+        except Exception as exc:  # pylint: disable=broad-except
+            log.debug("DocIngester: could not write ingest receipt (%s)", exc)
 
     # ── collection ────────────────────────────────────────────────────────────
 
     def _collect_chunks(self) -> list[dict]:
         chunks: list[dict] = []
-        chunks.extend(self._doc_chunks())
+        doc_files = self._find_doc_files()
+        chunks.extend(self._doc_chunks(doc_files))
+        # Only derive release notes from git tags when no changelog file exists —
+        # a real CHANGELOG.md is always preferred over reconstructing one from tags.
+        if not self._has_changelog_file(doc_files):
+            chunks.extend(self._git_release_notes_chunks())
         chunks.extend(self._git_chunks())
         return chunks
 
-    def _doc_chunks(self) -> list[dict]:
+    def _doc_chunks(self, doc_files: list[str] | None = None) -> list[dict]:
         chunks: list[dict] = []
-        for path in self._find_doc_files():
+        for path in (doc_files if doc_files is not None else self._find_doc_files()):
             try:
                 text = Path(path).read_text(encoding="utf-8", errors="ignore")
                 rel = os.path.relpath(path, self.root)
@@ -165,6 +208,59 @@ class DocIngester:
                     chunks.append({"text": chunk_text, "source": rel})
             except OSError:
                 pass
+        return chunks
+
+    @staticmethod
+    def _has_changelog_file(doc_files: list[str]) -> bool:
+        return any(os.path.basename(p).lower() in _CHANGELOG_BASENAMES for p in doc_files)
+
+    def has_changelog_source(self) -> bool:
+        """True if a changelog file exists OR git tags exist to derive release notes from."""
+        if self._has_changelog_file(self._find_doc_files()):
+            return True
+        return bool(self._list_release_tags())
+
+    def _list_release_tags(self) -> list[str]:
+        try:
+            result = subprocess.run(
+                ["git", "-C", self.root, "tag", "--sort=-creatordate"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return []
+            return [t for t in result.stdout.strip().splitlines() if t.strip()][:_MAX_RELEASE_TAGS]
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+
+    def _git_release_notes_chunks(self) -> list[dict]:
+        """Reconstruct release-notes-style chunks from git tags when no CHANGELOG exists."""
+        tags = self._list_release_tags()
+        if not tags:
+            return []
+
+        chunks: list[dict] = []
+        # tags are newest-first; pair each tag with the one before it chronologically
+        ordered = list(reversed(tags))
+        for i, tag in enumerate(ordered):
+            prev = ordered[i - 1] if i > 0 else None
+            rev_range = f"{prev}..{tag}" if prev else tag
+            try:
+                result = subprocess.run(
+                    ["git", "-C", self.root, "log", rev_range, "--pretty=format:- %s"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if result.returncode != 0 or not result.stdout.strip():
+                    continue
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            chunks.append({
+                "text": f"Release notes (derived from git tag {tag}):\n{result.stdout.strip()}",
+                "source": "git:release-notes",
+            })
         return chunks
 
     def _git_chunks(self) -> list[dict]:

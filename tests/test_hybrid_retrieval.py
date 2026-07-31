@@ -87,6 +87,37 @@ class TestHybridRetriever:
         assert scores == sorted(scores, reverse=True)
 
 
+class TestVectorRetrieveSourcePreservation:
+    """COGNIREPO-D07: _vector_retrieve() must report the real stored source
+    (previously hardcoded "semantic" for every vector-backend hit)."""
+
+    def test_preserves_real_stored_source(self):
+        from intelligence.retrieval.hybrid import HybridRetriever
+        from data.memory.embeddings import encode_with_timeout
+
+        r = HybridRetriever()
+        vec = encode_with_timeout("interaction style summary text").astype("float32")
+        r.db.add(vec, "interaction style summary text", importance=0.8, source="interaction_style")
+
+        results = r._vector_retrieve(vec, k=5)
+        assert results
+        assert results[0]["source"] == "interaction_style"
+
+    def test_defaults_to_memory_when_source_missing(self):
+        from intelligence.retrieval.hybrid import HybridRetriever
+        from data.memory.semantic_memory import SemanticMemory
+        from data.memory.embeddings import encode_with_timeout
+
+        sm = SemanticMemory()
+        sm.store("plain stored memory with default source")
+
+        r = HybridRetriever()
+        vec = encode_with_timeout("plain stored memory with default source").astype("float32")
+        results = r._vector_retrieve(vec, k=5)
+        assert results
+        assert results[0]["source"] == "memory"
+
+
 class TestConcurrentCacheMiss:
     def test_concurrent_misses_call_retriever_once(self, monkeypatch):
         """N concurrent cache misses for same key → HybridRetriever.retrieve called once."""

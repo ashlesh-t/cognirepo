@@ -12,11 +12,15 @@ Node types  : FILE, FUNCTION, CLASS, CONCEPT, QUERY, SESSION, USER_ACTION
 Edge types  : RELATES_TO, DEFINED_IN, CALLED_BY, QUERIED_WITH, CO_OCCURS
 
 Persistence : pickle to .cognirepo/graph/graph.pkl
-              Falls back to an empty graph on load failure (version drift etc.)
+              On load failure (corruption, version drift, etc.) the unreadable file is
+              quarantined to graph.pkl.corrupt-<unix_ts> and an empty graph is started —
+              mirrors ast_indexer.py's ast_index.json .corrupt self-heal.
 """
 import os
 import pickle
 import sys
+import tempfile
+import time
 import warnings
 from typing import Any
 
@@ -103,14 +107,49 @@ class KnowledgeGraph:
 
     def __init__(self) -> None:
         self.G: nx.DiGraph = nx.DiGraph()  # pylint: disable=invalid-name
+        # (mtime_ns, size) of graph.pkl as of the last _load()/save(), plus the
+        # path it refers to — _graph_file() is ContextVar-scoped, so the same
+        # call inside a _repo_ctx() block names a different repo's graph.
+        self._disk_stamp: tuple[int, int] | None = None
+        self._disk_path: str | None = _graph_file()
         self._load()
 
     # ── persistence ───────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _stat_stamp(path: str) -> tuple[int, int] | None:
+        """Return (mtime_ns, size) for *path*, or None if it does not exist."""
+        try:
+            st = os.stat(path)
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
+
+    def reload_if_changed(self) -> bool:
+        """Re-read graph.pkl when another process has rewritten it.
+
+        Counterpart to ASTIndexer.reload_if_changed(): the MCP server holds this
+        object as a process-lifetime singleton while the watcher mutates the
+        graph from a different process, so without revalidation who_calls() and
+        subgraph() answer from the graph as it existed at server start.
+        Safe against torn reads because save() now promotes via os.replace().
+        See COGNIREPO-D-A.
+        """
+        path = _graph_file()
+        if self._disk_path is not None and path != self._disk_path:
+            return False  # a _repo_ctx() has repointed get_path() at another repo
+        current = self._stat_stamp(path)
+        if current == self._disk_stamp:
+            return False
+        self._load()
+        return True
+
     def _load(self) -> None:
         """Load graph from disk; decrypt if needed."""
         if not os.path.exists(_graph_file()):
+            self._disk_stamp = None
             return
+        stamp = self._stat_stamp(_graph_file())
         try:
             with open(_graph_file(), "rb") as f:
                 raw = f.read()
@@ -129,13 +168,25 @@ class KnowledgeGraph:
                     # load below and is handled by the outer except.
                     pass
             self.G = pickle.loads(raw)  # nosec B301
+            self._disk_stamp = stamp
         except Exception as exc:  # pylint: disable=broad-except
+            quarantine_path = f"{_graph_file()}.corrupt-{int(time.time())}"
+            try:
+                os.replace(_graph_file(), quarantine_path)
+            except OSError:
+                quarantine_path = None
             warnings.warn(
                 f"KnowledgeGraph: could not load {_graph_file()} ({exc}). "
-                "Starting with an empty graph. Re-run `cognirepo index-repo` to rebuild.",
+                + (
+                    f"Quarantined the corrupt file to {quarantine_path}. "
+                    if quarantine_path
+                    else ""
+                )
+                + "Starting with an empty graph. Re-run `cognirepo index-repo` to rebuild.",
                 stacklevel=2,
             )
             self.G = nx.DiGraph()
+            self._disk_stamp = None
 
     def load(self) -> None:
         """Public alias for reloading the graph from disk."""
@@ -158,8 +209,29 @@ class KnowledgeGraph:
             from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
             raw = encrypt_bytes(raw, get_or_create_key(project_id))
         with store_lock():
-            with open(_graph_file(), "wb") as f:
-                f.write(raw)
+            # Atomic promote. A plain open("wb") leaves graph.pkl truncated for
+            # the duration of the write, and readers (MCP server revalidation,
+            # doctor, a second serve) take no lock — one of them reading mid-write
+            # sees a short pickle, fails to unpickle, and quarantines a perfectly
+            # good graph as .corrupt-<ts>. os.replace() makes the swap indivisible.
+            directory = os.path.dirname(_graph_file()) or "."
+            fd, tmp_path = tempfile.mkstemp(
+                dir=directory, prefix=os.path.basename(_graph_file()) + ".", suffix=".tmp",
+            )
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(raw)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, _graph_file())
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        self._disk_stamp = self._stat_stamp(_graph_file())
+        self._disk_path = _graph_file()
         breaker.record_success()
 
     # ── mutation ──────────────────────────────────────────────────────────────
@@ -204,12 +276,20 @@ class KnowledgeGraph:
         - Symbol/function/class nodes whose 'file' attribute == file_path
         - The FILE node whose node_id == file_path (convention from make_node_id)
 
-        NetworkX automatically removes all incident edges when a node is removed.
+        Before a FUNCTION/CLASS node is dropped, any live call/inherit edges it
+        participates in are preserved onto a `symbol::{name}` CONCEPT stub (see
+        `_redirect_edges_to_stub`) rather than silently discarded by NetworkX's
+        automatic incident-edge removal — COGNIREPO-D10. A later
+        `ASTIndexer._resolve_call_stubs()` pass reconciles the stub: merges it
+        back into a real node if one still exists elsewhere, or leaves it
+        correctly tagged `unresolved=True` if the symbol is genuinely gone.
+
         Returns the list of removed node IDs.
         """
         removed: list[str] = []
         for nid in self.nodes_for_file(file_path):
             if self.G.has_node(nid):
+                self._redirect_edges_to_stub(nid)
                 self.G.remove_node(nid)
                 removed.append(nid)
         # FILE node's node_id == rel_path (see make_node_id("FILE", name) → name)
@@ -217,6 +297,48 @@ class KnowledgeGraph:
             self.G.remove_node(file_path)
             removed.append(file_path)
         return removed
+
+    def _redirect_edges_to_stub(self, nid: str) -> None:
+        """
+        Preserve a FUNCTION/CLASS node's call/inherit edges onto a
+        `symbol::{name}` CONCEPT stub before the node itself is removed.
+
+        Without this, deleting a symbol that still has live callers (CALLED_BY
+        predecessors) or an inheriting subclass (INHERITS predecessors) would
+        silently drop those edges when NetworkX removes the node's incident
+        edges — the callers' own unchanged AST records still say they call/
+        inherit from it, so that information is real and worth keeping
+        discoverable via `who_calls`/`subgraph`, tagged as unresolved rather
+        than deleted outright. Mirrors `_resolve_call_stubs()`'s edge-copy
+        pattern in reverse. See COGNIREPO-D10.
+        """
+        node_data = self.G.nodes.get(nid, {})
+        if node_data.get("type") not in (NodeType.FUNCTION, NodeType.CLASS):
+            return  # only symbol nodes participate in call/inherit stub edges
+
+        predecessors = list(self.G.predecessors(nid))
+        successors = list(self.G.successors(nid))
+        if not predecessors and not successors:
+            return  # nothing referenced this node — safe to just drop it
+
+        name = nid.rsplit("::", 1)[-1]
+        stub = f"symbol::{name}"
+        if stub == nid:
+            return  # node IS the stub (shouldn't happen for a file-scoped node)
+        self.add_node(stub, NodeType.CONCEPT, unresolved=True)
+
+        for pred in predecessors:
+            if pred == stub:
+                continue
+            edge_data = dict(self.G[pred][nid])
+            if not self.G.has_edge(pred, stub):
+                self.G.add_edge(pred, stub, **edge_data)
+        for succ in successors:
+            if succ == stub:
+                continue
+            edge_data = dict(self.G[nid][succ])
+            if not self.G.has_edge(stub, succ):
+                self.G.add_edge(stub, succ, **edge_data)
 
     # ── queries ───────────────────────────────────────────────────────────────
 

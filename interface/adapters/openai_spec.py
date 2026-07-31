@@ -24,20 +24,22 @@ import json
 import os
 import sys
 
-MANIFEST_PATH = "server/manifest.json"
-DEFAULT_OUT_DIR = "adapters"
+MANIFEST_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server", "manifest.json")
+DEFAULT_OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 API_URL_FALLBACK = "http://localhost:8080"
 GRPC_PORT_FALLBACK = 50051
 
 
 def _load_manifest() -> list[dict]:
-    if not os.path.exists(MANIFEST_PATH):
-        print(f"[openai_spec] manifest not found at {MANIFEST_PATH}; generating…", file=sys.stderr)
-        try:
-            from interface.server.mcp_server import _write_manifest  # pylint: disable=import-outside-toplevel
-            _write_manifest()
-        except Exception as exc:  # pylint: disable=broad-except
-            print(f"[openai_spec] could not generate manifest: {exc}", file=sys.stderr)
+    # Always regenerate manifest.json from the live @mcp.tool() registry first —
+    # it is the single source of truth; this keeps a stale-but-present manifest
+    # from silently exporting outdated tool specs.
+    try:
+        from interface.server.mcp_server import _write_manifest  # pylint: disable=import-outside-toplevel
+        _write_manifest()
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"[openai_spec] could not regenerate manifest: {exc}", file=sys.stderr)
+        if not os.path.exists(MANIFEST_PATH):
             return []
     with open(MANIFEST_PATH, encoding="utf-8") as f:
         data = json.load(f)

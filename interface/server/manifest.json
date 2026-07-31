@@ -1,729 +1,757 @@
 {
   "name": "cognirepo",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "transport": "stdio",
   "tools": [
     {
-      "name": "store_memory",
-      "description": "Store a semantic memory with an optional source label.",
+      "name": "architecture_overview",
+      "description": "Retrieve pre-computed architectural summaries. scope: 'root' for repo summary, a directory path, or a file path.",
       "parameters": {
-        "type": "object",
         "properties": {
-          "text": {
-            "type": "string",
-            "description": "Memory text to store"
-          },
-          "source": {
-            "type": "string",
-            "description": "Origin label (file, url, …)",
-            "default": ""
+          "scope": {
+            "default": "root",
+            "type": "string"
           },
           "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional, defaults to server's project dir)",
-            "default": null
+            "default": null,
+            "type": "string"
           }
         },
-        "required": [
-          "text"
-        ]
+        "type": "object",
+        "required": []
       }
     },
     {
-      "name": "retrieve_memory",
-      "description": "Retrieve the top-k memories most similar to the query.",
+      "name": "context_pack",
+      "description": "Budget-pack the most relevant code + episodic context into a token-bounded block ready for injection into the next prompt. Call this BEFORE reading any source file to avoid wasting tokens on raw file reads. Returns at most max_tokens (default 2000) tokens \u2014 much smaller than raw files. Do NOT call for known short files (< 50 lines) \u2014 use Read directly instead.",
       "parameters": {
-        "type": "object",
         "properties": {
           "query": {
-            "type": "string",
-            "description": "Search query"
+            "type": "string"
+          },
+          "max_tokens": {
+            "default": 2000,
+            "type": "integer"
+          },
+          "include_episodic": {
+            "default": true,
+            "type": "boolean"
+          },
+          "include_symbols": {
+            "default": true,
+            "type": "boolean"
+          },
+          "window_lines": {
+            "default": 15,
+            "type": "integer"
+          },
+          "file": {
+            "default": "",
+            "type": "string"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "cross_repo_search",
+      "description": "Search knowledge from sibling repositories.",
+      "parameters": {
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "scope": {
+            "default": "project",
+            "type": "string"
           },
           "top_k": {
-            "type": "integer",
-            "description": "Number of results",
-            "default": 5
-          },
-          "include_org": {
-            "type": "boolean",
-            "description": "Search across all repos in the organization",
-            "default": false
-          },
-          "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
+            "default": 5,
+            "type": "integer"
           }
         },
         "required": [
           "query"
-        ]
+        ],
+        "type": "object"
       }
     },
     {
-      "name": "org_search",
-      "description": "Semantic search across all repositories in the organization.",
+      "name": "cross_repo_traverse",
+      "description": "Traverse the org dependency graph from a repo or symbol to find cross-service relationships.",
       "parameters": {
-        "type": "object",
         "properties": {
-          "query": {
-            "type": "string",
-            "description": "Search query"
+          "symbol": {
+            "default": null,
+            "type": "string"
           },
-          "top_k": {
-            "type": "integer",
-            "default": 5
-          }
-        },
-        "required": [
-          "query"
-        ]
-      }
-    },
-    {
-      "name": "org_dependencies",
-      "description": "Return the bidirectional inter-repo dependency graph for the current organization.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "depth": {
-            "type": "integer",
-            "description": "Max hops to traverse (default 2)",
-            "default": 2
-          }
-        }
-      }
-    },
-    {
-      "name": "search_docs",
-      "description": "Search all markdown documentation files for the given query string.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "description": "Text to search for in .md files"
-          }
-        },
-        "required": [
-          "query"
-        ]
-      }
-    },
-    {
-      "name": "log_episode",
-      "description": "Append an episodic event with optional metadata to the event log.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "event": {
-            "type": "string",
-            "description": "Event description"
+          "start_repo": {
+            "default": null,
+            "type": "string"
           },
-          "metadata": {
-            "type": "object",
-            "description": "Arbitrary key-value metadata",
-            "default": {}
-          }
-        },
-        "required": [
-          "event"
-        ]
-      }
-    },
-    {
-      "name": "lookup_symbol",
-      "description": "Return all locations where a symbol is defined or called, with file, line, and type.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "Symbol name to look up"
-          },
-          "include_org": {
-            "type": "boolean",
-            "description": "Search across sibling repos in the organization",
-            "default": false
-          },
-          "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
-          }
-        },
-        "required": [
-          "name"
-        ]
-      }
-    },
-    {
-      "name": "who_calls",
-      "description": "Return every caller of a function across the indexed repo.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "function_name": {
-            "type": "string",
-            "description": "Name of the function to look up callers for"
-          },
-          "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
-          }
-        },
-        "required": [
-          "function_name"
-        ]
-      }
-    },
-    {
-      "name": "subgraph",
-      "description": "Return the local neighbourhood of a concept or symbol as {nodes, edges}.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "entity": {
-            "type": "string",
-            "description": "Entity name or node ID to centre the subgraph on"
+          "direction": {
+            "default": "both",
+            "type": "string"
           },
           "depth": {
-            "type": "integer",
-            "description": "BFS radius",
-            "default": 2
+            "default": 2,
+            "type": "integer"
+          }
+        },
+        "type": "object",
+        "required": []
+      }
+    },
+    {
+      "name": "dependency_graph",
+      "description": "Return import/dependency relationships for a module. direction: \"imports\" | \"imported_by\" | \"both\". depth: transitive traversal depth (1 = direct only).",
+      "parameters": {
+        "properties": {
+          "module": {
+            "type": "string"
+          },
+          "direction": {
+            "default": "both",
+            "type": "string"
+          },
+          "depth": {
+            "default": 2,
+            "type": "integer"
           },
           "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
+            "default": null,
+            "type": "string"
           }
         },
         "required": [
-          "entity"
-        ]
+          "module"
+        ],
+        "type": "object"
       }
     },
     {
       "name": "episodic_search",
       "description": "Return past episodic events matching a keyword query.",
       "parameters": {
-        "type": "object",
         "properties": {
           "query": {
-            "type": "string",
-            "description": "Keyword to search for in event log"
+            "type": "string"
           },
           "limit": {
-            "type": "integer",
-            "description": "Maximum number of results",
-            "default": 10
+            "default": 10,
+            "type": "integer"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
           }
         },
         "required": [
           "query"
-        ]
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "explain_change",
+      "description": "Explain what changed in a file or function recently by cross-referencing git history with episodic memory events mentioning the same target.",
+      "parameters": {
+        "properties": {
+          "target": {
+            "type": "string"
+          },
+          "since": {
+            "default": "7d",
+            "type": "string"
+          },
+          "max_commits": {
+            "default": 10,
+            "type": "integer"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "find_symbol_path",
+      "description": "Find the shortest call-graph path between two symbols, crossing service boundaries via the org graph when needed.",
+      "parameters": {
+        "properties": {
+          "from_symbol": {
+            "type": "string"
+          },
+          "to_symbol": {
+            "type": "string"
+          },
+          "from_repo": {
+            "default": "",
+            "type": "string"
+          },
+          "to_repo": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_symbol",
+          "to_symbol"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_agent_bootstrap",
+      "description": "Single-call session bootstrap for AI agents. Replaces the 4-call sequence (get_session_brief \u2192 get_last_context \u2192 get_user_profile \u2192 get_error_patterns) with one ~300-token payload.",
+      "parameters": {
+        "properties": {
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": []
+      }
+    },
+    {
+      "name": "get_error_patterns",
+      "description": "Return recurring error patterns with prevention hints to avoid repeating mistakes.",
+      "parameters": {
+        "properties": {
+          "min_count": {
+            "default": 1,
+            "type": "integer"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": []
+      }
+    },
+    {
+      "name": "get_last_context",
+      "description": "Return the most recent context snapshot written by context_pack.",
+      "parameters": {
+        "properties": {
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": []
+      }
+    },
+    {
+      "name": "get_service_endpoints",
+      "description": "Return the HTTP endpoint registry for a service (from endpoints.json).",
+      "parameters": {
+        "properties": {
+          "repo_path": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": []
+      }
+    },
+    {
+      "name": "get_session_brief",
+      "description": "Generate a session bootstrap brief for agent orientation.",
+      "parameters": {
+        "properties": {
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": []
+      }
+    },
+    {
+      "name": "get_session_history",
+      "description": "Return recent conversation session exchanges for context continuity.",
+      "parameters": {
+        "properties": {
+          "limit": {
+            "default": 10,
+            "type": "integer"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": []
+      }
+    },
+    {
+      "name": "get_user_profile",
+      "description": "Return the user's interaction style profile for Claude to adapt its responses.",
+      "parameters": {
+        "properties": {
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": []
       }
     },
     {
       "name": "graph_stats",
       "description": "Return a health summary of the current graph state.",
       "parameters": {
-        "type": "object",
-        "properties": {},
-        "required": []
-      }
-    },
-    {
-      "name": "semantic_search_code",
-      "description": "Semantic vector search over code symbols only (no episodic entries).",
-      "parameters": {
-        "type": "object",
         "properties": {
-          "query": {
-            "type": "string",
-            "description": "Search query"
-          },
-          "top_k": {
-            "type": "integer",
-            "default": 5
-          },
-          "language": {
-            "type": "string",
-            "description": "Optional language filter: python, typescript, go, etc.",
-            "default": null
-          },
           "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
+            "default": null,
+            "type": "string"
           }
         },
-        "required": [
-          "query"
-        ]
-      }
-    },
-    {
-      "name": "dependency_graph",
-      "description": "Return import/dependency relationships for a module.",
-      "parameters": {
         "type": "object",
-        "properties": {
-          "module": {
-            "type": "string",
-            "description": "Relative file path"
-          },
-          "direction": {
-            "type": "string",
-            "default": "both",
-            "description": "imports | imported_by | both"
-          },
-          "depth": {
-            "type": "integer",
-            "default": 2
-          }
-        },
-        "required": [
-          "module"
-        ]
-      }
-    },
-    {
-      "name": "explain_change",
-      "description": "Explain recent changes to a file or function via git + episodic memory.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "target": {
-            "type": "string",
-            "description": "File path or function name"
-          },
-          "since": {
-            "type": "string",
-            "default": "7d",
-            "description": "7d, 30d, or ISO date"
-          },
-          "max_commits": {
-            "type": "integer",
-            "default": 10
-          }
-        },
-        "required": [
-          "target"
-        ]
-      }
-    },
-    {
-      "name": "architecture_overview",
-      "description": "Retrieve pre-computed high-level architectural summaries.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "scope": {
-            "type": "string",
-            "description": "Scope: 'root' for repo, a directory path, or a file path.",
-            "default": "root"
-          }
-        }
-      }
-    },
-    {
-      "name": "context_pack",
-      "description": "Budget-pack the most relevant code + episodic context into a token-bounded block for prompt injection.  Call this BEFORE reading any source file.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "description": "Search intent or question"
-          },
-          "max_tokens": {
-            "type": "integer",
-            "description": "Hard token budget for output",
-            "default": 2000
-          },
-          "include_episodic": {
-            "type": "boolean",
-            "description": "Include episodic memory hits",
-            "default": true
-          },
-          "include_symbols": {
-            "type": "boolean",
-            "description": "Include AST/symbol hits with code windows",
-            "default": true
-          },
-          "window_lines": {
-            "type": "integer",
-            "description": "Lines of code context above/below each hit",
-            "default": 15
-          },
-          "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional, defaults to server's project dir)",
-            "default": null
-          }
-        },
-        "required": [
-          "query"
-        ]
-      }
-    },
-    {
-      "name": "org_wide_search",
-      "description": "PRIMARY cross-repo search. Semantic search across ALL registered repos in the org.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "description": "Search query"
-          },
-          "top_k": {
-            "type": "integer",
-            "default": 5
-          }
-        },
-        "required": [
-          "query"
-        ]
-      }
-    },
-    {
-      "name": "cross_repo_search",
-      "description": "Search memories scoped to a project or the full org.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "description": "Search query"
-          },
-          "scope": {
-            "type": "string",
-            "description": "project | org",
-            "default": "project"
-          },
-          "top_k": {
-            "type": "integer",
-            "default": 5
-          }
-        },
-        "required": [
-          "query"
-        ]
-      }
-    },
-    {
-      "name": "cross_repo_traverse",
-      "description": "Walk the org dependency graph from a starting repo, annotating each hop with symbol locations.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "symbol": {
-            "type": "string",
-            "description": "Symbol to look up in each repo"
-          },
-          "start_repo": {
-            "type": "string",
-            "description": "Absolute path to starting repo"
-          },
-          "direction": {
-            "type": "string",
-            "description": "dependencies | dependents | both",
-            "default": "both"
-          },
-          "depth": {
-            "type": "integer",
-            "default": 2
-          }
-        },
         "required": []
-      }
-    },
-    {
-      "name": "list_org_context",
-      "description": "Return org, project, and sibling repo metadata for the current repo.",
-      "parameters": {
-        "type": "object",
-        "properties": {}
       }
     },
     {
       "name": "link_repos",
-      "description": "Record an inter-repo dependency edge. Auto-detected: IMPORTS only. CALLS_API and SHARES_SCHEMA must be declared manually.",
+      "description": "Record a dependency relationship between two repos in the org graph. Call this when you discover that one repo imports from or calls another.",
       "parameters": {
-        "type": "object",
         "properties": {
           "src_repo": {
-            "type": "string",
-            "description": "Absolute path to source repo"
+            "type": "string"
           },
           "dst_repo": {
-            "type": "string",
-            "description": "Absolute path to destination repo"
+            "type": "string"
           },
           "relationship": {
-            "type": "string",
-            "description": "imports | calls_api | shares_schema | discovered | child_of",
-            "default": "imports"
+            "default": "imports",
+            "type": "string"
           },
           "note": {
-            "type": "string",
-            "description": "Optional note about the relationship",
-            "default": ""
+            "default": "",
+            "type": "string"
           },
           "service_type": {
-            "type": "string",
-            "description": "Optional service type for destination (rest_api, grpc, worker, frontend, library)",
-            "default": ""
+            "default": "",
+            "type": "string"
           },
           "port": {
-            "type": "integer",
-            "description": "Optional port the destination service listens on",
-            "default": 0
+            "default": 0,
+            "type": "integer"
           },
           "api_base_url": {
-            "type": "string",
-            "description": "Optional API base URL/path prefix for destination service",
-            "default": ""
+            "default": "",
+            "type": "string"
           }
         },
         "required": [
           "src_repo",
           "dst_repo"
-        ]
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "list_org_context",
+      "description": "Show what org, project, and sibling repositories the current repo belongs to.",
+      "parameters": {
+        "properties": {},
+        "type": "object",
+        "required": []
+      }
+    },
+    {
+      "name": "log_episode",
+      "description": "Log a structured episodic event to the episodic memory store. Use to record what happened: bugs found, code explored, agent actions. Retrievable via episodic_search in future sessions. Do NOT use for architectural decisions \u2014 use record_decision instead.",
+      "parameters": {
+        "properties": {
+          "event": {
+            "type": "string"
+          },
+          "metadata": {
+            "default": null,
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "required": [
+          "event"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "lookup_symbol",
+      "description": "Return all locations where a symbol is defined or called, with file, line, and type. If include_org=True, also searches sibling repositories in the same organization. Do NOT call for broad concepts \u2014 only exact or near-exact symbol names. For concept queries use semantic_search_code instead.",
+      "parameters": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "include_org": {
+            "default": false,
+            "type": "boolean"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "org_dependencies",
+      "description": "Return the bidirectional inter-repo dependency graph for the current organization.",
+      "parameters": {
+        "properties": {
+          "depth": {
+            "default": 2,
+            "type": "integer"
+          }
+        },
+        "type": "object",
+        "required": []
+      }
+    },
+    {
+      "name": "org_search",
+      "description": "FALLBACK ONLY \u2014 use org_wide_search first. Text-match search across org repos when org_wide_search returns nothing. Do NOT call as primary cross-repo search \u2014 org_wide_search has broader coverage.",
+      "parameters": {
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "top_k": {
+            "default": 5,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "org_wide_search",
+      "description": "PRIMARY tool for cross-repo queries. Searches memories across ALL registered repos. Use this by default when a query spans multiple services or the answer may live in any repo. Prefer this over org_search (legacy fallback).",
+      "parameters": {
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "top_k": {
+            "default": 5,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
       }
     },
     {
       "name": "record_decision",
-      "description": "Record an architectural decision with rationale to episodic memory.",
+      "description": "Record an architectural decision, bug fix rationale, or 'why we did X'. Stored in episodic memory \u2014 retrievable via episodic_search in future sessions. Call when a non-obvious architectural decision is made, a bug root-cause is understood, or the user says to 'remember' something. Do NOT call for routine changes \u2014 only decisions where WHY is non-obvious. Returns: {stored: True, searchable_via: 'episodic_search'}",
       "parameters": {
-        "type": "object",
         "properties": {
           "summary": {
-            "type": "string",
-            "description": "One-line decision summary"
+            "type": "string"
           },
           "rationale": {
-            "type": "string",
-            "description": "Why this decision was made",
-            "default": ""
+            "default": "",
+            "type": "string"
           },
           "affected_files": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Files changed by this decision",
-            "default": []
+            "default": null,
+            "items": {},
+            "type": "array"
           },
           "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
+            "default": null,
+            "type": "string"
           }
         },
         "required": [
           "summary"
-        ]
+        ],
+        "type": "object"
       }
     },
     {
-      "name": "supersede_learning",
-      "description": "Deprecate an outdated memory entry and replace it with corrected text in one call.",
+      "name": "record_error",
+      "description": "Record an error Claude or the user encountered so future sessions can avoid it.",
       "parameters": {
-        "type": "object",
         "properties": {
-          "old_id": {
-            "type": "string",
-            "description": "ID of the memory entry to replace (from store_memory conflicts list)"
+          "error_type": {
+            "type": "string"
           },
-          "new_text": {
-            "type": "string",
-            "description": "Replacement memory text"
+          "message": {
+            "default": "",
+            "type": "string"
+          },
+          "file_path": {
+            "default": "",
+            "type": "string"
+          },
+          "query_context": {
+            "default": "",
+            "type": "string"
           },
           "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
+            "default": null,
+            "type": "string"
           }
         },
         "required": [
-          "old_id",
-          "new_text"
-        ]
-      }
-    },
-    {
-      "name": "search_token",
-      "description": "Fast BM25 token search over symbol names and docs — no embedding needed.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "word": {
-            "type": "string",
-            "description": "Word or identifier fragment to search"
-          },
-          "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
-          }
-        },
-        "required": [
-          "word"
-        ]
-      }
-    },
-    {
-      "name": "get_session_brief",
-      "description": "Return architecture summary, hot symbols, entry points, and index health. Call at session start.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
-          }
-        }
-      }
-    },
-    {
-      "name": "get_last_context",
-      "description": "Return what the last agent was looking at — resume from cross-agent handoff.",
-      "parameters": {
-        "type": "object",
-        "properties": {}
-      }
-    },
-    {
-      "name": "get_session_history",
-      "description": "Return recent session records with message counts and last exchange snippets.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "limit": {
-            "type": "integer",
-            "description": "Max sessions to return",
-            "default": 5
-          }
-        }
-      }
-    },
-    {
-      "name": "get_agent_bootstrap",
-      "description": "Single-call session bootstrap. Replaces get_session_brief + get_last_context + get_user_profile + get_error_patterns (~300 tokens vs ~900). Call ONCE at session start.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
-          }
-        }
-      }
-    },
-    {
-      "name": "get_user_profile",
-      "description": "Return interaction style profile: depth preference, framing hints, top terminology. Apply framing_hints to all responses.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
-          }
-        }
+          "error_type"
+        ],
+        "type": "object"
       }
     },
     {
       "name": "record_user_preference",
-      "description": "Store an explicit user preference or query-rewrite correction for future sessions.",
+      "description": "Store an explicit user preference or query-rewrite correction.",
       "parameters": {
-        "type": "object",
         "properties": {
           "preference_key": {
-            "type": "string",
-            "description": "Preference label (e.g. response_format) or 'query_rewrite'"
+            "type": "string"
           },
           "preference_value": {
-            "type": "string",
-            "description": "Value of the preference"
+            "type": "string"
           },
           "context": {
-            "type": "string",
-            "description": "Extra context (used for query_rewrite intent)",
-            "default": ""
+            "default": "",
+            "type": "string"
           },
           "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
+            "default": null,
+            "type": "string"
           }
         },
         "required": [
           "preference_key",
           "preference_value"
-        ]
+        ],
+        "type": "object"
       }
     },
     {
-      "name": "record_error",
-      "description": "Log a recurring error with message so get_error_patterns can surface prevention hints.",
+      "name": "retrieve_memory",
+      "description": "Retrieve the top-k memories most similar to the query. If include_org=True, also queries sibling repositories in the same organization.",
       "parameters": {
-        "type": "object",
         "properties": {
-          "error_type": {
-            "type": "string",
-            "description": "Error class name (e.g. ImportError)"
+          "query": {
+            "type": "string"
           },
-          "message": {
-            "type": "string",
-            "description": "Error message or description",
-            "default": ""
+          "top_k": {
+            "default": 5,
+            "type": "integer"
           },
-          "file_path": {
-            "type": "string",
-            "description": "Source file where the error occurred",
-            "default": ""
-          },
-          "query_context": {
-            "type": "string",
-            "description": "Query or action that triggered the error",
-            "default": ""
+          "include_org": {
+            "default": false,
+            "type": "boolean"
           },
           "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
+            "default": null,
+            "type": "string"
           }
         },
         "required": [
-          "error_type"
-        ]
+          "query"
+        ],
+        "type": "object"
       }
     },
     {
-      "name": "get_error_patterns",
-      "description": "Return recurring errors with counts and prevention hints. Check before proposing a fix.",
+      "name": "search_docs",
+      "description": "Search indexed documentation files (*.md, *.rst, *.txt) by semantic similarity. Use for: README explanations, architecture docs, decision logs. Do NOT use for code \u2014 use semantic_search_code instead.",
       "parameters": {
-        "type": "object",
         "properties": {
-          "min_count": {
-            "type": "integer",
-            "description": "Only return errors seen at least this many times",
-            "default": 1
+          "query": {
+            "type": "string"
+          },
+          "top_k": {
+            "default": 5,
+            "type": "integer"
           },
           "repo_path": {
-            "type": "string",
-            "description": "Absolute path to target repository (optional)",
-            "default": null
+            "default": null,
+            "type": "string"
           }
-        }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "search_token",
+      "description": "Word-level reverse-index search.",
+      "parameters": {
+        "properties": {
+          "word": {
+            "type": "string"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "required": [
+          "word"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "semantic_search_code",
+      "description": "Semantic vector search over indexed code symbols only (no episodic memory mixed in). Optionally filter by language: \"python\", \"typescript\", \"go\", etc. Do NOT call for exact string matches \u2014 use search_token or grep instead. Use for concepts and natural-language queries about what code does.",
+      "parameters": {
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "top_k": {
+            "default": 5,
+            "type": "integer"
+          },
+          "language": {
+            "default": null,
+            "type": "string"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "store_memory",
+      "description": "Store a semantic memory with an optional source label.",
+      "parameters": {
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "source": {
+            "default": "",
+            "type": "string"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "subgraph",
+      "description": "Return the local neighbourhood of a concept or symbol as {nodes, edges}.",
+      "parameters": {
+        "properties": {
+          "entity": {
+            "type": "string"
+          },
+          "depth": {
+            "default": 2,
+            "type": "integer"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "supersede_learning",
+      "description": "Deprecate an existing memory (by ID from store_memory conflicts list) and replace it with corrected text. Use when store_memory returns a conflict that contains incorrect or outdated information.",
+      "parameters": {
+        "properties": {
+          "old_id": {
+            "type": "string"
+          },
+          "new_text": {
+            "type": "string"
+          },
+          "learning_type": {
+            "default": "fact",
+            "type": "string"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "required": [
+          "old_id",
+          "new_text"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "who_calls",
+      "description": "Return every caller of a function across the indexed repo.",
+      "parameters": {
+        "properties": {
+          "function_name": {
+            "type": "string"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "required": [
+          "function_name"
+        ],
+        "type": "object"
       }
     }
   ]

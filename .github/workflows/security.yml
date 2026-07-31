@@ -41,14 +41,29 @@ jobs:
       - name: Install pip-audit
         run: pip install pip-audit
 
-      - name: Run pip-audit
+      - name: Run pip-audit (pyproject install)
         run: |
-          pip install --upgrade pip --quiet
+          # setuptools is pulled in as the build backend (pyproject.toml requires >=61.0, a loose
+          # floor) — pin it to a CVE-fixed version explicitly, since `pip install .` alone won't
+          # upgrade an already-present vulnerable setuptools from the base image.
+          pip install --upgrade pip "setuptools>=83.0.0" --quiet
           pip install . --quiet
           # Ignore CVE-2026-4539 (Pygments ReDoS in AdlLexer): no fix version available as of 2026-03-28,
           # and CogniRepo does not process untrusted code snippets with that lexer.
           # Ignore CVE-2026-3219 (pip itself): resolved by the pip upgrade above; pip is not a runtime dep.
           pip-audit --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219
+
+      - name: Run pip-audit (requirements.txt pins)
+        run: |
+          # Audits the pinned versions in requirements.txt directly — `pip install .`
+          # above resolves from pyproject.toml and does not exercise these pins, so a
+          # CVE fix committed to requirements.txt could silently drift without this step.
+          # Ignore CVE-2026-45829 (chromadb pre-auth code injection via trust_remote_code on
+          # its HTTP server's /collections endpoint): CogniRepo only uses
+          # chromadb.PersistentClient (embedded, in-process — core/vector_db/chroma_adapter.py),
+          # never chromadb's HTTP server, so the vulnerable endpoint is never running.
+          pip-audit -r requirements.txt \
+            --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-45829
 
   # ── 3. Trivy — filesystem scan ────────────────────────────────────────────
   trivy:

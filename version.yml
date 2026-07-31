@@ -5,7 +5,7 @@
 
 project:
   name: cognirepo
-  version: "2.0.0"
+  version: "2.0.1"
   description: "Local cognitive infrastructure layer for AI agents"
   license: MIT
   python_requires: ">=3.11,<3.15"

@@ -17,18 +17,35 @@ import json
 import os
 import re
 from datetime import datetime, timezone, timedelta
-from typing import TYPE_CHECKING
+from typing import Any, Callable
 
 from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
 from data.graph.graph_utils import make_node_id
-
-if TYPE_CHECKING:
-    from intelligence.indexer.ast_indexer import ASTIndexer
 
 from core.config.paths import get_path
 
 def _behaviour_file() -> str:
     return get_path("graph/behaviour.json")
+
+
+def _behaviour_lock():
+    """
+    Cross-process/cross-thread file lock scoped to behaviour.json only.
+
+    A dedicated lock (not core.config.lock.store_lock) avoids nesting with the
+    vector-DB write lock acquired downstream by store_fn() during
+    summarize_interaction_style() — see COGNIREPO-D09.
+    """
+    try:
+        from filelock import FileLock  # pylint: disable=import-outside-toplevel
+        return FileLock(_behaviour_file() + ".lock", timeout=15.0)
+    except ImportError as exc:
+        raise ImportError(
+            "filelock is required for concurrent write safety. "
+            "Run: pip install filelock"
+        ) from exc
+
+
 _USEFUL_WINDOW = timedelta(minutes=5)
 
 
@@ -87,9 +104,20 @@ class BehaviourTracker:
     # Number of queries to buffer before auto-summarising interaction style
     _STYLE_SUMMARIZE_EVERY = 10
 
-    def __init__(self, graph: KnowledgeGraph, db_adapter=None) -> None:
+    def __init__(
+        self,
+        graph: KnowledgeGraph,
+        db_adapter=None,
+        *,
+        store_fn: Callable[..., Any] | None = None,
+    ) -> None:
         self.graph = graph
         self._db_adapter = db_adapter  # VectorStorageAdapter | None
+        # Interface-layer callback for persisting interaction-style summaries as
+        # semantic memory (interface.tools.store_memory.store_memory). Injected
+        # by callers to keep this module free of upward `data → interface`
+        # imports — see IMPROVEMENTS.md item 1 / COGNIREPO-105.
+        self._store_fn = store_fn
         self.data: dict = {
             "version": 2,
             "updated_at": _now(),
@@ -115,15 +143,20 @@ class BehaviourTracker:
                 "framing_hints": "",
             },
         }
-        self._observer = None
         self._load()
+        # Snapshot of interaction_style as of load time — used by save() to tell
+        # apart "this instance's own new queries" from "another writer already
+        # summarized and reset the ring buffer since we loaded" (COGNIREPO-D09).
+        style = self.data.get("interaction_style", {})
+        self._loaded_query_patterns: list = list(style.get("query_patterns", []))
+        self._loaded_last_summarized = style.get("last_summarized")
 
     # ── persistence ───────────────────────────────────────────────────────────
 
-    def _load(self) -> None:
-        path = _behaviour_file()
+    def _read_raw(self, path: str) -> dict | None:
+        """Read+decrypt behaviour.json from disk without touching self.data."""
         if not os.path.exists(path):
-            return
+            return None
         try:
             raw = open(path, "rb").read()
             try:
@@ -134,25 +167,84 @@ class BehaviourTracker:
                     raw = decrypt_bytes(raw, get_or_create_key(project_id))
             except Exception:  # pylint: disable=broad-except
                 pass  # encryption not configured — treat as plaintext
-            self.data = json.loads(raw)
+            return json.loads(raw)
         except (json.JSONDecodeError, OSError, ValueError):
-            pass  # start fresh
+            return None  # start fresh
+
+    def _load(self) -> None:
+        disk = self._read_raw(_behaviour_file())
+        if disk is not None:
+            self.data = disk
+
+    def _merge_from_disk(self, disk: dict) -> None:
+        """
+        Additively fold concurrently-written disk state into self.data right
+        before overwriting it, so a stale in-memory snapshot loaded by one
+        request never clobbers another concurrent request's update.
+
+        Fixes COGNIREPO-D09: parallel MCP tool calls each construct their own
+        BehaviourTracker (load → mutate → save) with no synchronization; the
+        last save() to run used to win outright, silently reverting whichever
+        other call had just cleared query_patterns/set last_summarized inside
+        summarize_interaction_style() — auto-summarization looked permanently
+        stuck (query_patterns capped at 50, last_summarized never set) even
+        though summarize_interaction_style() itself was fixed and working.
+        """
+        # query_history is keyed by a fresh uuid per query — union is always safe.
+        disk_history = disk.get("query_history", {})
+        history = self.data.setdefault("query_history", {})
+        for qid, entry in disk_history.items():
+            history.setdefault(qid, entry)
+
+        # symbol_weights: keep whichever side saw the higher hit_count per symbol.
+        disk_weights = disk.get("symbol_weights", {})
+        weights = self.data.setdefault("symbol_weights", {})
+        for sym, dv in disk_weights.items():
+            wv = weights.get(sym)
+            if wv is None or dv.get("hit_count", 0) > wv.get("hit_count", 0):
+                weights[sym] = dv
+
+        # interaction_style: if disk was summarized more recently than what this
+        # instance loaded, another writer already reset the ring buffer — adopt
+        # disk's post-summarize state and replay only the query text(s) *this*
+        # instance appended since its own load (so they aren't lost).
+        disk_style = disk.get("interaction_style", {})
+        my_style = self.data.setdefault("interaction_style", {})
+        disk_summarized = disk_style.get("last_summarized")
+        if disk_summarized and disk_summarized != self._loaded_last_summarized:
+            appended = my_style.get("query_patterns", [])[len(self._loaded_query_patterns):]
+            my_style["query_patterns"] = disk_style.get("query_patterns", []) + appended
+            my_style["terminology"] = disk_style.get("terminology", {})
+            my_style["question_types"] = disk_style.get("question_types", {})
+            my_style["preferred_depth"] = disk_style.get("preferred_depth", my_style.get("preferred_depth"))
+            my_style["framing_hints"] = disk_style.get("framing_hints", my_style.get("framing_hints"))
+            my_style["last_summarized"] = disk_summarized
 
     def save(self) -> None:
-        """Persist behaviour data; encrypts if encryption is configured."""
-        os.makedirs(os.path.dirname(_behaviour_file()), exist_ok=True)
-        self.data["updated_at"] = _now()
-        raw = json.dumps(self.data, indent=2).encode()
-        try:
-            from core.security.storage import get_storage_config  # pylint: disable=import-outside-toplevel
-            encrypt, project_id = get_storage_config()
-            if encrypt:
-                from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
-                raw = encrypt_bytes(raw, get_or_create_key(project_id))
-        except Exception:  # pylint: disable=broad-except
-            pass  # best-effort encryption
-        with open(_behaviour_file(), "wb") as f:
-            f.write(raw)
+        """Persist behaviour data; encrypts if encryption is configured.
+
+        Re-reads and merges concurrent on-disk state under a dedicated file
+        lock (see _merge_from_disk) so parallel MCP tool calls don't lose each
+        other's query_history/interaction_style updates — COGNIREPO-D09.
+        """
+        path = _behaviour_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with _behaviour_lock():
+            disk = self._read_raw(path)
+            if disk is not None:
+                self._merge_from_disk(disk)
+            self.data["updated_at"] = _now()
+            raw = json.dumps(self.data, indent=2).encode()
+            try:
+                from core.security.storage import get_storage_config  # pylint: disable=import-outside-toplevel
+                encrypt, project_id = get_storage_config()
+                if encrypt:
+                    from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+                    raw = encrypt_bytes(raw, get_or_create_key(project_id))
+            except Exception:  # pylint: disable=broad-except
+                pass  # best-effort encryption
+            with open(path, "wb") as f:
+                f.write(raw)
 
     # ── query tracking ────────────────────────────────────────────────────────
 
@@ -501,33 +593,14 @@ class BehaviourTracker:
         """Returns {symbol_id: hit_count} for all tracked symbols."""
         return {k: float(v["hit_count"]) for k, v in self.data["symbol_weights"].items()}
 
-    # ── file watcher lifecycle ────────────────────────────────────────────────
-
-    def start_watching(
-        self,
-        path: str,
-        session_id: str,
-        indexer: "ASTIndexer",
-    ) -> None:
-        """Start a watchdog Observer for the given repo path."""
-        from intelligence.indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
-
-        self._observer = create_watcher(path, indexer, self.graph, self, session_id)
-
-    def stop_watching(self) -> None:
-        """Stop and join the file watcher thread."""
-        if self._observer is not None:
-            self._observer.stop()
-            self._observer.join()
-            self._observer = None
-
     # ── interaction style summariser ──────────────────────────────────────────
 
     def summarize_interaction_style(self) -> bool:
         """
         When query_patterns buffer reaches _STYLE_SUMMARIZE_EVERY entries,
         build a natural-language summary and store it as a semantic memory
-        with importance=0.8 and source="interaction_style".
+        with source="interaction_style" (importance is computed internally by
+        store_memory() via SemanticMemory.compute_importance()).
 
         Returns True if a memory was stored, False otherwise.
         """
@@ -535,9 +608,10 @@ class BehaviourTracker:
         patterns: list = style.get("query_patterns", [])
         if len(patterns) < self._STYLE_SUMMARIZE_EVERY:
             return False
+        if self._store_fn is None:
+            return False  # no interface-layer store callback injected — best-effort no-op
 
         try:
-            from interface.tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
             # top 5 terms by frequency
             terms: dict = style.get("terminology", {})
             top_terms = sorted(terms, key=lambda k: terms[k], reverse=True)[:5]
@@ -552,7 +626,7 @@ class BehaviourTracker:
                 f"Common terminology: {', '.join(top_terms) if top_terms else 'N/A'}. "
                 f"Recent query examples: {' | '.join(q[:80] for q in sample_queries)}."
             )
-            store_memory(summary, source="interaction_style", importance=0.8)
+            self._store_fn(summary, source="interaction_style")
             # Build framing hints snapshot for get_user_profile()
             hints_parts = []
             if depth != "unknown":

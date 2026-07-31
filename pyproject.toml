@@ -1,6 +1,6 @@
 [project]
 name = "cognirepo"
-version = "2.0.0"
+version = "2.0.1"
 description = "Local cognitive infrastructure layer for AI agents"
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -27,7 +27,7 @@ dependencies = [
     # Same model (all-MiniLM-L6-v2, dim=384) as before.
     "fastembed>=0.3.6",
     # MCP server
-    "mcp[cli]==1.27.0",
+    "mcp[cli]==1.28.1",
     # REST API + Server
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",
