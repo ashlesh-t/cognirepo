@@ -483,3 +483,50 @@ class KnowledgeGraph:
             "nodes": self.G.number_of_nodes(),
             "edges": self.G.number_of_edges(),
         }
+
+    # ── integrity ─────────────────────────────────────────────────────────────
+
+    _ORPHAN_TYPES = (NodeType.FILE, NodeType.FUNCTION, NodeType.CLASS)
+
+    def integrity_report(self, repo_root: str) -> dict:
+        """Structural + on-disk integrity sweep. O(nodes) — safe to run on every
+        graph_stats call (AC4: < 1s on a medium repo).
+
+        orphans        : FILE/FUNCTION/CLASS node IDs with degree 0. Restricted to
+                          these types — MEMORY/SESSION/ERROR/QUERY/USER_ACTION/CONCEPT
+                          nodes are legitimately edge-free early in their lifecycle.
+        dangling_files : unique file paths (FILE node IDs, or FUNCTION/CLASS nodes'
+                          'file' attr) that no longer exist under repo_root — left
+                          behind when a file is deleted outside a live watcher/server
+                          (COGNIREPO-100-Discovery §3/§4).
+        swept_at       : ISO-8601 UTC timestamp of this sweep.
+
+        See COGNIREPO-201.
+        """
+        orphans = [
+            n for n, d in self.G.nodes(data=True)
+            if d.get("type") in self._ORPHAN_TYPES and self.G.degree(n) == 0
+        ]
+
+        dangling: list[str] = []
+        checked: set[str] = set()
+        for n, d in self.G.nodes(data=True):
+            ntype = d.get("type")
+            if ntype == NodeType.FILE:
+                rel = n
+            elif ntype in (NodeType.FUNCTION, NodeType.CLASS):
+                rel = d.get("file")
+            else:
+                continue
+            if not rel or rel in checked:
+                continue
+            checked.add(rel)
+            if not os.path.exists(os.path.join(repo_root, rel)):
+                dangling.append(rel)
+
+        from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+        return {
+            "orphans": orphans,
+            "dangling_files": dangling,
+            "swept_at": datetime.now(tz=timezone.utc).isoformat(),
+        }

@@ -20,7 +20,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | `log_episode(event, metadata)` | ✅ | `data/memory/episodic_memory.py::log_event()` | Append-only JSONL with timestamp chain |
 | `search_docs(query)` | ✅ | `intelligence/retrieval/docs_search.py` | Full-text search over all `.md` files, returns file+line+snippet |
 | `episodic_search(query, limit)` | ✅ | `data/memory/episodic_memory.py::search_episodes()` | BM25Okapi ranked; module-level corpus cache with TTL |
-| `graph_stats()` | ✅ | `interface/server/mcp_server.py` → `KnowledgeGraph.stats()` | Node count by type, edge count |
+| `graph_stats()` | ✅ | `interface/server/mcp_server.py` → `KnowledgeGraph.stats()` + `integrity_report()` | Node/edge counts, index freshness, integrity (orphans, dangling_files, swept_at) |
 | `semantic_search_code(query, language, top_k)` | ✅ | `interface/tools/semantic_search_code.py` | FAISS search filtered to code-type entries; language filter optional |
 | `dependency_graph(file_path)` | ✅ | `interface/tools/dependency_graph.py` | Returns imports-from + imported-by using knowledge graph edges |
 | `explain_change(file_path, before, after)` | ✅ | `interface/tools/explain_change.py` | Diff analysis using `difflib`; identifies added/removed symbols |
@@ -325,9 +325,9 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ## 15. Test Coverage
 
-91 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+92 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
 for the current test-function count). This table is representative, not exhaustive — see
-`tests/` for the full list. The 89-file count is pinned against `tests/test_docs_sync.py`,
+`tests/` for the full list. This count is pinned against `tests/test_docs_sync.py`,
 which fails if this number drifts from the real glob count.
 
 | Test File | What it Covers |

@@ -82,6 +82,8 @@ def _run_doctor(
                 return 4218
         class _FakeKG:
             G = _FakeG()
+            def integrity_report(self, repo_root):  # pylint: disable=unused-argument
+                return {"orphans": [], "dangling_files": [], "swept_at": "2026-01-01T00:00:00+00:00"}
         fake_graph_mod.KnowledgeGraph = _FakeKG
     monkeypatch.setitem(sys.modules, "data.graph.knowledge_graph", fake_graph_mod)
 
@@ -334,6 +336,37 @@ class TestDoctorGraphQuarantine:
 
         assert "corrupt-" not in out
         assert code == 0
+
+
+class TestDoctorGraphIntegrity:
+    """COGNIREPO-201 AC2: doctor flags a seeded dangling node; clean fresh index reports 0/0."""
+
+    def test_dangling_node_produces_warn(self, isolated_cognirepo, capsys):
+        from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
+        from interface.cli.main import _cmd_doctor
+
+        kg = KnowledgeGraph()
+        kg.add_node("gone.py", NodeType.FILE)
+        kg.add_node("gone.py::stale", NodeType.FUNCTION, file="gone.py")
+        kg.add_edge("gone.py::stale", "gone.py", EdgeType.DEFINED_IN)
+        kg.save()
+
+        code = _cmd_doctor(verbose=False)
+        out = capsys.readouterr().out
+        assert "Graph integrity" in out
+        assert "1 dangling file" in out
+        assert "cognirepo graph repair --apply" in out
+        assert code >= 1
+
+    def test_clean_graph_reports_zero(self, isolated_cognirepo, capsys):
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from interface.cli.main import _cmd_doctor
+
+        KnowledgeGraph().save()
+
+        _cmd_doctor(verbose=False)
+        out = capsys.readouterr().out
+        assert "Graph integrity — 0 orphans · 0 dangling files" in out
 
 
 class TestDoctorWorkingTreeDirty:

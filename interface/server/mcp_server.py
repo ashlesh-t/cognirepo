@@ -1565,6 +1565,9 @@ def graph_stats(repo_path: str | None = None) -> dict:
         if g is None:
             g = _get_graph()
         stats = g.stats()
+        from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
+        integrity_root = _root or os.path.dirname(os.path.abspath(get_cognirepo_dir()))
+        integrity = g.integrity_report(integrity_root)
         from data.graph.knowledge_graph import PYTHON_BUILTINS  # pylint: disable=import-outside-toplevel
         concept_nodes = [
             n for n, d in g.G.nodes(data=True)
@@ -1626,6 +1629,7 @@ def graph_stats(repo_path: str | None = None) -> dict:
         "index_stale": index_stale,
         "stale_reindexing_triggered": stale_reindexing_triggered,
         "watcher_alive": watcher_alive,
+        "integrity": integrity,
     }
 
 

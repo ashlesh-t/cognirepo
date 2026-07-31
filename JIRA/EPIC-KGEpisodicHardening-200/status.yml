@@ -1,11 +1,12 @@
 epic_id: COGNIREPO-200
-status: not-started
+status: in-progress
 stories:
   - id: COGNIREPO-201
-    status: not-started
+    status: in-review
     branch: story/COGNIREPO-201
     pr: null
-    test_status: not-run
+    test_status: pass  # automated cases pass (1322 passed, 5 skipped); live E2E-100-1-style
+                        # re-verification against cognirepo_test_repo/easy left for the user
   - id: COGNIREPO-202
     status: not-started
     branch: story/COGNIREPO-202
