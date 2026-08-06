@@ -8,8 +8,8 @@ epics:
     blocked_by: []
   - id: COGNIREPO-200
     name: KGEpisodicHardening
-    status: not-started
-    blocked_by: [COGNIREPO-100]
+    status: in-progress  # COGNIREPO-201 in-review
+    blocked_by: []
   - id: COGNIREPO-300
     name: RepoInsights
     status: not-started

@@ -276,6 +276,45 @@ def _cmd_verify_index(verbose: bool = False) -> int:
     return 1 if issues else 0
 
 
+def _cmd_graph_repair(apply: bool = False) -> int:
+    """
+    Prune dangling file nodes (and their symbols) from the knowledge graph.
+
+    Dry-run by default — reports what integrity_report() found without
+    mutating the graph. --apply removes them via remove_file_nodes(), which
+    redirects any live call/inherit edges onto an unresolved CONCEPT stub
+    rather than dropping them, and leaves orphan CONCEPT stubs untouched
+    (they carry no 'file' attr, so nodes_for_file() never matches them).
+    See COGNIREPO-201.
+    """
+    # pylint: disable=import-outside-toplevel
+    from data.graph.knowledge_graph import KnowledgeGraph
+
+    kg = KnowledgeGraph()
+    repo_root = os.path.dirname(os.path.abspath(get_path("")))
+    report = kg.integrity_report(repo_root)
+    dangling = report["dangling_files"]
+
+    if not dangling:
+        print("graph repair: no dangling file nodes found.")
+        return 0
+
+    print(f"graph repair: {len(dangling)} dangling file path(s) found:")
+    for f in dangling:
+        print(f"  {f}")
+
+    if not apply:
+        print("\nDry run — no changes made. Re-run with --apply to prune.")
+        return 0
+
+    removed_total = 0
+    for f in dangling:
+        removed_total += len(kg.remove_file_nodes(f))
+    kg.save()
+    print(f"\nRemoved {removed_total} node(s) across {len(dangling)} dangling file path(s).")
+    return 0
+
+
 def _check_working_tree_dirty(manifest: dict) -> list[str]:
     """
     Return the list of indexed source paths with uncommitted working-tree changes.
@@ -517,6 +556,20 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         if verbose:
             _gpath = get_path("graph/graph.pkl")
             print(f"       {os.path.abspath(_gpath)}")
+
+        # ── Check 3a: Knowledge graph integrity (COGNIREPO-201) ────────────────
+        _repo_root = os.path.dirname(os.path.abspath(get_path("")))
+        _integrity = _kg.integrity_report(_repo_root)
+        _n_orphans = len(_integrity["orphans"])
+        _n_dangling = len(_integrity["dangling_files"])
+        if _n_orphans == 0 and _n_dangling == 0:
+            _ok("Graph integrity — 0 orphans · 0 dangling files")
+        else:
+            _warn(
+                f"Graph integrity — {_n_orphans} orphan node(s), "
+                f"{_n_dangling} dangling file(s)",
+                "Run: cognirepo graph repair --apply",
+            )
     except Exception as exc:  # pylint: disable=broad-except
         _fail(f"Knowledge graph — {exc}", "Run: cognirepo index-repo .")
         issues += 1
@@ -2597,6 +2650,7 @@ def _print_help() -> None:
     _row("who-calls <fn>",    "Trace callers of a function in the call graph")
     _row("subgraph <entity>", "Show knowledge-graph neighbourhood for an entity")
     _row("graph-stats",       "Node/edge count and health of the knowledge graph")
+    _row("graph repair",      "Prune dangling file nodes from the graph (--apply to write)")
 
     # ── AI Query ──────────────────────────────────────────────────────────────
     _hdr("AI QUERY")
@@ -3188,6 +3242,18 @@ def _main():
     p_sub.add_argument("--depth", type=int, default=2)
 
     sub.add_parser("graph-stats", help="Node/edge count and health of the knowledge graph")
+
+    # graph (COGNIREPO-201) — integrity maintenance, separate from graph-stats above
+    p_graph = sub.add_parser("graph", help="Knowledge-graph integrity maintenance")
+    graph_sub = p_graph.add_subparsers(dest="graph_command")
+    p_graph_repair = graph_sub.add_parser(
+        "repair",
+        help="Prune dangling file nodes from the knowledge graph (dry-run by default)",
+    )
+    p_graph_repair.add_argument(
+        "--apply", action="store_true",
+        help="Actually prune (default: dry-run report only)",
+    )
 
     p_mcpset = sub.add_parser("mcp-setup", help="Re-run MCP integration (Claude / Gemini / Cursor)")
     p_mcpset.add_argument("--target", action="append", dest="targets",
@@ -4391,6 +4457,12 @@ def _main():
                 _print_results(_srv.subgraph(args.entity, depth=args.depth))
             else:  # graph-stats
                 _print_results(_srv.graph_stats())
+
+        elif args.command == "graph":
+            if getattr(args, "graph_command", None) == "repair":
+                sys.exit(_cmd_graph_repair(apply=getattr(args, "apply", False)))
+            print("Usage: cognirepo graph repair [--apply]")
+            sys.exit(2)
 
         elif args.command == "mcp-setup":
             from interface.cli.init_project import setup_mcp  # pylint: disable=import-outside-toplevel

@@ -206,6 +206,16 @@ class TestNewMCPTools:
         result = graph_stats()
         assert isinstance(result["top_concepts"], list)
 
+    def test_graph_stats_integrity_block(self):
+        """COGNIREPO-201 AC1: graph_stats returns integrity {orphans, dangling_files, swept_at}."""
+        from interface.server.mcp_server import graph_stats
+        result = graph_stats()
+        assert "integrity" in result
+        integrity = result["integrity"]
+        assert isinstance(integrity["orphans"], list)
+        assert isinstance(integrity["dangling_files"], list)
+        assert integrity["swept_at"]
+
     def test_manifest_includes_new_tools(self):
         from interface.server.mcp_server import _build_manifest
         manifest = _build_manifest()

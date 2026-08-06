@@ -1,11 +1,12 @@
 epic_id: COGNIREPO-200
-status: not-started
+status: in-progress
 stories:
   - id: COGNIREPO-201
-    status: not-started
+    status: in-review
     branch: story/COGNIREPO-201
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/47
+    test_status: pass  # automated (1322 passed, 5 skipped) + live TC-201-1 retest against
+                        # cognirepo_test_repo/easy/fastapi, both PASS
   - id: COGNIREPO-202
     status: not-started
     branch: story/COGNIREPO-202

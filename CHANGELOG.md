@@ -6,6 +6,20 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [Unreleased]
+
+### Added
+- **COGNIREPO-201 — knowledge graph integrity sweep + metrics.**
+  `KnowledgeGraph.integrity_report(repo_root)` reports `orphans` (FILE/FUNCTION/CLASS
+  nodes with degree 0 — restricted to these types since MEMORY/SESSION/ERROR/QUERY/
+  CONCEPT nodes are legitimately edge-free early in their lifecycle) and
+  `dangling_files` (file paths no longer on disk, deduplicated across every symbol
+  in that file), O(nodes). `graph_stats` gains an output-only `integrity` block (no
+  input-schema change); `doctor` flags nonzero orphans/dangling as a warning with a
+  repair hint. New `cognirepo graph repair [--apply]` prunes dangling file nodes via
+  `remove_file_nodes()` — dry-run by default, orphan CONCEPT stubs untouched (they
+  carry no `file` attr).
+
 ## [2.0.1] — 2026-07-31
 
 ### Fixed

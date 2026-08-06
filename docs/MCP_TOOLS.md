@@ -202,15 +202,20 @@ freshness.
 **Output:**
 ```json
 {
-  "nodes": 1243,
-  "edges": 4871,
-  "node_types": { "FUNCTION": 892, "CLASS": 201, "FILE": 150 },
-  "healthy": true,
+  "node_count": 1243,
+  "edge_count": 4871,
+  "top_concepts": ["symbol::foo", "symbol::bar"],
   "last_indexed": "2026-07-22T18:20:10+00:00",
   "full_indexed_at": "2026-07-22T16:31:07+00:00",
   "index_age_minutes": 0,
   "index_stale": false,
-  "watcher_alive": true
+  "stale_reindexing_triggered": false,
+  "watcher_alive": true,
+  "integrity": {
+    "orphans": [],
+    "dangling_files": [],
+    "swept_at": "2026-07-31T12:00:00+00:00"
+  }
 }
 ```
 
@@ -227,6 +232,18 @@ freshness.
 Before COGNIREPO-D14, `last_indexed` only advanced on a full `index_repo()`
 run, so a repo kept current by the watcher reported a hours-old
 `last_indexed` next to `index_age_minutes: 0` — two clocks in one payload.
+
+**Integrity fields (COGNIREPO-201):**
+
+| Field | Meaning |
+|---|---|
+| `orphans` | FILE/FUNCTION/CLASS node IDs with degree 0 (no edges in or out). Excludes MEMORY/SESSION/ERROR/QUERY/CONCEPT nodes, which are legitimately edge-free early in their lifecycle. |
+| `dangling_files` | File paths (FILE node IDs, or FUNCTION/CLASS nodes' `file` attr) that no longer exist on disk — left behind when a file is deleted while no watcher/server was running to catch it. |
+| `swept_at` | ISO-8601 UTC timestamp of this integrity sweep — recomputed on every `graph_stats` call, O(nodes). |
+
+`doctor` flags nonzero `orphans`/`dangling_files` as a warning with a repair hint.
+`cognirepo graph repair [--apply]` prunes dangling file nodes (dry-run by default) —
+see [USAGE.md](USAGE.md).
 
 ---
 
