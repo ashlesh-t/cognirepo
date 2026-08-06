@@ -8,7 +8,7 @@ epics:
     blocked_by: []
   - id: COGNIREPO-200
     name: KGEpisodicHardening
-    status: in-progress  # COGNIREPO-201 in-review
+    status: in-progress  # COGNIREPO-201 signed-off; COGNIREPO-202 next
     blocked_by: []
   - id: COGNIREPO-300
     name: RepoInsights
