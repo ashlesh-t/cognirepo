@@ -17,7 +17,19 @@
   `tests/test_graph_repair.py::TestGraphRepair` (dry-run reports without mutating; `--apply`
   removes exactly the dangling nodes and prints the count; clean graph reports "no dangling
   file nodes found"). Full suite: 1322 passed, 5 skipped.
-  Live MCP verification against `cognirepo_test_repo/easy` (per skill.md step 4) — left for
-  the user: restart server after `rm`-ing an indexed file with the watcher stopped, run
-  `graph_stats`/doctor/`graph repair --apply` through the MCP client itself.
-- Verdict: PASS (automated). Live retest pending.
+  Live retest against `cognirepo_test_repo/easy/fastapi` (indexed, watcher confirmed not
+  running — `cognirepo list` showed no running watcher daemons) — executed 2026-08-06 via CLI
+  equivalents of the MCP tools (`graph-stats`/`doctor`/`graph repair`, same
+  `KnowledgeGraph.integrity_report()` code path graph_stats calls): baseline
+  `graph-stats`/`doctor` on the indexed repo showed 0 orphans/0 dangling (7153 nodes, 28614
+  edges). Removed `fastapi/security/utils.py` (1 indexed FUNCTION,
+  `get_authorization_scheme_param`). Re-ran `graph-stats` →
+  `integrity.dangling_files: ["fastapi/security/utils.py"]`, orphans still `[]`. `doctor` → WARN
+  "0 orphan node(s), 1 dangling file(s)" with the `cognirepo graph repair --apply` hint, exit
+  code 1. `cognirepo graph repair` (dry-run) reported the same path without mutating. `cognirepo
+  graph repair --apply` removed 2 nodes (the FILE node + its FUNCTION) across the 1 dangling
+  path. Re-ran `graph-stats`/`doctor` → 0 orphans/0 dangling, 7152 nodes/28611 edges (net -1
+  node/-3 edges — consistent with live call edges redirecting onto an unresolved CONCEPT stub
+  per COGNIREPO-D10 rather than being dropped; no other symbols touched). Restored the file via
+  `git checkout -- fastapi/security/utils.py`; working tree clean.
+- Verdict: PASS (automated + live retest).
