@@ -33,7 +33,7 @@ import numpy as np
 from core._bm25 import BM25 as _BM25, Document as _Document
 from data.graph.behaviour_tracker import BehaviourTracker
 from data.graph.graph_utils import extract_entities_from_text, make_node_id
-from data.graph.knowledge_graph import KnowledgeGraph
+from data.graph.knowledge_graph import KnowledgeGraph, EdgeType
 from intelligence.indexer.ast_indexer import ASTIndexer
 from data.memory.circuit_breaker import CircuitOpenError
 from data.memory.embeddings import encode_with_timeout
@@ -45,6 +45,11 @@ from core.config.paths import get_path
 def _config_file() -> str:
     return get_path("config.json")
 DEFAULT_WEIGHTS = {"vector": 0.5, "graph": 0.3, "behaviour": 0.2}
+
+# A 1-hop link that is SIMILAR_TO-only (no CALLS/DEFINED_IN/IMPORTS/etc. also connecting the
+# pair) is weaker relevance evidence than a real structural edge — discount it below the
+# vanilla 1-hop score (0.5) but keep it above 2-hop (0.333). COGNIREPO-202.
+_SIMILAR_TO_ONLY_DISCOUNT = 0.7
 
 
 def _load_weights() -> dict[str, float]:
@@ -366,6 +371,7 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
         g_undirected = self._undirected
 
         min_hops = None
+        best_entity_node = None
         for entity in query_entities:
             # Collect all candidate node IDs for this entity:
             # 1. Generic forms (concept/file/symbol prefixes)
@@ -395,6 +401,7 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
                         hops = 1_000_000
                 if min_hops is None or hops < min_hops:
                     min_hops = hops
+                    best_entity_node = node_id
                     if min_hops == 0:
                         break  # exact match — no need to keep searching
             if min_hops == 0:
@@ -402,7 +409,17 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
 
         if min_hops is None or min_hops >= 1_000_000:
             return 0.0
-        return 1.0 / (1.0 + min_hops)
+        score = 1.0 / (1.0 + min_hops)
+        if min_hops == 1 and best_entity_node and self._is_similar_to_only_link(best_entity_node, cand_node):
+            score *= _SIMILAR_TO_ONLY_DISCOUNT
+        return score
+
+    def _is_similar_to_only_link(self, a: str, b: str) -> bool:
+        """True if the only edge(s) directly connecting a and b are SIMILAR_TO."""
+        edge_ab = self.graph.G.get_edge_data(a, b)
+        edge_ba = self.graph.G.get_edge_data(b, a)
+        rels = [e.get("rel") for e in (edge_ab, edge_ba) if e]
+        return bool(rels) and all(r == EdgeType.SIMILAR_TO for r in rels)
 
     @staticmethod
     def _behaviour_score(

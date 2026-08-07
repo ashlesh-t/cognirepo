@@ -76,7 +76,7 @@ cpp = [
     "scikit-build-core>=0.9",
 ]
 security = [
-    "cryptography>=48.0.1",
+    "cryptography>=50.0.0",
     "keyring>=25.0",
 ]
 cli = [

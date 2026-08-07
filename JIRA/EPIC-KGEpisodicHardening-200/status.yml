@@ -8,10 +8,11 @@ stories:
     test_status: pass  # automated (1322 passed, 5 skipped) + live TC-201-1 retest against
                         # cognirepo_test_repo/easy/fastapi, both PASS
   - id: COGNIREPO-202
-    status: not-started
+    status: in-review
     branch: story/COGNIREPO-202
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/48
+    test_status: pass  # automated (1331 passed, 5 skipped, +9 new) + live TC-202-1 against
+                        # cognirepo_test_repo/medium/celery, PASS
   - id: COGNIREPO-203
     status: not-started
     branch: story/COGNIREPO-203

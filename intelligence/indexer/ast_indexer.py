@@ -143,6 +143,15 @@ _LITE_GRAPH_WEIGHT_MIN: float = 0.75
 _TIER1_WEIGHT_MIN: float = 0.5    # Tier 1: all BFS-reachable files (direct + indirect imports)
 _LARGE_REPO_TIER_THRESHOLD: int = _AUTO_SKIP_GRAPH_THRESHOLD  # same boundary as lite-graph
 
+# SIMILAR_TO edges: FAISS k-NN over already-embedded symbol vectors, post-index.
+# Cosine derived from the same "1 - l2_distance/2" convention hybrid.py/local_vector_db.py
+# use for unit-normalized fastembed vectors.
+_SIMILARITY_COSINE_THRESHOLD: float = 0.80
+_SIMILARITY_MAX_PER_NODE: int = 5
+# Above this many candidate symbols, similarity edges are off by default (O(n log n) k-NN
+# search cost) unless config.json explicitly opts in — see _similarity_gate_enabled().
+_SIMILARITY_SYMBOL_CEILING: int = 20_000
+
 
 
 def _effective_skip_dirs() -> frozenset[str]:
@@ -1514,8 +1523,13 @@ class ASTIndexer:
 
         self._build_reverse_index()
         # Resolve symbol:: stub nodes to real file-qualified nodes where unambiguous.
+        _similarity_edges = 0
         if not getattr(self, "_skip_graph", False):
             self._resolve_call_stubs()
+            try:
+                _similarity_edges = self._build_similarity_edges()
+            except Exception as _exc:  # pylint: disable=broad-except
+                log.warning("SIMILAR_TO edge pass failed (graph still valid): %s", _exc)
         total_symbols = sum(
             len(f.get("symbols", [])) for f in self.index_data["files"].values()
         )
@@ -1556,6 +1570,8 @@ class ASTIndexer:
                 f"Tier 2: {len(_tier2_pending)} low-weight files queued for background indexing. "
                 "Run: cognirepo index-repo . --tier 2"
             )
+        if _similarity_edges:
+            print(f"  SIMILAR_TO edges: {_similarity_edges}")
 
         # NOTE: doc ingestion deliberately does NOT run here. Every entry point
         # (cli/main.py index-repo Stage 3, cli/init_project.py, init-all) invokes
@@ -1570,6 +1586,7 @@ class ASTIndexer:
             "languages": dict(lang_file_counts),
             "skipped_extensions": sorted(skipped_exts),
             "tier2_queued": len(_tier2_pending),
+            "similarity_edges": _similarity_edges,
         }
 
     def index_file(self, rel_path: str, abs_path: str | None = None, weight: float = 1.0) -> dict:
@@ -1865,6 +1882,86 @@ class ASTIndexer:
 
             else:
                 self.graph.G.nodes[stub]["unresolved"] = True
+
+    def _similarity_gate_enabled(self, candidate_count: int) -> bool:
+        """config.json → {"indexing": {"similarity_edges": true|false}}.
+
+        Default: enabled below _SIMILARITY_SYMBOL_CEILING candidate symbols, off above
+        it (k-NN search cost scales with candidate count). Explicit config value wins
+        either way.
+        """
+        try:
+            with open(get_path("config.json"), encoding="utf-8") as f:
+                cfg = json.load(f)
+            gate = cfg.get("indexing", {}).get("similarity_edges")
+            if gate is not None:
+                return bool(gate)
+        except Exception:  # pylint: disable=broad-except
+            pass
+        return candidate_count < _SIMILARITY_SYMBOL_CEILING
+
+    def _build_similarity_edges(self) -> int:
+        """Post-index pass (COGNIREPO-202): FAISS k-NN over already-embedded FUNCTION/CLASS
+        symbol vectors, adding a SIMILAR_TO edge (both directions, like the CALLS/CALLED_BY
+        pair) between near-duplicate symbols in *different* files — same-file pairs are
+        already related via DEFINED_IN. Skipped entirely when the graph is empty (graph
+        indexing disabled) or the config gate is off.
+
+        Must run AFTER _batch_embed_pending() (faiss_index/faiss_meta populated) and
+        _resolve_call_stubs() (real symbol nodes exist, not just stubs).
+        """
+        if self.graph.G.number_of_nodes() == 0 or self.faiss_index is None or self.faiss_index.ntotal == 0:
+            return 0
+
+        candidates = [
+            (fid, m) for fid, m in enumerate(self.faiss_meta)
+            if m.get("source") == "symbol" and m.get("type") in (NodeType.FUNCTION, NodeType.CLASS)
+        ]
+        if len(candidates) < 2 or not self._similarity_gate_enabled(len(candidates)):
+            return 0
+
+        k = min(_SIMILARITY_MAX_PER_NODE + 1, self.faiss_index.ntotal)  # +1: self is always nearest
+        out_degree: dict[str, int] = {}
+        edges_added = 0
+
+        for fid, meta in candidates:
+            node_id = make_node_id(meta["type"], meta["name"], meta["file"])
+            if not self.graph.G.has_node(node_id) or out_degree.get(node_id, 0) >= _SIMILARITY_MAX_PER_NODE:
+                continue
+            try:
+                vec = self.faiss_index.reconstruct(int(fid)).reshape(1, -1)
+            except RuntimeError:
+                continue  # id was removed/never added — skip rather than crash the index pass
+            distances, ids = self.faiss_index.search(vec, k)
+
+            for dist, cand_fid in zip(distances[0], ids[0]):
+                if out_degree.get(node_id, 0) >= _SIMILARITY_MAX_PER_NODE:
+                    break
+                if cand_fid < 0 or cand_fid == fid or cand_fid >= len(self.faiss_meta):
+                    continue
+                cand_meta = self.faiss_meta[cand_fid]
+                if cand_meta.get("source") != "symbol" or cand_meta.get("type") not in (NodeType.FUNCTION, NodeType.CLASS):
+                    continue
+                if cand_meta["file"] == meta["file"]:
+                    continue  # DEFINED_IN already relates same-file symbols
+                cosine = max(0.0, 1.0 - float(dist) / 2.0)
+                if cosine < _SIMILARITY_COSINE_THRESHOLD:
+                    continue
+                cand_node_id = make_node_id(cand_meta["type"], cand_meta["name"], cand_meta["file"])
+                if cand_node_id == node_id or not self.graph.G.has_node(cand_node_id):
+                    continue
+                if out_degree.get(cand_node_id, 0) >= _SIMILARITY_MAX_PER_NODE:
+                    continue
+                if not self.graph.G.has_edge(node_id, cand_node_id):
+                    self.graph.add_edge(node_id, cand_node_id, EdgeType.SIMILAR_TO, weight=cosine)
+                    out_degree[node_id] = out_degree.get(node_id, 0) + 1
+                    edges_added += 1
+                if not self.graph.G.has_edge(cand_node_id, node_id):
+                    self.graph.add_edge(cand_node_id, node_id, EdgeType.SIMILAR_TO, weight=cosine)
+                    out_degree[cand_node_id] = out_degree.get(cand_node_id, 0) + 1
+                    edges_added += 1
+
+        return edges_added
 
     # ── kept for ASTIndexer API compatibility ─────────────────────────────────
 

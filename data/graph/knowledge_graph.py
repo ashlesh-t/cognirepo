@@ -100,6 +100,7 @@ class EdgeType:  # pylint: disable=too-few-public-methods
     INHERITS = "INHERITS"      # class A inherits from class B
     EXPOSES = "EXPOSES"        # function → ENDPOINT node (this function handles this route)
     CALLS_ENDPOINT = "CALLS_ENDPOINT"  # caller function → remote ENDPOINT stub (cross-service)
+    SIMILAR_TO = "SIMILAR_TO"  # embedding-distance near-duplicate symbols (added both directions)
 
 
 class KnowledgeGraph:

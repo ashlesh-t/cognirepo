@@ -85,6 +85,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | `stats()` | ✅ | Count by node type + total edges |
 | Behaviour tracking | ✅ | `data/graph/behaviour_tracker.py` — access frequency per node |
 | Entity extraction from text | ✅ | `data/graph/graph_utils.py::extract_entities_from_text()` |
+| `SIMILAR_TO` edges (embedding-distance near-duplicates, cross-file) | ✅ | Post-index FAISS k-NN pass, `intelligence/indexer/ast_indexer.py::_build_similarity_edges()` — gated via `config.json` → `indexing.similarity_edges` |
 
 ---
 
@@ -325,7 +326,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ## 15. Test Coverage
 
-92 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+93 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
 for the current test-function count). This table is representative, not exhaustive — see
 `tests/` for the full list. This count is pinned against `tests/test_docs_sync.py`,
 which fails if this number drifts from the real glob count.
