@@ -24,7 +24,7 @@ stories:
   - id: COGNIREPO-204
     status: in-review
     branch: story/COGNIREPO-204
-    pr: null
+    pr: https://github.com/ashlesh-t/cognirepo/pull/50
     test_status: pass  # automated (1350 passed, 5 skipped, +8 new) + live TC-204-1
                         # (7/7 seeded entries, rollup names decision+error) and
                         # TC-204-2 (archive toggle + D02 no-dup-IDs verified) — both PASS
