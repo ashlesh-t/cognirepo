@@ -19,6 +19,18 @@
 | `NodeType.USER_ACTION` | `"USER_ACTION"` | A recorded user interaction |
 | `NodeType.MEMORY` | `"MEMORY"` | Cross-agent memory node (synced from Claude/Gemini/etc.) |
 
+### Node attributes
+
+- `dispatch: "dynamic"` (COGNIREPO-203) — set on a FUNCTION/CLASS node when a static heuristic
+  detects it's reachable via dynamic dispatch rather than a visible call site: a celery-style
+  `@task`/`@shared_task` decorator, a `register(...)`-style plugin-registration call, a Python
+  `__init_subclass__` hook, or a packaging entry-point (`pyproject.toml`
+  `[project.entry-points.*]` / `setup.cfg` `[options.entry_points]`). Annotation-only — it never
+  fabricates a CALLS edge; it adds a `RELATES_TO` edge to the well-known CONCEPT node
+  `concept::dynamic_dispatch` so `subgraph()` surfaces it. `who_calls` returning few/no static
+  callers for such a symbol is expected, not a graph-integrity gap — check `dispatch` before
+  trusting an empty caller list.
+
 ---
 
 ## Edge Type Glossary

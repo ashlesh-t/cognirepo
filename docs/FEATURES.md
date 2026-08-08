@@ -86,6 +86,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | Behaviour tracking | ✅ | `data/graph/behaviour_tracker.py` — access frequency per node |
 | Entity extraction from text | ✅ | `data/graph/graph_utils.py::extract_entities_from_text()` |
 | `SIMILAR_TO` edges (embedding-distance near-duplicates, cross-file) | ✅ | Post-index FAISS k-NN pass, `intelligence/indexer/ast_indexer.py::_build_similarity_edges()` — gated via `config.json` → `indexing.similarity_edges` |
+| `dispatch:"dynamic"` annotation (celery tasks, plugin `register()`, `__init_subclass__`, packaging entry-points) | ✅ | `intelligence/indexer/ast_indexer.py::_detect_dynamic_dispatch()` / `_apply_entry_points_dispatch()` — annotation-only, `RELATES_TO` edge to `concept::dynamic_dispatch` |
 
 ---
 

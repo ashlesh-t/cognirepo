@@ -612,14 +612,32 @@ Priorities drawn from the v0.3.0 benchmark findings and community feedback. Now 
 some items below have since landed; each is annotated where that's the case.
 
 ### Near-term
-- **Go call-graph indexing** — *partially done:* Go IMPORTS edges (via `go.mod` scanning) and Go symbol/class indexing (tree-sitter `function_declaration`/`type_spec`) are implemented. Go-aware `who_calls`/CALLS edges are still missing — `_extract_calls()` (`intelligence/indexer/ast_indexer.py`) only walks Python's stdlib `ast`, not tree-sitter nodes, so Moby/Kubernetes call-graph tests (MO-3-5, K8-*) remain unblocked-but-incomplete for this specific edge type.
+- **Go call-graph indexing** — *done (COGNIREPO-203):* Go receiver-qualified method calls
+  (`recv.Method()`) now resolve through `who_calls`/CALLS edges — tree-sitter's Go
+  `selector_expression` names its method field `field`, not `property` (the JS convention the
+  extractor previously assumed), so method calls were silently dropped; fixed in
+  `_ts_collect_calls` (`intelligence/indexer/ast_indexer.py`). A second bug in the same
+  function — a call-collection recursion depth cap of 12, too shallow for a Go method wrapping
+  an if-statement around a composite-literal call argument — was also raised (to 60). Go
+  IMPORTS edges from `go.mod`-resolved local package imports are implemented
+  (`_extract_imports_go`/`_resolve_go_import_to_file`). Live-verified against
+  `cognirepo_test_repo/advanced/moby`: 4/4 hand-verified callers resolved (100%, vs. the 90%
+  target) after both fixes.
 - **`cognirepo ask`** — *done:* multi-model orchestrator (QUICK/STANDARD/COMPLEX/EXPERT tiers) is implemented and wired as a real CLI command (`_cmd_ask_local`, `interface/cli/main.py`). Streaming REPL mode (see Longer-term) is not yet built.
 - **Incremental re-index on save** — *done:* the file-watcher daemon (`cognirepo watch`) debounces writes (`config.json` → `indexing.debounce_ms`, default 500ms) and batches indexer/graph saves; `tests/test_watcher_debounce.py` covers this including flush-on-shutdown.
 - **CLAUDE.md mandatory-call relaxation** — benchmark feedback (Moby tests) flagged that forcing `context_pack` before every file read adds latency under memory pressure. A `--fast` mode that skips the tool-first gate for files under 50 lines is not yet implemented.
 
 ### Medium-term
 - **Kubernetes / 2M-LOC scale validation** — K8-1 through K8-5 test suite not yet completed. Goal: full scheduling-decision trace at < 8 000 tokens with CogniRepo vs. > 50 000 without.
-- **Plugin-registry pattern detection** — Ansible AN-3/AN-4 (22-level variable precedence, strategy plugins) and Celery CE-3 (dynamic dispatch) returned NA. Plan: static heuristic pass that detects `register`, `entry_points`, and `__init_subclass__` patterns and annotates them as `DYNAMIC_DISPATCH` nodes in the graph.
+- **Plugin-registry pattern detection** — *done (COGNIREPO-203):* a static, annotation-only
+  heuristic pass tags symbols reachable via dynamic dispatch — celery-style `@task`/
+  `@shared_task` decorators, `register(...)`-style plugin-registration calls, Python
+  `__init_subclass__` hooks, and packaging entry-points (`pyproject.toml`
+  `[project.entry-points.*]` / `setup.cfg` `[options.entry_points]`) — with `dispatch:"dynamic"`
+  plus a `RELATES_TO` edge to a `dynamic_dispatch` CONCEPT node (`_detect_dynamic_dispatch`,
+  `_apply_entry_points_dispatch` in `intelligence/indexer/ast_indexer.py`). Annotation-only by
+  design — never fabricates a CALLS edge. Live-verified against
+  `cognirepo_test_repo/medium/celery`'s real `@shared_task` functions.
 - **BM25 over symbol names** — *partially done:* `core/_bm25.py` is used by `intelligence/retrieval/hybrid.py` as the circuit-breaker fallback ranker (and by episodic search) when embeddings are unavailable, but it isn't yet the primary ranking signal for symbol-name partial-match recall (e.g. `HttpClient` matching `http_client`) in the normal (embeddings-available) retrieval path.
 - **Cross-session memory warm-up** — Ansible benchmark noted episodic/memory retrieval is low-value on fresh sessions. `cognirepo prime` exists but is not run automatically on `init`; will make it opt-in default.
 
