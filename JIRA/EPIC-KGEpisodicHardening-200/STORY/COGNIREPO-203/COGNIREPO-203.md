@@ -29,3 +29,25 @@ node "dynamic_dispatch". who_calls keeps its existing coverage_note behavior.
 - FIRST ACTION: check whether cognirepo_test_repo/advanced contains Go sources; if not, add a
   small Go fixture under tests/fixtures/ (TEST_SUITE marks this BLOCKED until resolved).
 - Dispatch heuristics are annotation-only — they must not fabricate CALLS edges.
+
+## Implementation notes (2026-08-08)
+- FIRST ACTION resolved: cognirepo_test_repo/advanced/moby (Docker) has 9992 real .go files —
+  no synthetic fixture needed for the live TEST_SUITE check. A hand-crafted inline fixture was
+  still added to tests/test_indexer_multilang.py (TestGoIndexing) for a deterministic,
+  version-controlled ≥10-call-site regression test per AC1/AC3.
+- Root cause of the missing Go method-call resolution: tree-sitter's Go `selector_expression`
+  names its method field `field`; the existing `_ts_collect_calls` only checked `property`
+  (the JS/TS field name), so `recv.Method()` calls were silently dropped for every Go file
+  ever indexed. Fixed with a fallback field lookup.
+- A SECOND, independent bug surfaced during live verification against moby: `_ts_collect_calls`'s
+  recursion depth cap (12) was too shallow for realistic nested code — a Go method wrapping an
+  if-statement around `append(x, Struct{Field: recv.Method()})` alone reaches depth 12-13,
+  dropping the innermost call. Raised the cap to 60. This affects call extraction for every
+  supported language, not just Go, though Go's method+conditional+composite-literal style
+  triggers it disproportionately.
+- Dynamic-dispatch heuristic added as `_detect_dynamic_dispatch()` (decorators/`register()`
+  calls/`__init_subclass__`) plus a separate post-index pass `_apply_entry_points_dispatch()`
+  for pyproject.toml/setup.cfg entry-points — both annotation-only (`dispatch:"dynamic"` +
+  `RELATES_TO` → `concept::dynamic_dispatch`), no fabricated CALLS edges (verified by test).
+- language_registry ↔ service_detect.py::_SERVICE_MARKERS already in sync for Go — no change
+  needed (confirmed per CLAUDE.md rule).
