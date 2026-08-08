@@ -15,12 +15,12 @@ stories:
                         # cognirepo_test_repo/medium/celery, PASS. PR merged 2026-08-08,
                         # no review comments.
   - id: COGNIREPO-203
-    status: in-review
+    status: signed-off
     branch: story/COGNIREPO-203
     pr: https://github.com/ashlesh-t/cognirepo/pull/49
     test_status: pass  # automated (1342 passed, 5 skipped, +11 new) + live TC-203-1
                         # (moby, 4/4 hand-verified callers) and TC-203-2 (celery
-                        # @shared_task, 7/7 tagged) — both PASS
+                        # @shared_task, 7/7 tagged) — both PASS. PR merged 2026-08-08.
   - id: COGNIREPO-204
     status: not-started
     branch: story/COGNIREPO-204
