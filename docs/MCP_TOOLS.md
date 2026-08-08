@@ -611,9 +611,24 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
   "last_focus": {"files": ["retrieval/hybrid.py"], "query": "how does scoring work", "agent": "claude"},
   "framing": {"depth": "detailed", "vocabulary": ["retrieval", "faiss", "hybrid"], "hints": "prefers detailed responses; often asks 'how' questions; domain vocabulary: retrieval, faiss, hybrid"},
   "error_patterns": [{"type": "OOM", "count": 2, "prevention_hint": "Check RSS before loading large index"}],
-  "index_health": {"symbols": 1240, "files": 92, "status": "ok"}
+  "index_health": {"symbols": 1240, "files": 92, "status": "ok"},
+  "recent_timeline": [
+    {"ts": "2026-08-08T09:00:00+00:00", "kind": "decision", "summary": "use FAISS for vector search", "ref": "e_42"},
+    {"ts": "2026-08-07T14:00:00+00:00", "kind": "error", "summary": "ImportError (x3)", "ref": "ImportError"},
+    {"ts": "2026-08-06T11:00:00+00:00", "kind": "session", "summary": "how does scoring work", "ref": "sess_abc123"}
+  ]
 }
 ```
+
+**recent_timeline** (COGNIREPO-204): last 5 entries from the past 7 days, merged
+chronologically across sessions, episodes, decisions, and errors — replaces the
+`get_session_history` + `episodic_search` + `get_error_patterns` 3-call stitch for a
+quick "what happened recently" view. Folded into this tool's existing output rather
+than a new MCP tool (0 manifest tokens vs. ~180 measured for a standalone
+`get_timeline` tool). For the full query surface (`since`/`include_archived`/`limit`,
+plus the deterministic `rollup()` — counts + top decisions/errors, no model-generated
+text), call `data.memory.timeline.merge()`/`rollup()` directly, or from a future
+`generate_insights` tool (EPIC-300).
 
 ---
 

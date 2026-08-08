@@ -22,10 +22,12 @@ stories:
                         # (moby, 4/4 hand-verified callers) and TC-203-2 (celery
                         # @shared_task, 7/7 tagged) — both PASS. PR merged 2026-08-08.
   - id: COGNIREPO-204
-    status: not-started
+    status: in-review
     branch: story/COGNIREPO-204
     pr: null
-    test_status: not-run
+    test_status: pass  # automated (1350 passed, 5 skipped, +8 new) + live TC-204-1
+                        # (7/7 seeded entries, rollup names decision+error) and
+                        # TC-204-2 (archive toggle + D02 no-dup-IDs verified) — both PASS
   - id: COGNIREPO-205
     status: not-started
     branch: story/COGNIREPO-205
