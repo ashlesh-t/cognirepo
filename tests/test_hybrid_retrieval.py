@@ -87,6 +87,48 @@ class TestHybridRetriever:
         assert scores == sorted(scores, reverse=True)
 
 
+class TestGraphScoreSimilarToWeighting:
+    """COGNIREPO-202 AC4 — SIMILAR_TO is weighted into _graph_score, not treated as a
+    full-strength structural edge (non-regression: a real 1-hop edge still outscores it)."""
+
+    def test_similar_to_only_link_discounted_below_real_edge(self):
+        from data.graph.knowledge_graph import EdgeType, NodeType
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        r = HybridRetriever()
+        r.graph.add_node("a.py::verify_a", NodeType.FUNCTION, file="a.py")
+        r.graph.add_node("b.py::verify_b", NodeType.FUNCTION, file="b.py")
+        r.graph.add_edge("a.py::verify_a", "b.py::verify_b", EdgeType.SIMILAR_TO, weight=0.9)
+        r.graph.add_edge("b.py::verify_b", "a.py::verify_a", EdgeType.SIMILAR_TO, weight=0.9)
+        r._undirected = r.graph.G.to_undirected()  # rebuild after manual edits
+
+        similar_only_score = r._graph_score({"_symbol": "b.py::verify_b"}, ["a.py::verify_a"])
+
+        r.graph.add_node("c.py::verify_c", NodeType.FUNCTION, file="c.py")
+        r.graph.add_edge("a.py::verify_a", "c.py::verify_c", EdgeType.CALLED_BY)
+        r.graph.add_edge("c.py::verify_c", "a.py::verify_a", EdgeType.CALLS)
+        r._undirected = r.graph.G.to_undirected()
+
+        real_edge_score = r._graph_score({"_symbol": "c.py::verify_c"}, ["a.py::verify_a"])
+
+        assert 0.0 < similar_only_score < real_edge_score == 0.5
+
+    def test_similar_to_plus_real_edge_not_discounted(self):
+        """When a real structural edge ALSO connects the pair, no discount applies."""
+        from data.graph.knowledge_graph import EdgeType, NodeType
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        r = HybridRetriever()
+        r.graph.add_node("a.py::verify_a", NodeType.FUNCTION, file="a.py")
+        r.graph.add_node("b.py::verify_b", NodeType.FUNCTION, file="b.py")
+        r.graph.add_edge("a.py::verify_a", "b.py::verify_b", EdgeType.CALLED_BY)
+        r.graph.add_edge("b.py::verify_b", "a.py::verify_a", EdgeType.SIMILAR_TO, weight=0.9)
+        r._undirected = r.graph.G.to_undirected()
+
+        score = r._graph_score({"_symbol": "b.py::verify_b"}, ["a.py::verify_a"])
+        assert score == 0.5
+
+
 class TestVectorRetrieveSourcePreservation:
     """COGNIREPO-D07: _vector_retrieve() must report the real stored source
     (previously hardcoded "semantic" for every vector-backend hit)."""

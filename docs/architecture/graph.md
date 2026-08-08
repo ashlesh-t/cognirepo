@@ -35,6 +35,7 @@
 | `EdgeType.INHERITS` | `"INHERITS"` | CLASS → CLASS | Class A inherits from class B | `subgraph("BaseRetriever")` |
 | `EdgeType.EXPOSES` | `"EXPOSES"` | FUNCTION → ENDPOINT | A function handles a specific HTTP route/endpoint | `subgraph("api_handler")` |
 | `EdgeType.CALLS_ENDPOINT` | `"CALLS_ENDPOINT"` | FUNCTION → ENDPOINT | A function calls a remote endpoint stub (cross-service call) | `cross_repo_traverse("checkout", "payments")` |
+| `EdgeType.SIMILAR_TO` | `"SIMILAR_TO"` | FUNCTION/CLASS ↔ FUNCTION/CLASS | Embedding-distance near-duplicate symbols in different files (cosine ≥ 0.80, FAISS k-NN, max 5/node), added both directions | `subgraph("get_authorization_scheme_param")` |
 
 ### Direction notes
 
@@ -42,6 +43,9 @@
   This makes `who_calls(fn)` a simple outbound traversal from fn's node.
 - `DEFINED_IN` edges go from symbol → file, not file → symbol.
   This lets you find all symbols in a file via inbound traversal on the FILE node.
+- `SIMILAR_TO` is added in both directions (like `CALLS`/`CALLED_BY`) since similarity is
+  symmetric — `subgraph()`/`who_calls()` show the counterpart regardless of which side you
+  query from. Same-file pairs never get one — `DEFINED_IN` already relates those.
 
 ---
 

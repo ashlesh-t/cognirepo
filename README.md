@@ -626,7 +626,7 @@ some items below have since landed; each is annotated where that's the case.
 ### Longer-term
 - **`cognirepo ask` streaming REPL** — full interactive session with tier routing, session persistence, and sub-agent delegation.
 - **Ruby, PHP, C#, Swift grammar support** — tree-sitter grammars exist; need `_TS_FUNCTION_TYPES`/`_TS_CLASS_TYPES` mappings and call-extraction rules per language.
-- **Similarity edges in knowledge graph** — embedding-distance clustering to connect semantically related symbols across files (not yet implemented).
+- **Similarity edges in knowledge graph** — *done (COGNIREPO-202):* post-index FAISS k-NN pass over already-embedded FUNCTION/CLASS symbol vectors adds a `SIMILAR_TO` edge (cosine ≥ 0.80, max 5/node, cross-file only) between near-duplicate symbols, both directions. Gated via `config.json` → `indexing.similarity_edges` (default on below 20k candidate symbols). Weighted (discounted) into `intelligence/retrieval/hybrid.py::_graph_score`.
 - **VS Code / JetBrains extension** — surface `lookup_symbol`, `context_pack`, and `who_calls` directly in the editor sidebar without requiring an MCP-capable host.
 
 ---
