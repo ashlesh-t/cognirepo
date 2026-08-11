@@ -249,13 +249,16 @@ see [USAGE.md](USAGE.md).
 
 ## episodic_search
 
-**Signature:** `episodic_search(query: str, limit: int = 10) → list[dict]`
+**Signature:** `episodic_search(query: str, limit: int = 10, include_archived: bool = False) → list[dict]`
 
-BM25-ranked keyword search in the event history.
+BM25-ranked keyword search in the event history; vector-similarity fallback when BM25
+returns zero results. `include_archived` (COGNIREPO-205) also searches events rotated
+out to `episodic_archive.json` by `episodic_max_events` rotation — default False (live
+store only). Archived hits are tagged `{"archived": true}`.
 
 **Input:**
 ```json
-{ "query": "redis cache bug", "limit": 5 }
+{ "query": "redis cache bug", "limit": 5, "include_archived": true }
 ```
 
 **Output:**
@@ -616,7 +619,8 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
     {"ts": "2026-08-08T09:00:00+00:00", "kind": "decision", "summary": "use FAISS for vector search", "ref": "e_42"},
     {"ts": "2026-08-07T14:00:00+00:00", "kind": "error", "summary": "ImportError (x3)", "ref": "ImportError"},
     {"ts": "2026-08-06T11:00:00+00:00", "kind": "session", "summary": "how does scoring work", "ref": "sess_abc123"}
-  ]
+  ],
+  "decision_nudge": "no decisions recorded yet — use record_decision for architectural choices"
 }
 ```
 
@@ -629,6 +633,17 @@ than a new MCP tool (0 manifest tokens vs. ~180 measured for a standalone
 plus the deterministic `rollup()` — counts + top decisions/errors, no model-generated
 text), call `data.memory.timeline.merge()`/`rollup()` directly, or from a future
 `generate_insights` tool (EPIC-300).
+
+**decision_nudge** (COGNIREPO-205): present only when the last 30 days have ≥5
+episodes but 0 decisions — a hint to use `record_decision` for architectural
+choices, since CLAUDE.md's instruction alone doesn't guarantee agents call it.
+Omitted from the payload entirely when there's nothing to nudge about.
+
+**Episodic events also include `index_event`-typed entries** (COGNIREPO-205):
+`cognirepo index-repo` and `cognirepo org rewire` completions are logged
+automatically (metadata `{"type": "index_event", ...}` with symbol/file or
+edge/repo counts), so infrastructure activity shows up in `recent_timeline` /
+`data.memory.timeline.merge()` even when no agent called `log_episode`.
 
 ---
 

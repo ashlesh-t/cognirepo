@@ -2207,6 +2207,20 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
     except Exception:  # pylint: disable=broad-except
         pass  # non-fatal
 
+    try:
+        from data.memory.episodic_memory import log_event as _log_index_event  # pylint: disable=import-outside-toplevel
+        _log_index_event(
+            f"index-repo completed: {n_symbols:,} symbols across {n_files:,} files",
+            metadata={
+                "type": "index_event",
+                "symbols": n_symbols,
+                "files": n_files,
+                "elapsed_s": round(elapsed, 2),
+            },
+        )
+    except Exception:  # pylint: disable=broad-except
+        pass  # non-fatal — indexing already succeeded
+
     _write_last_indexed_sha(abs_path)
 
     # Auto-launch Tier 2 background if pending queue exists (files or embed deferred).
@@ -4216,6 +4230,14 @@ def _main():
                 finally:
                     _CTX_DIR.reset(token)
             print(f"Rewire complete — {total} CALLS_API edge(s) across {len(indexed)} indexed repo(s).")
+            try:
+                from data.memory.episodic_memory import log_event as _log_rewire_event  # pylint: disable=import-outside-toplevel
+                _log_rewire_event(
+                    f"org rewire completed: {total} edges across {len(indexed)} repos",
+                    metadata={"type": "index_event", "edges": total, "repos": len(indexed)},
+                )
+            except Exception:  # pylint: disable=broad-except
+                pass  # non-fatal — rewire already succeeded
         elif args.org_command == "graph":
             from data.graph.org_graph import get_org_graph  # pylint: disable=import-outside-toplevel
             og = get_org_graph()
