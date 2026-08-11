@@ -22,7 +22,7 @@ stories:
                         # (moby, 4/4 hand-verified callers) and TC-203-2 (celery
                         # @shared_task, 7/7 tagged) — both PASS. PR merged 2026-08-08.
   - id: COGNIREPO-204
-    status: in-review
+    status: signed-off
     branch: story/COGNIREPO-204
     pr: https://github.com/ashlesh-t/cognirepo/pull/50
     test_status: pass  # automated (1350 passed, 5 skipped, +8 new) + live TC-204-1
@@ -30,7 +30,7 @@ stories:
                         # TC-204-2 (archive toggle + D02 no-dup-IDs verified) — both PASS.
                         # Re-verified 2026-08-12 against cognirepo_test_repo/dummy (TC-204-1)
                         # and a fresh cognirepo_test_repo/TC-204-2 fixture (TC-204-2) —
-                        # identical results both times.
+                        # identical results both times. PR merged 2026-08-11.
   - id: COGNIREPO-205
     status: not-started
     branch: story/COGNIREPO-205
