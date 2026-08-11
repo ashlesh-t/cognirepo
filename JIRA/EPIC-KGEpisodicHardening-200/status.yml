@@ -32,11 +32,12 @@ stories:
                         # and a fresh cognirepo_test_repo/TC-204-2 fixture (TC-204-2) —
                         # identical results both times. PR merged 2026-08-11.
   - id: COGNIREPO-205
-    status: in-review
+    status: signed-off
     branch: story/COGNIREPO-205
     pr: https://github.com/ashlesh-t/cognirepo/pull/51
     test_status: pass  # automated (1354 passed, 9 skipped, +8 new) + live TC-205-1
                         # (zanzibar archive hit found only with include_archived=True)
-                        # and TC-205-2 (index-repo logs exactly 1 index_event) — both PASS
+                        # and TC-205-2 (index-repo logs exactly 1 index_event) — both PASS.
+                        # Re-verified 2026-08-12 identically. PR merged 2026-08-11.
 defects: []
 epic_test_suite_status: not-run
