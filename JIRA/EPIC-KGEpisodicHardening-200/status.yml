@@ -27,7 +27,10 @@ stories:
     pr: https://github.com/ashlesh-t/cognirepo/pull/50
     test_status: pass  # automated (1350 passed, 5 skipped, +8 new) + live TC-204-1
                         # (7/7 seeded entries, rollup names decision+error) and
-                        # TC-204-2 (archive toggle + D02 no-dup-IDs verified) — both PASS
+                        # TC-204-2 (archive toggle + D02 no-dup-IDs verified) — both PASS.
+                        # Re-verified 2026-08-12 against cognirepo_test_repo/dummy (TC-204-1)
+                        # and a fresh cognirepo_test_repo/TC-204-2 fixture (TC-204-2) —
+                        # identical results both times.
   - id: COGNIREPO-205
     status: not-started
     branch: story/COGNIREPO-205

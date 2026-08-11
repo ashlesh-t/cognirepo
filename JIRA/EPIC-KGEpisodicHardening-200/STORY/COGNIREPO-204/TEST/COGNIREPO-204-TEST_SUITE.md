@@ -19,10 +19,15 @@
   — names both the decision and the error as required. One call either way (bootstrap digest
   or a single `merge()` call — no 3-call stitch).
 - Verdict: PASS
+- Re-verified: 2026-08-12, same `cognirepo_test_repo/dummy` fixture (backup/restore
+  repeated), same seed shape, identical result — 7/7 entries, correct kind counts,
+  `rollup()` naming both the decision and the error; bootstrap digest cap (`merge(since=
+  "7d", limit=5)`) also spot-checked, returned the 5 most-recent as designed.
 
 ## TC-204-2: Archive inclusion
-- Test repo: scratch dir (isolated `.cognirepo/`, not a checked-in test repo — avoids
-  polluting a shared fixture with a synthetic 30-event rotation).
+- Test repo: `cognirepo_test_repo/TC-204-2` (dedicated scratch fixture, isolated
+  `.cognirepo/` — not the shared `dummy` fixture, avoids polluting it with a synthetic
+  30-event rotation).
 - Prerequisites: episodic_max_events lowered to 20; 30 events logged (rotation happened).
 - What to do: query with and without include_archived.
 - Prompt: "Show the full timeline including archived history, then just the recent one."
@@ -34,3 +39,6 @@
   30 refs, 30 unique — zero duplicates, confirming D02's fix (`_next_event_id()`) holds under
   a real rotation triggered by this story's merge logic, not just the isolated D02 test suite.
 - Verdict: PASS
+- Re-verified: 2026-08-12, `cognirepo_test_repo/TC-204-2` (fresh `cognirepo setup`,
+  `episodic_max_events` set to 20, 30 events logged), identical result — 18 live /
+  30 live+archived (12 archived), 30/30 unique episode refs.
