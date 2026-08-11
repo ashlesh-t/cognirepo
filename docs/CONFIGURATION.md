@@ -89,6 +89,10 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
     semantic_metadata.json  ← per-vector metadata (text, source, importance, timestamp)
     episodic.json           ← append-only episodic event journal (JSON lines)
     episodic_archive.json   ← rotated events when episodic_max_events is exceeded
+    episodic_vecs.npy       ← cached entry embeddings for semantic episodic search
+                               fallback, keyed by event id (episodic_vecs_ids.json
+                               sidecar); regenerable — safe to delete
+    episodic_vecs_ids.json  ← id list, row-aligned with episodic_vecs.npy
   graph/                    ← knowledge graph
     graph.pkl               ← serialised NetworkX DiGraph
   index/                    ← AST symbol index
