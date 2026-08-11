@@ -15,6 +15,9 @@
   `search_episodes("zanzibar", include_archived=True)` → hit found (`e_0`, the seeded
   entry), tagged `{"archived": true}`.
 - Verdict: PASS
+- Re-verified: 2026-08-12, same `dummy` fixture (backup/restore repeated), identical
+  seed shape and identical result — 18 live / 12 archived, 0 hits without the flag,
+  hit found and tagged archived with it.
 
 ## TC-205-2: System events land in the timeline
 - Test repo: /home/ashlesh/my_works/cognirepo_test_repo/easy
@@ -29,3 +32,6 @@
   "elapsed_s": 4.29}` — matches the run's own printed summary ("7,701 symbols across
   1,180 files").
 - Verdict: PASS
+- Re-verified: 2026-08-12, same `easy/fastapi` fixture (backup/restore repeated),
+  identical result — exactly 1 `index_event` episode, `{"symbols": 7701, "files": 1180,
+  "elapsed_s": 3.63}`.
