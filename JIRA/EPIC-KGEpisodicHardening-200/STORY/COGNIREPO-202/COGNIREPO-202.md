@@ -29,3 +29,9 @@ docs/architecture/graph.md.
 ## Risks / notes
 - Threshold/cap (0.80/5) are initial guesses — tune; risk of CONCEPT-like noise (cf.
   PYTHON_BUILTINS filtering, knowledge_graph.py:31-66).
+
+## AC3 — measured overhead (2026-08-07)
+Test repo: `cognirepo_test_repo/medium/celery` (10,311 symbols, 444 files).
+- Gate ON (default, k-NN pass runs): 111.10s wall (1073.06s user, 969% cpu)
+- Gate OFF (`indexing.similarity_edges: false`): 106.28s wall (999.45s user, 943% cpu)
+- Overhead: ~4.5% — well under the 20% target. 4,211 SIMILAR_TO edges produced.

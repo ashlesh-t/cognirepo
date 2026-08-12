@@ -1,30 +1,47 @@
 epic_id: COGNIREPO-200
-status: not-started
+status: signed-off  # 2026-08-12, v2.1.0 — all 5 stories signed off, epic e2e suite PASS
 stories:
   - id: COGNIREPO-201
-    status: not-started
+    status: signed-off
     branch: story/COGNIREPO-201
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/47
+    test_status: pass  # automated (1322 passed, 5 skipped) + live TC-201-1 retest against
+                        # cognirepo_test_repo/easy/fastapi, both PASS
   - id: COGNIREPO-202
-    status: not-started
+    status: signed-off
     branch: story/COGNIREPO-202
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/48
+    test_status: pass  # automated (1331 passed, 5 skipped, +9 new) + live TC-202-1 against
+                        # cognirepo_test_repo/medium/celery, PASS. PR merged 2026-08-08,
+                        # no review comments.
   - id: COGNIREPO-203
-    status: not-started
+    status: signed-off
     branch: story/COGNIREPO-203
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/49
+    test_status: pass  # automated (1342 passed, 5 skipped, +11 new) + live TC-203-1
+                        # (moby, 4/4 hand-verified callers) and TC-203-2 (celery
+                        # @shared_task, 7/7 tagged) — both PASS. PR merged 2026-08-08.
   - id: COGNIREPO-204
-    status: not-started
+    status: signed-off
     branch: story/COGNIREPO-204
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/50
+    test_status: pass  # automated (1350 passed, 5 skipped, +8 new) + live TC-204-1
+                        # (7/7 seeded entries, rollup names decision+error) and
+                        # TC-204-2 (archive toggle + D02 no-dup-IDs verified) — both PASS.
+                        # Re-verified 2026-08-12 against cognirepo_test_repo/dummy (TC-204-1)
+                        # and a fresh cognirepo_test_repo/TC-204-2 fixture (TC-204-2) —
+                        # identical results both times. PR merged 2026-08-11.
   - id: COGNIREPO-205
-    status: not-started
+    status: signed-off
     branch: story/COGNIREPO-205
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/51
+    test_status: pass  # automated (1354 passed, 9 skipped, +8 new) + live TC-205-1
+                        # (zanzibar archive hit found only with include_archived=True)
+                        # and TC-205-2 (index-repo logs exactly 1 index_event) — both PASS.
+                        # Re-verified 2026-08-12 identically. PR merged 2026-08-11.
 defects: []
-epic_test_suite_status: not-run
+epic_test_suite_status: pass  # E2E-200-1 (medium/celery, 27/27 unique refs, rollup names
+                               # decision+recurring error) and E2E-200-2 (advanced/moby:
+                               # who_calls 4/4+, graph_stats 0 orphans; SIMILAR_TO verified
+                               # on medium/celery instead — moby's 116,532 symbols exceed
+                               # the auto-similarity ceiling by design) — both PASS

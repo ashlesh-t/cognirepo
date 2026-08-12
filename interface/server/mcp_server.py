@@ -1519,14 +1519,22 @@ def subgraph(entity: str, depth: int = 2, repo_path: str | None = None) -> dict:
 
 
 @mcp.tool()
-def episodic_search(query: str, limit: int = 10, repo_path: str | None = None) -> list:
+def episodic_search(
+    query: str,
+    limit: int = 10,
+    include_archived: bool = False,
+    repo_path: str | None = None,
+) -> list:
     """
     Return past episodic events matching a keyword query.
 
+    include_archived: also search events rotated out of the live store
+    (episodic_archive.json). Default False — live store only. Archived hits
+    are tagged {"archived": True}.
     repo_path: optional absolute path to the target repository.
     """
     with _repo_ctx(repo_path):
-        result = search_episodes(query, limit)
+        result = search_episodes(query, limit, include_archived)
     _behaviour_record_query(query, result)
     try:
         from interface.tools.context_pack import save_query_context  # pylint: disable=import-outside-toplevel
@@ -1565,6 +1573,9 @@ def graph_stats(repo_path: str | None = None) -> dict:
         if g is None:
             g = _get_graph()
         stats = g.stats()
+        from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
+        integrity_root = _root or os.path.dirname(os.path.abspath(get_cognirepo_dir()))
+        integrity = g.integrity_report(integrity_root)
         from data.graph.knowledge_graph import PYTHON_BUILTINS  # pylint: disable=import-outside-toplevel
         concept_nodes = [
             n for n, d in g.G.nodes(data=True)
@@ -1626,6 +1637,7 @@ def graph_stats(repo_path: str | None = None) -> dict:
         "index_stale": index_stale,
         "stale_reindexing_triggered": stale_reindexing_triggered,
         "watcher_alive": watcher_alive,
+        "integrity": integrity,
     }
 
 
@@ -1796,41 +1808,13 @@ def get_session_history(limit: int = 10, repo_path: str | None = None) -> list:
     repo_path: optional absolute path to the target repository.
     """
     with _repo_ctx(repo_path):
-        from core.config.paths import get_path as _gp  # pylint: disable=import-outside-toplevel
-        import glob  # pylint: disable=import-outside-toplevel
-        sessions_dir = _gp("sessions")
-        if not os.path.isdir(sessions_dir):
-            return []
-        session_files = sorted(
-            glob.glob(os.path.join(sessions_dir, "*.json")),
-            key=os.path.getmtime,
-            reverse=True,
-        )
-        # exclude the "current.json" pointer file
-        session_files = [f for f in session_files if not f.endswith("current.json")]
+        from data.memory.timeline import _list_session_files, parse_session_file  # pylint: disable=import-outside-toplevel
+        session_files = sorted(_list_session_files(), key=os.path.getmtime, reverse=True)
         results = []
         for sf in session_files[:limit]:
-            try:
-                with open(sf, encoding="utf-8") as f:
-                    data = json.load(f)
-                messages = data.get("messages", [])
-                # get last user/assistant exchange
-                last_exchange = {}
-                for i in range(len(messages) - 1, -1, -1):
-                    if messages[i].get("role") == "assistant":
-                        last_exchange["assistant"] = messages[i].get("content", "")[:300]
-                    elif messages[i].get("role") == "user" and "assistant" in last_exchange:
-                        last_exchange["user"] = messages[i].get("content", "")[:300]
-                        break
-                results.append({
-                    "session_id": data.get("session_id", os.path.basename(sf)),
-                    "created_at": data.get("created_at"),
-                    "message_count": len(messages),
-                    "model": data.get("model", "unknown"),
-                    "last_exchange": last_exchange,
-                })
-            except (OSError, json.JSONDecodeError):
-                continue
+            parsed = parse_session_file(sf)
+            if parsed is not None:
+                results.append(parsed)
     return results
 
 
@@ -1849,6 +1833,10 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
       framing       — {depth, vocabulary} from user profile (empty if tracking off)
       error_patterns — top 3 recurring errors with prevention hints
       index_health  — {symbols, files, status}
+      recent_timeline — last 5 entries (past 7 days) merged across sessions,
+                        episodes, decisions, and errors — {ts, kind, summary, ref}
+                        each; see data/memory/timeline.py::merge() for the full
+                        query surface (since/include_archived/limit)
 
     Claude: call this ONCE at session start instead of the 4 individual calls.
     Use individual tools only when you need the full detail each provides.
@@ -1947,6 +1935,31 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         except Exception:  # pylint: disable=broad-except
             pass
 
+        # ── recent timeline digest (COGNIREPO-204) ──────────────────────────────
+        # 5-entry digest folded into bootstrap's existing output rather than a new
+        # MCP tool — 0 manifest tokens vs. ~140 for a standalone get_timeline
+        # (measured on the PR), replacing what would otherwise be a 3-call stitch
+        # (get_session_history + episodic_search + get_error_patterns).
+        recent_timeline: list = []
+        try:
+            from data.memory.timeline import merge as _timeline_merge  # pylint: disable=import-outside-toplevel
+            recent_timeline = _timeline_merge(since="7d", limit=5)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+        # ── decision-coverage nudge (COGNIREPO-205) ─────────────────────────────
+        # Agents that never call record_decision leave the timeline's decision
+        # count at 0 even as episodes pile up — nudge once that gap is clear,
+        # rather than relying on CLAUDE.md instructions alone.
+        decision_nudge = ""
+        try:
+            from data.memory.timeline import merge as _nudge_merge, rollup as _nudge_rollup  # pylint: disable=import-outside-toplevel
+            _counts = _nudge_rollup(_nudge_merge(since="30d", limit=200))["counts"]
+            if _counts.get("decision", 0) == 0 and _counts.get("episode", 0) >= 5:
+                decision_nudge = "no decisions recorded yet — use record_decision for architectural choices"
+        except Exception:  # pylint: disable=broad-except
+            pass
+
     # ── child services (orchestrator repos only) ──────────────────────────────
     child_services: list[dict] = []
     try:
@@ -1981,9 +1994,12 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         "framing": framing,
         "error_patterns": error_patterns,
         "index_health": {"symbols": symbol_count, "files": file_count, "status": index_status},
+        "recent_timeline": recent_timeline,
     }
     if child_services:
         result["child_services"] = child_services
+    if decision_nudge:
+        result["decision_nudge"] = decision_nudge
     return result
 
 

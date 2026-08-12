@@ -172,13 +172,17 @@ cognirepo lookup-symbol Foo --include-org # also search sibling repos in the org
 cognirepo who-calls parse_config          # callers, from the call graph
 cognirepo subgraph interface/cli/main.py  # graph neighbourhood (--depth N)
 cognirepo graph-stats                     # node/edge counts + index freshness
+cognirepo graph repair                    # dry-run: list dangling file nodes
+cognirepo graph repair --apply            # prune them (orphan CONCEPTs untouched)
 cognirepo episodic-search "watcher crash" # keyword search over the event log
 ```
 
 `graph-stats` reports both clocks — `last_indexed` (any save, including the
 watcher's incremental path) and `full_indexed_at` (the last complete sweep) —
 plus `watcher_alive`, so "the index is fresh" and "something is keeping it
-fresh" are separate answers.
+fresh" are separate answers. It also gains an `integrity` block (orphans,
+dangling_files, swept_at) — `doctor` flags nonzero counts; `graph repair`
+prunes danglers (nodes whose file no longer exists on disk).
 
 ---
 

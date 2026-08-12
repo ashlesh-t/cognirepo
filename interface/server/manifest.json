@@ -1,6 +1,6 @@
 {
   "name": "cognirepo",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "transport": "stdio",
   "tools": [
     {
@@ -147,6 +147,10 @@
           "limit": {
             "default": 10,
             "type": "integer"
+          },
+          "include_archived": {
+            "default": false,
+            "type": "boolean"
           },
           "repo_path": {
             "default": null,

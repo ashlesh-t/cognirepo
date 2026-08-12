@@ -219,6 +219,267 @@ class TestJavaIndexing:
         assert any(r["file"] == "Repo.java" for r in results)
 
 
+# ── Go (tree-sitter-go) ────────────────────────────────────────────────────────
+
+def _callers_of(graph, name: str) -> list[str]:
+    """Mirror of interface/server/mcp_server.py::who_calls's graph-only lookup —
+    successors of the symbol/stub-resolved node connected via a CALLS edge."""
+    from data.graph.knowledge_graph import EdgeType
+    node = f"symbol::{name}"
+    if not graph.G.has_node(node):
+        candidates = [
+            n for n in graph.G.nodes()
+            if n.endswith(f"::{name}") and not n.startswith("symbol::")
+        ]
+        if not candidates:
+            return []
+        node = candidates[0]
+    return [
+        succ for succ in graph.G.successors(node)
+        if graph.G[node][succ].get("rel") == EdgeType.CALLS
+    ]
+
+
+class TestGoIndexing:
+    """COGNIREPO-203 AC1 — Go selector_expression (receiver-qualified method) calls
+    must resolve through who_calls, not just plain function calls."""
+
+    _GO_FIXTURE = """\
+        package main
+
+        type Server struct{}
+
+        func (s *Server) Start() {
+            s.listen()
+            logStart()
+        }
+
+        func (s *Server) listen() {
+            accept()
+        }
+
+        func (s *Server) Stop() {
+            s.cleanup()
+        }
+
+        func (s *Server) cleanup() {}
+
+        func accept() {
+            handle()
+        }
+
+        func handle() {
+            process()
+        }
+
+        func process() {
+            validate()
+            save()
+        }
+
+        func validate() {}
+        func save() {}
+        func logStart() {}
+
+        func main() {
+            s := &Server{}
+            s.Start()
+            s.Stop()
+            setup()
+        }
+
+        func setup() {}
+    """
+
+    # Hand-verified callee -> caller pairs (11 call sites, per AC1's "≥10 incl. method calls").
+    _EXPECTED_CALLERS = {
+        "listen": "Start", "logStart": "Start", "cleanup": "Stop", "accept": "listen",
+        "handle": "accept", "process": "handle", "validate": "process", "save": "process",
+        "Start": "main", "Stop": "main", "setup": "main",
+    }
+
+    def test_go_functions_and_methods_extracted(self, fresh_indexer, tmp_path, monkeypatch):
+        pytest.importorskip("tree_sitter_go")
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path, "main.go", self._GO_FIXTURE)
+        record = fresh_indexer.index_file("main.go", str(tmp_path / "main.go"))
+        names = [s["name"] for s in record["symbols"]]
+        assert "Server" in names
+        assert "Start" in names and "listen" in names and "Stop" in names
+
+    def test_go_selector_expression_call_captured(self, fresh_indexer, tmp_path, monkeypatch):
+        """Regression guard for the field-vs-property tree-sitter bug: Go's
+        selector_expression names its method field "field", not "property" (the JS
+        name) — before the fix, `s.listen()` inside Start() was silently dropped."""
+        pytest.importorskip("tree_sitter_go")
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path, "main.go", self._GO_FIXTURE)
+        record = fresh_indexer.index_file("main.go", str(tmp_path / "main.go"))
+        start_sym = next(s for s in record["symbols"] if s["name"] == "Start")
+        assert "listen" in start_sym["calls"]
+
+    def test_who_calls_resolves_at_least_90_percent_of_hand_verified_callers(
+        self, fresh_indexer, tmp_path, monkeypatch
+    ):
+        pytest.importorskip("tree_sitter_go")
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path, "main.go", self._GO_FIXTURE)
+        fresh_indexer.index_repo(str(tmp_path))
+
+        resolved = 0
+        for callee, expected_caller in self._EXPECTED_CALLERS.items():
+            callers = _callers_of(fresh_indexer.graph, callee)
+            if any(c.endswith(f"::{expected_caller}") for c in callers):
+                resolved += 1
+        ratio = resolved / len(self._EXPECTED_CALLERS)
+        assert ratio >= 0.90, f"only {resolved}/{len(self._EXPECTED_CALLERS)} callers resolved"
+
+    def test_go_imports_edge_to_local_package(self, fresh_indexer, tmp_path, monkeypatch):
+        pytest.importorskip("tree_sitter_go")
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "go.mod").write_text("module example.com/demo\n\ngo 1.21\n", encoding="utf-8")
+        util_dir = tmp_path / "util"
+        util_dir.mkdir()
+        _write(util_dir, "util.go", """\
+            package util
+
+            func Helper() {}
+        """)
+        _write(tmp_path, "main.go", """\
+            package main
+
+            import "example.com/demo/util"
+
+            func main() {
+                util.Helper()
+            }
+        """)
+        from data.graph.knowledge_graph import EdgeType
+        fresh_indexer.index_repo(str(tmp_path))
+        assert fresh_indexer.graph.G.has_edge("main.go", "util/util.go")
+        edge = fresh_indexer.graph.G["main.go"]["util/util.go"]
+        assert edge.get("rel") == EdgeType.IMPORTS
+
+    def test_go_external_import_not_resolved_locally(self, fresh_indexer, tmp_path, monkeypatch):
+        """stdlib/third-party imports (no go.mod match) must not fabricate edges."""
+        pytest.importorskip("tree_sitter_go")
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "go.mod").write_text("module example.com/demo\n\ngo 1.21\n", encoding="utf-8")
+        _write(tmp_path, "main.go", """\
+            package main
+
+            import "fmt"
+
+            func main() {
+                fmt.Println("hi")
+            }
+        """)
+        fresh_indexer.index_repo(str(tmp_path))
+        file_node = fresh_indexer.graph.G.nodes.get("main.go", {})
+        assert file_node  # file node itself still exists
+        assert fresh_indexer.graph.G.out_degree("main.go") == 0
+
+
+# ── Dynamic dispatch annotation (COGNIREPO-203 AC2) ────────────────────────────
+
+class TestDynamicDispatchAnnotation:
+    def test_celery_task_decorator_tagged_dynamic(self, fresh_indexer, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "tasks.py", """\
+            from celery import shared_task
+
+            @shared_task
+            def send_email(to):
+                pass
+
+            @app.task
+            def process_order(order_id):
+                pass
+
+            def plain_function():
+                pass
+        """)
+        record = fresh_indexer.index_file("tasks.py", str(src))
+        by_name = {s["name"]: s for s in record["symbols"]}
+        assert by_name["send_email"]["dispatch"] == "dynamic"
+        assert by_name["process_order"]["dispatch"] == "dynamic"
+        assert by_name["plain_function"].get("dispatch") is None
+
+    def test_register_call_tagged_dynamic(self, fresh_indexer, tmp_path, monkeypatch):
+        """Generic plugin-registry pattern (Ansible-module-style self-registration)."""
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "plugins.py", """\
+            def setup_plugin():
+                registry.register(MyPlugin)
+        """)
+        record = fresh_indexer.index_file("plugins.py", str(src))
+        sym = next(s for s in record["symbols"] if s["name"] == "setup_plugin")
+        assert sym["dispatch"] == "dynamic"
+
+    def test_init_subclass_tagged_dynamic(self, fresh_indexer, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "plugin_base.py", """\
+            class PluginBase:
+                def __init_subclass__(cls, **kwargs):
+                    super().__init_subclass__(**kwargs)
+        """)
+        record = fresh_indexer.index_file("plugin_base.py", str(src))
+        sym = next(s for s in record["symbols"] if s["name"] == "__init_subclass__")
+        assert sym["dispatch"] == "dynamic"
+
+    def test_dispatch_dynamic_relates_to_concept_node(self, fresh_indexer, tmp_path, monkeypatch):
+        """dispatch:"dynamic" symbols get a RELATES_TO edge to the dynamic_dispatch
+        CONCEPT node, so subgraph()/graph queries surface them without a fabricated
+        CALLS edge (risk note: annotation-only)."""
+        monkeypatch.chdir(tmp_path)
+        from data.graph.knowledge_graph import EdgeType
+        src = _write(tmp_path, "tasks.py", """\
+            @shared_task
+            def send_email(to):
+                pass
+        """)
+        fresh_indexer.index_file("tasks.py", str(src))
+        sym_node = "tasks.py::send_email"
+        assert fresh_indexer.graph.G.nodes[sym_node].get("dispatch") == "dynamic"
+        assert fresh_indexer.graph.G.has_edge(sym_node, "concept::dynamic_dispatch")
+        assert fresh_indexer.graph.G[sym_node]["concept::dynamic_dispatch"]["rel"] == EdgeType.RELATES_TO
+
+    def test_entry_points_pyproject_tagged_dynamic(self, fresh_indexer, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "pyproject.toml").write_text(
+            """\
+            [project.entry-points."myapp.plugins"]
+            widget = "myapp.plugins.widget:load_widget"
+            """,
+            encoding="utf-8",
+        )
+        _write(tmp_path, "widget.py", """\
+            def load_widget():
+                pass
+        """)
+        fresh_indexer.index_repo(str(tmp_path))
+        assert fresh_indexer.graph.G.nodes["widget.py::load_widget"].get("dispatch") == "dynamic"
+
+    def test_no_fabricated_calls_edge_from_dispatch_tag(self, fresh_indexer, tmp_path, monkeypatch):
+        """Risk note: dispatch heuristics are annotation-only — no synthetic CALLS
+        edge should appear between a dispatch:"dynamic" symbol and anything else
+        purely because of the tag."""
+        monkeypatch.chdir(tmp_path)
+        from data.graph.knowledge_graph import EdgeType
+        src = _write(tmp_path, "tasks.py", """\
+            @shared_task
+            def send_email(to):
+                pass
+        """)
+        fresh_indexer.index_file("tasks.py", str(src))
+        sym_node = "tasks.py::send_email"
+        rels = {
+            fresh_indexer.graph.G[sym_node][succ].get("rel")
+            for succ in fresh_indexer.graph.G.successors(sym_node)
+        }
+        assert EdgeType.CALLS not in rels
+
+
 # ── language_registry ─────────────────────────────────────────────────────────
 
 class TestLanguageRegistry:

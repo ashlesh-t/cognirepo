@@ -88,6 +88,72 @@ class TestKnowledgeGraph:
         assert kg.G.number_of_nodes() == 1
 
 
+class TestKnowledgeGraphIntegrity:
+    """COGNIREPO-201: integrity sweep — orphans + dangling file nodes."""
+
+    def test_clean_graph_reports_zero(self, tmp_path):
+        from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
+        kg = KnowledgeGraph()
+        (tmp_path / "auth.py").write_text("def verify_token(): pass\n", encoding="utf-8")
+        kg.add_node("auth.py", NodeType.FILE)
+        kg.add_node("auth.py::verify_token", NodeType.FUNCTION, file="auth.py")
+        kg.add_edge("auth.py::verify_token", "auth.py", EdgeType.DEFINED_IN)
+        report = kg.integrity_report(str(tmp_path))
+        assert report["orphans"] == []
+        assert report["dangling_files"] == []
+        assert report["swept_at"]
+
+    def test_orphan_restricted_to_file_function_class(self, tmp_path):
+        """MEMORY/SESSION/ERROR/QUERY/CONCEPT nodes are legitimately edge-free early on."""
+        from data.graph.knowledge_graph import KnowledgeGraph, NodeType
+        kg = KnowledgeGraph()
+        kg.add_node("orphan_fn", NodeType.FUNCTION, file="ghost.py")
+        kg.add_node("m1", NodeType.MEMORY)
+        kg.add_node("s1", NodeType.SESSION)
+        kg.add_node("e1", NodeType.ERROR)
+        kg.add_node("concept1", NodeType.CONCEPT)
+        report = kg.integrity_report(str(tmp_path))
+        assert report["orphans"] == ["orphan_fn"]
+
+    def test_dangling_file_detected_and_deduped(self, tmp_path):
+        from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
+        kg = KnowledgeGraph()
+        kg.add_node("gone.py", NodeType.FILE)
+        kg.add_node("gone.py::fn_a", NodeType.FUNCTION, file="gone.py")
+        kg.add_node("gone.py::fn_b", NodeType.FUNCTION, file="gone.py")
+        kg.add_edge("gone.py::fn_a", "gone.py", EdgeType.DEFINED_IN)
+        kg.add_edge("gone.py::fn_b", "gone.py", EdgeType.DEFINED_IN)
+        report = kg.integrity_report(str(tmp_path))
+        # gone.py never existed under tmp_path — one dangling entry, not three.
+        assert report["dangling_files"] == ["gone.py"]
+
+    def test_repair_apply_removes_dangling_only(self, tmp_path):
+        """AC3: --apply removes danglers only; orphan CONCEPTs untouched."""
+        from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
+        kg = KnowledgeGraph()
+        (tmp_path / "live.py").write_text("def keep(): pass\n", encoding="utf-8")
+        kg.add_node("live.py", NodeType.FILE)
+        kg.add_node("live.py::keep", NodeType.FUNCTION, file="live.py")
+        kg.add_edge("live.py::keep", "live.py", EdgeType.DEFINED_IN)
+
+        kg.add_node("gone.py", NodeType.FILE)
+        kg.add_node("gone.py::stale", NodeType.FUNCTION, file="gone.py")
+        kg.add_edge("gone.py::stale", "gone.py", EdgeType.DEFINED_IN)
+
+        kg.add_node("orphan_concept", NodeType.CONCEPT, unresolved=True)
+
+        report = kg.integrity_report(str(tmp_path))
+        for f in report["dangling_files"]:
+            kg.remove_file_nodes(f)
+
+        assert kg.node_exists("live.py") and kg.node_exists("live.py::keep")
+        assert not kg.node_exists("gone.py") and not kg.node_exists("gone.py::stale")
+        assert kg.node_exists("orphan_concept")  # untouched — no 'file' attr
+
+        report2 = kg.integrity_report(str(tmp_path))
+        assert report2["dangling_files"] == []
+
+
 class TestKnowledgeGraphCorruptionQuarantine:
     """COGNIREPO-103 AC2: a corrupt graph.pkl is quarantined, not silently overwritten."""
 

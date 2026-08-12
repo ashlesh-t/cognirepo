@@ -34,3 +34,21 @@ existing output — 0 manifest tokens. Ground Rule 3 justification either way: r
 - Session-parser extraction must not change get_session_history behavior (golden test).
 - Timestamps are ISO strings across stores — normalize defensively (some old entries may lack
   timezone suffixes).
+
+## Implementation notes (2026-08-08)
+- AC4 (requires D02 merged): already satisfied — D02 (episodic ID collision after rotation)
+  was fixed and signed off under EPIC-100's defect slot (PR #34), predating this story.
+  `_next_event_id()` already produces store-lifetime-unique refs across live+archive. No new
+  defect needed; verified by reading `data/memory/episodic_memory.py` before coding.
+- Surface decision (per the "measure both" instruction): folded a 5-entry digest into
+  `get_agent_bootstrap()`'s existing output rather than a new `get_timeline` MCP tool.
+  Measured: standalone tool draft (signature + docstring, same detail level as this ticket's
+  Description) = **180 manifest-equivalent tokens** (tiktoken cl100k_base) — in line with the
+  ticket's own ~140 estimate. Folded approach = **0 manifest tokens** (`gen_tool_specs.py
+  --check` confirms manifest.json unchanged — no new `@mcp.tool()` registered). Chose folded:
+  Ground Rule 3 justification is stronger (replaces the 3-call stitch at zero manifest cost
+  instead of ~180), and `get_agent_bootstrap` is the tool already documented as the
+  session-start entry point.
+- Full `merge()`/`rollup()` API still lives in `data/memory/timeline.py` for direct use
+  (custom `since`/`include_archived`/`limit`) and as the data foundation for EPIC-300's
+  `generate_insights` tool, per the story's background.

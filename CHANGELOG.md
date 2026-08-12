@@ -6,6 +6,66 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ---
 
+## [Unreleased]
+
+## [2.1.0] — 2026-08-12
+
+### Added
+- **COGNIREPO-201 — knowledge graph integrity sweep + metrics.**
+  `KnowledgeGraph.integrity_report(repo_root)` reports `orphans` (FILE/FUNCTION/CLASS
+  nodes with degree 0 — restricted to these types since MEMORY/SESSION/ERROR/QUERY/
+  CONCEPT nodes are legitimately edge-free early in their lifecycle) and
+  `dangling_files` (file paths no longer on disk, deduplicated across every symbol
+  in that file), O(nodes). `graph_stats` gains an output-only `integrity` block (no
+  input-schema change); `doctor` flags nonzero orphans/dangling as a warning with a
+  repair hint. New `cognirepo graph repair [--apply]` prunes dangling file nodes via
+  `remove_file_nodes()` — dry-run by default, orphan CONCEPT stubs untouched (they
+  carry no `file` attr).
+- **COGNIREPO-202 — SIMILAR_TO edges via FAISS k-NN at index time.** Post-index k-NN
+  pass over already-embedded FUNCTION/CLASS symbol vectors adds a `SIMILAR_TO` edge
+  (cosine ≥ 0.80, max 5/node, cross-file only) between near-duplicate symbols, in both
+  directions. Gated via `config.json` → `indexing.similarity_edges` (default on below
+  `_SIMILARITY_SYMBOL_CEILING` = 20,000 candidate symbols, off above it — k-NN cost
+  scales with candidate count; explicit config value always wins). Weighted (discounted
+  0.7x when it's the *only* link) into `intelligence/retrieval/hybrid.py::_graph_score`,
+  so a real structural edge (CALLS/DEFINED_IN/etc.) still outranks a similarity-only
+  link. Index-time overhead measured at ~4.5% on a 10,311-symbol repo.
+- **COGNIREPO-203 — Go call-graph completion + dynamic-dispatch annotation.** Fixed
+  `intelligence/indexer/ast_indexer.py::_ts_collect_calls` dropping every
+  receiver-qualified Go call (`recv.Method()`): Go's tree-sitter `selector_expression`
+  names its method field `field`, not `property` (the JS/TS convention the extractor
+  assumed) — added a field-name fallback. Also raised the call-recursion depth cap
+  12 → 60 (too shallow for realistic nested code, dropping innermost calls regardless
+  of language). Added Go `IMPORTS` edges resolved via `go.mod`. New static,
+  annotation-only dynamic-dispatch detection (`_detect_dynamic_dispatch`,
+  `_apply_entry_points_dispatch`) tags FUNCTION/CLASS symbols reachable via
+  `@task`/`@shared_task` decorators, `register(...)`-style plugin calls,
+  `__init_subclass__` hooks, and packaging entry-points with `dispatch:"dynamic"` plus
+  a `RELATES_TO` edge to a `dynamic_dispatch` CONCEPT node — never fabricates a CALLS
+  edge.
+- **COGNIREPO-204 — unified timeline (`data/memory/timeline.py`) + bootstrap digest.**
+  `merge(since, include_archived, limit)` merges episodic events (live + optionally
+  archived), session-exchange files, and behaviour-tracked error patterns into one
+  chronologically ordered view (`{ts, kind, summary, ref}`); `rollup(entries)` is a
+  deterministic template rollup (counts + top decisions/errors, no model-generated
+  text) — the data foundation for EPIC-300's insights report. Replaces the
+  `get_session_history` + `episodic_search` + `get_error_patterns` 3-call stitch an
+  agent previously had to do by hand. Folded a 5-entry digest into
+  `get_agent_bootstrap()`'s existing output (`recent_timeline`) rather than a new
+  `get_timeline` MCP tool — 0 manifest tokens vs. ~180 measured for a standalone tool.
+- **COGNIREPO-205 — episodic archive search, embedding cache, index_event logging.**
+  `search_episodes(query, limit, include_archived=False)` optionally extends the
+  search corpus with `episodic_archive.json` (rotated events); archived hits are
+  tagged `{"archived": true}`. Persistent embedding cache for the semantic-search
+  fallback (`.cognirepo/memory/episodic_vecs.npy` + id sidecar, keyed by event ID —
+  entry text is immutable once logged, so a cache hit by ID is always valid) means a
+  second identical fallback search re-encodes 0 corpus entries, only the query.
+  `index-repo` and `org rewire` completions now log an `index_event` episode
+  automatically, so infra activity shows up in the timeline without an agent calling
+  `log_episode`. `get_agent_bootstrap` gained a `decision_nudge` field (present only
+  when ≥5 episodes exist with 0 decisions in the last 30 days). Fixed the
+  `datetime.utcnow()` deprecation in `log_event`.
+
 ## [2.0.1] — 2026-07-31
 
 ### Fixed

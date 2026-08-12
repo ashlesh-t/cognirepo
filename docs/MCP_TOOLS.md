@@ -202,15 +202,20 @@ freshness.
 **Output:**
 ```json
 {
-  "nodes": 1243,
-  "edges": 4871,
-  "node_types": { "FUNCTION": 892, "CLASS": 201, "FILE": 150 },
-  "healthy": true,
+  "node_count": 1243,
+  "edge_count": 4871,
+  "top_concepts": ["symbol::foo", "symbol::bar"],
   "last_indexed": "2026-07-22T18:20:10+00:00",
   "full_indexed_at": "2026-07-22T16:31:07+00:00",
   "index_age_minutes": 0,
   "index_stale": false,
-  "watcher_alive": true
+  "stale_reindexing_triggered": false,
+  "watcher_alive": true,
+  "integrity": {
+    "orphans": [],
+    "dangling_files": [],
+    "swept_at": "2026-07-31T12:00:00+00:00"
+  }
 }
 ```
 
@@ -228,17 +233,32 @@ Before COGNIREPO-D14, `last_indexed` only advanced on a full `index_repo()`
 run, so a repo kept current by the watcher reported a hours-old
 `last_indexed` next to `index_age_minutes: 0` — two clocks in one payload.
 
+**Integrity fields (COGNIREPO-201):**
+
+| Field | Meaning |
+|---|---|
+| `orphans` | FILE/FUNCTION/CLASS node IDs with degree 0 (no edges in or out). Excludes MEMORY/SESSION/ERROR/QUERY/CONCEPT nodes, which are legitimately edge-free early in their lifecycle. |
+| `dangling_files` | File paths (FILE node IDs, or FUNCTION/CLASS nodes' `file` attr) that no longer exist on disk — left behind when a file is deleted while no watcher/server was running to catch it. |
+| `swept_at` | ISO-8601 UTC timestamp of this integrity sweep — recomputed on every `graph_stats` call, O(nodes). |
+
+`doctor` flags nonzero `orphans`/`dangling_files` as a warning with a repair hint.
+`cognirepo graph repair [--apply]` prunes dangling file nodes (dry-run by default) —
+see [USAGE.md](USAGE.md).
+
 ---
 
 ## episodic_search
 
-**Signature:** `episodic_search(query: str, limit: int = 10) → list[dict]`
+**Signature:** `episodic_search(query: str, limit: int = 10, include_archived: bool = False) → list[dict]`
 
-BM25-ranked keyword search in the event history.
+BM25-ranked keyword search in the event history; vector-similarity fallback when BM25
+returns zero results. `include_archived` (COGNIREPO-205) also searches events rotated
+out to `episodic_archive.json` by `episodic_max_events` rotation — default False (live
+store only). Archived hits are tagged `{"archived": true}`.
 
 **Input:**
 ```json
-{ "query": "redis cache bug", "limit": 5 }
+{ "query": "redis cache bug", "limit": 5, "include_archived": true }
 ```
 
 **Output:**
@@ -594,9 +614,36 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
   "last_focus": {"files": ["retrieval/hybrid.py"], "query": "how does scoring work", "agent": "claude"},
   "framing": {"depth": "detailed", "vocabulary": ["retrieval", "faiss", "hybrid"], "hints": "prefers detailed responses; often asks 'how' questions; domain vocabulary: retrieval, faiss, hybrid"},
   "error_patterns": [{"type": "OOM", "count": 2, "prevention_hint": "Check RSS before loading large index"}],
-  "index_health": {"symbols": 1240, "files": 92, "status": "ok"}
+  "index_health": {"symbols": 1240, "files": 92, "status": "ok"},
+  "recent_timeline": [
+    {"ts": "2026-08-08T09:00:00+00:00", "kind": "decision", "summary": "use FAISS for vector search", "ref": "e_42"},
+    {"ts": "2026-08-07T14:00:00+00:00", "kind": "error", "summary": "ImportError (x3)", "ref": "ImportError"},
+    {"ts": "2026-08-06T11:00:00+00:00", "kind": "session", "summary": "how does scoring work", "ref": "sess_abc123"}
+  ],
+  "decision_nudge": "no decisions recorded yet — use record_decision for architectural choices"
 }
 ```
+
+**recent_timeline** (COGNIREPO-204): last 5 entries from the past 7 days, merged
+chronologically across sessions, episodes, decisions, and errors — replaces the
+`get_session_history` + `episodic_search` + `get_error_patterns` 3-call stitch for a
+quick "what happened recently" view. Folded into this tool's existing output rather
+than a new MCP tool (0 manifest tokens vs. ~180 measured for a standalone
+`get_timeline` tool). For the full query surface (`since`/`include_archived`/`limit`,
+plus the deterministic `rollup()` — counts + top decisions/errors, no model-generated
+text), call `data.memory.timeline.merge()`/`rollup()` directly, or from a future
+`generate_insights` tool (EPIC-300).
+
+**decision_nudge** (COGNIREPO-205): present only when the last 30 days have ≥5
+episodes but 0 decisions — a hint to use `record_decision` for architectural
+choices, since CLAUDE.md's instruction alone doesn't guarantee agents call it.
+Omitted from the payload entirely when there's nothing to nudge about.
+
+**Episodic events also include `index_event`-typed entries** (COGNIREPO-205):
+`cognirepo index-repo` and `cognirepo org rewire` completions are logged
+automatically (metadata `{"type": "index_event", ...}` with symbol/file or
+edge/repo counts), so infrastructure activity shows up in `recent_timeline` /
+`data.memory.timeline.merge()` even when no agent called `log_episode`.
 
 ---
 

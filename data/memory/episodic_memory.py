@@ -17,7 +17,7 @@ import os
 import re
 import threading
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 
 from core.config.paths import get_path
 
@@ -68,8 +68,8 @@ def _rotate_if_needed(data: list) -> list:
 
 
 # ── BM25 module-level cache ───────────────────────────────────────────────────
-# (event_id, tokenized_text) pairs built on first search; cleared on _save()
-_BM25_CORPUS: list[tuple[str, list[str]]] | None = None
+# event IDs (in _BM25_INDEX's row order) for the live-store corpus; cleared on _save()
+_BM25_CORPUS: list[str] | None = None
 _BM25_INDEX: object | None = None  # BM25Okapi instance, or None when corpus empty
 _BM25_LOCK = threading.Lock()
 
@@ -163,27 +163,51 @@ def _save(data: list) -> None:
         _BM25_INDEX = None
 
 
+def _build_bm25(data: list):
+    """Build a fresh (uncached) BM25 index over `data`. Returns (index, event_ids)."""
+    from rank_bm25 import BM25Plus  # pylint: disable=import-outside-toplevel
+    corpus: list[list[str]] = []
+    event_ids: list[str] = []
+    for entry in data:
+        text = entry.get("event", "") + " " + json.dumps(entry.get("metadata", {}))
+        corpus.append(_tokenize(text))
+        event_ids.append(entry["id"])
+
+    if not corpus:
+        return None, []
+    return BM25Plus(corpus), event_ids
+
+
 def _get_bm25(data: list):
-    """Return (BM25Okapi instance, event_id_list), building from cache if available."""
+    """Return (BM25Okapi instance, event_id_list), building from cache if available.
+
+    Caches only the live-store index — callers that merge in archived entries
+    (search_episodes(include_archived=True)) must use _build_bm25() directly so
+    an archive-inflated corpus never gets stored as the live cache.
+    """
     global _BM25_CORPUS, _BM25_INDEX  # pylint: disable=global-statement
     with _BM25_LOCK:
         if _BM25_INDEX is not None and _BM25_CORPUS is not None:
-            return _BM25_INDEX, [eid for eid, _ in _BM25_CORPUS]
+            return _BM25_INDEX, _BM25_CORPUS
 
-        from rank_bm25 import BM25Plus  # pylint: disable=import-outside-toplevel
-        corpus: list[list[str]] = []
-        event_ids: list[str] = []
-        for entry in data:
-            text = entry.get("event", "") + " " + json.dumps(entry.get("metadata", {}))
-            corpus.append(_tokenize(text))
-            event_ids.append(entry["id"])
-
-        if not corpus:
+        index, event_ids = _build_bm25(data)
+        if index is None:
             return None, []
 
-        _BM25_INDEX = BM25Plus(corpus)
-        _BM25_CORPUS = list(zip(event_ids, corpus))
+        _BM25_INDEX = index
+        _BM25_CORPUS = event_ids
         return _BM25_INDEX, event_ids
+
+
+def _load_archive() -> list:
+    apath = _archive_path()
+    if not os.path.exists(apath):
+        return []
+    try:
+        with open(apath, "rb") as f:
+            return json.loads(f.read())
+    except (OSError, json.JSONDecodeError):
+        return []
 
 
 def log_event(event: str, metadata: dict = None) -> None:
@@ -197,7 +221,7 @@ def log_event(event: str, metadata: dict = None) -> None:
         "id": _next_event_id(data),
         "event": event,
         "metadata": metadata or {},
-        "time": datetime.utcnow().isoformat() + "Z",
+        "time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
     if data:
         entry["prev"] = data[-1]["id"]
@@ -213,8 +237,47 @@ def get_history(limit: int = 100) -> list:
     return data[-limit:]
 
 
+def _vec_cache_paths() -> tuple[str, str]:
+    return get_path("memory/episodic_vecs.npy"), get_path("memory/episodic_vecs_ids.json")
+
+
+def _load_vec_cache():
+    """Return (ids, vecs) for the persisted embedding cache, or ([], None) if
+    missing/corrupt/mismatched — regenerable, so any failure just means a cold cache."""
+    vec_path, ids_path = _vec_cache_paths()
+    if not (os.path.exists(vec_path) and os.path.exists(ids_path)):
+        return [], None
+    try:
+        import numpy as np  # pylint: disable=import-outside-toplevel
+        with open(ids_path, encoding="utf-8") as f:
+            ids = json.load(f)
+        vecs = np.load(vec_path)
+        if len(ids) != vecs.shape[0]:
+            return [], None
+        return ids, vecs
+    except Exception:  # pylint: disable=broad-except
+        return [], None
+
+
+def _save_vec_cache(ids: list, vecs) -> None:
+    try:
+        import numpy as np  # pylint: disable=import-outside-toplevel
+        vec_path, ids_path = _vec_cache_paths()
+        np.save(vec_path, vecs.astype("float32"))
+        with open(ids_path, "w", encoding="utf-8") as f:
+            json.dump(ids, f)
+    except OSError:
+        pass  # cache write failure is non-fatal — regenerable from source entries
+
+
 def _semantic_episode_search(data: list, query: str, limit: int) -> list:
-    """Vector fallback for search_episodes when BM25 returns no results."""
+    """Vector fallback for search_episodes when BM25 returns no results.
+
+    Entry embeddings are cached by event ID at .cognirepo/memory/episodic_vecs.npy
+    (+ id-list sidecar) — entry text is immutable once logged (only the `stale`
+    flag mutates), so a cache hit by ID is always valid; no invalidation needed.
+    Only the query itself, and any entry not yet in the cache, get encoded.
+    """
     try:
         import numpy as np  # pylint: disable=import-outside-toplevel
         from data.memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
@@ -222,13 +285,26 @@ def _semantic_episode_search(data: list, query: str, limit: int) -> list:
         q_norm = np.linalg.norm(q_vec)
         if q_norm == 0:
             return []
+
+        cached_ids, cached_vecs = _load_vec_cache()
+        cache_index = {eid: i for i, eid in enumerate(cached_ids)}
+        new_ids: list[str] = []
+        new_vecs: list = []
+
         scored = []
         for entry in data:
             text = entry.get("event", "") or str(entry.get("metadata", ""))
             if not text:
                 continue
+            eid = entry.get("id")
             try:
-                e_vec = encode_with_timeout(text[:512])
+                if eid is not None and eid in cache_index:
+                    e_vec = cached_vecs[cache_index[eid]]
+                else:
+                    e_vec = encode_with_timeout(text[:512])
+                    if eid is not None:
+                        new_ids.append(eid)
+                        new_vecs.append(e_vec)
                 e_norm = np.linalg.norm(e_vec)
                 if e_norm == 0:
                     continue
@@ -237,18 +313,37 @@ def _semantic_episode_search(data: list, query: str, limit: int) -> list:
                     scored.append((sim, entry))
             except Exception:  # pylint: disable=broad-except
                 continue
+
+        if new_ids:
+            if cached_vecs is not None and len(cached_ids):
+                merged_ids = cached_ids + new_ids
+                merged_vecs = np.vstack([cached_vecs, np.array(new_vecs, dtype="float32")])
+            else:
+                merged_ids = new_ids
+                merged_vecs = np.array(new_vecs, dtype="float32")
+            _save_vec_cache(merged_ids, merged_vecs)
+
         scored.sort(key=lambda x: x[0], reverse=True)
         return [e for _, e in scored[:limit]]
     except Exception:  # pylint: disable=broad-except
         return []
 
 
-def search_episodes(query: str, limit: int = 10) -> list:
+def search_episodes(query: str, limit: int = 10, include_archived: bool = False) -> list:
     """
     Search episodic events. BM25 (keyword) first; vector-similarity fallback
     when BM25 returns zero results (handles synonym and paraphrase mismatches).
+
+    include_archived: also search events rotated out to episodic_archive.json
+    (default False — live store only). Archived hits are tagged {"archived": True}.
     """
     data = _load()
+    archived_ids: set = set()
+    if include_archived:
+        archive = _load_archive()
+        archived_ids = {e["id"] for e in archive if "id" in e}
+        data = archive + data
+
     if not data:
         return []
 
@@ -256,7 +351,7 @@ def search_episodes(query: str, limit: int = 10) -> list:
     if not tokens:
         return []
 
-    bm25, event_ids = _get_bm25(data)
+    bm25, event_ids = _build_bm25(data) if include_archived else _get_bm25(data)
     if bm25 is None:
         return []
 
@@ -273,6 +368,11 @@ def search_episodes(query: str, limit: int = 10) -> list:
     if not results:
         results = _semantic_episode_search(data, query, limit)
 
+    if archived_ids:
+        for r in results:
+            if r.get("id") in archived_ids:
+                r["archived"] = True
+
     return results
 
 
@@ -285,8 +385,8 @@ class EpisodicMemory:  # pylint: disable=missing-function-docstring
     def get_history(self, limit: int = 100) -> list:
         return get_history(limit)
 
-    def search_episodes(self, query: str, limit: int = 10) -> list:
-        return search_episodes(query, limit)
+    def search_episodes(self, query: str, limit: int = 10, include_archived: bool = False) -> list:
+        return search_episodes(query, limit, include_archived)
 
     def mark_stale(self, file_path: str) -> int:
         return mark_stale(file_path)

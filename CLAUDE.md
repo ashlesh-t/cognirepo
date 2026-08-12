@@ -47,6 +47,7 @@ milestones, `record_error()` for any errors hit. This updates the profile for ne
 | Store user's style/format preference | `record_user_preference("key", "value")` |
 | User's interaction style | `get_user_profile()` — then apply framing_hints |
 | Avoid repeating past errors | `get_error_patterns()` — check before proposing a fix |
+| "What happened recently" (sessions + episodes + decisions + errors, one merged view) | `get_agent_bootstrap()`'s `recent_timeline` field (last 5, past 7 days) — replaces the `get_session_history` + `episodic_search` + `get_error_patterns` 3-call stitch. For a custom window/rollup, call `data.memory.timeline.merge()`/`rollup()` directly |
 | Record an error that occurred | `record_error("ErrorType", "message")` |
 
 ## Org search routing (pick the right tool)

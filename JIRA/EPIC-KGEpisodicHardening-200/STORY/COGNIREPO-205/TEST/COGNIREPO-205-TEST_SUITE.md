@@ -8,8 +8,16 @@
 - Prompt: "Search episodic memory for 'zanzibar', including archived history."
 - Expected results: hit found with flag on; miss (or empty) with flag off; response marks it
   archived.
-- Obtained results:
-- Verdict:
+- Obtained results: `episodic_max_events` set to 20 in `dummy/.cognirepo/config.json`
+  (backed up/restored around the test); logged 30 events, event #1 = "zanzibar migration
+  notes and rollout plan" (rotated into `episodic_archive.json` — live count 18, archive
+  count 12). `search_episodes("zanzibar", include_archived=False)` → 0 results.
+  `search_episodes("zanzibar", include_archived=True)` → hit found (`e_0`, the seeded
+  entry), tagged `{"archived": true}`.
+- Verdict: PASS
+- Re-verified: 2026-08-12, same `dummy` fixture (backup/restore repeated), identical
+  seed shape and identical result — 18 live / 12 archived, 0 hits without the flag,
+  hit found and tagged archived with it.
 
 ## TC-205-2: System events land in the timeline
 - Test repo: /home/ashlesh/my_works/cognirepo_test_repo/easy
@@ -17,5 +25,13 @@
 - What to do: run `cognirepo index-repo .`; then query the timeline/episodic log.
 - Prompt: "What system/indexing events happened in this repo today?"
 - Expected results: exactly one index_event episode with file/symbol counts metadata.
-- Obtained results:
-- Verdict:
+- Obtained results: ran `cognirepo index-repo . --no-watch` against
+  `cognirepo_test_repo/easy/fastapi` (`.cognirepo/` backed up/restored around the test).
+  Episodic log after the run contained exactly 1 entry with `metadata.type ==
+  "index_event"`: `{"type": "index_event", "symbols": 7701, "files": 1180,
+  "elapsed_s": 4.29}` — matches the run's own printed summary ("7,701 symbols across
+  1,180 files").
+- Verdict: PASS
+- Re-verified: 2026-08-12, same `easy/fastapi` fixture (backup/restore repeated),
+  identical result — exactly 1 `index_event` episode, `{"symbols": 7701, "files": 1180,
+  "elapsed_s": 3.63}`.

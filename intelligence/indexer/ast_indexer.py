@@ -143,6 +143,15 @@ _LITE_GRAPH_WEIGHT_MIN: float = 0.75
 _TIER1_WEIGHT_MIN: float = 0.5    # Tier 1: all BFS-reachable files (direct + indirect imports)
 _LARGE_REPO_TIER_THRESHOLD: int = _AUTO_SKIP_GRAPH_THRESHOLD  # same boundary as lite-graph
 
+# SIMILAR_TO edges: FAISS k-NN over already-embedded symbol vectors, post-index.
+# Cosine derived from the same "1 - l2_distance/2" convention hybrid.py/local_vector_db.py
+# use for unit-normalized fastembed vectors.
+_SIMILARITY_COSINE_THRESHOLD: float = 0.80
+_SIMILARITY_MAX_PER_NODE: int = 5
+# Above this many candidate symbols, similarity edges are off by default (O(n log n) k-NN
+# search cost) unless config.json explicitly opts in — see _similarity_gate_enabled().
+_SIMILARITY_SYMBOL_CEILING: int = 20_000
+
 
 
 def _effective_skip_dirs() -> frozenset[str]:
@@ -423,8 +432,15 @@ def _ts_docstring(node, source: bytes, ext: str) -> str:
 
 
 def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
-    """Recursively collect function-call names from a tree-sitter subtree."""
-    if depth > 12:
+    """Recursively collect function-call names from a tree-sitter subtree.
+
+    COGNIREPO-203: the previous cap of 12 was too shallow for real code — a Go method
+    body wrapping an if-statement around `append(x, Struct{Field: recv.Method()})`
+    alone reaches depth 12-13 before the innermost call node is even visited, silently
+    dropping it. 60 comfortably covers realistic nesting while still bounding
+    pathological/generated input.
+    """
+    if depth > 60:
         return
     if node.type == "call":          # Python
         fn = node.child_by_field_name("function")
@@ -440,7 +456,10 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
             or node.child_by_field_name("name")
         )
         if fn:
-            prop = fn.child_by_field_name("property")
+            prop = (
+                fn.child_by_field_name("property")  # JS/TS: obj.prop()
+                or fn.child_by_field_name("field")  # Go selector_expression: obj.Field()
+            )
             name_node = prop if prop else fn
             if name_node.type in ("identifier", "property_identifier", "field_identifier"):
                 method_name = _ts_text(name_node, source)
@@ -476,6 +495,24 @@ def _ts_decorators(parent_node, source: bytes) -> list[str]:
                     decs.append(_ts_text(sub, source).split("(")[0].strip())
                     break
     return decs
+
+
+# COGNIREPO-203: plugin-registry / dynamic-dispatch heuristics (README.md:626).
+# Annotation-only — these never fabricate CALLS edges, only flag a symbol as reachable
+# via a mechanism the static call graph can't see (framework registration, subclass
+# hooks), so who_calls callers can be cross-checked against dispatch:"dynamic" instead
+# of trusting an empty/short static caller list at face value.
+_DYNAMIC_DISPATCH_DECORATOR_TAILS = frozenset({"task", "shared_task"})  # celery-style
+
+
+def _detect_dynamic_dispatch(name: str, decorators: list[str], calls: list[str]) -> bool:
+    if name == "__init_subclass__":
+        return True
+    for dec in decorators:
+        tail = dec.rsplit(".", 1)[-1]
+        if tail in _DYNAMIC_DISPATCH_DECORATOR_TAILS:
+            return True
+    return "register" in calls
 
 
 def _ts_bases(node, source: bytes) -> list[str]:
@@ -519,30 +556,37 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
         if name_node:
             calls: list[str] = []
             _ts_collect_calls(node, source, calls)
+            fn_name = _ts_text(name_node, source)
+            fn_decs = _parent_decs or []
+            fn_calls = list(dict.fromkeys(calls))
             out.append({
-                "name": _ts_text(name_node, source),
+                "name": fn_name,
                 "type": "FUNCTION",
                 "start_line": node.start_point[0] + 1,
                 "end_line": node.end_point[0] + 1,
                 "docstring": _ts_docstring(node, source, ext),
-                "decorators": _parent_decs or [],
+                "decorators": fn_decs,
                 "tags": [],
-                "calls": list(dict.fromkeys(calls)),
+                "calls": fn_calls,
                 "bases": [],
                 "faiss_id": -1,
+                "dispatch": "dynamic" if _detect_dynamic_dispatch(fn_name, fn_decs, fn_calls) else None,
             })
     elif node.type in _TS_CLASS_TYPES:
         name_node = node.child_by_field_name("name")
         if name_node:
+            cls_name = _ts_text(name_node, source)
+            cls_decs = _parent_decs or []
             out.append({
-                "name": _ts_text(name_node, source),
+                "name": cls_name,
                 "type": "CLASS",
                 "start_line": node.start_point[0] + 1,
                 "end_line": node.end_point[0] + 1,
                 "docstring": _ts_docstring(node, source, ext),
-                "decorators": _parent_decs or [],
+                "decorators": cls_decs,
                 "tags": [],
                 "calls": [],
+                "dispatch": "dynamic" if _detect_dynamic_dispatch(cls_name, cls_decs, []) else None,
                 "bases": _ts_bases(node, source),
                 "faiss_id": -1,
             })
@@ -645,6 +689,83 @@ def _resolve_import_to_file(
             if tracked_files is None or candidate in tracked_files:
                 return candidate
     return None
+
+
+# ── import extraction (Go) ─────────────────────────────────────────────────────
+
+_GO_MODULE_CACHE: "dict[str, str | None]" = {}
+
+
+def _go_module_name(repo_root: str) -> "str | None":
+    """Read the `module <path>` line from go.mod at the repo root (cached per root)."""
+    if repo_root in _GO_MODULE_CACHE:
+        return _GO_MODULE_CACHE[repo_root]
+    mod_name = None
+    try:
+        with open(os.path.join(repo_root, "go.mod"), encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("module "):
+                    mod_name = line[len("module "):].strip()
+                    break
+    except OSError:
+        pass
+    _GO_MODULE_CACHE[repo_root] = mod_name
+    return mod_name
+
+
+def _extract_imports_go(tree, source: bytes) -> list[dict]:
+    """Extract import_spec paths from a Go tree-sitter tree.
+
+    Returns list of dicts: {module, alias, line}. module is the raw import path
+    (e.g. "github.com/foo/bar/pkg/util"); alias is the local package name/alias.
+    """
+    imports: list[dict] = []
+
+    def _walk(node) -> None:
+        if node.type == "import_spec":
+            path_node = node.child_by_field_name("path")
+            if path_node:
+                raw = _ts_text(path_node, source).strip('"')
+                name_node = node.child_by_field_name("name")
+                alias = _ts_text(name_node, source) if name_node else raw.rsplit("/", 1)[-1]
+                imports.append({"module": raw, "alias": alias, "line": node.start_point[0] + 1})
+            return  # import_spec has no nested import_specs
+        for child in node.children:
+            _walk(child)
+
+    _walk(tree.root_node)
+    return imports
+
+
+def _resolve_go_import_to_file(module: str, repo_root: str) -> "str | None":
+    """Resolve a Go import path to a representative local .go file.
+
+    Go packages are directories, not files — CogniRepo's IMPORTS edges are FILE→FILE,
+    so this picks the first non-test .go file (sorted) in the resolved package
+    directory as a stand-in for "this file imports that package". Only resolves
+    imports that belong to this repo's own module (per go.mod); stdlib/third-party
+    imports return None (nothing to link to locally), matching the Python resolver's
+    best-effort, local-only behaviour.
+    """
+    mod_name = _go_module_name(repo_root)
+    if not mod_name or not (module == mod_name or module.startswith(mod_name + "/")):
+        return None
+    rel_dir = module[len(mod_name):].lstrip("/")
+    abs_dir = os.path.join(repo_root, rel_dir) if rel_dir else repo_root
+    if not os.path.isdir(abs_dir):
+        return None
+    try:
+        go_files = sorted(
+            f for f in os.listdir(abs_dir)
+            if f.endswith(".go") and not f.endswith("_test.go")
+        )
+    except OSError:
+        return None
+    if not go_files:
+        return None
+    candidate = os.path.join(rel_dir, go_files[0]) if rel_dir else go_files[0]
+    return candidate.replace(os.sep, "/")
 
 
 # ── stdlib-ast extraction (Python fallback) ───────────────────────────────────
@@ -771,6 +892,7 @@ def _extract_symbols_py(tree: ast.AST, _file_path: str) -> list[dict]:
                 "tags": tags,
                 "dynamic_registers": dyn_targets,
                 "faiss_id": -1,
+                "dispatch": "dynamic" if _detect_dynamic_dispatch(node.name, decorators, calls) else None,
             })
 
         elif isinstance(node, ast.ClassDef):
@@ -795,6 +917,7 @@ def _extract_symbols_py(tree: ast.AST, _file_path: str) -> list[dict]:
                 "dynamic_registers": [],
                 "bases": bases,
                 "faiss_id": -1,
+                "dispatch": "dynamic" if _detect_dynamic_dispatch(node.name, _extract_decorators(node), []) else None,
             })
 
     # ── 2. module / class-level assignments → CONSTANT / VARIABLE ────────────
@@ -1514,8 +1637,18 @@ class ASTIndexer:
 
         self._build_reverse_index()
         # Resolve symbol:: stub nodes to real file-qualified nodes where unambiguous.
+        _similarity_edges = 0
+        _entry_point_dispatch = 0
         if not getattr(self, "_skip_graph", False):
             self._resolve_call_stubs()
+            try:
+                _similarity_edges = self._build_similarity_edges()
+            except Exception as _exc:  # pylint: disable=broad-except
+                log.warning("SIMILAR_TO edge pass failed (graph still valid): %s", _exc)
+            try:
+                _entry_point_dispatch = self._apply_entry_points_dispatch()
+            except Exception as _exc:  # pylint: disable=broad-except
+                log.warning("entry_points dispatch pass failed (graph still valid): %s", _exc)
         total_symbols = sum(
             len(f.get("symbols", [])) for f in self.index_data["files"].values()
         )
@@ -1556,6 +1689,10 @@ class ASTIndexer:
                 f"Tier 2: {len(_tier2_pending)} low-weight files queued for background indexing. "
                 "Run: cognirepo index-repo . --tier 2"
             )
+        if _similarity_edges:
+            print(f"  SIMILAR_TO edges: {_similarity_edges}")
+        if _entry_point_dispatch:
+            print(f"  dispatch:dynamic (entry_points): {_entry_point_dispatch}")
 
         # NOTE: doc ingestion deliberately does NOT run here. Every entry point
         # (cli/main.py index-repo Stage 3, cli/init_project.py, init-all) invokes
@@ -1570,6 +1707,8 @@ class ASTIndexer:
             "languages": dict(lang_file_counts),
             "skipped_extensions": sorted(skipped_exts),
             "tier2_queued": len(_tier2_pending),
+            "similarity_edges": _similarity_edges,
+            "entry_point_dispatch": _entry_point_dispatch,
         }
 
     def index_file(self, rel_path: str, abs_path: str | None = None, weight: float = 1.0) -> dict:
@@ -1679,8 +1818,15 @@ class ASTIndexer:
                 file_node = make_node_id("FILE", rel_path)
                 sym_node = node_id_from_symbol_record(sym, rel_path)
                 self.graph.add_node(file_node, NodeType.FILE, weight=weight)
-                self.graph.add_node(sym_node, sym["type"], file=rel_path, line=sym["start_line"], weight=weight)
+                node_attrs = {"file": rel_path, "line": sym["start_line"], "weight": weight}
+                if sym.get("dispatch") == "dynamic":
+                    node_attrs["dispatch"] = "dynamic"
+                self.graph.add_node(sym_node, sym["type"], **node_attrs)
                 self.graph.add_edge(sym_node, file_node, EdgeType.DEFINED_IN)
+                if sym.get("dispatch") == "dynamic":
+                    dispatch_node = make_node_id("CONCEPT", "dynamic_dispatch")
+                    self.graph.add_node(dispatch_node, NodeType.CONCEPT)
+                    self.graph.add_edge(sym_node, dispatch_node, EdgeType.RELATES_TO)
 
         # ── file-level summary embedding ──────────────────────────────────────
         if embed_enabled and raw_symbols:
@@ -1759,6 +1905,24 @@ class ASTIndexer:
                         self.graph.add_node(target_node, NodeType.FILE)
                         self.graph.add_edge(file_node, target_node, EdgeType.IMPORTS)
             except (SyntaxError, OSError):
+                pass  # best-effort
+        elif ext == ".go":
+            try:
+                _go_lang = _get_language(ext)
+                if _go_lang is not None:
+                    from tree_sitter import Parser as _Parser  # pylint: disable=import-outside-toplevel
+                    _go_source = Path(abs_path).read_bytes()
+                    _go_tree = _Parser(_go_lang).parse(_go_source)
+                    _imports = _extract_imports_go(_go_tree, _go_source)
+                    _repo_root = self.index_data.get("repo_root") or os.getcwd()
+                    file_node = make_node_id("FILE", rel_path)
+                    for imp in _imports:
+                        _target = _resolve_go_import_to_file(imp["module"], _repo_root)
+                        if _target and _target != rel_path:
+                            target_node = make_node_id("FILE", _target)
+                            self.graph.add_node(target_node, NodeType.FILE)
+                            self.graph.add_edge(file_node, target_node, EdgeType.IMPORTS)
+            except OSError:
                 pass  # best-effort
 
         file_record = {
@@ -1865,6 +2029,147 @@ class ASTIndexer:
 
             else:
                 self.graph.G.nodes[stub]["unresolved"] = True
+
+    def _similarity_gate_enabled(self, candidate_count: int) -> bool:
+        """config.json → {"indexing": {"similarity_edges": true|false}}.
+
+        Default: enabled below _SIMILARITY_SYMBOL_CEILING candidate symbols, off above
+        it (k-NN search cost scales with candidate count). Explicit config value wins
+        either way.
+        """
+        try:
+            with open(get_path("config.json"), encoding="utf-8") as f:
+                cfg = json.load(f)
+            gate = cfg.get("indexing", {}).get("similarity_edges")
+            if gate is not None:
+                return bool(gate)
+        except Exception:  # pylint: disable=broad-except
+            pass
+        return candidate_count < _SIMILARITY_SYMBOL_CEILING
+
+    def _build_similarity_edges(self) -> int:
+        """Post-index pass (COGNIREPO-202): FAISS k-NN over already-embedded FUNCTION/CLASS
+        symbol vectors, adding a SIMILAR_TO edge (both directions, like the CALLS/CALLED_BY
+        pair) between near-duplicate symbols in *different* files — same-file pairs are
+        already related via DEFINED_IN. Skipped entirely when the graph is empty (graph
+        indexing disabled) or the config gate is off.
+
+        Must run AFTER _batch_embed_pending() (faiss_index/faiss_meta populated) and
+        _resolve_call_stubs() (real symbol nodes exist, not just stubs).
+        """
+        if self.graph.G.number_of_nodes() == 0 or self.faiss_index is None or self.faiss_index.ntotal == 0:
+            return 0
+
+        candidates = [
+            (fid, m) for fid, m in enumerate(self.faiss_meta)
+            if m.get("source") == "symbol" and m.get("type") in (NodeType.FUNCTION, NodeType.CLASS)
+        ]
+        if len(candidates) < 2 or not self._similarity_gate_enabled(len(candidates)):
+            return 0
+
+        k = min(_SIMILARITY_MAX_PER_NODE + 1, self.faiss_index.ntotal)  # +1: self is always nearest
+        out_degree: dict[str, int] = {}
+        edges_added = 0
+
+        for fid, meta in candidates:
+            node_id = make_node_id(meta["type"], meta["name"], meta["file"])
+            if not self.graph.G.has_node(node_id) or out_degree.get(node_id, 0) >= _SIMILARITY_MAX_PER_NODE:
+                continue
+            try:
+                vec = self.faiss_index.reconstruct(int(fid)).reshape(1, -1)
+            except RuntimeError:
+                continue  # id was removed/never added — skip rather than crash the index pass
+            distances, ids = self.faiss_index.search(vec, k)
+
+            for dist, cand_fid in zip(distances[0], ids[0]):
+                if out_degree.get(node_id, 0) >= _SIMILARITY_MAX_PER_NODE:
+                    break
+                if cand_fid < 0 or cand_fid == fid or cand_fid >= len(self.faiss_meta):
+                    continue
+                cand_meta = self.faiss_meta[cand_fid]
+                if cand_meta.get("source") != "symbol" or cand_meta.get("type") not in (NodeType.FUNCTION, NodeType.CLASS):
+                    continue
+                if cand_meta["file"] == meta["file"]:
+                    continue  # DEFINED_IN already relates same-file symbols
+                cosine = max(0.0, 1.0 - float(dist) / 2.0)
+                if cosine < _SIMILARITY_COSINE_THRESHOLD:
+                    continue
+                cand_node_id = make_node_id(cand_meta["type"], cand_meta["name"], cand_meta["file"])
+                if cand_node_id == node_id or not self.graph.G.has_node(cand_node_id):
+                    continue
+                if out_degree.get(cand_node_id, 0) >= _SIMILARITY_MAX_PER_NODE:
+                    continue
+                if not self.graph.G.has_edge(node_id, cand_node_id):
+                    self.graph.add_edge(node_id, cand_node_id, EdgeType.SIMILAR_TO, weight=cosine)
+                    out_degree[node_id] = out_degree.get(node_id, 0) + 1
+                    edges_added += 1
+                if not self.graph.G.has_edge(cand_node_id, node_id):
+                    self.graph.add_edge(cand_node_id, node_id, EdgeType.SIMILAR_TO, weight=cosine)
+                    out_degree[cand_node_id] = out_degree.get(cand_node_id, 0) + 1
+                    edges_added += 1
+
+        return edges_added
+
+    def _apply_entry_points_dispatch(self) -> int:
+        """Post-index pass (COGNIREPO-203): tag symbols referenced by a packaging
+        entry-point (PEP 621 `[project.entry-points.*]` in pyproject.toml, or
+        `[options.entry_points]` in setup.cfg) as dispatch:"dynamic" — these are
+        invoked by name lookup at runtime (plugin loaders, console_scripts) rather
+        than a visible call site, so the static call graph can never find their
+        caller. Best-effort name match only (target's last dotted component vs.
+        symbol name) — does not verify the module path, matching the same
+        local-only, best-effort spirit as `_resolve_import_to_file`.
+        """
+        repo_root = self.index_data.get("repo_root") or os.getcwd()
+        targets: "set[str]" = set()
+
+        pyproject = os.path.join(repo_root, "pyproject.toml")
+        if os.path.isfile(pyproject):
+            try:
+                import tomllib  # pylint: disable=import-outside-toplevel
+                with open(pyproject, "rb") as f:
+                    data = tomllib.load(f)
+                for group in data.get("project", {}).get("entry-points", {}).values():
+                    for value in group.values():
+                        if ":" in value:
+                            targets.add(value.split(":")[-1].split(".")[-1].strip())
+            except Exception:  # pylint: disable=broad-except
+                pass
+
+        setup_cfg = os.path.join(repo_root, "setup.cfg")
+        if os.path.isfile(setup_cfg):
+            try:
+                import configparser  # pylint: disable=import-outside-toplevel
+                cp = configparser.ConfigParser()
+                cp.read(setup_cfg)
+                for section in cp.sections():
+                    if section == "options.entry_points" or section.startswith("options.entry_points."):
+                        for _key, value in cp.items(section):
+                            for line in value.splitlines():
+                                line = line.strip()
+                                if "=" in line:
+                                    _, target = line.split("=", 1)
+                                    target = target.strip()
+                                    if ":" in target:
+                                        targets.add(target.split(":")[-1].split(".")[-1].strip())
+            except Exception:  # pylint: disable=broad-except
+                pass
+
+        if not targets:
+            return 0
+
+        tagged = 0
+        dispatch_node = make_node_id("CONCEPT", "dynamic_dispatch")
+        for node_id, data in list(self.graph.G.nodes(data=True)):
+            if data.get("type") not in (NodeType.FUNCTION, NodeType.CLASS):
+                continue
+            name = node_id.rsplit("::", 1)[-1]
+            if name in targets and data.get("dispatch") != "dynamic":
+                self.graph.G.nodes[node_id]["dispatch"] = "dynamic"
+                self.graph.add_node(dispatch_node, NodeType.CONCEPT)
+                self.graph.add_edge(node_id, dispatch_node, EdgeType.RELATES_TO)
+                tagged += 1
+        return tagged
 
     # ── kept for ASTIndexer API compatibility ─────────────────────────────────
 
