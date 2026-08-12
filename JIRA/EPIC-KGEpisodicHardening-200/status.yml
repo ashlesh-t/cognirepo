@@ -1,5 +1,5 @@
 epic_id: COGNIREPO-200
-status: in-progress
+status: signed-off  # 2026-08-12, v2.1.0 — all 5 stories signed off, epic e2e suite PASS
 stories:
   - id: COGNIREPO-201
     status: signed-off
@@ -40,4 +40,8 @@ stories:
                         # and TC-205-2 (index-repo logs exactly 1 index_event) — both PASS.
                         # Re-verified 2026-08-12 identically. PR merged 2026-08-11.
 defects: []
-epic_test_suite_status: not-run
+epic_test_suite_status: pass  # E2E-200-1 (medium/celery, 27/27 unique refs, rollup names
+                               # decision+recurring error) and E2E-200-2 (advanced/moby:
+                               # who_calls 4/4+, graph_stats 0 orphans; SIMILAR_TO verified
+                               # on medium/celery instead — moby's 116,532 symbols exceed
+                               # the auto-similarity ceiling by design) — both PASS

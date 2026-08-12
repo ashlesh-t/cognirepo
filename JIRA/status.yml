@@ -1,6 +1,6 @@
 # Root JIRA registry — read this FIRST in any new session (see /skill.md).
 project: cognirepo
-active_epic: COGNIREPO-200
+active_epic: COGNIREPO-300
 epics:
   - id: COGNIREPO-100
     name: ReliabilityGate
@@ -8,20 +8,20 @@ epics:
     blocked_by: []
   - id: COGNIREPO-200
     name: KGEpisodicHardening
-    status: in-progress  # COGNIREPO-201..205 all signed-off; epic_test_suite_status: not-run
+    status: signed-off  # 2026-08-12, v2.1.0 — all 5 stories + epic e2e suite PASS
     blocked_by: []
   - id: COGNIREPO-300
     name: RepoInsights
     status: not-started
-    blocked_by: [COGNIREPO-200]
+    blocked_by: []
   - id: COGNIREPO-400
     name: MoodPersonaLayer
     status: not-started
-    blocked_by: [COGNIREPO-200]
+    blocked_by: []
   - id: COGNIREPO-500
     name: SubagentEnrichment
     status: not-started
-    blocked_by: [COGNIREPO-200]
+    blocked_by: []
   - id: COGNIREPO-600
     name: OSSGrowth
     status: not-started
