@@ -1,11 +1,11 @@
 epic_id: COGNIREPO-300
-status: not-started
+status: in-progress
 stories:
   - id: COGNIREPO-301
-    status: not-started
+    status: in-review
     branch: story/COGNIREPO-301
     pr: null
-    test_status: not-run
+    test_status: pass
   - id: COGNIREPO-302
     status: not-started
     branch: story/COGNIREPO-302

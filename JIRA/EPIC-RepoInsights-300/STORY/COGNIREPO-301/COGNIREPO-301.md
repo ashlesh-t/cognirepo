@@ -27,3 +27,25 @@ content. Pure read-only aggregation; no MCP surface in this story.
 ## Risks / notes
 - since-window parsing reuses _parse_since — don't reimplement.
 - Depends on EPIC-200 signed off (get_timeline/merge available).
+
+## Implementation notes (added during coding)
+- Discovery's cited line numbers drifted at HEAD: `get_hot_symbols()` is now
+  `data/graph/behaviour_tracker.py:577` (was 485-494); `KnowledgeGraph.stats()`/
+  `integrity_report()` are now `data/graph/knowledge_graph.py:481`/`:492` (was 358). Logic
+  unchanged, only line numbers moved.
+- `intelligence/orchestrator/insights_collector.py` imports `interface/tools/git_utils.py`
+  directly, per this ticket's explicit design — `git_utils.py` has no `@mcp.tool()` wrapper
+  and is a plain subprocess helper, not an MCP entry point, so this doesn't violate CLAUDE.md's
+  "tools are the single entry point" rule; it is the first `intelligence/` → `interface/`
+  import in the repo, worth flagging if a future story wants to relocate `git_utils.py` to a
+  lower layer.
+- `collect()` scopes `.cognirepo` storage lookups (KnowledgeGraph/BehaviourTracker/get_path)
+  to `repo_root` via a local `_scoped_to_repo()` context manager (ContextVar `_CTX_DIR` +
+  `get_cognirepo_dir_for_repo`), mirroring `mcp_server.py::_repo_ctx` — reimplemented locally
+  rather than imported, to avoid depending on `interface/server`.
+- Added `git_utils.list_branches(repo_root)` — local branches via `git for-each-ref`, default
+  branch resolved from `origin/HEAD` → local `main`/`master` → current `HEAD`, ahead/behind via
+  `git rev-list --left-right --count`.
+- `commits_by_week` reuses `git_log_patch(target=".", since=since, ...)` rather than adding a
+  new git_utils helper — `--follow` is a no-op (not an error) against a directory target,
+  confirmed against this repo's own history.

@@ -131,3 +131,96 @@ def _parse_git_log_output(raw: str) -> list[dict]:
             },
         })
     return commits
+
+
+def _default_branch(repo_root: str) -> str:
+    """Best-effort resolution of the repo's default branch.
+
+    Tries origin/HEAD first (what a clone actually points at), then falls back
+    to a local "main"/"master" branch, then the current branch — never raises,
+    since insights collection must not fail just because a repo has no remote.
+    """
+    try:
+        proc = subprocess.run(
+            ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            cwd=repo_root, capture_output=True, text=True, timeout=10,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            return proc.stdout.strip().removeprefix("origin/")
+    except FileNotFoundError:
+        pass
+
+    for candidate in ("main", "master"):
+        proc = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", candidate],
+            cwd=repo_root, capture_output=True, text=True, timeout=10,
+        )
+        if proc.returncode == 0:
+            return candidate
+
+    proc = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repo_root, capture_output=True, text=True, timeout=10,
+    )
+    return proc.stdout.strip() if proc.returncode == 0 else "HEAD"
+
+
+def list_branches(repo_root: str | None = None) -> list[dict]:
+    """List local branches with their last commit and ahead/behind counts
+    against the resolved default branch.
+
+    Returns
+    -------
+    [{name, last_commit: {hash, date, message}, ahead, behind, is_default}]
+    ahead/behind are 0 for the default branch itself, and omitted (None) for
+    a branch whose merge-base with the default branch can't be computed
+    (e.g. unrelated histories) rather than raising.
+    """
+    if repo_root is None:
+        import os  # pylint: disable=import-outside-toplevel
+        repo_root = _find_git_root(os.getcwd())
+
+    try:
+        proc = subprocess.run(
+            ["git", "for-each-ref", "refs/heads/",
+             "--format=%(refname:short)%09%(objectname)%09%(committerdate:iso-strict)%09%(subject)"],
+            cwd=repo_root, capture_output=True, text=True, timeout=15,
+        )
+    except FileNotFoundError as exc:
+        raise GitNotFoundError("git executable not found") from exc
+
+    if proc.returncode != 0:
+        return []
+
+    default_branch = _default_branch(repo_root)
+    branches: list[dict] = []
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) != 4:
+            continue
+        name, commit_hash, date, message = parts
+
+        ahead = behind = 0
+        if name != default_branch:
+            ab = subprocess.run(
+                ["git", "rev-list", "--left-right", "--count",
+                 f"{default_branch}...{name}"],
+                cwd=repo_root, capture_output=True, text=True, timeout=15,
+            )
+            if ab.returncode == 0 and ab.stdout.strip():
+                left, _, right = ab.stdout.strip().partition("\t")
+                behind, ahead = int(left), int(right)
+            else:
+                ahead = behind = None  # merge-base unavailable
+
+        branches.append({
+            "name": name,
+            "last_commit": {"hash": commit_hash, "date": date, "message": message},
+            "ahead": ahead,
+            "behind": behind,
+            "is_default": name == default_branch,
+        })
+    return branches

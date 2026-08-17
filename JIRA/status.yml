@@ -12,7 +12,7 @@ epics:
     blocked_by: []
   - id: COGNIREPO-300
     name: RepoInsights
-    status: not-started
+    status: in-progress
     blocked_by: []
   - id: COGNIREPO-400
     name: MoodPersonaLayer
