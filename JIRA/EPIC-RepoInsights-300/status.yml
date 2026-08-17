@@ -4,7 +4,7 @@ stories:
   - id: COGNIREPO-301
     status: in-review
     branch: story/COGNIREPO-301
-    pr: null
+    pr: https://github.com/ashlesh-t/cognirepo/pull/53
     test_status: pass
   - id: COGNIREPO-302
     status: not-started
