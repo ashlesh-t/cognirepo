@@ -167,6 +167,7 @@ Use `get_storage_adapter()` factory (`core/vector_db/__init__.py`) — do not in
 |--------|---------------|
 | `intelligence/orchestrator/classifier.py` | Query complexity classifier — QUICK / STANDARD / COMPLEX / EXPERT |
 | `intelligence/orchestrator/router.py` | Routes QUICK to Gemini Flash, COMPLEX to Claude Opus, etc. |
+| `intelligence/orchestrator/insights_collector.py` | `collect(repo_root, since)` — COGNIREPO-301: aggregates the merged timeline, git history (`interface/tools/git_utils.py`), behaviour hot symbols, and graph stats/integrity into one read-only InsightsModel dict for the EPIC-300 repo-insights report. No MCP tool wrapper yet. |
 
 Do not hardcode model names outside `intelligence/orchestrator/classifier.py`.
 
