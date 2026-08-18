@@ -2,7 +2,7 @@ epic_id: COGNIREPO-300
 status: in-progress
 stories:
   - id: COGNIREPO-301
-    status: in-review
+    status: signed-off
     branch: story/COGNIREPO-301
     pr: https://github.com/ashlesh-t/cognirepo/pull/53
     test_status: pass
