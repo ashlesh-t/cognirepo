@@ -7,10 +7,10 @@ stories:
     pr: https://github.com/ashlesh-t/cognirepo/pull/53
     test_status: pass
   - id: COGNIREPO-302
-    status: not-started
+    status: in-review
     branch: story/COGNIREPO-302
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/54
+    test_status: pass
   - id: COGNIREPO-303
     status: not-started
     branch: story/COGNIREPO-303
