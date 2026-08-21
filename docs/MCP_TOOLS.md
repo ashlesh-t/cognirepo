@@ -529,6 +529,19 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
 
 ---
 
+## generate_insights
+
+**Signature:** `generate_insights(since: str = "90d", repo_path: str = None) → dict`
+
+**When:** the user asks "what happened in this repo" / wants a repo-history report. Generates/updates a self-contained HTML report (timeline, decisions, challenges, branch/commit activity, index health) at `.claude/insights/<repoName>-insights.html`, sourced only from real stored records — no fabricated content. Re-running updates the same file in place.
+
+**Output is a pointer, not the content** — surface the `path` in your reply, do not quote or reconstruct the report body from this tool's output:
+```json
+{"status": "ok", "path": ".claude/insights/cognirepo-insights.html", "sections": ["overview", "timeline", "decisions", "challenges", "activity", "index-health"], "updated_at": "2026-08-21T12:00:00Z"}
+```
+
+---
+
 ## get_user_profile
 
 **Signature:** `get_user_profile(repo_path: str = None) → dict`

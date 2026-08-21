@@ -6,7 +6,7 @@ Goal: cut token overhead and context loss between AI sessions, not add complexit
 
 ## Key rules
 
-- All storage lives under `.cognirepo/` in the project root, with one exception: cross-agent handoff snapshots are written to `~/.cognirepo/<repo>/last_context.json` so multiple agent processes (Claude, Gemini, Cursor) can share context across sessions. The org-level dependency graph lives at `~/.cognirepo/org_graph.pkl` for the same reason.
+- All storage lives under `.cognirepo/` in the project root, with these exceptions: cross-agent handoff snapshots are written to `~/.cognirepo/<repo>/last_context.json` so multiple agent processes (Claude, Gemini, Cursor) can share context across sessions; the org-level dependency graph lives at `~/.cognirepo/org_graph.pkl` for the same reason; and generated human-facing reports (currently `cognirepo insights`) are written to `.claude/insights/<repoName>-insights.html` in the project root — these are presentation artifacts for the human + their agent tooling, not machine state, so keeping them out of `.cognirepo/` avoids polluting index/memory storage, and `.claude/` is already the agent-facing, gitignored surface. The machine-readable twin remains under `.cognirepo/docs/`.
 - Org graph model: main repo = hub/parent. Sub-repos/microservices are registered as children via `cognirepo init --parent-repo <path>`. Edges are IMPORTS/CALLS_API/SHARES_SCHEMA/CHILD_OF/DISCOVERED. AI agents add DISCOVERED edges dynamically via `link_repos()`. Children can be interconnected.
 - Model names only in `intelligence/orchestrator/classifier.py`. No hardcoding elsewhere.
 - `intelligence/retrieval/hybrid.py` owns all retrieval. Never call FAISS or the graph directly from tools.
@@ -49,6 +49,7 @@ milestones, `record_error()` for any errors hit. This updates the profile for ne
 | Avoid repeating past errors | `get_error_patterns()` — check before proposing a fix |
 | "What happened recently" (sessions + episodes + decisions + errors, one merged view) | `get_agent_bootstrap()`'s `recent_timeline` field (last 5, past 7 days) — replaces the `get_session_history` + `episodic_search` + `get_error_patterns` 3-call stitch. For a custom window/rollup, call `data.memory.timeline.merge()`/`rollup()` directly |
 | Record an error that occurred | `record_error("ErrorType", "message")` |
+| Repo history report ("what happened in this repo") | `generate_insights(since="90d")` — returns a path, not content; surface the link |
 
 ## Org search routing (pick the right tool)
 

@@ -224,7 +224,7 @@ from Repo B if both are linked to the same local organization.
 
 ## MCP Server
 
-CogniRepo exposes 34 MCP tools over stdio transport (see [docs/MCP_TOOLS.md](MCP_TOOLS.md) for the full reference):
+CogniRepo exposes 35 MCP tools over stdio transport (see [docs/MCP_TOOLS.md](MCP_TOOLS.md) for the full reference):
 
 | Tool | Parameters | Returns |
 |---|---|---|
