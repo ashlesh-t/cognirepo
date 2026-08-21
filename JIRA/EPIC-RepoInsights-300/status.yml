@@ -14,7 +14,7 @@ stories:
   - id: COGNIREPO-303
     status: in-review
     branch: story/COGNIREPO-303
-    pr: null
+    pr: https://github.com/ashlesh-t/cognirepo/pull/55
     test_status: pass
 defects: []
 epic_test_suite_status: not-run
