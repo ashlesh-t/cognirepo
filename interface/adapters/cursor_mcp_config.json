@@ -20,6 +20,7 @@
     "episodic_search",
     "explain_change",
     "find_symbol_path",
+    "generate_insights",
     "get_agent_bootstrap",
     "get_error_patterns",
     "get_last_context",

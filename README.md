@@ -15,7 +15,7 @@ mcp-name: io.github.ashlesh-t/cognirepo
 
 ---
 
-**`lookup_symbol` returns file:line very quickly — grep takes 2–8 seconds.** On Python repos ≥ 15K LOC, CogniRepo cuts AI coding agent token usage by **50–80%** compared to raw file reads — benchmarked on Flask, FastAPI, Celery, and Ansible (1,800+ files). Works with Claude Code, Cursor, and Gemini CLI. **Fully offline. No API keys required for indexing or any of the 34 MCP tools.**
+**`lookup_symbol` returns file:line very quickly — grep takes 2–8 seconds.** On Python repos ≥ 15K LOC, CogniRepo cuts AI coding agent token usage by **50–80%** compared to raw file reads — benchmarked on Flask, FastAPI, Celery, and Ansible (1,800+ files). Works with Claude Code, Cursor, and Gemini CLI. **Fully offline. No API keys required for indexing or any of the 35 MCP tools.**
 
 ---
 

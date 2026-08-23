@@ -70,6 +70,12 @@ forward requests to these functions. **Never duplicate logic in an adapter.**
 | `interface/tools/explain_change.py` | `explain_change` — explains what changed between code versions |
 | `interface/tools/dependency_graph.py` | `dependency_graph` — imports-from + imported-by via graph edges |
 
+Helper modules under `interface/tools/` with no `@mcp.tool()` wrapper (yet): `git_utils.py`
+(subprocess git helpers, used by `explain_change` and `insights_collector`) and `insights.py`
+(COGNIREPO-302 — `render(model)`/`write(html, repo_root)`/`generate(model, repo_root, now)`,
+renders the EPIC-300 repo-insights HTML report + markdown twin; MCP tool wrapper lands in
+COGNIREPO-303).
+
 ---
 
 ### `intelligence/retrieval/hybrid.py` — Hybrid Retrieval
@@ -167,6 +173,7 @@ Use `get_storage_adapter()` factory (`core/vector_db/__init__.py`) — do not in
 |--------|---------------|
 | `intelligence/orchestrator/classifier.py` | Query complexity classifier — QUICK / STANDARD / COMPLEX / EXPERT |
 | `intelligence/orchestrator/router.py` | Routes QUICK to Gemini Flash, COMPLEX to Claude Opus, etc. |
+| `intelligence/orchestrator/insights_collector.py` | `collect(repo_root, since)` — COGNIREPO-301: aggregates the merged timeline, git history (`interface/tools/git_utils.py`), behaviour hot symbols, and graph stats/integrity into one read-only InsightsModel dict for the EPIC-300 repo-insights report. No MCP tool wrapper yet. |
 
 Do not hardcode model names outside `intelligence/orchestrator/classifier.py`.
 

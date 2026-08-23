@@ -5,7 +5,7 @@
 
 project:
   name: cognirepo
-  version: "2.1.0"
+  version: "2.2.0"
   description: "Local cognitive infrastructure layer for AI agents"
   license: MIT
   python_requires: ">=3.11,<3.15"
@@ -23,4 +23,4 @@ mcp:
   title: "CogniRepo"
   transport: stdio
   runtime_hint: uvx
-  description: "FAISS, call graph, AST, BM25 — 34 MCP tools for AI agents. 50-80% token reduction. Offline."
+  description: "FAISS, call graph, AST, BM25 — 35 MCP tools for AI agents. 50-80% token reduction. Offline."

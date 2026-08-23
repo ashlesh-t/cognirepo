@@ -1844,6 +1844,22 @@ def _cmd_ask_local(query: str, verbose: bool = False, top_k: int = 5) -> None:
     )
 
 
+def _cmd_insights(since: str = "90d") -> None:
+    """Generate/update the repo insights HTML report — thin wrapper over
+    insights_collector.collect() + interface.tools.insights.generate()."""
+    from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+    from intelligence.orchestrator.insights_collector import collect  # pylint: disable=import-outside-toplevel
+    from interface.tools import insights as _insights_tool  # pylint: disable=import-outside-toplevel
+
+    repo_root = os.getcwd()
+    model = collect(repo_root, since=since)
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    result = _insights_tool.generate(model, repo_root, now)
+    print(f"Insights report written: {result['path']}")
+    print(f"  sections: {', '.join(result['sections'])}")
+    print(f"  updated: {result['updated_at']}")
+
+
 def _cmd_prime(as_json: bool = False) -> None:
     """Generate a session brief for agent bootstrap — thin wrapper over prime_session()."""
     from interface.tools.prime_session import prime_session  # pylint: disable=import-outside-toplevel
@@ -3518,6 +3534,10 @@ def _main():
         help="Output raw JSON instead of human-readable brief.",
     )
 
+    # insights — repo-history HTML report (COGNIREPO-300)
+    p_insights = sub.add_parser("insights", help="Generate/update the repo insights HTML report")
+    p_insights.add_argument("--since", default="90d", help="History window, e.g. 90d (default: 90d)")
+
     # status — show live signal weights and cold-start progress (P1-A)
     sub.add_parser("status", help="Show live retrieval signal weights and index health")
 
@@ -4145,6 +4165,10 @@ def _main():
 
     if args.command == "prime":
         _cmd_prime(as_json=getattr(args, "json", False))
+        return
+
+    if args.command == "insights":
+        _cmd_insights(since=getattr(args, "since", "90d"))
         return
 
     if args.command == "status":

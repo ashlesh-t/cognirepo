@@ -1,6 +1,6 @@
 {
   "name": "cognirepo",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "transport": "stdio",
   "tools": [
     {
@@ -215,6 +215,24 @@
           "to_symbol"
         ],
         "type": "object"
+      }
+    },
+    {
+      "name": "generate_insights",
+      "description": "Generate/update the repo insights HTML report \u2014 a human-readable \"what happened in this repo\" summary (timeline, decisions, challenges, branch/ commit activity, index health), sourced only from real stored records.",
+      "parameters": {
+        "properties": {
+          "since": {
+            "default": "90d",
+            "type": "string"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": []
       }
     },
     {
