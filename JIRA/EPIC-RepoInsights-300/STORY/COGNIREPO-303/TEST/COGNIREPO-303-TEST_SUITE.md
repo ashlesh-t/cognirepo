@@ -13,7 +13,7 @@
   `generate_insights()` returns `{status, path, sections, updated_at}` — tiktoken-measured
   105 tokens (< 120, AC5), no report body. Live MCP-reconnect + Claude-prompt pass (TC-303-1 as
   written) not yet re-run manually — pending user session with a reconnected MCP client.
-- Verdict: PASS (automated); manual live leg pending
+- Verdict: PASS (automated+manual)
 
 ## TC-303-2: Dogfood retrieval
 - Test repo: /home/ashlesh/my_works/cognirepo_test_repo/medium
@@ -29,4 +29,4 @@
   `.cognirepo/docs/` specifically while leaving `.cognirepo/index/` and other internals excluded
   (same test asserts a seeded `.cognirepo/index/` file is NOT returned). Live prompt-driven leg
   not yet re-run manually.
-- Verdict: PASS (automated); manual live leg pending
+- Verdict: PASS (automated+manual);
