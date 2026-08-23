@@ -2064,6 +2064,38 @@ def get_session_brief(repo_path: str | None = None) -> dict:
 
 
 @mcp.tool()
+def generate_insights(since: str = "90d", repo_path: str | None = None) -> dict:
+    """
+    Generate/update the repo insights HTML report — a human-readable "what
+    happened in this repo" summary (timeline, decisions, challenges, branch/
+    commit activity, index health), sourced only from real stored records.
+
+    Returns a small pointer, NOT the report content: {status, path, sections,
+    updated_at}. Claude: surface the path/link in your reply — do not quote
+    or reconstruct the report body from this tool's output.
+
+    since: history window, e.g. "90d" (default).
+    repo_path: optional absolute path to the target repository.
+    """
+    from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+    from intelligence.orchestrator.insights_collector import collect  # pylint: disable=import-outside-toplevel
+    from interface.tools import insights as _insights_tool  # pylint: disable=import-outside-toplevel
+
+    target = os.path.abspath(repo_path) if repo_path else os.getcwd()
+    model = collect(target, since=since)
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    result = _insights_tool.generate(model, target, now)
+    with _repo_ctx(repo_path):
+        log_event("insights generated", {"path": result["path"], "sections": result["sections"]})
+    return {
+        "status": "ok",
+        "path": result["path"],
+        "sections": result["sections"],
+        "updated_at": result["updated_at"],
+    }
+
+
+@mcp.tool()
 def get_user_profile(repo_path: str | None = None) -> dict:
     """
     Return the user's interaction style profile for Claude to adapt its responses.
@@ -2260,7 +2292,7 @@ _REGISTERED_TOOLS: set[str] = {
     "cross_repo_traverse", "episodic_search", "org_wide_search", "list_org_context",
     "get_user_profile", "record_error", "get_error_patterns", "link_repos",
     "record_user_preference", "supersede_learning", "get_agent_bootstrap",
-    "find_symbol_path", "get_service_endpoints",
+    "find_symbol_path", "get_service_endpoints", "generate_insights",
 }
 
 

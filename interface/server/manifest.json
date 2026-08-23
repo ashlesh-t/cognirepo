@@ -218,6 +218,24 @@
       }
     },
     {
+      "name": "generate_insights",
+      "description": "Generate/update the repo insights HTML report \u2014 a human-readable \"what happened in this repo\" summary (timeline, decisions, challenges, branch/ commit activity, index health), sourced only from real stored records.",
+      "parameters": {
+        "properties": {
+          "since": {
+            "default": "90d",
+            "type": "string"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "type": "object",
+        "required": []
+      }
+    },
+    {
       "name": "get_agent_bootstrap",
       "description": "Single-call session bootstrap for AI agents. Replaces the 4-call sequence (get_session_brief \u2192 get_last_context \u2192 get_user_profile \u2192 get_error_patterns) with one ~300-token payload.",
       "parameters": {

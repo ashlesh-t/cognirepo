@@ -314,7 +314,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 |----------|--------|---------|
 | `README.md` | ✅ | Root |
 | `ARCHITECTURE.md` | ✅ | Root + `docs/ARCHITECTURE.md` |
-| `docs/MCP_TOOLS.md` | ✅ | All 34 MCP tools with signatures and examples |
+| `docs/MCP_TOOLS.md` | ✅ | All 35 MCP tools with signatures and examples |
 | `docs/CLI_REFERENCE.md` | ✅ | All commands with flags |
 | `docs/CONFIGURATION.md` | ✅ | config.json fields, env vars, storage layout |
 | `docs/CONTRIBUTING.md` | ✅ | Dev setup, add-tool and add-language walkthroughs |
@@ -327,7 +327,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ## 15. Test Coverage
 
-98 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+99 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
 for the current test-function count). This table is representative, not exhaustive — see
 `tests/` for the full list. This count is pinned against `tests/test_docs_sync.py`,
 which fails if this number drifts from the real glob count.

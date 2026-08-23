@@ -23,4 +23,4 @@ mcp:
   title: "CogniRepo"
   transport: stdio
   runtime_hint: uvx
-  description: "FAISS, call graph, AST, BM25 — 34 MCP tools for AI agents. 50-80% token reduction. Offline."
+  description: "FAISS, call graph, AST, BM25 — 35 MCP tools for AI agents. 50-80% token reduction. Offline."

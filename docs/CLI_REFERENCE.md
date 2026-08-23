@@ -155,6 +155,20 @@ cognirepo prime [--json]
 
 ---
 
+## cognirepo insights
+
+Generate/update the repo insights HTML report — timeline, decisions, challenges (recurring errors), branch/commit activity, index health. Sourced only from real stored records; re-running updates the same file in place at `.claude/insights/<repoName>-insights.html` (markdown twin under `.cognirepo/docs/`, searchable via `search-docs`).
+
+```bash
+cognirepo insights [--since 90d]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--since` | `90d` | History window |
+
+---
+
 ## cognirepo prune
 
 Remove low-importance or stale memories.

@@ -28,7 +28,12 @@ from core.config.paths import get_path
 
 def _ast_index_file() -> str:
     return get_path("index/ast_index.json")
-_SKIP_DIRS = {".git", "venv", ".venv", "__pycache__", "node_modules", ".cognirepo"}
+_SKIP_DIRS = {".git", "venv", ".venv", "__pycache__", "node_modules"}
+# .cognirepo is internal storage (FAISS/graph/index state) and stays out of doc
+# search, EXCEPT .cognirepo/docs/ — generated markdown twins (COGNIREPO-303)
+# that must be dogfoodable via search_docs.
+_COGNIREPO_DIR = ".cognirepo"
+_COGNIREPO_ALLOWED_SUBDIR = "docs"
 # Filename substrings to skip — prevents test harness / CogniRepo internals from
 # polluting search results (e.g. MANUAL_TEST_SUITE.md matching every test prompt).
 _SKIP_FILE_SUBSTRINGS = {
@@ -182,6 +187,9 @@ def search_docs(query: str) -> list[dict]:
     # ── pass 2: full recursive walk — covers the whole repo tree ──────────────
     for root, dirnames, files in os.walk("."):
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        if os.path.basename(root) == _COGNIREPO_DIR:
+            dirnames[:] = [d for d in dirnames if d == _COGNIREPO_ALLOWED_SUBDIR]
+            continue
         for fname in files:
             if not fname.endswith(".md"):
                 continue
