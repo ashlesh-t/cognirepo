@@ -546,7 +546,7 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
 
 **Signature:** `get_user_profile(repo_path: str = None) → dict`
 
-**When:** ALWAYS call at session start (step 3). Apply `framing_hints` to ALL responses. Shows depth preference, domain vocabulary, code-focus %, and explicit stored preferences.
+**When:** ALWAYS call at session start (step 3). Apply `framing_hints` to ALL responses. Shows depth preference, domain vocabulary, code-focus %, explicit stored preferences, and a `mood` signal.
 
 **Output:**
 ```json
@@ -555,9 +555,21 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
   "framing_hints": "prefers concise responses; focuses on code/symbols",
   "top_terminology": ["context_pack", "graph", "episodic"],
   "explicit_preferences": {"response_style": "concise"},
-  "total_queries_tracked": 47
+  "total_queries_tracked": 47,
+  "mood": {
+    "state": "neutral",
+    "evidence": [],
+    "suggested_adaptation": ""
+  }
 }
 ```
+
+**mood** (COGNIREPO-401): derived from recent (last 15-20m) error streaks, query
+velocity, and edit momentum already in the behaviour store — `state` is
+`neutral`/`frustrated`/`flow`, never a bare sentiment label; `suggested_adaptation`
+is always an action (e.g. "verify against get_error_patterns before proposing
+fixes"), not a tone adjective. Neutral with empty evidence on sparse/fresh data.
+Precedence: explicit user request > persona > `framing_hints`/`mood`.
 
 ---
 
@@ -626,6 +638,7 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
   "hot_symbols": ["hybrid_retrieve:retrieval/hybrid.py:45", "context_pack:tools/context_pack.py:12"],
   "last_focus": {"files": ["retrieval/hybrid.py"], "query": "how does scoring work", "agent": "claude"},
   "framing": {"depth": "detailed", "vocabulary": ["retrieval", "faiss", "hybrid"], "hints": "prefers detailed responses; often asks 'how' questions; domain vocabulary: retrieval, faiss, hybrid"},
+  "mood": {"state": "neutral", "evidence": [], "suggested_adaptation": ""},
   "error_patterns": [{"type": "OOM", "count": 2, "prevention_hint": "Check RSS before loading large index"}],
   "index_health": {"symbols": 1240, "files": 92, "status": "ok"},
   "recent_timeline": [
@@ -644,8 +657,8 @@ quick "what happened recently" view. Folded into this tool's existing output rat
 than a new MCP tool (0 manifest tokens vs. ~180 measured for a standalone
 `get_timeline` tool). For the full query surface (`since`/`include_archived`/`limit`,
 plus the deterministic `rollup()` — counts + top decisions/errors, no model-generated
-text), call `data.memory.timeline.merge()`/`rollup()` directly, or from a future
-`generate_insights` tool (EPIC-300).
+text), call `data.memory.timeline.merge()`/`rollup()` directly, or use the
+`generate_insights` tool (COGNIREPO-303).
 
 **decision_nudge** (COGNIREPO-205): present only when the last 30 days have ≥5
 episodes but 0 decisions — a hint to use `record_decision` for architectural

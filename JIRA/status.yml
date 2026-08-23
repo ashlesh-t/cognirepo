@@ -16,7 +16,7 @@ epics:
     blocked_by: []
   - id: COGNIREPO-400
     name: MoodPersonaLayer
-    status: not-started
+    status: in-progress
     blocked_by: []
   - id: COGNIREPO-500
     name: SubagentEnrichment

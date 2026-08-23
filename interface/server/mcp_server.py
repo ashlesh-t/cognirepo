@@ -1831,6 +1831,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
       hot_symbols   — ["fn:file:line", ...] top 8 symbols by behaviour weight
       last_focus    — {files, query, agent} from last agent's context_pack
       framing       — {depth, vocabulary} from user profile (empty if tracking off)
+      mood          — {state, evidence, suggested_adaptation}; neutral/empty on sparse data
       error_patterns — top 3 recurring errors with prevention hints
       index_health  — {symbols, files, status}
       recent_timeline — last 5 entries (past 7 days) merged across sessions,
@@ -1899,6 +1900,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         hot_symbols: list[str] = []
         framing: dict = {}
         error_patterns: list = []
+        mood: dict = {"state": "neutral", "evidence": [], "suggested_adaptation": ""}
         if _behaviour_enabled():
             try:
                 from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
@@ -1914,6 +1916,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
                     "hints": profile.get("framing_hints", ""),
                 }
                 error_patterns = bt.get_error_patterns(min_count=1)[:3]
+                mood = profile.get("mood", mood)
             except Exception:  # pylint: disable=broad-except
                 pass
 
@@ -1992,6 +1995,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         "hot_symbols": hot_symbols,
         "last_focus": last_focus,
         "framing": framing,
+        "mood": mood,
         "error_patterns": error_patterns,
         "index_health": {"symbols": symbol_count, "files": file_count, "status": index_status},
         "recent_timeline": recent_timeline,
@@ -2101,7 +2105,9 @@ def get_user_profile(repo_path: str | None = None) -> dict:
     Return the user's interaction style profile for Claude to adapt its responses.
 
     Includes: depth preference, dominant question types, domain vocabulary,
-    code-focus percentage, and framing hints Claude should apply.
+    code-focus percentage, framing hints, and a mood signal ({state, evidence,
+    suggested_adaptation} — neutral/empty on sparse data) Claude should apply.
+    Precedence: explicit user request > persona > framing_hints/mood.
 
     Call this at the start of a session to calibrate response style.
 

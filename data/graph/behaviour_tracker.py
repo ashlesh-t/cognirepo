@@ -47,6 +47,10 @@ def _behaviour_lock():
 
 
 _USEFUL_WINDOW = timedelta(minutes=5)
+_MOOD_FRUSTRATED_WINDOW = timedelta(minutes=15)
+_MOOD_FRUSTRATED_ERROR_THRESHOLD = 3
+_MOOD_FRUSTRATED_REWRITE_THRESHOLD = 2
+_MOOD_FLOW_WINDOW = timedelta(minutes=20)
 
 
 def _now() -> str:
@@ -489,7 +493,80 @@ class BehaviourTracker:
             "total_queries_tracked": len(self.data.get("query_history", {})),
             "explicit_preferences": self.get_preferences(),
             "query_rewrites": self.get_query_rewrites(),
+            "mood": self.derive_mood(),
         }
+
+    def derive_mood(self) -> dict:
+        """Derive a lightweight mood signal from existing behaviour data.
+
+        state: "frustrated" | "flow" | "neutral". Never a bare sentiment label —
+        suggested_adaptation is always an action Claude can take, not a tone
+        adjective (COGNIREPO-401 AC4). Sparse/fresh data degrades to neutral with
+        empty evidence, mirroring get_user_profile's "no profile yet" fallback.
+
+        Derived within a recent time window (not all-time counts) so mood tracks
+        the current session rather than pinning permanently on old errors.
+        """
+        now = datetime.now(tz=timezone.utc)
+
+        def _recent(ts: str | None, window: timedelta) -> bool:
+            if not ts:
+                return False
+            try:
+                parsed = datetime.fromisoformat(ts)
+            except ValueError:
+                return False
+            return now - parsed <= window
+
+        # ── frustrated: error streak or a rewrite correction still recurring ──
+        evidence: list[str] = []
+        for error_type, info in self.data.get("error_patterns", {}).items():
+            recent_occ = [
+                occ for occ in info.get("occurrences", [])
+                if _recent(occ.get("time"), _MOOD_FRUSTRATED_WINDOW)
+            ]
+            if len(recent_occ) >= _MOOD_FRUSTRATED_ERROR_THRESHOLD:
+                evidence.append(f"{error_type}: {len(recent_occ)} occurrences in the last 15m")
+        for rw in self.data.get("query_rewrites", []):
+            if rw.get("hit_count", 0) >= _MOOD_FRUSTRATED_REWRITE_THRESHOLD and _recent(
+                rw.get("updated_at") or rw.get("stored_at"), _MOOD_FRUSTRATED_WINDOW
+            ):
+                evidence.append(
+                    f"query rewrite '{rw.get('original', '')[:40]}' re-corrected "
+                    f"{rw.get('hit_count')}x"
+                )
+        if evidence:
+            return {
+                "state": "frustrated",
+                "evidence": evidence,
+                "suggested_adaptation": "verify against get_error_patterns before proposing fixes",
+            }
+
+        # ── flow: sustained queries + edits with zero new errors ─────────────
+        recent_queries = [
+            qh for qh in self.data.get("query_history", {}).values()
+            if _recent(qh.get("timestamp"), _MOOD_FLOW_WINDOW)
+        ]
+        recent_edits = any(
+            _recent(session.get("start"), _MOOD_FLOW_WINDOW) and session.get("files_touched")
+            for session in self.data.get("session_registry", {}).values()
+        )
+        recent_errors = any(
+            _recent(occ.get("time"), _MOOD_FLOW_WINDOW)
+            for info in self.data.get("error_patterns", {}).values()
+            for occ in info.get("occurrences", [])
+        )
+        if recent_queries and recent_edits and not recent_errors:
+            return {
+                "state": "flow",
+                "evidence": [
+                    f"{len(recent_queries)} queries and active edits over the last 20m "
+                    f"with 0 new errors"
+                ],
+                "suggested_adaptation": "batch confirmations; skip re-explaining settled context",
+            }
+
+        return {"state": "neutral", "evidence": [], "suggested_adaptation": ""}
 
     def record_user_preference(self, key: str, value: str) -> dict:
         """Store an explicit user preference (key/value pair) with timestamp.

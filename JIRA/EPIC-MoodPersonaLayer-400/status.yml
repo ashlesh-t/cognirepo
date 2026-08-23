@@ -1,8 +1,8 @@
 epic_id: COGNIREPO-400
-status: not-started
+status: in-progress
 stories:
   - id: COGNIREPO-401
-    status: not-started
+    status: in-progress
     branch: story/COGNIREPO-401
     pr: null
     test_status: not-run
