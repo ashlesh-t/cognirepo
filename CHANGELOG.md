@@ -8,6 +8,30 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-08-23
+
+### Added
+- **COGNIREPO-301 — insights data collector.** New
+  `intelligence/orchestrator/insights_collector.py::collect(repo_root, since="90d")` sources an
+  `InsightsModel` (timeline, decisions, errors, branches, commits_by_week, hot_symbols, index
+  health) entirely from existing real records — merged episodic timeline, git history, behaviour
+  hot symbols, graph integrity — never invented data.
+- **COGNIREPO-302 — HTML generator + idempotent writer.** New `interface/tools/insights.py`
+  renders the collector's model into one self-contained HTML report (no CDN/fonts/external
+  requests, light/dark via `prefers-color-scheme`, section nav) and writes it idempotently
+  (tmp + `os.replace`) to a fixed per-repo path.
+- **COGNIREPO-303 — CLI command + MCP tool + docs-index carve-out.** `cognirepo insights
+  [--since 90d]` CLI subcommand and a `generate_insights` MCP tool wire 301+302 into the
+  product; report path is `.claude/insights/<repoName>-insights.html` (new CLAUDE.md exception
+  — presentation artifact, not machine state) with a machine-readable markdown twin under
+  `.cognirepo/docs/` so the report is retrievable via `search_docs` (dogfoodable) while
+  `.cognirepo/index/` internals stay excluded from doc search.
+
+### Verified
+- Epic e2e suite (`JIRA/EPIC-RepoInsights-300/COGNIREPO-300-TEST_SUITE.md`): full
+  generate→regenerate→retrieve loop and empty-history honesty, both PASS — dogfooded against
+  live test repos, browser-checked in both light and dark themes with no network requests.
+
 ## [2.1.0] — 2026-08-12
 
 ### Added

@@ -29,3 +29,10 @@ D02 → 101 → 102 → 103 → 104 → 105 → 106. The final self-check is in 
 - file_watcher: no debounce, no `on_moved`, orphan graph nodes on modify.
 - episodic `log_event` ID collision after rotation (`e_{len(data)}`).
 - Docs drift: FEATURES §15/§16, README Future Plans (v0.3.0 headers), SECURITY.md (Snyk), IMPROVEMENTS.md (stale counts), openai_tools.json (13 tools), `openai_spec.py` stale `server/manifest.json` path.
+
+## Epic milestones (post-implementation, per skill.md §F)
+
+- **COGNIREPO-300 — RepoInsights** — signed off 2026-08-23, v2.2.0. Stories 301 (data
+  collector), 302 (HTML generator + idempotent writer), 303 (CLI + MCP tool + docs-index
+  carve-out) all signed off; epic e2e suite (generate→regenerate→retrieve loop,
+  empty-history honesty) PASS.

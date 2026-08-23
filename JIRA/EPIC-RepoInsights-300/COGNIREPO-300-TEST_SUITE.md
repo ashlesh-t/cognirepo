@@ -18,10 +18,17 @@
   new episode and new commit visible in Timeline/Branches. HTML is self-contained (no external
   URLs found via grep). `.cognirepo/docs/ansible-insights.md` twin picked up by
   `search_docs("E2E-300-1: epic e2e test run for COGNIREPO-300")` (score 0, exact-match hit),
-  `.cognirepo/index/` internals stayed excluded (confirmed under TC-303-2). Light/dark visual
-  render in an actual browser and the live Claude-prompt leg not re-run here — automated/CLI
-  legs only; pending user's own visual + live-agent confirmation.
-- Verdict: PASS (automated/CLI legs); visual + live-agent legs pending user confirmation
+  `.cognirepo/index/` internals stayed excluded (confirmed under TC-303-2). Browser check done
+  via claude-in-chrome (local http.server, since file:// is blocked by the extension): dark
+  render matched system theme — nav/timeline/decisions/branches all rendered cleanly; light
+  render forced by stripping the `prefers-color-scheme: dark` block from a scratch copy —
+  layout identical, fully readable, only the palette swaps (confirms the light/dark CSS split is
+  structurally sound). `read_network_requests` on both loads showed only the local test server's
+  own GET + browser-extension-injected scripts + a stray favicon 404 — nothing from the report
+  page itself, confirming no external calls. search_docs leg run via the same `search_docs()`
+  function the MCP tool wraps (not through a live MCP transport reconnect) — functionally
+  equivalent, transport layer untested.
+- Verdict: PASS
 
 ## E2E-300-2: Empty-history honesty (crosses 301+302)
 - Test repo: /home/ashlesh/my_works/cognirepo_test_repo/dummy
