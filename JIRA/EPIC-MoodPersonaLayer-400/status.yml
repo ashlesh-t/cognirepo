@@ -2,10 +2,10 @@ epic_id: COGNIREPO-400
 status: in-progress
 stories:
   - id: COGNIREPO-401
-    status: in-review
+    status: signed-off
     branch: story/COGNIREPO-401
     pr: https://github.com/ashlesh-t/cognirepo/pull/57
-    test_status: not-run
+    test_status: pass
   - id: COGNIREPO-402
     status: not-started
     branch: story/COGNIREPO-402
