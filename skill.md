@@ -41,7 +41,7 @@ JIRA/
 
 Allocated epics: 100 ReliabilityGate (stories 101-106, defects D01-D03) · 200
 KGEpisodicHardening (201-205) · 300 RepoInsights (301-303) · 400 MoodPersonaLayer (401-404) ·
-500 SubagentEnrichment (501-502) · 600 OSSGrowth (601-603).
+500 SubagentEnrichment (501-502) · 600 OSSGrowth (601-603) · 700 CognitiveDynamics (701-704).
 
 ## B. status.yml — schema and RESUME protocol
 
@@ -144,7 +144,7 @@ user as reviewer. For each story (defects follow the identical loop):
 `COGNIREPO-<ID>-TEST_SUITE.md` (cross-story e2e flows) passes. Then: mark the epic signed-off,
 set root `active_epic` to the next unblocked epic, append the milestone to `COMPLETED_TASKS.md`,
 and bump the version per the phase's planning doc (`version.yml` → `python
-scripts/sync_version.py`; sequence: 2.0.1 → 2.1.0 → 2.2.0 → 2.3.0 → 2.4.0 → 2.4.1).
+scripts/sync_version.py`; sequence: 2.0.1 → 2.1.0 → 2.2.0 → 2.3.0 → 2.4.0 → 2.4.1 → 2.5.0).
 
 ### F.4 TEST_SUITE.md case format (use for every new suite you write)
 ```
