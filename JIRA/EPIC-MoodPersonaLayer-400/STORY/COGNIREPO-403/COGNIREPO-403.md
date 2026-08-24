@@ -32,3 +32,13 @@ transitions. (2) Docs (USAGE.md + CLAUDE.md) with before/after example pairs, e.
 ## Risks / notes
 - Non-Claude clients may ignore output_contract — acceptance measured on Claude Code;
   best-effort elsewhere.
+
+## Analyze correction (line drift vs Discovery, verified at implementation HEAD)
+Discovery-cited `classifier.py:24,301` was stale — current HEAD has `_TIER_QUICK` at line 92 and
+`_score_to_tier()`/mapping at lines 300-307 (confirmed identical to the citations already
+verified during EPIC-700's own audit of this same file). The QUICK-usage suggestion is
+implemented in `interface/server/mcp_server.py` (not inside `BehaviourTracker`) to avoid an
+upward `data -> intelligence` import — same reasoning as the injected `store_fn` callback
+(COGNIREPO-105) — computed over the existing `interaction_style.query_patterns` ring buffer via
+`classifier.classify()`, called only at profile-read time (not wired into the query-recording
+hot path).

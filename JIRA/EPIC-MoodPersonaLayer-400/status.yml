@@ -12,9 +12,9 @@ stories:
     pr: https://github.com/ashlesh-t/cognirepo/pull/58
     test_status: pass
   - id: COGNIREPO-403
-    status: not-started
+    status: in-review
     branch: story/COGNIREPO-403
-    pr: null
+    pr: https://github.com/ashlesh-t/cognirepo/pull/59
     test_status: not-run
   - id: COGNIREPO-404
     status: not-started

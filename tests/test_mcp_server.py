@@ -290,6 +290,60 @@ class TestManifestFormat:
         assert all(t["type"] == "function" for t in tools)
 
 
+class TestCavemanSuggestion:
+    def test_suggestion_fires_on_sustained_quick_usage(self):
+        from interface.server.mcp_server import _maybe_add_caveman_suggestion
+        from unittest.mock import MagicMock
+        bt = MagicMock()
+        bt.data = {"interaction_style": {"query_patterns": ["what is x"] * 8}}
+        bt.get_preferences.return_value = {}
+        profile = {}
+        _maybe_add_caveman_suggestion(profile, bt)
+        assert "persona_suggestion" in profile
+
+    def test_suggestion_absent_when_caveman_already_active(self):
+        from interface.server.mcp_server import _maybe_add_caveman_suggestion
+        from unittest.mock import MagicMock
+        bt = MagicMock()
+        bt.data = {"interaction_style": {"query_patterns": ["what is x"] * 8}}
+        bt.get_preferences.return_value = {}
+        profile = {"active_persona": "caveman"}
+        _maybe_add_caveman_suggestion(profile, bt)
+        assert "persona_suggestion" not in profile
+
+    def test_suggestion_dismissible(self):
+        from interface.server.mcp_server import _maybe_add_caveman_suggestion
+        from unittest.mock import MagicMock
+        bt = MagicMock()
+        bt.data = {"interaction_style": {"query_patterns": ["what is x"] * 8}}
+        bt.get_preferences.return_value = {"persona_suggestion_dismissed": "true"}
+        profile = {}
+        _maybe_add_caveman_suggestion(profile, bt)
+        assert "persona_suggestion" not in profile
+
+    def test_suggestion_absent_on_sparse_history(self):
+        from interface.server.mcp_server import _maybe_add_caveman_suggestion
+        from unittest.mock import MagicMock
+        bt = MagicMock()
+        bt.data = {"interaction_style": {"query_patterns": ["what is x"]}}
+        bt.get_preferences.return_value = {}
+        profile = {}
+        _maybe_add_caveman_suggestion(profile, bt)
+        assert "persona_suggestion" not in profile
+
+    def test_suggestion_absent_on_mixed_tier_usage(self):
+        from interface.server.mcp_server import _maybe_add_caveman_suggestion
+        from unittest.mock import MagicMock
+        bt = MagicMock()
+        bt.data = {"interaction_style": {"query_patterns": [
+            "compare the tradeoffs of this architecture design and refactor it step by step"
+        ] * 8}}
+        bt.get_preferences.return_value = {}
+        profile = {}
+        _maybe_add_caveman_suggestion(profile, bt)
+        assert "persona_suggestion" not in profile
+
+
 class TestAgentBootstrapFraming:
     def test_agent_bootstrap_framing_populated(self, tmp_path, monkeypatch):
         """framing.depth must not be 'unknown' when behaviour data is present."""

@@ -245,6 +245,36 @@ class TestPersonaRegistry:
         assert result["recorded"] is True
 
 
+# ── Caveman output contract (COGNIREPO-403) ──────────────────────────────────
+
+class TestCavemanOutputContract:
+    def test_output_contract_present_iff_caveman_active(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_user_preference("persona", "caveman")
+        profile = bt.get_user_profile()
+        assert "output_contract" in profile
+        assert isinstance(profile["output_contract"], str) and len(profile["output_contract"]) > 20
+
+    def test_output_contract_absent_for_other_personas(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        for name in ("mentor", "pair"):
+            bt.record_user_preference("persona", name)
+            assert "output_contract" not in bt.get_user_profile()
+
+    def test_output_contract_absent_when_no_persona(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        assert "output_contract" not in bt.get_user_profile()
+
+    def test_output_contract_forbids_omitting_caveats_and_numbers(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_user_preference("persona", "caveman")
+        contract = bt.get_user_profile()["output_contract"].lower()
+        assert "retain" in contract
+        assert "caveat" in contract
+        assert "number" in contract
+        assert "file:line" in contract or "reference" in contract
+
+
 # ── Framing hints lifecycle (T3.1 fix) ───────────────────────────────────────
 
 class TestFramingHintsLifecycle:

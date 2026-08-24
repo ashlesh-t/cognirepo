@@ -67,10 +67,18 @@ _PERSONAS: dict[str, dict[str, str]] = {
     },
     "caveman": {
         "retrieval_depth": "default",
-        "verbosity": "economy output — see COGNIREPO-403 for the full spec",
+        "verbosity": "economy output — see the output_contract field when active",
         "tone": "telegraphic, complete-information style; opt-in only, never auto-enabled",
     },
 }
+
+# Served in the profile payload ONLY when persona=caveman is active (COGNIREPO-403).
+# Compresses STYLE, never content — never trade accuracy for brevity (README "Honest limits").
+_CAVEMAN_OUTPUT_CONTRACT = (
+    "Caveman mode: headline verdict first, then minimal factual lines. RETAIN every "
+    "file:line reference, number, and caveat — never drop them for brevity. DROP preamble, "
+    "hedging, restatement, and transition phrases. Compress style, never content or accuracy."
+)
 
 
 def _now() -> str:
@@ -523,6 +531,8 @@ class BehaviourTracker:
         if active_persona in _PERSONAS:
             profile["active_persona"] = active_persona
             profile["persona_behavior"] = _PERSONAS[active_persona]
+            if active_persona == "caveman":
+                profile["output_contract"] = _CAVEMAN_OUTPUT_CONTRACT
         return profile
 
     def derive_mood(self) -> dict:

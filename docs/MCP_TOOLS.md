@@ -585,6 +585,15 @@ opted into a persona via `record_user_preference("persona", "mentor"|"pair"|"cav
 }
 ```
 
+**output_contract** (COGNIREPO-403): present ONLY when `active_persona == "caveman"`. A ~57-token
+instruction string — compress style, never content; retain every file:line ref/number/caveat,
+drop preamble/hedging/restatement/transitions. See `docs/USAGE.md#caveman-mode-cognirepo-403`
+for before/after examples with measured token counts.
+
+**persona_suggestion** (COGNIREPO-403): optional one-line, dismissible nudge toward caveman,
+surfaced after ≥5 of the last 10 tracked queries classify as QUICK tier — advisory only, never
+self-enables. Dismiss with `record_user_preference("persona_suggestion_dismissed", "true")`.
+
 ---
 
 ## get_error_patterns
