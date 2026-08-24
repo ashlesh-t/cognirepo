@@ -23,6 +23,11 @@ Goal: cut token overhead and context loss between AI sessions, not add complexit
 ## Behavioral confirmation rule
 
 After `get_user_profile()`, apply `framing_hints` to every response (depth, vocabulary, code-focus).
+`get_user_profile()`/`get_agent_bootstrap()` also carry a `mood` signal ({state, evidence,
+suggested_adaptation}) derived from recent errors/queries/edits — neutral with empty evidence on
+sparse data. **Precedence: explicit user request > persona > framing_hints/mood.** A `mood` of
+"frustrated" means act on `suggested_adaptation` (e.g. verify against `get_error_patterns` before
+proposing fixes), not adopt a tone — it never overrides what the user actually asked for.
 **When ambiguity detected:** if the user's current request conflicts with their established pattern
 (e.g. they always ask for concise answers but this request seems to want a long walkthrough),
 ask ONE short clarifying question before proceeding. Do not assume — confirm.

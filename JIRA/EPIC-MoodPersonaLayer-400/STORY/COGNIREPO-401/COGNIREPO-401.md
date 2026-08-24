@@ -31,3 +31,12 @@ UserPromptSubmit hook text for contradictions with that rule.
 ## Risks / notes
 - Session boundary: derive within the current session window (last N minutes), not all-time
   counts — all-time errors would pin mood permanently.
+
+## Analyze correction (line drift vs Discovery, verified at implementation HEAD)
+Discovery §1 line numbers were cited against `146627d` (v2.0.0); functions moved but are
+unchanged in shape: `record_error` now :406, `get_error_patterns` :544, `record_query` :251,
+`record_query_rewrite`/`get_query_rewrites` :509-540, `record_file_edit` :362, `get_hot_symbols`
+:577-594, `get_user_profile` :437-484. `query_rewrites[].hit_count` is initialized to 0 in
+`record_query_rewrite` but nothing in the current codebase increments it despite the docstring
+claim ("incremented each time a matching query is seen") — pre-existing gap, out of scope for
+this story; derive_mood() reads whatever value is there.

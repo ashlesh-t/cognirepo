@@ -1,10 +1,10 @@
 epic_id: COGNIREPO-400
-status: not-started
+status: in-progress
 stories:
   - id: COGNIREPO-401
-    status: not-started
+    status: in-review
     branch: story/COGNIREPO-401
-    pr: null
+    pr: https://github.com/ashlesh-t/cognirepo/pull/57
     test_status: not-run
   - id: COGNIREPO-402
     status: not-started

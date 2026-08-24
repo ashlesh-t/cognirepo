@@ -322,6 +322,51 @@ class TestAgentBootstrapFraming:
         assert result["framing"]["hints"] == "prefers code-first answers"
         assert "auth" in result["framing"]["vocabulary"]
 
+    def test_agent_bootstrap_mood_populated(self, tmp_path, monkeypatch):
+        """mood must surface from the profile when behaviour data is present."""
+        from unittest.mock import patch, MagicMock
+        monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
+        (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
+
+        fake_profile = {
+            "depth_preference": "detailed",
+            "top_terminology": [],
+            "framing_hints": "",
+            "explicit_preferences": {},
+            "mood": {
+                "state": "frustrated",
+                "evidence": ["ImportError: 3 occurrences in the last 15m"],
+                "suggested_adaptation": "verify against get_error_patterns before proposing fixes",
+            },
+        }
+        fake_bt = MagicMock()
+        fake_bt.data = {"symbol_weights": {}}
+        fake_bt.get_user_profile.return_value = fake_profile
+        fake_bt.get_error_patterns.return_value = []
+
+        with patch("interface.server.mcp_server._behaviour_enabled", return_value=True), \
+             patch("interface.server.mcp_server._get_graph", return_value=MagicMock()), \
+             patch("data.graph.behaviour_tracker.BehaviourTracker", return_value=fake_bt), \
+             patch("interface.server.mcp_server._index_is_stale", return_value=False):
+            from interface.server.mcp_server import get_agent_bootstrap
+            result = get_agent_bootstrap()
+
+        assert result["mood"]["state"] == "frustrated"
+        assert result["mood"]["evidence"]
+
+    def test_agent_bootstrap_mood_defaults_neutral_when_disabled(self, tmp_path, monkeypatch):
+        """mood must default to neutral/empty when behaviour tracking is disabled."""
+        from unittest.mock import patch
+        monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
+        (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
+
+        with patch("interface.server.mcp_server._behaviour_enabled", return_value=False), \
+             patch("interface.server.mcp_server._index_is_stale", return_value=False):
+            from interface.server.mcp_server import get_agent_bootstrap
+            result = get_agent_bootstrap()
+
+        assert result["mood"] == {"state": "neutral", "evidence": [], "suggested_adaptation": ""}
+
     def test_agent_bootstrap_framing_empty_when_disabled(self, tmp_path, monkeypatch):
         """framing must be empty dict when behaviour tracking is disabled."""
         from unittest.mock import patch
