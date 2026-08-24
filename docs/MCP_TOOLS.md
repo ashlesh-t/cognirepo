@@ -571,6 +571,20 @@ is always an action (e.g. "verify against get_error_patterns before proposing
 fixes"), not a tone adjective. Neutral with empty evidence on sparse/fresh data.
 Precedence: explicit user request > persona > `framing_hints`/`mood`.
 
+**active_persona / persona_behavior** (COGNIREPO-402): present ONLY when the user has
+opted into a persona via `record_user_preference("persona", "mentor"|"pair"|"caveman")`
+— absent entirely otherwise (zero payload change from pre-402 baseline). Example when set:
+```json
+{
+  "active_persona": "mentor",
+  "persona_behavior": {
+    "retrieval_depth": "+1 — include episodic context by default",
+    "verbosity": "full explanations",
+    "tone": "links responses to related past decisions/history"
+  }
+}
+```
+
 ---
 
 ## get_error_patterns
@@ -616,6 +630,13 @@ Precedence: explicit user request > persona > `framing_hints`/`mood`.
 **Output:**
 ```json
 {"key": "response_style", "value": "concise", "recorded": true}
+```
+
+**Reserved key `"persona"`** (COGNIREPO-402): opt-in only, never enable without an explicit
+ask. Valid values: `mentor` / `pair` / `caveman` (see [Personas](USAGE.md#personas) for the
+behavior deltas). An unknown value is rejected, not stored:
+```json
+{"key": "persona", "value": "wizard", "recorded": false, "error": "unknown persona 'wizard' — valid: ['caveman', 'mentor', 'pair']"}
 ```
 
 ---

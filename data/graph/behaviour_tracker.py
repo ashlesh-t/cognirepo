@@ -52,6 +52,26 @@ _MOOD_FRUSTRATED_ERROR_THRESHOLD = 3
 _MOOD_FRUSTRATED_REWRITE_THRESHOLD = 2
 _MOOD_FLOW_WINDOW = timedelta(minutes=20)
 
+# Reserved "persona" preference values (COGNIREPO-402) — opt-in only, never auto-enabled.
+# Each behavior delta must be concrete (retrieval depth / verbosity / tone), never decorative.
+_PERSONAS: dict[str, dict[str, str]] = {
+    "mentor": {
+        "retrieval_depth": "+1 — include episodic context by default",
+        "verbosity": "full explanations",
+        "tone": "links responses to related past decisions/history",
+    },
+    "pair": {
+        "retrieval_depth": "default",
+        "verbosity": "default, plus mood-aware phrasing",
+        "tone": "current default-equivalent behavior",
+    },
+    "caveman": {
+        "retrieval_depth": "default",
+        "verbosity": "economy output — see COGNIREPO-403 for the full spec",
+        "tone": "telegraphic, complete-information style; opt-in only, never auto-enabled",
+    },
+}
+
 
 def _now() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
@@ -481,8 +501,9 @@ class BehaviourTracker:
         )
 
         sample_queries = patterns[-3:] if patterns else []
+        explicit_preferences = self.get_preferences()
 
-        return {
+        profile = {
             "depth_preference": depth,
             "top_question_type": top_qtype,
             "question_type_distribution": qtypes,
@@ -491,10 +512,18 @@ class BehaviourTracker:
             "framing_hints": framing_hints,
             "sample_queries": sample_queries,
             "total_queries_tracked": len(self.data.get("query_history", {})),
-            "explicit_preferences": self.get_preferences(),
+            "explicit_preferences": explicit_preferences,
             "query_rewrites": self.get_query_rewrites(),
             "mood": self.derive_mood(),
         }
+        # Additive only — no persona set (or an already-rejected/unknown value that somehow
+        # made it into storage before this validation existed) leaves the payload identical
+        # to pre-402 output (COGNIREPO-402 AC2).
+        active_persona = explicit_preferences.get("persona")
+        if active_persona in _PERSONAS:
+            profile["active_persona"] = active_persona
+            profile["persona_behavior"] = _PERSONAS[active_persona]
+        return profile
 
     def derive_mood(self) -> dict:
         """Derive a lightweight mood signal from existing behaviour data.
@@ -572,7 +601,14 @@ class BehaviourTracker:
         """Store an explicit user preference (key/value pair) with timestamp.
 
         Persisted immediately. Surfaced by get_user_profile()['explicit_preferences'].
+        The reserved "persona" key is validated against _PERSONAS — an unknown value is
+        rejected (not stored) so a typo doesn't silently no-op the opt-in.
         """
+        if key == "persona" and value not in _PERSONAS:
+            return {
+                "key": key, "value": value, "recorded": False,
+                "error": f"unknown persona '{value}' — valid: {sorted(_PERSONAS)}",
+            }
         prefs = self.data.setdefault("user_preferences", {})
         prefs[key] = {"value": value, "updated_at": _now()}
         self.save()

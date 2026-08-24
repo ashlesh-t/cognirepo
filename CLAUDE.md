@@ -34,6 +34,17 @@ ask ONE short clarifying question before proceeding. Do not assume — confirm.
 **After every session:** call `record_decision()` for architectural choices, `log_episode()` for
 milestones, `record_error()` for any errors hit. This updates the profile for next session.
 
+## Personas (COGNIREPO-402)
+
+Opt-in only — **never enable a persona unless the user explicitly asks.** Set via
+`record_user_preference("persona", "<name>")`; read from `get_user_profile()['active_persona']` /
+`['persona_behavior']` — absent entirely when unset (no behavior change from pre-402 baseline).
+Exactly three, each a concrete behavior delta, never a decorative label:
+- **mentor** — retrieval depth +1 (include episodic context by default), full explanations, link
+  responses to related past decisions/history.
+- **pair** — the default-equivalent: current behavior plus mood-aware phrasing only.
+- **caveman** — economy/telegraphic output (full spec: COGNIREPO-403).
+
 ## Tool routing (for Claude Code agents using this repo)
 
 | Task | Use this first |

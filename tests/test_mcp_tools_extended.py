@@ -166,6 +166,15 @@ def test_record_user_preference_returns_dict():
     assert isinstance(result, dict) or result is not None
 
 
+def test_record_user_preference_persona_unknown_value_rejected():
+    from interface.server.mcp_server import record_user_preference
+    result = record_user_preference("persona", "wizard")
+    if result.get("behaviour_tracking") == "disabled":
+        return
+    assert result["recorded"] is False
+    assert "error" in result
+
+
 # ── supersede_learning ────────────────────────────────────────────────────────
 
 def test_supersede_learning_nonexistent_id():
