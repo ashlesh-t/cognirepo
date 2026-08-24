@@ -23,8 +23,8 @@ stories:
     test_status: pass
 defects:
   - id: COGNIREPO-D01
-    status: in-review
+    status: signed-off
     branch: defect/COGNIREPO-400-D01
     pr: https://github.com/ashlesh-t/cognirepo/pull/61
-    test_status: not-run
+    test_status: pass
 epic_test_suite_status: not-run
