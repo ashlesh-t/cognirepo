@@ -37,8 +37,10 @@ milestones, `record_error()` for any errors hit. This updates the profile for ne
 ## Personas (COGNIREPO-402, COGNIREPO-403)
 
 Opt-in only — **never enable a persona unless the user explicitly asks.** Set via
-`record_user_preference("persona", "<name>")`; read from `get_user_profile()['active_persona']` /
-`['persona_behavior']` — absent entirely when unset (no behavior change from pre-402 baseline).
+`record_user_preference("persona", "<name>")`; clear with
+`record_user_preference("persona", "none")` (COGNIREPO-400-D01); read from
+`get_user_profile()['active_persona']` / `['persona_behavior']` — absent entirely when unset or
+cleared (no behavior change from pre-402 baseline).
 Exactly three, each a concrete behavior delta, never a decorative label:
 - **mentor** — retrieval depth +1 (include episodic context by default), full explanations, link
   responses to related past decisions/history.

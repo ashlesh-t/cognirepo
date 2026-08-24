@@ -612,8 +612,15 @@ class BehaviourTracker:
 
         Persisted immediately. Surfaced by get_user_profile()['explicit_preferences'].
         The reserved "persona" key is validated against _PERSONAS — an unknown value is
-        rejected (not stored) so a typo doesn't silently no-op the opt-in.
+        rejected (not stored) so a typo doesn't silently no-op the opt-in. "none"
+        (case-insensitive) is reserved to CLEAR a previously-set persona rather than being
+        a 4th persona name (COGNIREPO-400-D01 — opt-in must allow opting back out).
         """
+        if key == "persona" and value.strip().lower() == "none":
+            prefs = self.data.setdefault("user_preferences", {})
+            prefs.pop("persona", None)
+            self.save()
+            return {"key": key, "value": None, "recorded": True, "cleared": True}
         if key == "persona" and value not in _PERSONAS:
             return {
                 "key": key, "value": value, "recorded": False,

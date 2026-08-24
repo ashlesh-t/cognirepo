@@ -509,12 +509,14 @@ request. Set it with the existing preference tool — no new tool, no schema cha
 
 ```
 record_user_preference("persona", "mentor")   # or "pair" / "caveman"
+record_user_preference("persona", "none")     # clear it — opt-in means you can opt back out (COGNIREPO-400-D01)
 ```
 
 `get_user_profile()` then additionally returns `active_persona` and `persona_behavior`; both
-keys are absent entirely when no persona is set (zero behavior change from the pre-402 baseline).
-An unknown persona name is rejected outright — `{"recorded": false, "error": "unknown persona
-'...' — valid: ['caveman', 'mentor', 'pair']"}` — nothing silently no-ops.
+keys are absent entirely when no persona is set OR after clearing one (zero behavior change from
+the pre-402 baseline). An unknown persona name is rejected outright — `{"recorded": false,
+"error": "unknown persona '...' — valid: ['caveman', 'mentor', 'pair']"}` — nothing silently
+no-ops. `"none"` is reserved to mean "clear" — it is not a 4th persona.
 
 Exactly three personas, each a concrete behavior delta — never a decorative tone label:
 

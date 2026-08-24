@@ -647,6 +647,11 @@ behavior deltas). An unknown value is rejected, not stored:
 ```json
 {"key": "persona", "value": "wizard", "recorded": false, "error": "unknown persona 'wizard' — valid: ['caveman', 'mentor', 'pair']"}
 ```
+`"none"` (case-insensitive) is reserved to CLEAR a previously-set persona, not a 4th persona
+name (COGNIREPO-400-D01):
+```json
+{"key": "persona", "value": "none", "recorded": true, "cleared": true}
+```
 
 ---
 

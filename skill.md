@@ -35,6 +35,13 @@ JIRA/
 - Epics: round hundreds — COGNIREPO-100, -200, -300, -400, -500, -600.
 - Stories: increment within the epic — COGNIREPO-101, -102, …
 - Defects: D-prefixed — COGNIREPO-D01, -D02, … (registered under their epic's status.yml).
+  **D-numbers reset per epic (not globally unique)** — epic 100's D01 and epic 400's D01 are
+  different tickets. The ticket folder path disambiguates on disk
+  (`EPIC-<Name>-<ID>/DEFECT/COGNIREPO-D<nn>/`), but branch names and commit-message ticket
+  references do NOT carry epic context by themselves — so **defect branches and commit-message
+  ticket refs MUST be epic-qualified**: `defect/COGNIREPO-<EpicID>-D<nn>` (e.g.
+  `defect/COGNIREPO-400-D01`), commit prefix `COGNIREPO-400-D01: …`. The ticket file's own
+  internal heading may stay short (`COGNIREPO-D01`) since its folder already gives it context.
 - Sub-tasks are NOT separately numbered — they are `_SubtaskN.md` files under their story.
   New defects found during testing: take the next free D-number in the epic, create the folder,
   add it to the epic's status.yml.
