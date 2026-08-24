@@ -17,6 +17,7 @@ Complete documentation for every command, MCP tool, and configuration option.
 9. [VS Code MCP Setup](#vs-code-mcp-setup)
 10. [GitHub Copilot Integration](#github-copilot-integration)
 11. [Adding API Keys](#adding-api-keys)
+12. [Personas](#personas)
 
 ---
 
@@ -498,3 +499,31 @@ After 2+ queries, `get_user_profile()` returns a `framing_hints` string. The `Us
 hook prints this as a system-reminder before each Claude response — no MCP call required.
 `sync_claude_memory.py` ensures any notes you save via Claude Code's memory system are
 immediately searchable via `retrieve_memory()`.
+
+---
+
+## Personas
+
+Opt-in only (COGNIREPO-402) — a persona is never enabled automatically, only by an explicit
+request. Set it with the existing preference tool — no new tool, no schema change:
+
+```
+record_user_preference("persona", "mentor")   # or "pair" / "caveman"
+```
+
+`get_user_profile()` then additionally returns `active_persona` and `persona_behavior`; both
+keys are absent entirely when no persona is set (zero behavior change from the pre-402 baseline).
+An unknown persona name is rejected outright — `{"recorded": false, "error": "unknown persona
+'...' — valid: ['caveman', 'mentor', 'pair']"}` — nothing silently no-ops.
+
+Exactly three personas, each a concrete behavior delta — never a decorative tone label:
+
+| Persona | Retrieval depth | Verbosity | Tone |
+|---|---|---|---|
+| `mentor` | +1 — includes episodic context by default | Full explanations | Links responses to related past decisions/history |
+| `pair` | Default | Default, plus mood-aware phrasing | Current default-equivalent behavior |
+| `caveman` | Default | Economy/telegraphic output (full spec: COGNIREPO-403) | Complete-information, no filler — opt-in only, never auto-enabled |
+
+Precedence, same as `framing_hints`/`mood`: **explicit user request > persona >
+framing_hints/mood.** A persona shapes *how* Claude answers; it never overrides *what* the user
+actually asked for.

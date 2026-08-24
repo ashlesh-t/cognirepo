@@ -2108,6 +2108,9 @@ def get_user_profile(repo_path: str | None = None) -> dict:
     code-focus percentage, framing hints, and a mood signal ({state, evidence,
     suggested_adaptation} — neutral/empty on sparse data) Claude should apply.
     Precedence: explicit user request > persona > framing_hints/mood.
+    If the user has opted into a persona (COGNIREPO-402, via record_user_preference),
+    the payload additionally carries active_persona + persona_behavior — absent
+    entirely when no persona is set (byte-identical to pre-402 output otherwise).
 
     Call this at the start of a session to calibrate response style.
 
@@ -2143,6 +2146,15 @@ def record_user_preference(
       record_user_preference("query_rewrite", "deploy model", context="user means: update the ML model weights in production, not software deploy")
     Stored in query_rewrites list; agents apply these before retrieval so future
     similar queries hit the right code even when phrasing is off.
+
+    **Persona selection** (preference_key = "persona", COGNIREPO-402):
+    Opt-in only — never enable a persona without the user explicitly asking.
+    Valid values: "mentor" (deeper retrieval + full explanations + links to history),
+    "pair" (default-equivalent, mood-aware phrasing), "caveman" (economy/telegraphic
+    output, see COGNIREPO-403). An unknown value is rejected, not stored — response
+    includes {"recorded": false, "error": "..."}. Surfaced via
+    get_user_profile()['active_persona'] / ['persona_behavior']. Precedence: explicit
+    user request > persona > framing_hints/mood (see CLAUDE.md).
 
     Claude: call this when:
     - User corrects your interpretation ("no, I meant X not Y")

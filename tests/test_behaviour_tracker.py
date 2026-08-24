@@ -195,6 +195,56 @@ class TestMoodDerivation:
         assert set(profile.keys()) == expected
 
 
+# ── Persona registry (COGNIREPO-402) ─────────────────────────────────────────
+
+class TestPersonaRegistry:
+    def test_valid_persona_recorded_and_surfaced(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        result = bt.record_user_preference("persona", "mentor")
+        assert result["recorded"] is True
+        profile = bt.get_user_profile()
+        assert profile["active_persona"] == "mentor"
+        assert profile["persona_behavior"]["retrieval_depth"] == "+1 — include episodic context by default"
+
+    def test_unknown_persona_rejected_not_stored(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        result = bt.record_user_preference("persona", "wizard")
+        assert result["recorded"] is False
+        assert "mentor" in result["error"] and "pair" in result["error"] and "caveman" in result["error"]
+        assert "persona" not in bt.get_preferences()
+
+    def test_no_persona_set_omits_keys_entirely(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        profile = bt.get_user_profile()
+        assert "active_persona" not in profile
+        assert "persona_behavior" not in profile
+
+    def test_no_persona_golden_regression_on_other_fields(self, tmp_path, monkeypatch):
+        """AC2: no persona set ⇒ profile identical to pre-402 field set."""
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_query("q1", "how does auth work", [])
+        profile = bt.get_user_profile()
+        expected = {
+            "depth_preference", "top_question_type", "question_type_distribution",
+            "top_terminology", "code_focus_percent", "framing_hints", "sample_queries",
+            "total_queries_tracked", "explicit_preferences", "query_rewrites", "mood",
+        }
+        assert set(profile.keys()) == expected
+
+    def test_all_three_personas_have_concrete_behavior_blocks(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        for name in ("mentor", "pair", "caveman"):
+            bt.record_user_preference("persona", name)
+            behavior = bt.get_user_profile()["persona_behavior"]
+            assert set(behavior.keys()) == {"retrieval_depth", "verbosity", "tone"}
+            assert all(isinstance(v, str) and v for v in behavior.values())
+
+    def test_other_preference_keys_unaffected_by_persona_validation(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        result = bt.record_user_preference("response_style", "code first")
+        assert result["recorded"] is True
+
+
 # ── Framing hints lifecycle (T3.1 fix) ───────────────────────────────────────
 
 class TestFramingHintsLifecycle:
