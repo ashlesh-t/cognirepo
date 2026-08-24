@@ -1,6 +1,6 @@
 # Root JIRA registry — read this FIRST in any new session (see /skill.md).
 project: cognirepo
-active_epic: COGNIREPO-400
+active_epic: COGNIREPO-500
 epics:
   - id: COGNIREPO-100
     name: ReliabilityGate
@@ -16,7 +16,7 @@ epics:
     blocked_by: []
   - id: COGNIREPO-400
     name: MoodPersonaLayer
-    status: in-progress
+    status: signed-off  # 2026-08-24, v2.3.0 — all 4 stories + 1 defect + epic e2e suite PASS
     blocked_by: []
   - id: COGNIREPO-500
     name: SubagentEnrichment
