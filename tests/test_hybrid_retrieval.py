@@ -129,6 +129,191 @@ class TestGraphScoreSimilarToWeighting:
         assert score == 0.5
 
 
+class TestIndependenceGrouping:
+    """COGNIREPO-501 — union-find grouping of hits by structural-edge reachability."""
+
+    def test_disconnected_files_get_different_component_ids(self, monkeypatch):
+        from data.graph.knowledge_graph import NodeType
+        from intelligence.retrieval import hybrid as hybrid_mod
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        monkeypatch.setattr(hybrid_mod, "_grouping_allowed", lambda graph: True)
+        r = HybridRetriever()
+        r.graph.add_node("a.py::fn_a", NodeType.FUNCTION, file="a.py")
+        r.graph.add_node("b.py::fn_b", NodeType.FUNCTION, file="b.py")
+        # no edge at all between them
+
+        top = [
+            {"final_score": 0.9, "_symbol": "a.py::fn_a"},
+            {"final_score": 0.8, "_symbol": "b.py::fn_b"},
+        ]
+        result = r._annotate_independence_groups(top)
+        assert result[0]["component_id"] != result[1]["component_id"]
+        assert "_symbol" not in result[0] and "_symbol" not in result[1]
+
+    def test_adding_import_edge_merges_into_same_component(self, monkeypatch):
+        from data.graph.knowledge_graph import EdgeType, NodeType
+        from intelligence.retrieval import hybrid as hybrid_mod
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        monkeypatch.setattr(hybrid_mod, "_grouping_allowed", lambda graph: True)
+        r = HybridRetriever()
+        r.graph.add_node("a.py", NodeType.FILE)
+        r.graph.add_node("b.py", NodeType.FILE)
+        r.graph.add_node("a.py::fn_a", NodeType.FUNCTION, file="a.py")
+        r.graph.add_node("b.py::fn_b", NodeType.FUNCTION, file="b.py")
+        r.graph.add_edge("a.py::fn_a", "a.py", EdgeType.DEFINED_IN)
+        r.graph.add_edge("b.py::fn_b", "b.py", EdgeType.DEFINED_IN)
+        r.graph.add_edge("a.py", "b.py", EdgeType.IMPORTS)
+
+        top = [
+            {"final_score": 0.9, "_symbol": "a.py::fn_a"},
+            {"final_score": 0.8, "_symbol": "b.py::fn_b"},
+        ]
+        result = r._annotate_independence_groups(top)
+        assert result[0]["component_id"] == result[1]["component_id"]
+
+    def test_similar_to_edge_alone_does_not_merge(self, monkeypatch):
+        """SIMILAR_TO is not a structural edge type for grouping purposes."""
+        from data.graph.knowledge_graph import EdgeType, NodeType
+        from intelligence.retrieval import hybrid as hybrid_mod
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        monkeypatch.setattr(hybrid_mod, "_grouping_allowed", lambda graph: True)
+        r = HybridRetriever()
+        r.graph.add_node("a.py::fn_a", NodeType.FUNCTION, file="a.py")
+        r.graph.add_node("b.py::fn_b", NodeType.FUNCTION, file="b.py")
+        r.graph.add_edge("a.py::fn_a", "b.py::fn_b", EdgeType.SIMILAR_TO)
+        r.graph.add_edge("b.py::fn_b", "a.py::fn_a", EdgeType.SIMILAR_TO)
+
+        top = [
+            {"final_score": 0.9, "_symbol": "a.py::fn_a"},
+            {"final_score": 0.8, "_symbol": "b.py::fn_b"},
+        ]
+        result = r._annotate_independence_groups(top)
+        assert result[0]["component_id"] != result[1]["component_id"]
+
+    def test_integrity_gate_blocks_grouping_entirely(self, monkeypatch):
+        """AC3: high-orphan graph -> no component_id emitted at all."""
+        from data.graph.knowledge_graph import NodeType
+        from intelligence.retrieval import hybrid as hybrid_mod
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        monkeypatch.setattr(hybrid_mod, "_grouping_allowed", lambda graph: False)
+        r = HybridRetriever()
+        r.graph.add_node("a.py::fn_a", NodeType.FUNCTION, file="a.py")
+        r.graph.add_node("b.py::fn_b", NodeType.FUNCTION, file="b.py")
+
+        top = [
+            {"final_score": 0.9, "_symbol": "a.py::fn_a"},
+            {"final_score": 0.8, "_symbol": "b.py::fn_b"},
+        ]
+        result = r._annotate_independence_groups(top)
+        assert "component_id" not in result[0]
+        assert "component_id" not in result[1]
+
+    def test_golden_regression_other_fields_untouched(self, monkeypatch):
+        """AC2: with grouping gated off, hits/scores/order are byte-identical apart from
+        the internal _symbol field, which was never part of the pre-501 output contract."""
+        from data.graph.knowledge_graph import NodeType
+        from intelligence.retrieval import hybrid as hybrid_mod
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        monkeypatch.setattr(hybrid_mod, "_grouping_allowed", lambda graph: False)
+        r = HybridRetriever()
+        r.graph.add_node("a.py::fn_a", NodeType.FUNCTION, file="a.py")
+
+        original = {"final_score": 0.9, "vector_score": 0.8, "text": "fn_a",
+                    "_symbol": "a.py::fn_a"}
+        top = [dict(original)]
+        result = r._annotate_independence_groups(top)
+        expected = {k: v for k, v in original.items() if k != "_symbol"}
+        assert result[0] == expected
+
+    def test_reachable_files_respects_hop_cap(self, monkeypatch):
+        from data.graph.knowledge_graph import EdgeType, NodeType
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        r = HybridRetriever()
+        # chain: a -> b -> c -> d -> e (4 hops from a to e), all via CALLS/CALLED_BY
+        nodes = ["a.py::fn", "b.py::fn", "c.py::fn", "d.py::fn", "e.py::fn"]
+        for n in nodes:
+            r.graph.add_node(n, NodeType.FUNCTION, file=n.split("::")[0])
+        for a, b in zip(nodes, nodes[1:]):
+            r.graph.add_edge(a, b, EdgeType.CALLED_BY)
+            r.graph.add_edge(b, a, EdgeType.CALLS)
+
+        reached = r._reachable_files("a.py::fn")
+        # hop cap 3: a(0) -> b(1) -> c(2) -> d(3) reachable; e.py (hop 4) is not
+        assert "a.py" in reached and "b.py" in reached and "c.py" in reached and "d.py" in reached
+        assert "e.py" not in reached
+
+    def test_reachable_files_capped_through_hub_node(self, monkeypatch):
+        """Found dogfooding on cognirepo_test_repo/medium/ansible: a hub file used by hundreds
+        of others makes hop-cap-3 alone reach 700-900 files in 9-16ms. _GROUPING_MAX_VISITED
+        bounds this regardless of hop cap."""
+        from data.graph.knowledge_graph import EdgeType, NodeType
+        from intelligence.retrieval import hybrid as hybrid_mod
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        r = HybridRetriever()
+        r.graph.add_node("start.py::fn", NodeType.FUNCTION, file="start.py")
+        r.graph.add_node("hub.py::util", NodeType.FUNCTION, file="hub.py")
+        r.graph.add_edge("start.py::fn", "hub.py::util", EdgeType.CALLED_BY)
+        r.graph.add_edge("hub.py::util", "start.py::fn", EdgeType.CALLS)
+        # hub.py::util is called by 200 unrelated files — classic fan-out hub
+        for i in range(200):
+            node = f"file{i}.py::caller"
+            r.graph.add_node(node, NodeType.FUNCTION, file=f"file{i}.py")
+            r.graph.add_edge(node, "hub.py::util", EdgeType.CALLED_BY)
+            r.graph.add_edge("hub.py::util", node, EdgeType.CALLS)
+
+        reached = r._reachable_files("start.py::fn")
+        assert len(reached) <= hybrid_mod._GROUPING_MAX_VISITED
+
+    def test_grouping_allowed_on_clean_graph(self, tmp_path, monkeypatch):
+        """_grouping_allowed itself (not mocked) returns True for a graph with no orphans."""
+        from intelligence.retrieval import hybrid as hybrid_mod
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        hybrid_mod._integrity_gate_cache["ts"] = 0.0  # force a fresh check
+        monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
+        (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
+        r = HybridRetriever()
+        assert hybrid_mod._grouping_allowed(r.graph) is True
+
+    def test_grouping_allowed_caches_result(self, monkeypatch):
+        """Repeated calls within the TTL don't re-run integrity_report."""
+        from intelligence.retrieval import hybrid as hybrid_mod
+        from unittest.mock import MagicMock
+
+        hybrid_mod._integrity_gate_cache["ts"] = hybrid_mod.time.monotonic()
+        hybrid_mod._integrity_gate_cache["allowed"] = True
+        fake_graph = MagicMock()
+        assert hybrid_mod._grouping_allowed(fake_graph) is True
+        fake_graph.integrity_report.assert_not_called()
+
+    def test_annotate_independence_groups_latency(self, monkeypatch):
+        """AC4: added latency < 10ms for k <= 10 on a small synthetic graph."""
+        import time as _time
+        from data.graph.knowledge_graph import NodeType
+        from intelligence.retrieval import hybrid as hybrid_mod
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        monkeypatch.setattr(hybrid_mod, "_grouping_allowed", lambda graph: True)
+        r = HybridRetriever()
+        top = []
+        for i in range(10):
+            node = f"file{i}.py::fn{i}"
+            r.graph.add_node(node, NodeType.FUNCTION, file=f"file{i}.py")
+            top.append({"final_score": 1.0 - i * 0.01, "_symbol": node})
+
+        start = _time.perf_counter()
+        r._annotate_independence_groups(top)
+        elapsed_ms = (_time.perf_counter() - start) * 1000
+        assert elapsed_ms < 10.0, f"grouping took {elapsed_ms:.2f}ms, budget is 10ms"
+
+
 class TestVectorRetrieveSourcePreservation:
     """COGNIREPO-D07: _vector_retrieve() must report the real stored source
     (previously hardcoded "semantic" for every vector-backend hit)."""

@@ -33,7 +33,7 @@ import numpy as np
 from core._bm25 import BM25 as _BM25, Document as _Document
 from data.graph.behaviour_tracker import BehaviourTracker
 from data.graph.graph_utils import extract_entities_from_text, make_node_id
-from data.graph.knowledge_graph import KnowledgeGraph, EdgeType
+from data.graph.knowledge_graph import KnowledgeGraph, EdgeType, NodeType
 from intelligence.indexer.ast_indexer import ASTIndexer
 from data.memory.circuit_breaker import CircuitOpenError
 from data.memory.embeddings import encode_with_timeout
@@ -50,6 +50,47 @@ DEFAULT_WEIGHTS = {"vector": 0.5, "graph": 0.3, "behaviour": 0.2}
 # pair) is weaker relevance evidence than a real structural edge — discount it below the
 # vanilla 1-hop score (0.5) but keep it above 2-hop (0.333). COGNIREPO-202.
 _SIMILAR_TO_ONLY_DISCOUNT = 0.7
+
+# COGNIREPO-501 — independence grouping. Only these edge types count as "structurally
+# connected" for delegation purposes; QUERIED_WITH/CO_OCCURS/SIMILAR_TO/RELATES_TO don't imply
+# a subagent working on one hit would step on another's toes.
+_STRUCTURAL_EDGE_TYPES = {EdgeType.IMPORTS, EdgeType.CALLS, EdgeType.CALLED_BY, EdgeType.DEFINED_IN}
+_GROUPING_HOP_CAP = 3
+# Hard latency/precision backstop — see _reachable_files docstring for why hop cap alone
+# isn't sufficient on a real, densely-connected repo.
+_GROUPING_MAX_VISITED = 30
+
+# integrity_report() is O(nodes), documented as "< 1s on a medium repo" (COGNIREPO-201) — far too
+# slow to run synchronously on every hybrid_retrieve() call. Cache the gate decision at module
+# level with the same TTL as _HYBRID_CACHE rather than recomputing per query.
+_INTEGRITY_CACHE_TTL = 300
+_INTEGRITY_ORPHAN_THRESHOLD = 100
+_INTEGRITY_DANGLING_THRESHOLD = 20
+_integrity_gate_cache: dict = {"allowed": True, "ts": 0.0}
+_integrity_gate_lock = threading.Lock()
+
+
+def _grouping_allowed(graph: KnowledgeGraph) -> bool:
+    """True unless the graph's orphan/dangling counts exceed a corruption-level threshold —
+    so integrity problems never masquerade as legitimate parallelism (COGNIREPO-501 AC3)."""
+    now = time.monotonic()
+    with _integrity_gate_lock:
+        if now - _integrity_gate_cache["ts"] < _INTEGRITY_CACHE_TTL:
+            return _integrity_gate_cache["allowed"]
+    try:
+        from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
+        repo_root = os.path.dirname(os.path.abspath(get_cognirepo_dir()))
+        report = graph.integrity_report(repo_root)
+        allowed = (
+            len(report["orphans"]) <= _INTEGRITY_ORPHAN_THRESHOLD
+            and len(report["dangling_files"]) <= _INTEGRITY_DANGLING_THRESHOLD
+        )
+    except Exception:  # pylint: disable=broad-except
+        allowed = True  # fail open — a broken integrity check shouldn't break retrieval
+    with _integrity_gate_lock:
+        _integrity_gate_cache["allowed"] = allowed
+        _integrity_gate_cache["ts"] = now
+    return allowed
 
 
 def _load_weights() -> dict[str, float]:
@@ -137,6 +178,10 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
         # 6. sort + truncate
         scored.sort(key=lambda x: x["final_score"], reverse=True)
         top = scored[:top_k]
+
+        # 6b. independence grouping (COGNIREPO-501) — annotates component_id in place,
+        # never reorders or rescores; strips its own internal "_symbol" field when done.
+        top = self._annotate_independence_groups(top)
 
         # 7. record query for user-behaviour profiling (never breaks retrieval)
         try:
@@ -348,7 +393,9 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
                 "behaviour_score": round(b_score, 4),
             })
             result.pop("_id", None)
-            result.pop("_symbol", None)
+            # NOTE: "_symbol" is intentionally kept here (unlike "_id") — retrieve()'s
+            # independence-grouping pass (COGNIREPO-501) needs it on the truncated top-k and
+            # strips it itself before returning, so the final output shape is unchanged.
             scored.append(result)
         return scored
 
@@ -420,6 +467,107 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
         edge_ba = self.graph.G.get_edge_data(b, a)
         rels = [e.get("rel") for e in (edge_ab, edge_ba) if e]
         return bool(rels) and all(r == EdgeType.SIMILAR_TO for r in rels)
+
+    def _reachable_files(self, start_node: str) -> set[str]:
+        """Bounded (hop cap _GROUPING_HOP_CAP, visited-node cap _GROUPING_MAX_VISITED)
+        undirected BFS from start_node, traversing only _STRUCTURAL_EDGE_TYPES edges. Returns
+        the set of file paths reached — FILE node IDs are themselves the file path
+        (graph_utils.make_node_id); FUNCTION/CLASS nodes carry a 'file' attr. COGNIREPO-501.
+
+        The visited-node cap exists because hop-cap-3 alone is not enough on a real,
+        densely-connected repo: measured on cognirepo_test_repo/medium/ansible (17.6k nodes,
+        96.5k edges), an unbounded hop-3 BFS from a single symbol reached 700-900 files through
+        common hub utility/test files in 9-16ms each — blowing the <10ms/k<=10 budget (AC4) and
+        making almost every hit look "connected" through shared infrastructure, defeating the
+        whole point of the grouping (a hub-adjacent hit isn't meaningfully coupled to everything
+        the hub touches). Stopping BFS once the cap is hit trades a small false-independence
+        risk (two truly-connected-only-via-a-huge-hub files might get different component_ids)
+        for bounded latency and groups that actually reflect direct coupling — the same
+        precautionary direction as the integrity gate (COGNIREPO-501 Analyze correction).
+        """
+        g = self.graph.G
+        if not g.has_node(start_node):
+            return set()
+        from collections import deque  # pylint: disable=import-outside-toplevel
+        visited = {start_node}
+        queue = deque([(start_node, 0)])
+        files: set[str] = set()
+
+        def _record(node: str) -> None:
+            data = g.nodes[node]
+            if data.get("type") == NodeType.FILE:
+                files.add(node)
+            elif data.get("file"):
+                files.add(data["file"])
+
+        _record(start_node)
+        while queue:
+            if len(visited) >= _GROUPING_MAX_VISITED:
+                break
+            current, hops = queue.popleft()
+            if hops >= _GROUPING_HOP_CAP:
+                continue
+            neighbours = set(g.successors(current)) | set(g.predecessors(current))
+            for nxt in neighbours:
+                if len(visited) >= _GROUPING_MAX_VISITED:
+                    break
+                if nxt in visited:
+                    continue
+                edge_fwd = g.get_edge_data(current, nxt) or {}
+                edge_bwd = g.get_edge_data(nxt, current) or {}
+                rels = {edge_fwd.get("rel"), edge_bwd.get("rel")}
+                if not rels & _STRUCTURAL_EDGE_TYPES:
+                    continue
+                visited.add(nxt)
+                _record(nxt)
+                queue.append((nxt, hops + 1))
+        return files
+
+    def _annotate_independence_groups(self, top: list[dict]) -> list[dict]:
+        """Post-score pass (COGNIREPO-501): union-find hits whose files are reachable from one
+        another through structural edges only, hop-capped. When the integrity gate blocks
+        grouping (_grouping_allowed is False), no 'component_id' is added at all — every dict
+        stays exactly as _score_candidates produced it (AC2 golden-identical behavior).
+        Otherwise every hit with a resolvable '_symbol' gets a 'component_id' — equal for hits
+        that turn out connected (AC1's "add one edge -> same id"), distinct otherwise. Hits with
+        no resolvable symbol (e.g. memory-only candidates with no graph representation) get no
+        key. Always strips the internal '_symbol' field before returning, matching pre-501
+        output shape."""
+        if not _grouping_allowed(self.graph):
+            for r in top:
+                r.pop("_symbol", None)
+            return top
+
+        # union-find over hit indices, keyed by reachable-file-set overlap
+        parent = list(range(len(top)))
+
+        def find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def union(i: int, j: int) -> None:
+            ri, rj = find(i), find(j)
+            if ri != rj:
+                parent[rj] = ri
+
+        reachable = [
+            self._reachable_files(r["_symbol"]) if r.get("_symbol") else set()
+            for r in top
+        ]
+        for i in range(len(top)):
+            for j in range(i + 1, len(top)):
+                if reachable[i] & reachable[j]:
+                    union(i, j)
+
+        groupable_roots = sorted({find(i) for i, r in enumerate(top) if r.get("_symbol")})
+        root_to_id = {root: f"g{n}" for n, root in enumerate(groupable_roots)}
+        for i, r in enumerate(top):
+            symbol = r.pop("_symbol", None)
+            if symbol:
+                r["component_id"] = root_to_id[find(i)]
+        return top
 
     @staticmethod
     def _behaviour_score(

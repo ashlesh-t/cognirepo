@@ -20,7 +20,7 @@ epics:
     blocked_by: []
   - id: COGNIREPO-500
     name: SubagentEnrichment
-    status: not-started
+    status: in-progress
     blocked_by: []
   - id: COGNIREPO-600
     name: OSSGrowth
