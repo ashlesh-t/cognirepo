@@ -35,13 +35,20 @@ JIRA/
 - Epics: round hundreds — COGNIREPO-100, -200, -300, -400, -500, -600.
 - Stories: increment within the epic — COGNIREPO-101, -102, …
 - Defects: D-prefixed — COGNIREPO-D01, -D02, … (registered under their epic's status.yml).
+  **D-numbers reset per epic (not globally unique)** — epic 100's D01 and epic 400's D01 are
+  different tickets. The ticket folder path disambiguates on disk
+  (`EPIC-<Name>-<ID>/DEFECT/COGNIREPO-D<nn>/`), but branch names and commit-message ticket
+  references do NOT carry epic context by themselves — so **defect branches and commit-message
+  ticket refs MUST be epic-qualified**: `defect/COGNIREPO-<EpicID>-D<nn>` (e.g.
+  `defect/COGNIREPO-400-D01`), commit prefix `COGNIREPO-400-D01: …`. The ticket file's own
+  internal heading may stay short (`COGNIREPO-D01`) since its folder already gives it context.
 - Sub-tasks are NOT separately numbered — they are `_SubtaskN.md` files under their story.
   New defects found during testing: take the next free D-number in the epic, create the folder,
   add it to the epic's status.yml.
 
 Allocated epics: 100 ReliabilityGate (stories 101-106, defects D01-D03) · 200
 KGEpisodicHardening (201-205) · 300 RepoInsights (301-303) · 400 MoodPersonaLayer (401-404) ·
-500 SubagentEnrichment (501-502) · 600 OSSGrowth (601-603).
+500 SubagentEnrichment (501-502) · 600 OSSGrowth (601-603) · 700 CognitiveDynamics (701-704).
 
 ## B. status.yml — schema and RESUME protocol
 
@@ -144,7 +151,7 @@ user as reviewer. For each story (defects follow the identical loop):
 `COGNIREPO-<ID>-TEST_SUITE.md` (cross-story e2e flows) passes. Then: mark the epic signed-off,
 set root `active_epic` to the next unblocked epic, append the milestone to `COMPLETED_TASKS.md`,
 and bump the version per the phase's planning doc (`version.yml` → `python
-scripts/sync_version.py`; sequence: 2.0.1 → 2.1.0 → 2.2.0 → 2.3.0 → 2.4.0 → 2.4.1).
+scripts/sync_version.py`; sequence: 2.0.1 → 2.1.0 → 2.2.0 → 2.3.0 → 2.4.0 → 2.4.1 → 2.5.0).
 
 ### F.4 TEST_SUITE.md case format (use for every new suite you write)
 ```
@@ -160,9 +167,12 @@ scripts/sync_version.py`; sequence: 2.0.1 → 2.1.0 → 2.2.0 → 2.3.0 → 2.4.
 
 ## G. Defect workflow
 
-Anything found not working during testing (any gate, any suite) becomes a DEFECT ticket:
-1. Allocate the next `COGNIREPO-D<nn>` in the epic; create
-   `DEFECT/COGNIREPO-D<nn>/COGNIREPO-D<nn>.md` (backstory with reproduction + file:line,
+Anything found not working — during testing (any gate, any suite), OR during another epic's
+Discovery/audit (e.g. an invariant found already violated in production code while researching
+an unrelated epic) — becomes a DEFECT ticket:
+1. Allocate the next `COGNIREPO-D<nn>` in the epic that found it (it doesn't need to be the epic
+   that caused it — file it where it was discovered unless a more obviously-owning epic exists);
+   create `DEFECT/COGNIREPO-D<nn>/COGNIREPO-D<nn>.md` (backstory with reproduction + file:line,
    description/fix, AC) and its `TEST/COGNIREPO-D<nn>-TEST_SUITE.md` — write the test suite
    BEFORE fixing.
 2. Register it in the epic's status.yml (`defects:` list) with branch `defect/COGNIREPO-D<nn>`.

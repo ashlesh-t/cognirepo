@@ -8,6 +8,36 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+## [2.3.0] — 2026-08-24
+
+### Added
+- **COGNIREPO-401 — mood signal derivation.** `BehaviourTracker.derive_mood()` ->
+  `{state, evidence, suggested_adaptation}` from existing behaviour data only (error streaks,
+  query velocity, edit momentum) — no new subsystem, no new tool. `state` is
+  `neutral`/`frustrated`/`flow`; neutral + empty evidence on sparse data; `suggested_adaptation`
+  is always an action, never a bare tone label. Windowed (15m frustrated / 20m flow). Surfaced
+  additively in `get_user_profile()`/`get_agent_bootstrap()` — 0 manifest-token growth.
+- **COGNIREPO-402 — persona registry (mentor / pair / caveman).** Exactly 3 opt-in personas via
+  the existing `record_user_preference("persona", ...)` — zero new tools, zero schema change.
+  Unknown values rejected without clobbering an existing valid one; `get_user_profile()`
+  additively surfaces `active_persona`/`persona_behavior`, absent entirely when unset.
+- **COGNIREPO-403 — caveman economy persona.** `output_contract` (~57 tok) served only when
+  `persona=caveman` is active: compress style, never content — retain every file:line
+  reference/number/caveat, drop preamble/hedging/restatement/transitions. A one-line, dismissible
+  `persona_suggestion` nudges toward caveman after sustained QUICK-tier query usage — advisory
+  only, never self-enables.
+- **COGNIREPO-404 — output-side persona measurement harness.** New `scripts/persona_bench.py`
+  (dev script, not CI) scores a 20-question golden set of real off/on response pairs. Result:
+  median reduction **57.3%** (gate ≥40%, PASS); accuracy delta **-8.8pp** (gate ≤2pp absolute,
+  MISSED, but in the safe direction — persona-on never scored lower than off on any question;
+  root cause is a substring-matching scoring artifact, not information loss). Documented
+  honestly per the story's own AC — caveman ships marked **experimental** with the real numbers,
+  not a validated claim. Full methodology: `docs/METRICS.md`.
+- **COGNIREPO-400-D01 — persona clear.** `record_user_preference("persona", "none")`
+  (case-insensitive) now clears a previously-set persona — found running the epic's own e2e
+  suite, which assumed clearing was possible but no story had implemented it. Reverts to the
+  exact never-set profile shape.
+
 ## [2.2.0] — 2026-08-23
 
 ### Added

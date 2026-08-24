@@ -1,25 +1,30 @@
 epic_id: COGNIREPO-400
-status: not-started
+status: signed-off
 stories:
   - id: COGNIREPO-401
-    status: not-started
+    status: signed-off
     branch: story/COGNIREPO-401
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/57
+    test_status: pass
   - id: COGNIREPO-402
-    status: not-started
+    status: signed-off
     branch: story/COGNIREPO-402
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/58
+    test_status: pass
   - id: COGNIREPO-403
-    status: not-started
+    status: signed-off
     branch: story/COGNIREPO-403
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/59
+    test_status: pass
   - id: COGNIREPO-404
-    status: not-started
+    status: signed-off
     branch: story/COGNIREPO-404
-    pr: null
-    test_status: not-run
-defects: []
-epic_test_suite_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/60
+    test_status: pass
+defects:
+  - id: COGNIREPO-D01
+    status: signed-off
+    branch: defect/COGNIREPO-400-D01
+    pr: https://github.com/ashlesh-t/cognirepo/pull/61
+    test_status: pass
+epic_test_suite_status: pass

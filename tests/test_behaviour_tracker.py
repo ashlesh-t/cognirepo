@@ -119,6 +119,208 @@ class TestBehaviourTrackerCore:
         assert prefs["format"] == "markdown"
 
 
+# ── Mood derivation (COGNIREPO-401) ──────────────────────────────────────────
+
+class TestMoodDerivation:
+    def test_empty_store_is_neutral_with_no_evidence(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        mood = bt.derive_mood()
+        assert mood == {"state": "neutral", "evidence": [], "suggested_adaptation": ""}
+
+    def test_three_same_type_errors_within_15min_is_frustrated(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_error("ImportError", file_path="utils.py", message="cannot import X")
+        bt.record_error("ImportError", file_path="utils.py", message="cannot import X")
+        bt.record_error("ImportError", file_path="utils.py", message="cannot import X")
+        mood = bt.derive_mood()
+        assert mood["state"] == "frustrated"
+        assert any("ImportError" in e for e in mood["evidence"])
+
+    def test_suggested_adaptation_is_an_action_not_a_tone_word(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        for _ in range(3):
+            bt.record_error("TypeError", file_path="main.py")
+        mood = bt.derive_mood()
+        adaptation = mood["suggested_adaptation"].lower()
+        assert "get_error_patterns" in adaptation
+        for tone_word in ("frustrated", "annoyed", "happy", "calm"):
+            assert tone_word not in adaptation
+
+    def test_old_errors_outside_window_do_not_pin_frustrated(self, tmp_path, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_error("ImportError", file_path="utils.py")
+        bt.record_error("ImportError", file_path="utils.py")
+        bt.record_error("ImportError", file_path="utils.py")
+        stale = (datetime.now(tz=timezone.utc) - timedelta(hours=2)).isoformat()
+        for occ in bt.data["error_patterns"]["ImportError"]["occurrences"]:
+            occ["time"] = stale
+        mood = bt.derive_mood()
+        assert mood["state"] == "neutral"
+        assert mood["evidence"] == []
+
+    def test_sustained_edits_and_queries_with_no_errors_is_flow(self, tmp_path, monkeypatch):
+        from datetime import datetime, timedelta, timezone
+
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_query("q1", "how does routing work", [])
+        recent = (datetime.now(tz=timezone.utc) - timedelta(minutes=15)).isoformat()
+        bt.data["query_history"]["q1"]["timestamp"] = recent
+        bt.data["session_registry"]["s1"] = {
+            "start": recent, "queries": [], "files_touched": ["routing.py"],
+        }
+        mood = bt.derive_mood()
+        assert mood["state"] == "flow"
+        assert mood["evidence"]
+
+    def test_get_user_profile_includes_mood_key(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        profile = bt.get_user_profile()
+        assert "mood" in profile
+        assert profile["mood"]["state"] == "neutral"
+
+    def test_get_user_profile_other_fields_unchanged_when_mood_neutral(self, tmp_path, monkeypatch):
+        """Golden test (AC3): adding `mood` must not perturb any other profile field."""
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_query("q1", "how does auth work", [])
+        profile = bt.get_user_profile()
+        mood = profile.pop("mood")
+        assert mood["state"] == "neutral"
+        expected = {
+            "depth_preference", "top_question_type", "question_type_distribution",
+            "top_terminology", "code_focus_percent", "framing_hints", "sample_queries",
+            "total_queries_tracked", "explicit_preferences", "query_rewrites",
+        }
+        assert set(profile.keys()) == expected
+
+
+# ── Persona registry (COGNIREPO-402) ─────────────────────────────────────────
+
+class TestPersonaRegistry:
+    def test_valid_persona_recorded_and_surfaced(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        result = bt.record_user_preference("persona", "mentor")
+        assert result["recorded"] is True
+        profile = bt.get_user_profile()
+        assert profile["active_persona"] == "mentor"
+        assert profile["persona_behavior"]["retrieval_depth"] == "+1 — include episodic context by default"
+
+    def test_unknown_persona_rejected_not_stored(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        result = bt.record_user_preference("persona", "wizard")
+        assert result["recorded"] is False
+        assert "mentor" in result["error"] and "pair" in result["error"] and "caveman" in result["error"]
+        assert "persona" not in bt.get_preferences()
+
+    def test_no_persona_set_omits_keys_entirely(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        profile = bt.get_user_profile()
+        assert "active_persona" not in profile
+        assert "persona_behavior" not in profile
+
+    def test_no_persona_golden_regression_on_other_fields(self, tmp_path, monkeypatch):
+        """AC2: no persona set ⇒ profile identical to pre-402 field set."""
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_query("q1", "how does auth work", [])
+        profile = bt.get_user_profile()
+        expected = {
+            "depth_preference", "top_question_type", "question_type_distribution",
+            "top_terminology", "code_focus_percent", "framing_hints", "sample_queries",
+            "total_queries_tracked", "explicit_preferences", "query_rewrites", "mood",
+        }
+        assert set(profile.keys()) == expected
+
+    def test_all_three_personas_have_concrete_behavior_blocks(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        for name in ("mentor", "pair", "caveman"):
+            bt.record_user_preference("persona", name)
+            behavior = bt.get_user_profile()["persona_behavior"]
+            assert set(behavior.keys()) == {"retrieval_depth", "verbosity", "tone"}
+            assert all(isinstance(v, str) and v for v in behavior.values())
+
+    def test_other_preference_keys_unaffected_by_persona_validation(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        result = bt.record_user_preference("response_style", "code first")
+        assert result["recorded"] is True
+
+
+# ── Persona clear (COGNIREPO-400-D01) ────────────────────────────────────────
+
+class TestPersonaClear:
+    def test_clear_after_set_removes_persona(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_user_preference("persona", "caveman")
+        assert bt.get_user_profile()["active_persona"] == "caveman"
+        result = bt.record_user_preference("persona", "none")
+        assert result["recorded"] is True
+        assert result["cleared"] is True
+        profile = bt.get_user_profile()
+        assert "active_persona" not in profile
+        assert "persona_behavior" not in profile
+        assert "output_contract" not in profile
+
+    def test_clear_is_case_insensitive(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_user_preference("persona", "mentor")
+        bt.record_user_preference("persona", "NONE")
+        assert "active_persona" not in bt.get_user_profile()
+
+    def test_clear_when_never_set_is_noop_not_error(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        result = bt.record_user_preference("persona", "none")
+        assert result["recorded"] is True
+        assert "active_persona" not in bt.get_user_profile()
+
+    def test_none_not_registered_as_a_fourth_persona(self, tmp_path, monkeypatch):
+        from data.graph.behaviour_tracker import _PERSONAS
+        assert "none" not in _PERSONAS
+        assert set(_PERSONAS) == {"mentor", "pair", "caveman"}
+
+    def test_cleared_profile_matches_never_set_field_set(self, tmp_path, monkeypatch):
+        """Reuses the COGNIREPO-402 golden-regression field set after clearing."""
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_user_preference("persona", "pair")
+        bt.record_user_preference("persona", "none")
+        profile = bt.get_user_profile()
+        expected = {
+            "depth_preference", "top_question_type", "question_type_distribution",
+            "top_terminology", "code_focus_percent", "framing_hints", "sample_queries",
+            "total_queries_tracked", "explicit_preferences", "query_rewrites", "mood",
+        }
+        assert set(profile.keys()) == expected
+
+
+# ── Caveman output contract (COGNIREPO-403) ──────────────────────────────────
+
+class TestCavemanOutputContract:
+    def test_output_contract_present_iff_caveman_active(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_user_preference("persona", "caveman")
+        profile = bt.get_user_profile()
+        assert "output_contract" in profile
+        assert isinstance(profile["output_contract"], str) and len(profile["output_contract"]) > 20
+
+    def test_output_contract_absent_for_other_personas(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        for name in ("mentor", "pair"):
+            bt.record_user_preference("persona", name)
+            assert "output_contract" not in bt.get_user_profile()
+
+    def test_output_contract_absent_when_no_persona(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        assert "output_contract" not in bt.get_user_profile()
+
+    def test_output_contract_forbids_omitting_caveats_and_numbers(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_user_preference("persona", "caveman")
+        contract = bt.get_user_profile()["output_contract"].lower()
+        assert "retain" in contract
+        assert "caveat" in contract
+        assert "number" in contract
+        assert "file:line" in contract or "reference" in contract
+
+
 # ── Framing hints lifecycle (T3.1 fix) ───────────────────────────────────────
 
 class TestFramingHintsLifecycle:

@@ -290,6 +290,60 @@ class TestManifestFormat:
         assert all(t["type"] == "function" for t in tools)
 
 
+class TestCavemanSuggestion:
+    def test_suggestion_fires_on_sustained_quick_usage(self):
+        from interface.server.mcp_server import _maybe_add_caveman_suggestion
+        from unittest.mock import MagicMock
+        bt = MagicMock()
+        bt.data = {"interaction_style": {"query_patterns": ["what is x"] * 8}}
+        bt.get_preferences.return_value = {}
+        profile = {}
+        _maybe_add_caveman_suggestion(profile, bt)
+        assert "persona_suggestion" in profile
+
+    def test_suggestion_absent_when_caveman_already_active(self):
+        from interface.server.mcp_server import _maybe_add_caveman_suggestion
+        from unittest.mock import MagicMock
+        bt = MagicMock()
+        bt.data = {"interaction_style": {"query_patterns": ["what is x"] * 8}}
+        bt.get_preferences.return_value = {}
+        profile = {"active_persona": "caveman"}
+        _maybe_add_caveman_suggestion(profile, bt)
+        assert "persona_suggestion" not in profile
+
+    def test_suggestion_dismissible(self):
+        from interface.server.mcp_server import _maybe_add_caveman_suggestion
+        from unittest.mock import MagicMock
+        bt = MagicMock()
+        bt.data = {"interaction_style": {"query_patterns": ["what is x"] * 8}}
+        bt.get_preferences.return_value = {"persona_suggestion_dismissed": "true"}
+        profile = {}
+        _maybe_add_caveman_suggestion(profile, bt)
+        assert "persona_suggestion" not in profile
+
+    def test_suggestion_absent_on_sparse_history(self):
+        from interface.server.mcp_server import _maybe_add_caveman_suggestion
+        from unittest.mock import MagicMock
+        bt = MagicMock()
+        bt.data = {"interaction_style": {"query_patterns": ["what is x"]}}
+        bt.get_preferences.return_value = {}
+        profile = {}
+        _maybe_add_caveman_suggestion(profile, bt)
+        assert "persona_suggestion" not in profile
+
+    def test_suggestion_absent_on_mixed_tier_usage(self):
+        from interface.server.mcp_server import _maybe_add_caveman_suggestion
+        from unittest.mock import MagicMock
+        bt = MagicMock()
+        bt.data = {"interaction_style": {"query_patterns": [
+            "compare the tradeoffs of this architecture design and refactor it step by step"
+        ] * 8}}
+        bt.get_preferences.return_value = {}
+        profile = {}
+        _maybe_add_caveman_suggestion(profile, bt)
+        assert "persona_suggestion" not in profile
+
+
 class TestAgentBootstrapFraming:
     def test_agent_bootstrap_framing_populated(self, tmp_path, monkeypatch):
         """framing.depth must not be 'unknown' when behaviour data is present."""
@@ -321,6 +375,51 @@ class TestAgentBootstrapFraming:
         assert result["framing"]["depth"] != "unknown"
         assert result["framing"]["hints"] == "prefers code-first answers"
         assert "auth" in result["framing"]["vocabulary"]
+
+    def test_agent_bootstrap_mood_populated(self, tmp_path, monkeypatch):
+        """mood must surface from the profile when behaviour data is present."""
+        from unittest.mock import patch, MagicMock
+        monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
+        (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
+
+        fake_profile = {
+            "depth_preference": "detailed",
+            "top_terminology": [],
+            "framing_hints": "",
+            "explicit_preferences": {},
+            "mood": {
+                "state": "frustrated",
+                "evidence": ["ImportError: 3 occurrences in the last 15m"],
+                "suggested_adaptation": "verify against get_error_patterns before proposing fixes",
+            },
+        }
+        fake_bt = MagicMock()
+        fake_bt.data = {"symbol_weights": {}}
+        fake_bt.get_user_profile.return_value = fake_profile
+        fake_bt.get_error_patterns.return_value = []
+
+        with patch("interface.server.mcp_server._behaviour_enabled", return_value=True), \
+             patch("interface.server.mcp_server._get_graph", return_value=MagicMock()), \
+             patch("data.graph.behaviour_tracker.BehaviourTracker", return_value=fake_bt), \
+             patch("interface.server.mcp_server._index_is_stale", return_value=False):
+            from interface.server.mcp_server import get_agent_bootstrap
+            result = get_agent_bootstrap()
+
+        assert result["mood"]["state"] == "frustrated"
+        assert result["mood"]["evidence"]
+
+    def test_agent_bootstrap_mood_defaults_neutral_when_disabled(self, tmp_path, monkeypatch):
+        """mood must default to neutral/empty when behaviour tracking is disabled."""
+        from unittest.mock import patch
+        monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
+        (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
+
+        with patch("interface.server.mcp_server._behaviour_enabled", return_value=False), \
+             patch("interface.server.mcp_server._index_is_stale", return_value=False):
+            from interface.server.mcp_server import get_agent_bootstrap
+            result = get_agent_bootstrap()
+
+        assert result["mood"] == {"state": "neutral", "evidence": [], "suggested_adaptation": ""}
 
     def test_agent_bootstrap_framing_empty_when_disabled(self, tmp_path, monkeypatch):
         """framing must be empty dict when behaviour tracking is disabled."""

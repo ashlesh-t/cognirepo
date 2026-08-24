@@ -546,7 +546,7 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
 
 **Signature:** `get_user_profile(repo_path: str = None) → dict`
 
-**When:** ALWAYS call at session start (step 3). Apply `framing_hints` to ALL responses. Shows depth preference, domain vocabulary, code-focus %, and explicit stored preferences.
+**When:** ALWAYS call at session start (step 3). Apply `framing_hints` to ALL responses. Shows depth preference, domain vocabulary, code-focus %, explicit stored preferences, and a `mood` signal.
 
 **Output:**
 ```json
@@ -555,9 +555,44 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
   "framing_hints": "prefers concise responses; focuses on code/symbols",
   "top_terminology": ["context_pack", "graph", "episodic"],
   "explicit_preferences": {"response_style": "concise"},
-  "total_queries_tracked": 47
+  "total_queries_tracked": 47,
+  "mood": {
+    "state": "neutral",
+    "evidence": [],
+    "suggested_adaptation": ""
+  }
 }
 ```
+
+**mood** (COGNIREPO-401): derived from recent (last 15-20m) error streaks, query
+velocity, and edit momentum already in the behaviour store — `state` is
+`neutral`/`frustrated`/`flow`, never a bare sentiment label; `suggested_adaptation`
+is always an action (e.g. "verify against get_error_patterns before proposing
+fixes"), not a tone adjective. Neutral with empty evidence on sparse/fresh data.
+Precedence: explicit user request > persona > `framing_hints`/`mood`.
+
+**active_persona / persona_behavior** (COGNIREPO-402): present ONLY when the user has
+opted into a persona via `record_user_preference("persona", "mentor"|"pair"|"caveman")`
+— absent entirely otherwise (zero payload change from pre-402 baseline). Example when set:
+```json
+{
+  "active_persona": "mentor",
+  "persona_behavior": {
+    "retrieval_depth": "+1 — include episodic context by default",
+    "verbosity": "full explanations",
+    "tone": "links responses to related past decisions/history"
+  }
+}
+```
+
+**output_contract** (COGNIREPO-403): present ONLY when `active_persona == "caveman"`. A ~57-token
+instruction string — compress style, never content; retain every file:line ref/number/caveat,
+drop preamble/hedging/restatement/transitions. See `docs/USAGE.md#caveman-mode-cognirepo-403`
+for before/after examples with measured token counts.
+
+**persona_suggestion** (COGNIREPO-403): optional one-line, dismissible nudge toward caveman,
+surfaced after ≥5 of the last 10 tracked queries classify as QUICK tier — advisory only, never
+self-enables. Dismiss with `record_user_preference("persona_suggestion_dismissed", "true")`.
 
 ---
 
@@ -606,6 +641,18 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
 {"key": "response_style", "value": "concise", "recorded": true}
 ```
 
+**Reserved key `"persona"`** (COGNIREPO-402): opt-in only, never enable without an explicit
+ask. Valid values: `mentor` / `pair` / `caveman` (see [Personas](USAGE.md#personas) for the
+behavior deltas). An unknown value is rejected, not stored:
+```json
+{"key": "persona", "value": "wizard", "recorded": false, "error": "unknown persona 'wizard' — valid: ['caveman', 'mentor', 'pair']"}
+```
+`"none"` (case-insensitive) is reserved to CLEAR a previously-set persona, not a 4th persona
+name (COGNIREPO-400-D01):
+```json
+{"key": "persona", "value": "none", "recorded": true, "cleared": true}
+```
+
 ---
 
 ## get_agent_bootstrap
@@ -626,6 +673,7 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
   "hot_symbols": ["hybrid_retrieve:retrieval/hybrid.py:45", "context_pack:tools/context_pack.py:12"],
   "last_focus": {"files": ["retrieval/hybrid.py"], "query": "how does scoring work", "agent": "claude"},
   "framing": {"depth": "detailed", "vocabulary": ["retrieval", "faiss", "hybrid"], "hints": "prefers detailed responses; often asks 'how' questions; domain vocabulary: retrieval, faiss, hybrid"},
+  "mood": {"state": "neutral", "evidence": [], "suggested_adaptation": ""},
   "error_patterns": [{"type": "OOM", "count": 2, "prevention_hint": "Check RSS before loading large index"}],
   "index_health": {"symbols": 1240, "files": 92, "status": "ok"},
   "recent_timeline": [
@@ -644,8 +692,8 @@ quick "what happened recently" view. Folded into this tool's existing output rat
 than a new MCP tool (0 manifest tokens vs. ~180 measured for a standalone
 `get_timeline` tool). For the full query surface (`since`/`include_archived`/`limit`,
 plus the deterministic `rollup()` — counts + top decisions/errors, no model-generated
-text), call `data.memory.timeline.merge()`/`rollup()` directly, or from a future
-`generate_insights` tool (EPIC-300).
+text), call `data.memory.timeline.merge()`/`rollup()` directly, or use the
+`generate_insights` tool (COGNIREPO-303).
 
 **decision_nudge** (COGNIREPO-205): present only when the last 30 days have ≥5
 episodes but 0 decisions — a hint to use `record_decision` for architectural

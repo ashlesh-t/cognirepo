@@ -36,3 +36,9 @@ D02 → 101 → 102 → 103 → 104 → 105 → 106. The final self-check is in 
   collector), 302 (HTML generator + idempotent writer), 303 (CLI + MCP tool + docs-index
   carve-out) all signed off; epic e2e suite (generate→regenerate→retrieve loop,
   empty-history honesty) PASS.
+- **COGNIREPO-400 — MoodPersonaLayer** — signed off 2026-08-24, v2.3.0. Stories 401 (mood
+  signal derivation), 402 (persona registry), 403 (caveman economy persona — ships
+  experimental, missed the strict accuracy-delta gate but in the safe direction), 404
+  (output-side measurement harness, 57.3% median reduction) all signed off; defect
+  COGNIREPO-400-D01 (persona clear, found via the epic's own e2e suite) signed off; epic
+  e2e suite (mood+persona end-to-end shift, economy persona measurement gate) PASS.

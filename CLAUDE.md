@@ -23,11 +23,37 @@ Goal: cut token overhead and context loss between AI sessions, not add complexit
 ## Behavioral confirmation rule
 
 After `get_user_profile()`, apply `framing_hints` to every response (depth, vocabulary, code-focus).
+`get_user_profile()`/`get_agent_bootstrap()` also carry a `mood` signal ({state, evidence,
+suggested_adaptation}) derived from recent errors/queries/edits — neutral with empty evidence on
+sparse data. **Precedence: explicit user request > persona > framing_hints/mood.** A `mood` of
+"frustrated" means act on `suggested_adaptation` (e.g. verify against `get_error_patterns` before
+proposing fixes), not adopt a tone — it never overrides what the user actually asked for.
 **When ambiguity detected:** if the user's current request conflicts with their established pattern
 (e.g. they always ask for concise answers but this request seems to want a long walkthrough),
 ask ONE short clarifying question before proceeding. Do not assume — confirm.
 **After every session:** call `record_decision()` for architectural choices, `log_episode()` for
 milestones, `record_error()` for any errors hit. This updates the profile for next session.
+
+## Personas (COGNIREPO-402, COGNIREPO-403)
+
+Opt-in only — **never enable a persona unless the user explicitly asks.** Set via
+`record_user_preference("persona", "<name>")`; clear with
+`record_user_preference("persona", "none")` (COGNIREPO-400-D01); read from
+`get_user_profile()['active_persona']` / `['persona_behavior']` — absent entirely when unset or
+cleared (no behavior change from pre-402 baseline).
+Exactly three, each a concrete behavior delta, never a decorative label:
+- **mentor** — retrieval depth +1 (include episodic context by default), full explanations, link
+  responses to related past decisions/history.
+- **pair** — the default-equivalent: current behavior plus mood-aware phrasing only.
+- **caveman** — economy/telegraphic output (status: **experimental** — 57.3% median reduction
+  measured, but missed the strict accuracy-delta gate; see `docs/METRICS.md`). When active,
+  `get_user_profile()['output_contract']`
+  carries the exact instruction: **compress style, never content** — headline verdict first,
+  minimal factual lines, but every file:line reference, number, and caveat must survive; only
+  preamble/hedging/restatement/transitions get dropped. Never trade accuracy for brevity (see
+  `docs/USAGE.md#personas` for before/after examples). The profile may also carry a one-line,
+  dismissible `persona_suggestion` after sustained QUICK-tier usage — advisory only, it never
+  self-enables.
 
 ## Tool routing (for Claude Code agents using this repo)
 

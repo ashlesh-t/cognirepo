@@ -17,6 +17,7 @@ Complete documentation for every command, MCP tool, and configuration option.
 9. [VS Code MCP Setup](#vs-code-mcp-setup)
 10. [GitHub Copilot Integration](#github-copilot-integration)
 11. [Adding API Keys](#adding-api-keys)
+12. [Personas](#personas)
 
 ---
 
@@ -498,3 +499,84 @@ After 2+ queries, `get_user_profile()` returns a `framing_hints` string. The `Us
 hook prints this as a system-reminder before each Claude response — no MCP call required.
 `sync_claude_memory.py` ensures any notes you save via Claude Code's memory system are
 immediately searchable via `retrieve_memory()`.
+
+---
+
+## Personas
+
+Opt-in only (COGNIREPO-402) — a persona is never enabled automatically, only by an explicit
+request. Set it with the existing preference tool — no new tool, no schema change:
+
+```
+record_user_preference("persona", "mentor")   # or "pair" / "caveman"
+record_user_preference("persona", "none")     # clear it — opt-in means you can opt back out (COGNIREPO-400-D01)
+```
+
+`get_user_profile()` then additionally returns `active_persona` and `persona_behavior`; both
+keys are absent entirely when no persona is set OR after clearing one (zero behavior change from
+the pre-402 baseline). An unknown persona name is rejected outright — `{"recorded": false,
+"error": "unknown persona '...' — valid: ['caveman', 'mentor', 'pair']"}` — nothing silently
+no-ops. `"none"` is reserved to mean "clear" — it is not a 4th persona.
+
+Exactly three personas, each a concrete behavior delta — never a decorative tone label:
+
+| Persona | Retrieval depth | Verbosity | Tone |
+|---|---|---|---|
+| `mentor` | +1 — includes episodic context by default | Full explanations | Links responses to related past decisions/history |
+| `pair` | Default | Default, plus mood-aware phrasing | Current default-equivalent behavior |
+| `caveman` | Default | Economy/telegraphic output (full spec: COGNIREPO-403) | Complete-information, no filler — opt-in only, never auto-enabled |
+
+Precedence, same as `framing_hints`/`mood`: **explicit user request > persona >
+framing_hints/mood.** A persona shapes *how* Claude answers; it never overrides *what* the user
+actually asked for.
+
+### Caveman mode (COGNIREPO-403)
+
+The flagship persona — an output-side token reducer mirroring `context_pack`'s input-side
+reduction. Compresses **style**, never content: every file:line reference, number, and caveat
+must survive; only preamble, hedging, restatement, and transition phrasing get dropped. When
+active, `get_user_profile()` additionally returns an `output_contract` string carrying this
+instruction (~57 tokens, served only while caveman is active).
+
+Three before/after examples, token counts measured with `tiktoken` (`cl100k_base`):
+
+**1. Explaining a bug fix**
+- OFF (67 tok): "I looked into the failing test and it turns out the root cause is that the
+  fixture creates the index before the config is patched, so the path resolver still points at
+  the old directory. You can fix this by moving the monkeypatch above the fixture, since that
+  ordering issue is what causes the stale path to leak into the test run."
+- ON (37 tok): "Root cause: fixture builds index before config patch → stale path. Fix: move
+  monkeypatch above fixture, tests/test_x.py:42. Caveat: also used by test_y."
+- **45% reduction**, root cause / fix / file:line / caveat all retained.
+
+**2. A lookup-style question**
+- OFF (62 tok): "Sure, let me check where that function is defined for you. After looking
+  through the codebase I found that retrieve_memory is defined in the tools/memory.py file,
+  specifically on line 42, and it looks like it gets called from a couple of different places in
+  the API routes as well as the CLI."
+- ON (25 tok): "retrieve_memory: tools/memory.py:42. Callers: api/routes/memory.py:28,
+  cli/main.py:110."
+- **60% reduction**, file:line and both callers retained.
+
+**3. Explaining a how-to**
+- OFF (68 tok): "To add support for a new language you will want to start by creating a new
+  grammar file. The convention here is to place it under language_grammars/ named after the
+  language, and then you will also need to register it in a couple of other places so that both
+  the indexer and the CLI recognize the new language correctly going forward."
+- ON (42 tok): "Add language: create language_grammars/<lang>.py. Register in
+  language_registry.py:_GRAMMAR_MAP and interface/cli/service_detect.py:_SERVICE_MARKERS. Both
+  required — CLAUDE.md invariant."
+- **38% reduction**, both required registration points and the invariant caveat retained.
+
+These are illustrative. The real measurement (COGNIREPO-404, 20-question harness,
+`scripts/persona_bench.py`) found **57.3% median token reduction** — well past the 40% bar — but
+missed the strict accuracy-delta gate (measured −8.8pp against a ≤2pp bar), because caveman mode
+scored *equal or higher* accuracy on every single question, never lower — the substring-based
+fact scorer penalizes natural paraphrasing more than it penalizes terseness. See
+`docs/METRICS.md#output-side-persona-measurements--2026-08-24` for the full numbers and
+methodology. **Status: experimental** — real numbers, not a validated zero-accuracy-cost claim.
+
+After sustained QUICK-tier query usage (mostly simple lookups), the profile payload may also
+carry a one-line `persona_suggestion` nudging toward caveman — advisory only, never
+auto-enables it. Dismiss permanently with
+`record_user_preference("persona_suggestion_dismissed", "true")`.

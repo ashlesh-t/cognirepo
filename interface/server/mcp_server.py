@@ -1831,6 +1831,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
       hot_symbols   — ["fn:file:line", ...] top 8 symbols by behaviour weight
       last_focus    — {files, query, agent} from last agent's context_pack
       framing       — {depth, vocabulary} from user profile (empty if tracking off)
+      mood          — {state, evidence, suggested_adaptation}; neutral/empty on sparse data
       error_patterns — top 3 recurring errors with prevention hints
       index_health  — {symbols, files, status}
       recent_timeline — last 5 entries (past 7 days) merged across sessions,
@@ -1899,6 +1900,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         hot_symbols: list[str] = []
         framing: dict = {}
         error_patterns: list = []
+        mood: dict = {"state": "neutral", "evidence": [], "suggested_adaptation": ""}
         if _behaviour_enabled():
             try:
                 from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
@@ -1914,6 +1916,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
                     "hints": profile.get("framing_hints", ""),
                 }
                 error_patterns = bt.get_error_patterns(min_count=1)[:3]
+                mood = profile.get("mood", mood)
             except Exception:  # pylint: disable=broad-except
                 pass
 
@@ -1992,6 +1995,7 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         "hot_symbols": hot_symbols,
         "last_focus": last_focus,
         "framing": framing,
+        "mood": mood,
         "error_patterns": error_patterns,
         "index_health": {"symbols": symbol_count, "files": file_count, "status": index_status},
         "recent_timeline": recent_timeline,
@@ -2095,13 +2099,56 @@ def generate_insights(since: str = "90d", repo_path: str | None = None) -> dict:
     }
 
 
+_CAVEMAN_SUGGESTION_SAMPLE = 10
+_CAVEMAN_SUGGESTION_MIN_SAMPLES = 5
+_CAVEMAN_SUGGESTION_QUICK_RATIO = 0.8
+
+
+def _maybe_add_caveman_suggestion(profile: dict, bt) -> None:
+    """
+    One-line, dismissible suggestion (COGNIREPO-403) after sustained QUICK-tier usage —
+    NEVER auto-enables the persona; classify() scores retrieval queries, not generations,
+    so this is advisory only, surfaced in the profile payload for the user/agent to act on.
+    Lives here rather than in BehaviourTracker to avoid an upward data -> intelligence
+    import (same reasoning as the injected store_fn callback — see COGNIREPO-105).
+    """
+    if profile.get("active_persona") == "caveman":
+        return
+    if bt.get_preferences().get("persona_suggestion_dismissed") == "true":
+        return
+    recent = bt.data.get("interaction_style", {}).get("query_patterns", [])[-_CAVEMAN_SUGGESTION_SAMPLE:]
+    if len(recent) < _CAVEMAN_SUGGESTION_MIN_SAMPLES:
+        return
+    try:
+        from intelligence.orchestrator.classifier import classify  # pylint: disable=import-outside-toplevel
+        quick_count = sum(1 for q in recent if classify(q).tier == "QUICK")
+    except Exception:  # pylint: disable=broad-except
+        return
+    if quick_count / len(recent) >= _CAVEMAN_SUGGESTION_QUICK_RATIO:
+        profile["persona_suggestion"] = (
+            f"{quick_count}/{len(recent)} recent queries were quick lookups — try "
+            'persona=caveman for terser answers (opt-in: record_user_preference('
+            '"persona", "caveman")). Dismiss: record_user_preference('
+            '"persona_suggestion_dismissed", "true").'
+        )
+
+
 @mcp.tool()
 def get_user_profile(repo_path: str | None = None) -> dict:
     """
     Return the user's interaction style profile for Claude to adapt its responses.
 
     Includes: depth preference, dominant question types, domain vocabulary,
-    code-focus percentage, and framing hints Claude should apply.
+    code-focus percentage, framing hints, and a mood signal ({state, evidence,
+    suggested_adaptation} — neutral/empty on sparse data) Claude should apply.
+    Precedence: explicit user request > persona > framing_hints/mood.
+    If the user has opted into a persona (COGNIREPO-402, via record_user_preference),
+    the payload additionally carries active_persona + persona_behavior — absent
+    entirely when no persona is set (byte-identical to pre-402 output otherwise).
+    Caveman persona additionally carries output_contract (COGNIREPO-403) — served
+    ONLY when active. After sustained QUICK-tier query usage, the payload may also
+    carry a one-line, dismissible persona_suggestion nudging toward caveman — never
+    auto-enabled.
 
     Call this at the start of a session to calibrate response style.
 
@@ -2114,7 +2161,9 @@ def get_user_profile(repo_path: str | None = None) -> dict:
             return {"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
         from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g, store_fn=_store_memory)
-    return bt.get_user_profile()
+        profile = bt.get_user_profile()
+        _maybe_add_caveman_suggestion(profile, bt)
+    return profile
 
 
 @mcp.tool()
@@ -2137,6 +2186,16 @@ def record_user_preference(
       record_user_preference("query_rewrite", "deploy model", context="user means: update the ML model weights in production, not software deploy")
     Stored in query_rewrites list; agents apply these before retrieval so future
     similar queries hit the right code even when phrasing is off.
+
+    **Persona selection** (preference_key = "persona", COGNIREPO-402):
+    Opt-in only — never enable a persona without the user explicitly asking.
+    Valid values: "mentor" (deeper retrieval + full explanations + links to history),
+    "pair" (default-equivalent, mood-aware phrasing), "caveman" (economy/telegraphic
+    output, see COGNIREPO-403). "none" clears a previously-set persona (COGNIREPO-400-D01)
+    — not a 4th persona. An unknown value is rejected, not stored — response
+    includes {"recorded": false, "error": "..."}. Surfaced via
+    get_user_profile()['active_persona'] / ['persona_behavior']. Precedence: explicit
+    user request > persona > framing_hints/mood (see CLAUDE.md).
 
     Claude: call this when:
     - User corrects your interpretation ("no, I meant X not Y")

@@ -1,0 +1,30 @@
+epic_id: COGNIREPO-700
+status: not-started
+stories:
+  - id: COGNIREPO-701
+    status: not-started
+    branch: story/COGNIREPO-701
+    pr: null
+    test_status: not-run
+  - id: COGNIREPO-702
+    status: not-started
+    branch: story/COGNIREPO-702
+    pr: null
+    test_status: not-run
+  - id: COGNIREPO-703
+    status: not-started
+    branch: story/COGNIREPO-703
+    pr: null
+    test_status: not-run
+  - id: COGNIREPO-704
+    status: not-started
+    branch: story/COGNIREPO-704
+    pr: null
+    test_status: not-run
+defects:
+  - id: COGNIREPO-D01
+    status: not-started
+    branch: defect/COGNIREPO-700-D01
+    pr: null
+    test_status: not-run
+epic_test_suite_status: not-run
