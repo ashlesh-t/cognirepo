@@ -566,9 +566,13 @@ Three before/after examples, token counts measured with `tiktoken` (`cl100k_base
   required — CLAUDE.md invariant."
 - **38% reduction**, both required registration points and the invariant caveat retained.
 
-These are illustrative — the actual measured reduction/accuracy tradeoff across a real prompt
-set is COGNIREPO-404's job (gate: ≥40% median reduction, accuracy delta ≤2pp), required before
-this epic can sign off.
+These are illustrative. The real measurement (COGNIREPO-404, 20-question harness,
+`scripts/persona_bench.py`) found **57.3% median token reduction** — well past the 40% bar — but
+missed the strict accuracy-delta gate (measured −8.8pp against a ≤2pp bar), because caveman mode
+scored *equal or higher* accuracy on every single question, never lower — the substring-based
+fact scorer penalizes natural paraphrasing more than it penalizes terseness. See
+`docs/METRICS.md#output-side-persona-measurements--2026-08-24` for the full numbers and
+methodology. **Status: experimental** — real numbers, not a validated zero-accuracy-cost claim.
 
 After sustained QUICK-tier query usage (mostly simple lookups), the profile payload may also
 carry a one-line `persona_suggestion` nudging toward caveman — advisory only, never
