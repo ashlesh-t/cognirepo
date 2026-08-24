@@ -43,7 +43,9 @@ Exactly three, each a concrete behavior delta, never a decorative label:
 - **mentor** — retrieval depth +1 (include episodic context by default), full explanations, link
   responses to related past decisions/history.
 - **pair** — the default-equivalent: current behavior plus mood-aware phrasing only.
-- **caveman** — economy/telegraphic output. When active, `get_user_profile()['output_contract']`
+- **caveman** — economy/telegraphic output (status: **experimental** — 57.3% median reduction
+  measured, but missed the strict accuracy-delta gate; see `docs/METRICS.md`). When active,
+  `get_user_profile()['output_contract']`
   carries the exact instruction: **compress style, never content** — headline verdict first,
   minimal factual lines, but every file:line reference, number, and caveat must survive; only
   preamble/hedging/restatement/transitions get dropped. Never trade accuracy for brevity (see

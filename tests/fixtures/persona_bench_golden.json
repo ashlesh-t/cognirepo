@@ -1,0 +1,142 @@
+[
+  {
+    "id": "p01",
+    "prompt": "Where is the behaviour score computed for retrieval and what formula does it use?",
+    "golden_facts": ["hybrid.py:424", "_behaviour_score", "log", "hit_count"],
+    "response_off": "So the behaviour score gets computed in the hybrid retrieval module — specifically there's a static method called _behaviour_score in intelligence/retrieval/hybrid.py, around line 424 to 436. What it does is take the raw hit_count for a symbol and log-normalize it against the highest hit_count seen across the current result set, so the formula ends up being math.log(1+raw)/math.log(1+max_count), which keeps the output nicely bounded between 0 and 1.",
+    "response_on": "_behaviour_score: hybrid.py:424-436. Formula: log(1+hit_count)/log(1+max_count) -> [0,1]."
+  },
+  {
+    "id": "p02",
+    "prompt": "What are the three retrieval score weights and their default values?",
+    "golden_facts": ["vector", "0.5", "graph", "0.3", "behaviour", "0.2"],
+    "response_off": "There are three weights that get blended together for the final retrieval score. By default, the vector similarity weight is set to 0.5, the graph-based weight is 0.3, and the behaviour weight (based on past usefulness) is 0.2. These all live in DEFAULT_WEIGHTS in hybrid.py and can technically be overridden via config.json if you want to tune them for your own repo.",
+    "response_on": "Weights (hybrid.py DEFAULT_WEIGHTS): vector=0.5, graph=0.3, behaviour=0.2. Overridable via config.json retrieval_weights."
+  },
+  {
+    "id": "p03",
+    "prompt": "What does derive_mood() return and what are the possible states?",
+    "golden_facts": ["neutral", "frustrated", "flow", "evidence", "suggested_adaptation"],
+    "response_off": "derive_mood() is a method on BehaviourTracker that looks at recent errors, queries, and edits and returns a dict describing the user's current mood. It has three possible states: neutral, frustrated, or flow. The returned dict always has three keys — state, evidence (a list of strings backing up the classification), and suggested_adaptation, which is meant to be an actual behavioral action rather than just a tone label.",
+    "response_on": "derive_mood() -> {state, evidence, suggested_adaptation}. States: neutral | frustrated | flow. suggested_adaptation is always an action, never a tone word."
+  },
+  {
+    "id": "p04",
+    "prompt": "What triggers the frustrated mood state and within what time window?",
+    "golden_facts": ["3", "15", "minutes", "same-type"],
+    "response_off": "Frustrated mode kicks in mainly when there's an error streak — if you get 3 or more occurrences of the same error type within a 15 minute window, that's enough to flip the mood to frustrated. There's also a secondary path involving repeated query-rewrite corrections, but the error-streak path is the main one.",
+    "response_on": "Frustrated: >=3 same-type error occurrences within 15 minutes (also fires on a recurring query-rewrite correction in the same window)."
+  },
+  {
+    "id": "p05",
+    "prompt": "Where is record_decision implemented and how is it stored?",
+    "golden_facts": ["mcp_server.py:646", "episodic.json", "metadata", "type"],
+    "response_off": "record_decision is implemented in interface/server/mcp_server.py, roughly lines 646 to 670. It's actually a pretty thin wrapper — under the hood it just calls log_event and writes into the same flat episodic.json file that ordinary episodes get written to, except it tags the entry with metadata type set to \"decision\" so later tools like timeline.py can tell decisions apart from regular episodes.",
+    "response_on": "record_decision: mcp_server.py:646-670. Writes into episodic.json via log_event, tagged metadata.type=\"decision\" — same store as ordinary episodes."
+  },
+  {
+    "id": "p06",
+    "prompt": "What is the flow mood window and what conditions must hold?",
+    "golden_facts": ["20", "minutes", "queries", "edits", "no", "errors"],
+    "response_off": "Flow state uses a 20 minute window. For it to trigger, you need to have had recent queries and recent file edits within that window, and critically there should be zero new error occurrences recorded in that same window — the idea being sustained productive activity without anything going wrong.",
+    "response_on": "Flow: 20-minute window. Requires recent queries AND recent edits AND zero new errors in that window."
+  },
+  {
+    "id": "p07",
+    "prompt": "Does get_hot_symbols apply any time decay to hit_count?",
+    "golden_facts": ["no", "decay", "raw", "hit_count", "monotonic"],
+    "response_off": "No, it doesn't — get_hot_symbols just sorts symbols purely by their raw hit_count value, descending. hit_count itself is a monotonically incrementing counter with no decay logic applied anywhere in the file, so a symbol hit heavily a long time ago will keep outranking one that's been hit consistently more recently, at least until COGNIREPO-701 addresses this.",
+    "response_on": "No. get_hot_symbols sorts by raw hit_count only — monotonic counter, zero decay applied anywhere (gap tracked as COGNIREPO-701)."
+  },
+  {
+    "id": "p08",
+    "prompt": "Name the three personas and one concrete behavior delta for each.",
+    "golden_facts": ["mentor", "pair", "caveman", "retrieval depth", "economy"],
+    "response_off": "There are exactly three personas available. Mentor increases retrieval depth by including episodic context by default and gives full explanations. Pair is basically the default-equivalent behavior, just with mood-aware phrasing added on top. And caveman is the economy persona — very telegraphic, minimal output, but it's opt-in only and never gets enabled automatically.",
+    "response_on": "mentor: retrieval depth +1, full explanations. pair: default + mood-aware phrasing. caveman: economy/telegraphic output, opt-in only."
+  },
+  {
+    "id": "p09",
+    "prompt": "What happens if you call record_user_preference(\"persona\", \"wizard\")?",
+    "golden_facts": ["rejected", "recorded", "false", "error", "valid"],
+    "response_off": "That would get rejected — \"wizard\" isn't one of the three valid persona names, so record_user_preference checks the value against the _PERSONAS registry, finds no match, and returns a dict with recorded set to false plus an error message listing the actual valid options (caveman, mentor, pair). Importantly it doesn't overwrite whatever persona was previously set, if any.",
+    "response_on": "Rejected: {\"recorded\": false, \"error\": \"unknown persona 'wizard' — valid: ['caveman','mentor','pair']\"}. Existing persona value unchanged."
+  },
+  {
+    "id": "p10",
+    "prompt": "What is _SIMILAR_TO_ONLY_DISCOUNT and where is it defined?",
+    "golden_facts": ["0.7", "hybrid.py:52", "SIMILAR_TO"],
+    "response_off": "That's a constant defined in hybrid.py at line 52, and it's set to 0.7. The idea behind it is that if two symbols are only connected by a SIMILAR_TO edge (from the COGNIREPO-202 k-NN pass) and nothing structural like a CALLS or IMPORTS edge, that's weaker evidence of relevance, so the graph score for that link gets multiplied by 0.7 to discount it below a normal 1-hop score.",
+    "response_on": "_SIMILAR_TO_ONLY_DISCOUNT = 0.7, hybrid.py:52. Applied when the only edge between two nodes is SIMILAR_TO — discounts below a normal 1-hop score."
+  },
+  {
+    "id": "p11",
+    "prompt": "What are the classifier tier score thresholds?",
+    "golden_facts": ["QUICK", "2.0", "STANDARD", "4.0", "COMPLEX", "9.0", "EXPERT"],
+    "response_off": "The classifier maps an accumulated score onto four tiers. If the score is 2.0 or below, it's QUICK. Above that up through 4.0 is STANDARD. Above 4.0 up through 9.0 is COMPLEX. And anything above 9.0 falls into EXPERT. These constants live in classifier.py around line 92.",
+    "response_on": "Tiers (classifier.py:92-94): QUICK<=2.0, STANDARD<=4.0, COMPLEX<=9.0, EXPERT>9.0."
+  },
+  {
+    "id": "p12",
+    "prompt": "Where is episodic data actually persisted on disk?",
+    "golden_facts": [".cognirepo/memory/episodic.json", "log_event"],
+    "response_off": "Episodic events end up in a file at .cognirepo/memory/episodic.json, and the code responsible for writing there is the log_event function in data/memory/episodic_memory.py. It's a flat JSON list of dicts, each with an id, the event text, a metadata dict, and a timestamp, and it optionally gets encrypted depending on your storage config.",
+    "response_on": "Persisted at .cognirepo/memory/episodic.json via log_event() (data/memory/episodic_memory.py). Flat JSON list, optionally encrypted."
+  },
+  {
+    "id": "p13",
+    "prompt": "What does summarize_interaction_style do to its own source data after running?",
+    "golden_facts": ["prunes", "query_patterns", "terminology", "reset"],
+    "response_off": "After it builds its summary and stores it into semantic memory, summarize_interaction_style actually goes and prunes its own source data — it resets both the query_patterns ring buffer and the terminology counter back to empty. This is intentional so the same queries don't get summarized twice, but it does mean the raw query history disappears after that point.",
+    "response_on": "After storing its summary, summarize_interaction_style() resets query_patterns=[] and terminology={} — prunes its own source data."
+  },
+  {
+    "id": "p14",
+    "prompt": "What condition triggers the decision_nudge in get_agent_bootstrap?",
+    "golden_facts": ["0", "decisions", "5", "episodes", "30", "days"],
+    "response_off": "decision_nudge fires when it looks at the last 30 days of activity and finds exactly 0 recorded decisions but at least 5 episodes logged in that same window — basically it's a way of catching the situation where someone's been working and logging events but never actually called record_decision for any of the architectural choices they made.",
+    "response_on": "decision_nudge fires when: decisions==0 AND episodes>=5, over the last 30 days."
+  },
+  {
+    "id": "p15",
+    "prompt": "What model-name invariant violation was found in this session's audit, and where?",
+    "golden_facts": ["router.py", "key_probes.py", "model_adapters", "classifier.py"],
+    "response_off": "During the COGNIREPO-700 audit we found the invariant that model names should only live in classifier.py was actually already being violated in a few places — gemini_adapter.py and anthropic_adapter.py hardcode their own defaults with no import from classifier.py at all, and separately, router.py and key_probes.py do correctly import from classifier.py but also carry a duplicate hardcoded fallback literal alongside that import, which could silently drift out of sync. It got filed as COGNIREPO-D01.",
+    "response_on": "Found: gemini_adapter.py/anthropic_adapter.py hardcode defaults, zero import from classifier.py. router.py/key_probes.py import correctly but also carry a duplicate literal fallback. Filed: COGNIREPO-D01."
+  },
+  {
+    "id": "p16",
+    "prompt": "How many tokens is the caveman output_contract, and what does it forbid dropping?",
+    "golden_facts": ["57", "caveat", "file:line", "number"],
+    "response_off": "The output_contract string comes out to 57 tokens when measured with tiktoken's cl100k_base encoder. Content-wise, it explicitly says to retain every file:line reference, every number, and every caveat — those are never allowed to be dropped for the sake of brevity. What it does allow dropping is preamble, hedging, restatement, and transition phrases.",
+    "response_on": "output_contract: 57 tokens (tiktoken cl100k_base). Forbids dropping file:line refs, numbers, caveats. Allows dropping preamble/hedging/restatement/transitions."
+  },
+  {
+    "id": "p17",
+    "prompt": "What condition triggers the persona_suggestion hint toward caveman mode?",
+    "golden_facts": ["5", "10", "QUICK", "dismissible"],
+    "response_off": "The suggestion shows up when at least 5 of the last 10 tracked queries classify as QUICK tier using the existing classifier — so it's basically detecting a pattern of mostly simple lookup-style questions. It's purely advisory though, never auto-enables the persona, and it's fully dismissible by setting a preference so it won't nag you again.",
+    "response_on": "Fires when >=5 of the last 10 tracked queries classify QUICK-tier. Advisory only, never auto-enables. Dismissible via preference."
+  },
+  {
+    "id": "p18",
+    "prompt": "Where is search_episodes implemented and what search strategy does it use?",
+    "golden_facts": ["episodic_memory.py:332", "BM25", "vector", "fallback"],
+    "response_off": "search_episodes lives in data/memory/episodic_memory.py, around lines 332 to 376. It primarily does BM25Plus keyword search over the episodic history, and if that returns zero results it falls back to a vector-similarity search instead, using a lazily-built embedding cache.",
+    "response_on": "search_episodes: episodic_memory.py:332-376. BM25Plus keyword search, falls back to vector similarity when BM25 returns zero hits."
+  },
+  {
+    "id": "p19",
+    "prompt": "What is the exact decay formula used in record_feedback for relevance_feedback?",
+    "golden_facts": ["0.95", "0.1", "min", "1.0"],
+    "response_off": "In record_feedback, whenever a symbol gets marked useful again, its relevance_feedback score gets updated using this formula: new_score = min(1.0, old_score * 0.95 + 0.1). It's essentially an exponential moving average that asymptotically climbs toward 1.0 the more times a symbol proves useful, though it's worth noting this only updates on that specific event, not on any kind of clock.",
+    "response_on": "record_feedback relevance_feedback update: new_score = min(1.0, old_score*0.95 + 0.1). Event-triggered EMA, not time-based."
+  },
+  {
+    "id": "p20",
+    "prompt": "Did the manifest token count change across stories 401, 402, and 403?",
+    "golden_facts": ["3499", "unchanged", "zero"],
+    "response_off": "No, it stayed exactly the same the whole way through — 3499 tokens before and after each of the three stories. That's because all the new documentation for mood, personas, and the caveman contract got added past the first paragraph of each tool's docstring, and only the first paragraph actually counts toward the manifest description, so there was zero growth across all three stories.",
+    "response_on": "Unchanged: 3499 tokens across 401, 402, and 403 — all doc additions landed past each docstring's first paragraph (only the first paragraph counts toward the manifest)."
+  }
+]

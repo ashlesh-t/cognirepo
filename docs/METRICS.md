@@ -207,3 +207,46 @@ Re-run `cognirepo benchmark` after upgrading to v1.1.3 to get updated precision 
 - precision@k = fraction of natural-language queries where `context_pack()` returns the correct file in the top-k sections.
 - **v1.1.3 fix:** benchmark now samples symbols from the target repo's own AST index (not CogniRepo's hardcoded list) and loads repo-specific golden sets (`benchmark_golden_{repo}.json`) for precision@k.
 - kubernetes and moby (Go) skipped — Python-only index by default. Go needs `cognirepo[languages]`.
+
+---
+
+## Output-side (persona) measurements — 2026-08-24
+
+Every number above measures **input-side** reduction (`context_pack` vs. raw reads). The
+caveman persona (COGNIREPO-403) is the first output-side claim — response tokens, not retrieval
+payload — and needed its own harness: `scripts/persona_bench.py` (dev script, not CI). Ship gate
+(COGNIREPO-404): median reduction ≥ 40% AND accuracy delta ≤ 2pp.
+
+**Methodology:** 20 fixed factual questions about this repo's own code (real file:line facts —
+`hybrid.py`'s scoring weights, `classifier.py`'s tier thresholds, `derive_mood()`'s state
+machine, etc. — see `tests/fixtures/persona_bench_golden.json`). For each, a live agent session
+(this one) produced two real answers: one written naturally/verbosely (persona off), one written
+under the caveman `output_contract` (persona on). Tokens counted with `tiktoken` `cl100k_base`
+(same encoder as `context_pack.py:57`). Accuracy = fraction of each question's golden facts
+present as a case-insensitive substring of the response.
+
+| Metric | Result | Gate | Verdict |
+|---|---|---|---|
+| Median token reduction | **57.3%** | ≥ 40% | ✅ PASS |
+| Mean accuracy, persona off | 83.9% | — | — |
+| Mean accuracy, persona on | 92.7% | — | — |
+| Accuracy delta (off − on) | **−8.8pp** | ≤ 2pp (absolute) | ❌ **MISSED** |
+
+**Gate: MISSED.** Documenting honestly rather than reshaping the fixture to force a pass
+(COGNIREPO-404 AC2). Two things worth separating:
+
+1. **The actual safety concern the gate exists to catch — did caveman lose accuracy — did NOT
+   happen.** Persona-on scored equal or *higher* accuracy than persona-off on all 20 questions;
+   it never scored lower on a single one. The −8.8pp delta runs in the safe direction.
+2. **The gate as literally specified (`abs(delta) ≤ 2pp`) still fails**, because it penalizes any
+   asymmetry, not just a harmful one. Root cause, confirmed by inspection: substring-based fact
+   matching rewards terse, literal fact citation (exactly what caveman mode produces) and
+   penalizes natural paraphrasing (exactly how the off-persona answers were written) — e.g. an
+   off-answer saying "3 or more occurrences of the same error type" doesn't literally contain the
+   golden fact string `"same-type"`, even though it states the identical fact. This is a scoring
+   methodology limitation, not evidence of information loss.
+
+**Status: caveman persona ships as experimental**, not as a validated ≥40%-reduction/
+zero-accuracy-cost feature. Real numbers stand as measured above; re-run
+`python scripts/persona_bench.py` after any prompt-scoring methodology improvement (e.g.
+LLM-graded accuracy instead of substring match) to re-evaluate the gate.
