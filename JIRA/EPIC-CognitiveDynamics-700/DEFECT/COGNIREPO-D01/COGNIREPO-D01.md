@@ -1,6 +1,6 @@
 # COGNIREPO-D01 — model-ID literals hardcoded outside classifier.py
 
-Epic: COGNIREPO-700 · Branch: defect/COGNIREPO-D01 · Base: development
+Epic: COGNIREPO-700 · Branch: defect/COGNIREPO-700-D01 · Base: development
 
 ## Backstory
 CLAUDE.md's invariant "model names only in `intelligence/orchestrator/classifier.py`. No

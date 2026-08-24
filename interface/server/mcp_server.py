@@ -2191,7 +2191,8 @@ def record_user_preference(
     Opt-in only — never enable a persona without the user explicitly asking.
     Valid values: "mentor" (deeper retrieval + full explanations + links to history),
     "pair" (default-equivalent, mood-aware phrasing), "caveman" (economy/telegraphic
-    output, see COGNIREPO-403). An unknown value is rejected, not stored — response
+    output, see COGNIREPO-403). "none" clears a previously-set persona (COGNIREPO-400-D01)
+    — not a 4th persona. An unknown value is rejected, not stored — response
     includes {"recorded": false, "error": "..."}. Surfaced via
     get_user_profile()['active_persona'] / ['persona_behavior']. Precedence: explicit
     user request > persona > framing_hints/mood (see CLAUDE.md).

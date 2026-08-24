@@ -245,6 +245,52 @@ class TestPersonaRegistry:
         assert result["recorded"] is True
 
 
+# ── Persona clear (COGNIREPO-400-D01) ────────────────────────────────────────
+
+class TestPersonaClear:
+    def test_clear_after_set_removes_persona(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_user_preference("persona", "caveman")
+        assert bt.get_user_profile()["active_persona"] == "caveman"
+        result = bt.record_user_preference("persona", "none")
+        assert result["recorded"] is True
+        assert result["cleared"] is True
+        profile = bt.get_user_profile()
+        assert "active_persona" not in profile
+        assert "persona_behavior" not in profile
+        assert "output_contract" not in profile
+
+    def test_clear_is_case_insensitive(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_user_preference("persona", "mentor")
+        bt.record_user_preference("persona", "NONE")
+        assert "active_persona" not in bt.get_user_profile()
+
+    def test_clear_when_never_set_is_noop_not_error(self, tmp_path, monkeypatch):
+        bt = _make_bt(tmp_path, monkeypatch)
+        result = bt.record_user_preference("persona", "none")
+        assert result["recorded"] is True
+        assert "active_persona" not in bt.get_user_profile()
+
+    def test_none_not_registered_as_a_fourth_persona(self, tmp_path, monkeypatch):
+        from data.graph.behaviour_tracker import _PERSONAS
+        assert "none" not in _PERSONAS
+        assert set(_PERSONAS) == {"mentor", "pair", "caveman"}
+
+    def test_cleared_profile_matches_never_set_field_set(self, tmp_path, monkeypatch):
+        """Reuses the COGNIREPO-402 golden-regression field set after clearing."""
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_user_preference("persona", "pair")
+        bt.record_user_preference("persona", "none")
+        profile = bt.get_user_profile()
+        expected = {
+            "depth_preference", "top_question_type", "question_type_distribution",
+            "top_terminology", "code_focus_percent", "framing_hints", "sample_queries",
+            "total_queries_tracked", "explicit_preferences", "query_rewrites", "mood",
+        }
+        assert set(profile.keys()) == expected
+
+
 # ── Caveman output contract (COGNIREPO-403) ──────────────────────────────────
 
 class TestCavemanOutputContract:
