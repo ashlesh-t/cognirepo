@@ -160,9 +160,12 @@ scripts/sync_version.py`; sequence: 2.0.1 → 2.1.0 → 2.2.0 → 2.3.0 → 2.4.
 
 ## G. Defect workflow
 
-Anything found not working during testing (any gate, any suite) becomes a DEFECT ticket:
-1. Allocate the next `COGNIREPO-D<nn>` in the epic; create
-   `DEFECT/COGNIREPO-D<nn>/COGNIREPO-D<nn>.md` (backstory with reproduction + file:line,
+Anything found not working — during testing (any gate, any suite), OR during another epic's
+Discovery/audit (e.g. an invariant found already violated in production code while researching
+an unrelated epic) — becomes a DEFECT ticket:
+1. Allocate the next `COGNIREPO-D<nn>` in the epic that found it (it doesn't need to be the epic
+   that caused it — file it where it was discovered unless a more obviously-owning epic exists);
+   create `DEFECT/COGNIREPO-D<nn>/COGNIREPO-D<nn>.md` (backstory with reproduction + file:line,
    description/fix, AC) and its `TEST/COGNIREPO-D<nn>-TEST_SUITE.md` — write the test suite
    BEFORE fixing.
 2. Register it in the epic's status.yml (`defects:` list) with branch `defect/COGNIREPO-D<nn>`.

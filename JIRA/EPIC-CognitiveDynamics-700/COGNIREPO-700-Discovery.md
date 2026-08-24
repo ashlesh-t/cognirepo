@@ -205,17 +205,20 @@ runs that check before an agent complies with an instruction:
   today unless an agent happens to remember them.
 
 **Live proof this gap is real, found during this epic's own audit**: the "model names live only
-in `classifier.py`" invariant is *already violated* in current production code —
-`interface/cli/key_probes.py:23,25` hardcodes `"claude-haiku-4-5"` as a fallback default (twice);
-`intelligence/orchestrator/router.py:339,691` both hardcode the same literal inside
-`_PROVIDER_DEFAULT_MODELS.get(provider, "claude-haiku-4-5")`; `intelligence/orchestrator/
-model_adapters/gemini_adapter.py:38` defaults `model_id: str = "gemini-2.0-flash"`;
-`intelligence/orchestrator/model_adapters/anthropic_adapter.py:48` defaults `model_id: str =
-"claude-sonnet-4-6"` — none of these import from `classifier.py`'s `DEFAULT_MODELS_BY_PROVIDER`,
-despite `classifier.py`'s own comment (lines 175-176) asserting `router.py` and `key_probes.py`
-do. This drifted in unnoticed; a precedent-check that cross-references invariants before a
-"let's just hardcode this here" change would have caught it. (Not fixed as part of this epic —
-flagged to the user separately as a candidate defect for its own ticket.)
+in `classifier.py`" invariant is *already violated* in current production code, at two distinct
+severities. The clean violations — no import from `classifier.py` at all — are
+`intelligence/orchestrator/model_adapters/gemini_adapter.py:38` (defaults `model_id: str =
+"gemini-2.0-flash"`) and `intelligence/orchestrator/model_adapters/anthropic_adapter.py:48`
+(defaults `model_id: str = "claude-sonnet-4-6"`). The subtler violations are in
+`interface/cli/key_probes.py:20-24` and `intelligence/orchestrator/router.py:251-253,339,691`:
+both correctly import/spread `classifier.py`'s `DEFAULT_MODELS_BY_PROVIDER` as their primary
+source (confirming `classifier.py`'s own comment at lines 175-176 IS honored for the *primary*
+path) — but both also hardcode a duplicate literal (`"claude-haiku-4-5"`) as the `.get(...,
+fallback)` value or `except ImportError` fallback, redundant with and silently divergeable from
+whatever `classifier.py` actually says if that value is ever bumped there. This drifted in
+unnoticed; a precedent-check that cross-references invariants before a "let's just hardcode this
+here" change would have caught both classes. Filed as `COGNIREPO-D01` under this epic — not fixed
+as part of 701-704.
 
 **Verdict**: KEEP as story 704, per explicit user instruction to fold this thread in. Weakest
 neuroscience grounding of the four (this is a software-engineering-discipline idea, not derived
