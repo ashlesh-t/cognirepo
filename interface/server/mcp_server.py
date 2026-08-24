@@ -2099,6 +2099,40 @@ def generate_insights(since: str = "90d", repo_path: str | None = None) -> dict:
     }
 
 
+_CAVEMAN_SUGGESTION_SAMPLE = 10
+_CAVEMAN_SUGGESTION_MIN_SAMPLES = 5
+_CAVEMAN_SUGGESTION_QUICK_RATIO = 0.8
+
+
+def _maybe_add_caveman_suggestion(profile: dict, bt) -> None:
+    """
+    One-line, dismissible suggestion (COGNIREPO-403) after sustained QUICK-tier usage —
+    NEVER auto-enables the persona; classify() scores retrieval queries, not generations,
+    so this is advisory only, surfaced in the profile payload for the user/agent to act on.
+    Lives here rather than in BehaviourTracker to avoid an upward data -> intelligence
+    import (same reasoning as the injected store_fn callback — see COGNIREPO-105).
+    """
+    if profile.get("active_persona") == "caveman":
+        return
+    if bt.get_preferences().get("persona_suggestion_dismissed") == "true":
+        return
+    recent = bt.data.get("interaction_style", {}).get("query_patterns", [])[-_CAVEMAN_SUGGESTION_SAMPLE:]
+    if len(recent) < _CAVEMAN_SUGGESTION_MIN_SAMPLES:
+        return
+    try:
+        from intelligence.orchestrator.classifier import classify  # pylint: disable=import-outside-toplevel
+        quick_count = sum(1 for q in recent if classify(q).tier == "QUICK")
+    except Exception:  # pylint: disable=broad-except
+        return
+    if quick_count / len(recent) >= _CAVEMAN_SUGGESTION_QUICK_RATIO:
+        profile["persona_suggestion"] = (
+            f"{quick_count}/{len(recent)} recent queries were quick lookups — try "
+            'persona=caveman for terser answers (opt-in: record_user_preference('
+            '"persona", "caveman")). Dismiss: record_user_preference('
+            '"persona_suggestion_dismissed", "true").'
+        )
+
+
 @mcp.tool()
 def get_user_profile(repo_path: str | None = None) -> dict:
     """
@@ -2111,6 +2145,10 @@ def get_user_profile(repo_path: str | None = None) -> dict:
     If the user has opted into a persona (COGNIREPO-402, via record_user_preference),
     the payload additionally carries active_persona + persona_behavior — absent
     entirely when no persona is set (byte-identical to pre-402 output otherwise).
+    Caveman persona additionally carries output_contract (COGNIREPO-403) — served
+    ONLY when active. After sustained QUICK-tier query usage, the payload may also
+    carry a one-line, dismissible persona_suggestion nudging toward caveman — never
+    auto-enabled.
 
     Call this at the start of a session to calibrate response style.
 
@@ -2123,7 +2161,9 @@ def get_user_profile(repo_path: str | None = None) -> dict:
             return {"behaviour_tracking": "disabled", "hint": "Enable in .cognirepo/config.json: behaviour_tracking=true"}
         from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
         bt = BehaviourTracker(g, store_fn=_store_memory)
-    return bt.get_user_profile()
+        profile = bt.get_user_profile()
+        _maybe_add_caveman_suggestion(profile, bt)
+    return profile
 
 
 @mcp.tool()
