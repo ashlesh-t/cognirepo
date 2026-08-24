@@ -17,9 +17,9 @@ stories:
     pr: https://github.com/ashlesh-t/cognirepo/pull/59
     test_status: pass
   - id: COGNIREPO-404
-    status: in-review
+    status: signed-off
     branch: story/COGNIREPO-404
     pr: https://github.com/ashlesh-t/cognirepo/pull/60
-    test_status: not-run
+    test_status: pass
 defects: []
 epic_test_suite_status: not-run
