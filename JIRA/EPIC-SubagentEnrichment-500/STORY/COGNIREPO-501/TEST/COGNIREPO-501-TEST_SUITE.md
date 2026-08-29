@@ -25,3 +25,18 @@
   symbol pairs and checking for zero reachable-file overlap) correctly got distinct
   `component_id`s (`g0`/`g1`).
 - Verdict: PASS
+
+## TC-501-2: Integrity gate (AC3)
+- Test repo: cognirepo itself (unit-level; no full repo index needed)
+- Prerequisites: none beyond the story branch.
+- What to do: `venv/bin/python -m pytest tests/test_hybrid_retrieval.py -k grouping_allowed -v`
+- Prompt: n/a — automated test, added in response to PR #63 review comment asking how the
+  orphan/dangling thresholds were decided and what happens if the check misbehaves.
+- Expected results: `test_grouping_allowed_trips_on_high_orphan_count` builds a graph with
+  `_INTEGRITY_ORPHAN_THRESHOLD + 1` degree-0 FILE nodes, asserts `_grouping_allowed()` returns
+  `False`, and asserts a WARNING log line with the actual orphan/dangling counts was emitted
+  (previously the gate tripped silently). `test_grouping_allowed_on_clean_graph` and
+  `test_grouping_allowed_caches_result` cover the allowed/caching paths.
+- Obtained results: `venv/bin/python -m pytest tests/test_hybrid_retrieval.py -q` → 25 passed.
+  Full suite (`tests/ -q`) → 1433 passed, 5 skipped.
+- Verdict: PASS
