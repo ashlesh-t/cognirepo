@@ -80,13 +80,17 @@ _integrity_gate_cache: dict = {"allowed": True, "ts": 0.0}
 _integrity_gate_lock = threading.Lock()
 
 
-def _grouping_allowed(graph: KnowledgeGraph) -> bool:
-    """True unless the graph's orphan/dangling counts exceed a corruption-level threshold —
-    so integrity problems never masquerade as legitimate parallelism (COGNIREPO-501 AC3)."""
-    now = time.monotonic()
-    with _integrity_gate_lock:
-        if now - _integrity_gate_cache["ts"] < _INTEGRITY_CACHE_TTL:
-            return _integrity_gate_cache["allowed"]
+def _compute_integrity_allowed(graph: KnowledgeGraph) -> bool:
+    """The actual orphan/dangling-threshold decision, with no cache and no shared state.
+
+    Split out of _grouping_allowed() so the decision logic is unit-testable in isolation
+    from the TTL cache below — that cache is one module-level dict shared by every
+    concurrent caller in the process (any HybridRetriever, in any thread), so a test call
+    racing against a genuinely concurrent one (e.g. a different test's background thread)
+    could observe THAT OTHER call's verdict rather than its own, no matter how the dict
+    itself is isolated — the race is in the cache's check-then-act window, not the object
+    identity. This function has none of that: same graph in, same answer out, always.
+    """
     try:
         from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
         repo_root = os.path.dirname(os.path.abspath(get_cognirepo_dir()))
@@ -106,11 +110,28 @@ def _grouping_allowed(graph: KnowledgeGraph) -> bool:
                 n_orphans, _INTEGRITY_ORPHAN_THRESHOLD,
                 n_dangling, _INTEGRITY_DANGLING_THRESHOLD,
             )
+        return allowed
     except Exception as exc:  # pylint: disable=broad-except
         # Fail open — a broken integrity check shouldn't break retrieval — but still surface
         # it, since a silently-broken check would look identical to "graph is fine".
         log.debug("hybrid: integrity_report() failed, grouping gate fails open: %s", exc)
-        allowed = True
+        return True
+
+
+def _grouping_allowed(graph: KnowledgeGraph) -> bool:
+    """True unless the graph's orphan/dangling counts exceed a corruption-level threshold —
+    so integrity problems never masquerade as legitimate parallelism (COGNIREPO-501 AC3).
+
+    TTL-caches _compute_integrity_allowed()'s result across calls — integrity_report() is
+    O(nodes), too slow to run synchronously on every hybrid_retrieve() call (see module
+    comments above). NOT keyed by graph/repo identity (see COGNIREPO-500-D01 addendum) —
+    correct for the common single-repo-per-process case, a known gap for cross-repo calls.
+    """
+    now = time.monotonic()
+    with _integrity_gate_lock:
+        if now - _integrity_gate_cache["ts"] < _INTEGRITY_CACHE_TTL:
+            return _integrity_gate_cache["allowed"]
+    allowed = _compute_integrity_allowed(graph)
     with _integrity_gate_lock:
         _integrity_gate_cache["allowed"] = allowed
         _integrity_gate_cache["ts"] = now

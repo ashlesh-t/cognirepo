@@ -272,47 +272,51 @@ class TestIndependenceGrouping:
         assert len(reached) <= hybrid_mod._GROUPING_MAX_VISITED
 
     def test_grouping_allowed_on_clean_graph(self, tmp_path, monkeypatch):
-        """_grouping_allowed itself (not mocked) returns True for a graph with no orphans."""
+        """_compute_integrity_allowed (the decision _grouping_allowed caches) returns True
+        for a graph with no orphans.
+
+        Calls _compute_integrity_allowed() directly rather than the cached _grouping_allowed()
+        wrapper — see test_grouping_allowed_trips_on_high_orphan_count below for why: the
+        wrapper's TTL cache is one module-level dict shared by every concurrent caller in the
+        process, and no amount of isolating the dict object closes the race, since the cache
+        stores a per-CALL verdict with no notion of which graph it came from.
+        """
         from intelligence.retrieval import hybrid as hybrid_mod
         from intelligence.retrieval.hybrid import HybridRetriever
 
-        # A fresh dict, not a mutation of the shared module-level cache: _grouping_allowed's
-        # own local `allowed` is what it returns, but its FIRST check reads
-        # _integrity_gate_cache["ts"] under a lock — if any other thread in this process
-        # (e.g. a leftover background-reindex/watcher daemon thread from an earlier test)
-        # concurrently calls _grouping_allowed() on an unrelated graph, it can repopulate the
-        # SHARED cache with a fresh timestamp between this test setting ts=0.0 and its own
-        # call, causing THIS call to short-circuit into returning THAT unrelated result
-        # instead of computing its own — see test_grouping_allowed_trips_on_high_orphan_count
-        # for where this was actually observed. Swapping in a private dict object closes that
-        # race entirely: nothing else in the process can be holding a reference to it.
-        monkeypatch.setattr(hybrid_mod, "_integrity_gate_cache", {"allowed": True, "ts": 0.0})
-        (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
-        # See test_grouping_allowed_trips_on_high_orphan_count below for why
-        # get_cognirepo_dir() is patched directly rather than relying on the env var.
-        import core.config.paths as _paths_mod
-        monkeypatch.setattr(_paths_mod, "get_cognirepo_dir", lambda: str(tmp_path / ".cognirepo"))
-        r = HybridRetriever()
-        assert hybrid_mod._grouping_allowed(r.graph) is True
-
-    def test_grouping_allowed_trips_on_high_orphan_count(self, tmp_path, monkeypatch, caplog):
-        """AC3: a graph past the corruption-level orphan threshold gates grouping off,
-        and the trip is logged (not silent) — see PR #63 review discussion."""
-        from data.graph.knowledge_graph import NodeType
-        from intelligence.retrieval import hybrid as hybrid_mod
-        from intelligence.retrieval.hybrid import HybridRetriever
-
-        # Private cache dict, not a mutation of the shared module-level one — see the
-        # docstring note in test_grouping_allowed_on_clean_graph above for the concurrent-
-        # caller race this closes (observed on CI: this exact assertion flaked with
-        # "assert True is False" even with ts forced to 0.0, because a background thread
-        # elsewhere in the same worker process repopulated the SHARED cache with an unrelated
-        # graph's fresh result in between).
-        monkeypatch.setattr(hybrid_mod, "_integrity_gate_cache", {"allowed": True, "ts": 0.0})
         (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
         # get_cognirepo_dir() checks a ContextVar before the COGNIREPO_DIR env var (used by
         # CrossRepoRouter for thread safety) — patch it directly so repo_root resolution can't
         # be affected by ambient state either.
+        import core.config.paths as _paths_mod
+        monkeypatch.setattr(_paths_mod, "get_cognirepo_dir", lambda: str(tmp_path / ".cognirepo"))
+        r = HybridRetriever()
+        assert hybrid_mod._compute_integrity_allowed(r.graph) is True
+
+    def test_grouping_allowed_trips_on_high_orphan_count(self, tmp_path, monkeypatch, caplog):
+        """AC3: a graph past the corruption-level orphan threshold gates grouping off,
+        and the trip is logged (not silent) — see PR #63 review discussion.
+
+        Calls _compute_integrity_allowed() directly, not the cached _grouping_allowed()
+        wrapper. This assertion originally flaked on CI (push-triggered runs only) with
+        "assert True is False" even after isolating _integrity_gate_cache to a private dict —
+        because _grouping_allowed's cache is a single module-level dict storing one verdict for
+        ANY graph any concurrent caller passes it (any HybridRetriever, any thread, in the same
+        process); a genuinely concurrent caller (e.g. another test's background thread, or
+        pytest-xdist scheduling this test right after one) racing the cache's check-then-act
+        window can have ITS verdict read back for THIS graph, no matter whose dict object it
+        is. _compute_integrity_allowed has no cache and no shared state — same graph in, same
+        answer out, always; this is what actually needed testing for AC3, and it's what
+        _grouping_allowed's cache wraps (test_grouping_allowed_caches_result below covers the
+        wrapper's TTL behavior with a MagicMock graph, which was never part of the flake).
+        Also documented as a real production gap in COGNIREPO-500-D01's addendum (the cache
+        should be keyed by repo/graph identity — not fixed here).
+        """
+        from data.graph.knowledge_graph import NodeType
+        from intelligence.retrieval import hybrid as hybrid_mod
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
         import core.config.paths as _paths_mod
         monkeypatch.setattr(_paths_mod, "get_cognirepo_dir", lambda: str(tmp_path / ".cognirepo"))
         r = HybridRetriever()
@@ -322,7 +326,7 @@ class TestIndependenceGrouping:
             r.graph.add_node(f"orphan{i}.py", NodeType.FILE, file=f"orphan{i}.py")
 
         with caplog.at_level("WARNING", logger=hybrid_mod.log.name):
-            allowed = hybrid_mod._grouping_allowed(r.graph)
+            allowed = hybrid_mod._compute_integrity_allowed(r.graph)
         assert allowed is False
         assert "independence grouping disabled" in caplog.text
 
@@ -336,6 +340,52 @@ class TestIndependenceGrouping:
         fake_graph = MagicMock()
         assert hybrid_mod._grouping_allowed(fake_graph) is True
         fake_graph.integrity_report.assert_not_called()
+
+    def test_grouping_allowed_cache_not_keyed_by_graph(self, tmp_path, monkeypatch):
+        """Documents the known gap behind COGNIREPO-500-D01's addendum and the CI flake that
+        led to _compute_integrity_allowed being split out: _grouping_allowed's TTL cache is
+        one module-level dict for the whole process, with no notion of WHICH graph a verdict
+        was computed for. Two concurrent callers with different graphs (a healthy one, a
+        corrupt one) can have the corrupt one's caller read back the healthy one's cached
+        verdict — reproduced here directly rather than asserted as "sometimes flaky"."""
+        import threading
+        import networkx as nx
+        from data.graph.knowledge_graph import NodeType
+        from intelligence.retrieval import hybrid as hybrid_mod
+
+        import core.config.paths as _paths_mod
+        (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(_paths_mod, "get_cognirepo_dir", lambda: str(tmp_path / ".cognirepo"))
+        monkeypatch.setattr(hybrid_mod, "_integrity_gate_cache", {"allowed": True, "ts": 0.0})
+
+        healthy = hybrid_mod.KnowledgeGraph.__new__(hybrid_mod.KnowledgeGraph)
+        healthy.G = nx.DiGraph()
+        corrupt = hybrid_mod.KnowledgeGraph.__new__(hybrid_mod.KnowledgeGraph)
+        corrupt.G = nx.DiGraph()
+        for i in range(hybrid_mod._INTEGRITY_ORPHAN_THRESHOLD + 1):
+            corrupt.add_node(f"orphan{i}.py", NodeType.FILE, file=f"orphan{i}.py")
+
+        results = {}
+
+        def _call_corrupt():
+            # Give the healthy call a head start so it wins the cache write —
+            # deterministic ordering, not a hope-it-races timing gamble.
+            import time as _time
+            _time.sleep(0.02)
+            results["corrupt"] = hybrid_mod._grouping_allowed(corrupt)
+
+        t_healthy = threading.Thread(target=lambda: hybrid_mod._grouping_allowed(healthy))
+        t_corrupt = threading.Thread(target=_call_corrupt)
+        t_healthy.start()
+        t_corrupt.start()
+        t_healthy.join()
+        t_corrupt.join()
+
+        # The known-bad behavior: the corrupt graph's caller reads back the healthy graph's
+        # cached True instead of computing its own False. This is what makes
+        # _compute_integrity_allowed() (tested directly above, no cache involved) the right
+        # thing for AC3 correctness tests to call instead of this cached wrapper.
+        assert results["corrupt"] is True  # documents the gap; not the desired behavior
 
     def test_annotate_independence_groups_latency(self, monkeypatch):
         """AC4: added latency < 10ms for k <= 10 on a small synthetic graph."""
