@@ -90,3 +90,22 @@ added for. Options, roughly cheapest-to-most-invasive:
 
 - This is a design tradeoff (memory vs. grouping accuracy), not a straightforward bug fix —
   flagging for the user to pick a direction before implementation starts.
+
+## Addendum (2026-08-30) — related cache-keying issue found while CI-debugging this ticket
+
+`_grouping_allowed()`'s `_integrity_gate_cache` (`intelligence/retrieval/hybrid.py`) is a
+single module-level dict shared by every caller in the process, with no key on which repo/graph
+it was computed for. `HybridRetriever.__init__` constructs a fresh `KnowledgeGraph()` per call,
+and `_repo_ctx()` (mcp_server.py) repoints storage at a different repo's `.cognirepo/` for
+cross-repo tool calls within the SAME long-lived MCP server process — so a cross-repo call can
+read (and serve, for up to the 300s TTL) an integrity-gate verdict that was actually computed
+against a *different* repo's graph. Confirmed as a real race (not just a test artifact) while
+fixing CI flakiness in `test_grouping_allowed_trips_on_high_orphan_count`
+(COGNIREPO-502/PR #64): the shared cache dict was observably repopulated by a concurrent
+caller between one test forcing a fresh check and that same test's own `_grouping_allowed()`
+call — the test-side fix was isolating the test onto a private dict via `monkeypatch.setattr`,
+but production code has no equivalent isolation. Likely fix: key the cache by `repo_root` (or
+`id(graph)`/a hash of the graph's disk path) instead of one flat dict. Not fixed here — flagging
+alongside the primary D01 finding since both concern this same integrity-gate mechanism, but
+this is a separate, more clear-cut correctness bug (no design tradeoff needed) rather than the
+above's memory-vs-accuracy call.

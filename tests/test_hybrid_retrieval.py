@@ -276,7 +276,17 @@ class TestIndependenceGrouping:
         from intelligence.retrieval import hybrid as hybrid_mod
         from intelligence.retrieval.hybrid import HybridRetriever
 
-        hybrid_mod._integrity_gate_cache["ts"] = 0.0  # force a fresh check
+        # A fresh dict, not a mutation of the shared module-level cache: _grouping_allowed's
+        # own local `allowed` is what it returns, but its FIRST check reads
+        # _integrity_gate_cache["ts"] under a lock — if any other thread in this process
+        # (e.g. a leftover background-reindex/watcher daemon thread from an earlier test)
+        # concurrently calls _grouping_allowed() on an unrelated graph, it can repopulate the
+        # SHARED cache with a fresh timestamp between this test setting ts=0.0 and its own
+        # call, causing THIS call to short-circuit into returning THAT unrelated result
+        # instead of computing its own — see test_grouping_allowed_trips_on_high_orphan_count
+        # for where this was actually observed. Swapping in a private dict object closes that
+        # race entirely: nothing else in the process can be holding a reference to it.
+        monkeypatch.setattr(hybrid_mod, "_integrity_gate_cache", {"allowed": True, "ts": 0.0})
         (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
         # See test_grouping_allowed_trips_on_high_orphan_count below for why
         # get_cognirepo_dir() is patched directly rather than relying on the env var.
@@ -292,15 +302,17 @@ class TestIndependenceGrouping:
         from intelligence.retrieval import hybrid as hybrid_mod
         from intelligence.retrieval.hybrid import HybridRetriever
 
-        hybrid_mod._integrity_gate_cache["ts"] = 0.0  # force a fresh check
+        # Private cache dict, not a mutation of the shared module-level one — see the
+        # docstring note in test_grouping_allowed_on_clean_graph above for the concurrent-
+        # caller race this closes (observed on CI: this exact assertion flaked with
+        # "assert True is False" even with ts forced to 0.0, because a background thread
+        # elsewhere in the same worker process repopulated the SHARED cache with an unrelated
+        # graph's fresh result in between).
+        monkeypatch.setattr(hybrid_mod, "_integrity_gate_cache", {"allowed": True, "ts": 0.0})
         (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
         # get_cognirepo_dir() checks a ContextVar before the COGNIREPO_DIR env var (used by
-        # CrossRepoRouter for thread safety). Under pytest-xdist, if any earlier test in this
-        # worker leaves that ContextVar set, monkeypatch.setenv() below is silently ignored and
-        # _grouping_allowed()'s repo_root ends up pointing at an unrelated directory — observed
-        # as a flaky CI failure (assert True is False) that didn't reproduce locally or on every
-        # CI run of the same commit. Patching get_cognirepo_dir() itself makes this test's
-        # result independent of what ran before it in the same worker.
+        # CrossRepoRouter for thread safety) — patch it directly so repo_root resolution can't
+        # be affected by ambient state either.
         import core.config.paths as _paths_mod
         monkeypatch.setattr(_paths_mod, "get_cognirepo_dir", lambda: str(tmp_path / ".cognirepo"))
         r = HybridRetriever()
