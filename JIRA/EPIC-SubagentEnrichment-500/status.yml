@@ -7,9 +7,14 @@ stories:
     pr: https://github.com/ashlesh-t/cognirepo/pull/63
     test_status: pass  # TC-501-1 + TC-501-2, both PASS
   - id: COGNIREPO-502
-    status: not-started
+    status: in-review
     branch: story/COGNIREPO-502
+    pr: null  # opened below
+    test_status: pass  # TC-502-1 PASS
+defects:
+  - id: COGNIREPO-D01
+    status: not-started
+    branch: defect/COGNIREPO-500-D01
     pr: null
     test_status: not-run
-defects: []
 epic_test_suite_status: not-run
