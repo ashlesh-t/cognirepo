@@ -9,7 +9,7 @@ stories:
   - id: COGNIREPO-502
     status: in-review
     branch: story/COGNIREPO-502
-    pr: null  # opened below
+    pr: https://github.com/ashlesh-t/cognirepo/pull/64
     test_status: pass  # TC-502-1 PASS
 defects:
   - id: COGNIREPO-D01
