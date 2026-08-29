@@ -277,8 +277,11 @@ class TestIndependenceGrouping:
         from intelligence.retrieval.hybrid import HybridRetriever
 
         hybrid_mod._integrity_gate_cache["ts"] = 0.0  # force a fresh check
-        monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
         (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
+        # See test_grouping_allowed_trips_on_high_orphan_count below for why
+        # get_cognirepo_dir() is patched directly rather than relying on the env var.
+        import core.config.paths as _paths_mod
+        monkeypatch.setattr(_paths_mod, "get_cognirepo_dir", lambda: str(tmp_path / ".cognirepo"))
         r = HybridRetriever()
         assert hybrid_mod._grouping_allowed(r.graph) is True
 
@@ -290,8 +293,16 @@ class TestIndependenceGrouping:
         from intelligence.retrieval.hybrid import HybridRetriever
 
         hybrid_mod._integrity_gate_cache["ts"] = 0.0  # force a fresh check
-        monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
         (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
+        # get_cognirepo_dir() checks a ContextVar before the COGNIREPO_DIR env var (used by
+        # CrossRepoRouter for thread safety). Under pytest-xdist, if any earlier test in this
+        # worker leaves that ContextVar set, monkeypatch.setenv() below is silently ignored and
+        # _grouping_allowed()'s repo_root ends up pointing at an unrelated directory — observed
+        # as a flaky CI failure (assert True is False) that didn't reproduce locally or on every
+        # CI run of the same commit. Patching get_cognirepo_dir() itself makes this test's
+        # result independent of what ran before it in the same worker.
+        import core.config.paths as _paths_mod
+        monkeypatch.setattr(_paths_mod, "get_cognirepo_dir", lambda: str(tmp_path / ".cognirepo"))
         r = HybridRetriever()
         # Degree-0 FILE nodes with no incident edges — exactly what integrity_report()
         # counts as orphans. One past the threshold is enough to trip the gate.
