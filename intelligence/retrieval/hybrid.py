@@ -23,6 +23,7 @@ Weights are read from .cognirepo/config.json → retrieval_weights.
 Default: {"vector": 0.5, "graph": 0.3, "behaviour": 0.2}
 """
 import json
+import logging
 import math
 import os
 import threading
@@ -41,6 +42,9 @@ from data.memory.episodic_memory import get_history
 from core.vector_db.local_vector_db import LocalVectorDB
 
 from core.config.paths import get_path
+
+log = logging.getLogger(__name__)
+
 
 def _config_file() -> str:
     return get_path("config.json")
@@ -64,6 +68,12 @@ _GROUPING_MAX_VISITED = 30
 # slow to run synchronously on every hybrid_retrieve() call. Cache the gate decision at module
 # level with the same TTL as _HYBRID_CACHE rather than recomputing per query.
 _INTEGRITY_CACHE_TTL = 300
+# Calibrated empirically (not guessed) against integrity_report() on every real indexed repo in
+# cognirepo_test_repo/, from 1.9k nodes (flask) to 77.7k nodes (moby/kubernetes): every one of
+# them reported 0 orphans and 0-4 dangling files. These thresholds sit an order of magnitude
+# above the worst healthy value observed, so a healthy repo — however large — never trips the
+# gate; only a graph that's actually corrupt (predominantly orphaned/dangling) does. Re-run the
+# calibration in the sweep below if these ever need revisiting.
 _INTEGRITY_ORPHAN_THRESHOLD = 100
 _INTEGRITY_DANGLING_THRESHOLD = 20
 _integrity_gate_cache: dict = {"allowed": True, "ts": 0.0}
@@ -81,12 +91,26 @@ def _grouping_allowed(graph: KnowledgeGraph) -> bool:
         from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
         repo_root = os.path.dirname(os.path.abspath(get_cognirepo_dir()))
         report = graph.integrity_report(repo_root)
+        n_orphans, n_dangling = len(report["orphans"]), len(report["dangling_files"])
         allowed = (
-            len(report["orphans"]) <= _INTEGRITY_ORPHAN_THRESHOLD
-            and len(report["dangling_files"]) <= _INTEGRITY_DANGLING_THRESHOLD
+            n_orphans <= _INTEGRITY_ORPHAN_THRESHOLD
+            and n_dangling <= _INTEGRITY_DANGLING_THRESHOLD
         )
-    except Exception:  # pylint: disable=broad-except
-        allowed = True  # fail open — a broken integrity check shouldn't break retrieval
+        if not allowed:
+            # Grouping is skipped silently otherwise — a corrupt graph shouldn't crash
+            # retrieval, but a maintainer trying to explain "why do I never get
+            # component_ids" needs a trace of *why* the gate tripped.
+            log.warning(
+                "hybrid: independence grouping disabled — orphans=%d (limit %d), "
+                "dangling=%d (limit %d); graph likely corrupt, re-run `cognirepo index-repo`",
+                n_orphans, _INTEGRITY_ORPHAN_THRESHOLD,
+                n_dangling, _INTEGRITY_DANGLING_THRESHOLD,
+            )
+    except Exception as exc:  # pylint: disable=broad-except
+        # Fail open — a broken integrity check shouldn't break retrieval — but still surface
+        # it, since a silently-broken check would look identical to "graph is fine".
+        log.debug("hybrid: integrity_report() failed, grouping gate fails open: %s", exc)
+        allowed = True
     with _integrity_gate_lock:
         _integrity_gate_cache["allowed"] = allowed
         _integrity_gate_cache["ts"] = now

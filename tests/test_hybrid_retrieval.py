@@ -282,6 +282,27 @@ class TestIndependenceGrouping:
         r = HybridRetriever()
         assert hybrid_mod._grouping_allowed(r.graph) is True
 
+    def test_grouping_allowed_trips_on_high_orphan_count(self, tmp_path, monkeypatch, caplog):
+        """AC3: a graph past the corruption-level orphan threshold gates grouping off,
+        and the trip is logged (not silent) — see PR #63 review discussion."""
+        from data.graph.knowledge_graph import NodeType
+        from intelligence.retrieval import hybrid as hybrid_mod
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        hybrid_mod._integrity_gate_cache["ts"] = 0.0  # force a fresh check
+        monkeypatch.setenv("COGNIREPO_DIR", str(tmp_path / ".cognirepo"))
+        (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
+        r = HybridRetriever()
+        # Degree-0 FILE nodes with no incident edges — exactly what integrity_report()
+        # counts as orphans. One past the threshold is enough to trip the gate.
+        for i in range(hybrid_mod._INTEGRITY_ORPHAN_THRESHOLD + 1):
+            r.graph.add_node(f"orphan{i}.py", NodeType.FILE, file=f"orphan{i}.py")
+
+        with caplog.at_level("WARNING", logger=hybrid_mod.log.name):
+            allowed = hybrid_mod._grouping_allowed(r.graph)
+        assert allowed is False
+        assert "independence grouping disabled" in caplog.text
+
     def test_grouping_allowed_caches_result(self, monkeypatch):
         """Repeated calls within the TTL don't re-run integrity_report."""
         from intelligence.retrieval import hybrid as hybrid_mod
