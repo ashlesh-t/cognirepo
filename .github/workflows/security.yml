@@ -58,12 +58,17 @@ jobs:
           # Audits the pinned versions in requirements.txt directly — `pip install .`
           # above resolves from pyproject.toml and does not exercise these pins, so a
           # CVE fix committed to requirements.txt could silently drift without this step.
-          # Ignore CVE-2026-45829 (chromadb pre-auth code injection via trust_remote_code on
-          # its HTTP server's /collections endpoint): CogniRepo only uses
-          # chromadb.PersistentClient (embedded, in-process — core/vector_db/chroma_adapter.py),
-          # never chromadb's HTTP server, so the vulnerable endpoint is never running.
+          # Ignore CVE-2026-45829/-45830/-45831/-45833 (chromadb): all four require chromadb's
+          # HTTP server to be running — 45829/45833 are pre-auth / update_collection code
+          # injection via trust_remote_code on the server's endpoints, 45830/45831 are
+          # SimpleRBACAuthorizationProvider multi-tenant authorization bypasses on the same
+          # server. CogniRepo only uses chromadb.PersistentClient (embedded, in-process —
+          # core/vector_db/chroma_adapter.py:60), never chromadb.HttpClient or the server
+          # process, so none of these endpoints ever run. No fix version exists yet for any of
+          # the three added here (checked via pip-audit's Fix Versions column, 2026-08-30).
           pip-audit -r requirements.txt \
-            --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-45829
+            --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-45829 \
+            --ignore-vuln CVE-2026-45830 --ignore-vuln CVE-2026-45831 --ignore-vuln CVE-2026-45833
 
   # ── 3. Trivy — filesystem scan ────────────────────────────────────────────
   trivy:
