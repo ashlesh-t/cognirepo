@@ -1812,21 +1812,39 @@ class ASTIndexer:
                     self.faiss_meta.append(meta)
                     sym["faiss_id"] = faiss_id
 
-            # knowledge graph — skipped or weight-filtered for large repos to prevent OOM
+            # knowledge graph — full population weight-filtered for large repos to prevent OOM
+            # (lite-graph mode, see skip_graph=None handling above): rich attrs (weight,
+            # dispatch) and the CONCEPT/RELATES_TO dynamic-dispatch annotation are real memory
+            # cost and stay gated on weight, same as before.
+            #
+            # But even a below-threshold symbol still gets a MINIMAL node (type/file/line, no
+            # weight/dispatch — a few dict keys, not an embedding or FAISS entry) and its
+            # DEFINED_IN edge to the FILE node — COGNIREPO-500-D01. Without this, a low-weight
+            # symbol only entered the graph at all if a *separate*, unconditional pass (the
+            # call-graph edge loop below) happened to reference it as a caller/callee, and even
+            # then with zero attrs (networkx auto-creates edge endpoints bare) and no DEFINED_IN
+            # edge — so intelligence/retrieval/hybrid.py's _reachable_files() (COGNIREPO-501)
+            # could never connect it to its own file, let alone same-file siblings. Measured on
+            # cognirepo_test_repo/advanced/{moby,kubernetes}: 77-81% of nodes were attr-less for
+            # exactly this reason, over-fragmenting independence grouping on large repos.
             _graph_min = getattr(self, "_graph_weight_min", 0.0)
-            if not getattr(self, "_skip_graph", False) and weight >= _graph_min:
+            if not getattr(self, "_skip_graph", False):
                 file_node = make_node_id("FILE", rel_path)
                 sym_node = node_id_from_symbol_record(sym, rel_path)
                 self.graph.add_node(file_node, NodeType.FILE, weight=weight)
-                node_attrs = {"file": rel_path, "line": sym["start_line"], "weight": weight}
-                if sym.get("dispatch") == "dynamic":
-                    node_attrs["dispatch"] = "dynamic"
-                self.graph.add_node(sym_node, sym["type"], **node_attrs)
-                self.graph.add_edge(sym_node, file_node, EdgeType.DEFINED_IN)
-                if sym.get("dispatch") == "dynamic":
-                    dispatch_node = make_node_id("CONCEPT", "dynamic_dispatch")
-                    self.graph.add_node(dispatch_node, NodeType.CONCEPT)
-                    self.graph.add_edge(sym_node, dispatch_node, EdgeType.RELATES_TO)
+                if weight >= _graph_min:
+                    node_attrs = {"file": rel_path, "line": sym["start_line"], "weight": weight}
+                    if sym.get("dispatch") == "dynamic":
+                        node_attrs["dispatch"] = "dynamic"
+                    self.graph.add_node(sym_node, sym["type"], **node_attrs)
+                    self.graph.add_edge(sym_node, file_node, EdgeType.DEFINED_IN)
+                    if sym.get("dispatch") == "dynamic":
+                        dispatch_node = make_node_id("CONCEPT", "dynamic_dispatch")
+                        self.graph.add_node(dispatch_node, NodeType.CONCEPT)
+                        self.graph.add_edge(sym_node, dispatch_node, EdgeType.RELATES_TO)
+                else:
+                    self.graph.add_node(sym_node, sym["type"], file=rel_path, line=sym["start_line"])
+                    self.graph.add_edge(sym_node, file_node, EdgeType.DEFINED_IN)
 
         # ── file-level summary embedding ──────────────────────────────────────
         if embed_enabled and raw_symbols:

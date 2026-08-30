@@ -5,6 +5,15 @@ Found while manually testing: COGNIREPO-502 (TC-502-1)
 Does NOT block COGNIREPO-501 or COGNIREPO-502's own acceptance criteria — both pass as written.
 Blocks: epic COGNIREPO-500 sign-off (per skill.md §G.4) until resolved or explicitly deferred.
 
+**Resolution (2026-08-30):** Owner selected Option 1 (stamp minimal attrs). Implemented in
+`intelligence/indexer/ast_indexer.py` — every symbol now gets a minimal `{type, file, line}`
+node + `DEFINED_IN` edge regardless of `_graph_weight_min`; rich attrs (`weight`, `dispatch`)
+and embeddings/FAISS stay gated exactly as before, preserving the lite-graph mode's actual
+memory-saving intent. The addendum's cache-keying gap was fixed alongside it (same mechanism,
+same investigation) — `_grouping_allowed()`'s TTL cache is now keyed by
+`KnowledgeGraph._disk_path` instead of one flat dict. See TEST_SUITE for empirical AC1-3
+evidence. All 3 ACs PASS.
+
 ## Backstory
 
 `intelligence/indexer/ast_indexer.py:1818-1826` gates full graph population (proper

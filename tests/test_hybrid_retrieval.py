@@ -331,23 +331,23 @@ class TestIndependenceGrouping:
         assert "independence grouping disabled" in caplog.text
 
     def test_grouping_allowed_caches_result(self, monkeypatch):
-        """Repeated calls within the TTL don't re-run integrity_report."""
+        """Repeated calls within the TTL, for the SAME graph, don't re-run integrity_report."""
         from intelligence.retrieval import hybrid as hybrid_mod
         from unittest.mock import MagicMock
 
-        hybrid_mod._integrity_gate_cache["ts"] = hybrid_mod.time.monotonic()
-        hybrid_mod._integrity_gate_cache["allowed"] = True
         fake_graph = MagicMock()
+        fake_graph._disk_path = "/fake/repo/.cognirepo/graph/graph.pkl"
+        key = hybrid_mod._integrity_gate_key(fake_graph)
+        hybrid_mod._integrity_gate_cache[key] = {"allowed": True, "ts": hybrid_mod.time.monotonic()}
         assert hybrid_mod._grouping_allowed(fake_graph) is True
         fake_graph.integrity_report.assert_not_called()
 
-    def test_grouping_allowed_cache_not_keyed_by_graph(self, tmp_path, monkeypatch):
-        """Documents the known gap behind COGNIREPO-500-D01's addendum and the CI flake that
-        led to _compute_integrity_allowed being split out: _grouping_allowed's TTL cache is
-        one module-level dict for the whole process, with no notion of WHICH graph a verdict
-        was computed for. Two concurrent callers with different graphs (a healthy one, a
-        corrupt one) can have the corrupt one's caller read back the healthy one's cached
-        verdict — reproduced here directly rather than asserted as "sometimes flaky"."""
+    def test_grouping_allowed_cache_keyed_by_graph(self, tmp_path, monkeypatch):
+        """COGNIREPO-500-D01 fix: two concurrent callers with DIFFERENT graphs (a healthy one,
+        a corrupt one) each get their OWN cached verdict — the corrupt graph's caller must
+        never read back the healthy graph's cached "allowed". Before the fix (a single flat
+        cache dict, see the addendum in the defect ticket and the CI flake that led to
+        _compute_integrity_allowed being split out), this reproduced 200/200 in a tight loop."""
         import threading
         import networkx as nx
         from data.graph.knowledge_graph import NodeType
@@ -356,19 +356,21 @@ class TestIndependenceGrouping:
         import core.config.paths as _paths_mod
         (tmp_path / ".cognirepo").mkdir(parents=True, exist_ok=True)
         monkeypatch.setattr(_paths_mod, "get_cognirepo_dir", lambda: str(tmp_path / ".cognirepo"))
-        monkeypatch.setattr(hybrid_mod, "_integrity_gate_cache", {"allowed": True, "ts": 0.0})
+        monkeypatch.setattr(hybrid_mod, "_integrity_gate_cache", {})
 
         healthy = hybrid_mod.KnowledgeGraph.__new__(hybrid_mod.KnowledgeGraph)
         healthy.G = nx.DiGraph()
+        healthy._disk_path = "healthy-repo/graph.pkl"
         corrupt = hybrid_mod.KnowledgeGraph.__new__(hybrid_mod.KnowledgeGraph)
         corrupt.G = nx.DiGraph()
+        corrupt._disk_path = "corrupt-repo/graph.pkl"
         for i in range(hybrid_mod._INTEGRITY_ORPHAN_THRESHOLD + 1):
             corrupt.add_node(f"orphan{i}.py", NodeType.FILE, file=f"orphan{i}.py")
 
         results = {}
 
         def _call_corrupt():
-            # Give the healthy call a head start so it wins the cache write —
+            # Give the healthy call a head start so it wins the cache write first —
             # deterministic ordering, not a hope-it-races timing gamble.
             import time as _time
             _time.sleep(0.02)
@@ -381,11 +383,9 @@ class TestIndependenceGrouping:
         t_healthy.join()
         t_corrupt.join()
 
-        # The known-bad behavior: the corrupt graph's caller reads back the healthy graph's
-        # cached True instead of computing its own False. This is what makes
-        # _compute_integrity_allowed() (tested directly above, no cache involved) the right
-        # thing for AC3 correctness tests to call instead of this cached wrapper.
-        assert results["corrupt"] is True  # documents the gap; not the desired behavior
+        # Fixed behavior: the corrupt graph's caller computes and caches its OWN verdict,
+        # keyed by its own _disk_path — unaffected by the healthy graph's concurrent result.
+        assert results["corrupt"] is False
 
     def test_annotate_independence_groups_latency(self, monkeypatch):
         """AC4: added latency < 10ms for k <= 10 on a small synthetic graph."""
