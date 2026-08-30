@@ -7,7 +7,7 @@ stories:
     pr: https://github.com/ashlesh-t/cognirepo/pull/63
     test_status: pass  # TC-501-1 + TC-501-2, both PASS
   - id: COGNIREPO-502
-    status: in-review
+    status: signed-off  # 2026-08-30, PR #64 merged
     branch: story/COGNIREPO-502
     pr: https://github.com/ashlesh-t/cognirepo/pull/64
     test_status: pass  # TC-502-1 PASS
