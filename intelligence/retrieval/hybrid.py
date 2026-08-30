@@ -76,8 +76,24 @@ _INTEGRITY_CACHE_TTL = 300
 # calibration in the sweep below if these ever need revisiting.
 _INTEGRITY_ORPHAN_THRESHOLD = 100
 _INTEGRITY_DANGLING_THRESHOLD = 20
-_integrity_gate_cache: dict = {"allowed": True, "ts": 0.0}
+# Keyed by graph identity (KnowledgeGraph._disk_path — the exact graph.pkl a graph was loaded
+# from/saved to), NOT a single flat verdict — COGNIREPO-500-D01 addendum. A flat cache let one
+# caller's verdict for its OWN graph get read back by a concurrent caller passing a DIFFERENT
+# graph (confirmed 200/200 in a repro loop: a corrupt graph's caller reading back a healthy
+# graph's "allowed"), which happens both across threads in one process and across repos in a
+# long-lived MCP server session via mcp_server.py's _repo_ctx().
+_integrity_gate_cache: dict[str, dict] = {}
 _integrity_gate_lock = threading.Lock()
+
+
+def _integrity_gate_key(graph: KnowledgeGraph) -> str:
+    """Cache key for the integrity gate: the graph's own on-disk path when known (set by
+    KnowledgeGraph.__init__/save(), independent of ambient get_cognirepo_dir() state — see
+    _compute_integrity_allowed(), which still resolves repo_root ambiently and is a separate,
+    smaller instance of the same class of gap), falling back to object identity for a graph
+    that was never loaded from / saved to disk (e.g. built in-memory in a test)."""
+    path = getattr(graph, "_disk_path", None)
+    return path if path else f"id:{id(graph)}"
 
 
 def _compute_integrity_allowed(graph: KnowledgeGraph) -> bool:
@@ -122,19 +138,19 @@ def _grouping_allowed(graph: KnowledgeGraph) -> bool:
     """True unless the graph's orphan/dangling counts exceed a corruption-level threshold —
     so integrity problems never masquerade as legitimate parallelism (COGNIREPO-501 AC3).
 
-    TTL-caches _compute_integrity_allowed()'s result across calls — integrity_report() is
-    O(nodes), too slow to run synchronously on every hybrid_retrieve() call (see module
-    comments above). NOT keyed by graph/repo identity (see COGNIREPO-500-D01 addendum) —
-    correct for the common single-repo-per-process case, a known gap for cross-repo calls.
+    TTL-caches _compute_integrity_allowed()'s result per graph (keyed by _integrity_gate_key,
+    COGNIREPO-500-D01) — integrity_report() is O(nodes), too slow to run synchronously on every
+    hybrid_retrieve() call (see module comments above).
     """
+    key = _integrity_gate_key(graph)
     now = time.monotonic()
     with _integrity_gate_lock:
-        if now - _integrity_gate_cache["ts"] < _INTEGRITY_CACHE_TTL:
-            return _integrity_gate_cache["allowed"]
+        entry = _integrity_gate_cache.get(key)
+        if entry is not None and now - entry["ts"] < _INTEGRITY_CACHE_TTL:
+            return entry["allowed"]
     allowed = _compute_integrity_allowed(graph)
     with _integrity_gate_lock:
-        _integrity_gate_cache["allowed"] = allowed
-        _integrity_gate_cache["ts"] = now
+        _integrity_gate_cache[key] = {"allowed": allowed, "ts": now}
     return allowed
 
 
