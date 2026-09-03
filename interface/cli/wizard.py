@@ -121,6 +121,22 @@ def _ask_choice(
         _warn(f"Please enter a number between 1 and {len(choices)}.")
 
 
+def _count_source_files(repo_root: str) -> int:
+    """Cheap pre-scan of supported source files — mirrors ast_indexer's own fallback
+    walk (ast_indexer.py:1495-1499) so the wizard can decide whether tiering is even
+    a real choice before indexing starts."""
+    from intelligence.indexer.ast_indexer import _effective_skip_dirs  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.language_registry import is_supported    # pylint: disable=import-outside-toplevel
+    from pathlib import Path as _Path                                  # pylint: disable=import-outside-toplevel
+
+    skip_dirs = _effective_skip_dirs()
+    n = 0
+    for dirpath, dirnames, filenames in os.walk(repo_root):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+        n += sum(1 for f in filenames if is_supported(_Path(f)))
+    return n
+
+
 # ── section header ────────────────────────────────────────────────────────────
 
 def _section(step: int, total: int, title: str, subtitle: str = "") -> None:
@@ -505,6 +521,9 @@ def run_wizard() -> dict:
       mcp_targets       list  subset of ["claude", "gemini", "cursor", "vscode"]
       org               str | None  organization name
       project           str | None  project within org
+      tier              str | None  indexing tier: None (auto: tier 1 + background tier 2
+                                     for large repos) or "all" (full index now); only asked
+                                     when the repo is large enough for it to matter
       child_repos       list[ServiceCandidate]  detected microservices to set up
       orchestrator_mode bool  True if child_repos is non-empty
 
@@ -512,7 +531,7 @@ def run_wizard() -> dict:
     """
     # Microservice detection deferred until user opts in (step 8).
     _candidates: list = []
-    STEPS = 8
+    STEPS = 9
 
     print()
     print("  ╔══════════════════════════════════════════════════════╗")
@@ -577,8 +596,37 @@ def run_wizard() -> dict:
         else:
             _warn("Install failed — run: pip install cognirepo[languages]")
 
-    # ── 5. AI tool MCP integration ────────────────────────────────────────────
-    _section(5, STEPS, "AI tool MCP integration",
+    # ── 5. Indexing strategy (large repos only) ──────────────────────────────
+    # Tiering only kicks in above _LARGE_REPO_TIER_THRESHOLD — below that, the
+    # indexer always does a full index anyway, so asking would be a pointless
+    # extra prompt for the common case (COGNIREPO-500-D02 AC2).
+    cfg["tier"] = None  # None → let the indexer decide (current auto behavior)
+    from intelligence.indexer.ast_indexer import _LARGE_REPO_TIER_THRESHOLD  # pylint: disable=import-outside-toplevel
+    _n_src = _count_source_files(os.getcwd())
+    if _n_src >= _LARGE_REPO_TIER_THRESHOLD:
+        _section(5, STEPS, "Indexing strategy",
+                 f"{_n_src:,} source files detected — large enough that indexing speed "
+                 "vs. completeness is a real tradeoff here.")
+        _tier_idx = _ask_choice(
+            "How should the first index run?",
+            [
+                "Tier 1 now, Tier 2 in background",
+                "Full index now (all tiers)",
+            ],
+            descriptions=[
+                "Fast: symbols for the most-connected ~half of files immediately; "
+                "everything else (plus semantic embeddings) finishes in a background "
+                "process you don't have to wait for.",
+                "Slower up front (can take significantly longer on 10k+ file repos) "
+                "but the symbol index and embeddings are complete the moment setup "
+                "finishes — nothing running in the background afterward.",
+            ],
+            default=0,
+        )
+        cfg["tier"] = None if _tier_idx == 0 else "all"
+
+    # ── 6. AI tool MCP integration ────────────────────────────────────────────
+    _section(6, STEPS, "AI tool MCP integration",
              "Wire CogniRepo memory + code search into Claude / Gemini / Cursor / VS Code.")
     mcp_idx = _ask_choice(
         "Set up MCP server for:",
@@ -616,8 +664,8 @@ def run_wizard() -> dict:
 
     cfg["mcp_global"] = False  # always project-scoped; global registration removed
 
-    # ── 6. Cross-agent context handoff ───────────────────────────────────────
-    _section(6, STEPS, "Cross-agent context handoff",
+    # ── 7. Cross-agent context handoff ───────────────────────────────────────
+    _section(7, STEPS, "Cross-agent context handoff",
              "Share last session context between Claude, Gemini, and Cursor automatically.")
     cfg["autosave_context"] = _ask_yn(
         "Enable cross-agent context handoff? (saves last query context to ~/.cognirepo/<repo>/)",
@@ -628,8 +676,8 @@ def run_wizard() -> dict:
     else:
         print(f"  {_c(_DIM, '  Sessions stay isolated. Enable later: set autosave_context=true in config.json')}")
 
-    # ── 7. Organization + Project ─────────────────────────────────────────────
-    _section(7, STEPS, "Organisation & Project",
+    # ── 8. Organization + Project ─────────────────────────────────────────────
+    _section(8, STEPS, "Organisation & Project",
              "Group repos for cross-repo knowledge sharing.")
     from core.config.orgs import list_orgs, list_projects, create_project  # pylint: disable=import-outside-toplevel
     orgs = list_orgs()
@@ -673,8 +721,8 @@ def run_wizard() -> dict:
                     create_project(cfg["org"], proj_name, proj_desc)
                     cfg["project"] = proj_name
 
-    # ── 8. Microservice detection (opt-in) ───────────────────────────────────
-    _section(8, STEPS, "Microservice architecture",
+    # ── 9. Microservice detection (opt-in) ───────────────────────────────────
+    _section(9, STEPS, "Microservice architecture",
              "Does this repo contain or orchestrate multiple microservices?")
     _is_microservice_repo = _ask_yn(
         "Is this repo part of a microservice architecture?", default=False
@@ -711,6 +759,7 @@ def run_wizard() -> dict:
         ("Context handoff", "yes" if cfg.get("autosave_context", True) else "no"),
         ("AST indexing",    "FAISS"),
         ("Semantic text",   "ChromaDB"),
+        ("Indexing tier",   "all (full index now)" if cfg.get("tier") == "all" else "1 + background 2 (default)"),
         ("Languages",       "extended" if cfg["install_languages"] else "Python only"),
         ("MCP targets",     ", ".join(cfg["mcp_targets"]) or "none"),
         ("MCP scope",       "project-only"),

@@ -1476,6 +1476,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
             mcp_targets=wizard_cfg.get("mcp_targets", []),
             autosave_context=wizard_cfg.get("autosave_context", True),
             behaviour_tracking=wizard_cfg.get("behaviour_tracking", False),
+            tier=wizard_cfg.get("tier"),
         )
     except KeyboardInterrupt:
         print("\n  Setup cancelled.")
@@ -1596,22 +1597,18 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
                             if _t2_ans == "1":
                                 print("\n  Running Tier 2 … (use Ctrl-C to interrupt)\n")
                                 import subprocess as _sp_t2  # pylint: disable=import-outside-toplevel
-                                from pathlib import Path as _Pt2  # pylint: disable=import-outside-toplevel
-                                _bin2 = _Pt2(sys.executable).parent / "cognirepo"
-                                _cmd2 = str(_bin2) if _bin2.exists() else "cognirepo"
                                 _sp_t2.run(
-                                    [_cmd2, "index-repo", parent_path, "--tier", "2", "--no-watch"],
+                                    [sys.executable, "-m", "interface.cli.main",
+                                     "index-repo", parent_path, "--tier", "2", "--no-watch"],
                                     check=False,
                                 )
                                 print("  ✓  Tier 2 complete.")
 
                             elif _t2_ans == "2":
                                 import subprocess as _sp_bg  # pylint: disable=import-outside-toplevel
-                                from pathlib import Path as _Pbg  # pylint: disable=import-outside-toplevel
-                                _bin_bg = _Pbg(sys.executable).parent / "cognirepo"
-                                _cmd_bg = str(_bin_bg) if _bin_bg.exists() else "cognirepo"
                                 _sp_bg.Popen(
-                                    [_cmd_bg, "index-repo", parent_path, "--tier", "2", "--no-watch"],
+                                    [sys.executable, "-m", "interface.cli.main",
+                                     "index-repo", parent_path, "--tier", "2", "--no-watch"],
                                     stdout=_sp_bg.DEVNULL, stderr=_sp_bg.DEVNULL,
                                     start_new_session=True,
                                 )
@@ -2243,7 +2240,6 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
     # Only for non-Tier-2 runs to avoid infinite subprocess loops.
     if tier != 2:
         try:
-            from pathlib import Path as _Path2  # pylint: disable=import-outside-toplevel
             import json as _j2  # pylint: disable=import-outside-toplevel
             _t2_queue = get_path("index/pending_tier2.json")
             if os.path.exists(_t2_queue):
@@ -2253,11 +2249,9 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
                 _embed_pending = _t2_data.get("embed_pending", False)
                 if _t2_count > 0 or _embed_pending:
                     import subprocess as _sp2  # pylint: disable=import-outside-toplevel
-                    _bin_dir2 = _Path2(sys.executable).parent
-                    _colocated2 = _bin_dir2 / "cognirepo"
-                    _cogcmd2 = str(_colocated2) if _colocated2.exists() else "cognirepo"
                     _sp2.Popen(
-                        [_cogcmd2, "index-repo", abs_path, "--tier", "2", "--no-watch"],
+                        [sys.executable, "-m", "interface.cli.main",
+                         "index-repo", abs_path, "--tier", "2", "--no-watch"],
                         stdout=_sp2.DEVNULL, stderr=_sp2.DEVNULL,
                         start_new_session=True,
                     )
