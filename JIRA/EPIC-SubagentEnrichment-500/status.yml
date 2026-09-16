@@ -13,8 +13,13 @@ stories:
     test_status: pass  # TC-502-1 PASS
 defects:
   - id: COGNIREPO-D01
-    status: in-review
+    status: signed-off  # 2026-08-30, PR #65 merged, no review comments
     branch: defect/COGNIREPO-500-D01
     pr: https://github.com/ashlesh-t/cognirepo/pull/65
     test_status: pass  # TC-D01-1/2/3, all PASS
+  - id: COGNIREPO-D02
+    status: in-review  # 2026-09-03, PR #66 opened
+    branch: defect/COGNIREPO-500-D02
+    pr: https://github.com/ashlesh-t/cognirepo/pull/66
+    test_status: pass  # TC-D02-1/2/3 verified by inspection, TC-D02-4/4b live-verified on kubernetes, TC-D02-5 unaffected
 epic_test_suite_status: not-run

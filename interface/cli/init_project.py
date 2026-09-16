@@ -1088,6 +1088,7 @@ def init_project(
     mcp_targets: list[str] | None = None,
     autosave_context: bool = True,
     behaviour_tracking: bool = False,
+    tier: "int | str | None" = None,
     # deprecated — accepted but ignored for backward compat
     multi_model: bool = True,
     redis: bool = False,
@@ -1100,6 +1101,11 @@ def init_project(
     and all parameters are sourced from user answers.
 
     When *non_interactive* is True, all prompts use defaults (for CI/scripting).
+
+    *tier* controls indexing depth for large repos (None=auto tier 1 + background
+    tier 2, "all"=full index now) — see ast_indexer.ASTIndexer.index_repo. Sourced
+    from the wizard's "Indexing strategy" step when interactive, or passed through
+    directly by callers like _cmd_setup that already ran the wizard themselves.
 
     Returns (summary_dict, kg, indexer) if indexing was performed,
     otherwise (None, None, None).
@@ -1126,6 +1132,7 @@ def init_project(
             mcp_targets    = wizard_cfg.get("mcp_targets", mcp_targets or [])
             autosave_context = wizard_cfg.get("autosave_context", autosave_context)
             behaviour_tracking = wizard_cfg.get("behaviour_tracking", behaviour_tracking)
+            tier           = wizard_cfg.get("tier", tier)
             _wizard_ran = True
         except (ImportError, KeyboardInterrupt):
             # Fall back to non-interactive with defaults
@@ -1228,7 +1235,7 @@ def init_project(
     except ImportError:
         _ctx = None
 
-    summary = indexer.index_repo(cwd, skip_graph=True if no_graph else None)
+    summary = indexer.index_repo(cwd, skip_graph=True if no_graph else None, tier=tier)
     if _ctx is not None:
         _ctx.close()
 
@@ -1253,7 +1260,6 @@ def init_project(
     try:
         from core.config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
         import subprocess as _sp  # pylint: disable=import-outside-toplevel
-        from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
         _t2_queue = pending_tier2_path()
         if os.path.exists(_t2_queue):
             import json as _json  # pylint: disable=import-outside-toplevel
@@ -1262,11 +1268,17 @@ def init_project(
             _t2_count = len(_t2_data.get("files", []))
             _embed_pending = _t2_data.get("embed_pending", False)
             if _t2_count > 0 or _embed_pending:
-                _bin_dir = _Path(sys.executable).parent
-                _colocated = _bin_dir / "cognirepo"
-                _cogcmd = str(_colocated) if _colocated.exists() else "cognirepo"
+                # Invoke the *exact interpreter* that just ran Tier 1 as `-m
+                # interface.cli.main` rather than hunting for a `cognirepo` binary
+                # on disk/PATH — sys.executable's site-packages are what Tier 1
+                # actually imported from, so this guarantees Tier 2 runs under the
+                # same install with no ambiguity (COGNIREPO-500-D02 AC4). A PATH
+                # lookup (bare "cognirepo", or a colocated-binary guess) can resolve
+                # to an unrelated install — e.g. a stale pipx copy — and silently
+                # run different code than the one the user is working from.
+                _cogcmd = [sys.executable, "-m", "interface.cli.main"]
                 _sp.Popen(
-                    [_cogcmd, "index-repo", cwd, "--tier", "2", "--no-watch"],
+                    [*_cogcmd, "index-repo", cwd, "--tier", "2", "--no-watch"],
                     stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
                     start_new_session=True,
                 )
@@ -1275,7 +1287,7 @@ def init_project(
                     _what.append(f"{_t2_count:,} files")
                 if _embed_pending:
                     _what.append("FAISS embeddings")
-                print(f"  Tier 2: {' + '.join(_what)} queued — background indexing started.")
+                print(f"  Tier 2: {' + '.join(_what)} queued — background indexing started ({sys.executable}).")
                 # edge: launch progress window (failure never blocks indexing)
                 try:
                     from interface.tools.bg_progress import launch_progress_ui as _lpui  # pylint: disable=import-outside-toplevel
