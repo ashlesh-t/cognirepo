@@ -1,5 +1,5 @@
 epic_id: COGNIREPO-500
-status: in-progress
+status: signed-off  # 2026-09-17, epic e2e suite PASS
 stories:
   - id: COGNIREPO-501
     status: signed-off  # 2026-08-30, PR #63 merged
@@ -22,4 +22,4 @@ defects:
     branch: defect/COGNIREPO-500-D02
     pr: https://github.com/ashlesh-t/cognirepo/pull/66
     test_status: pass  # TC-D02-1/2/3 verified by inspection, TC-D02-4/4b live-verified on kubernetes, TC-D02-5 unaffected
-epic_test_suite_status: not-run
+epic_test_suite_status: pass  # E2E-500-1 + E2E-500-2, both PASS

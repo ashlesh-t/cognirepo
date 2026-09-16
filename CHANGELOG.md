@@ -8,6 +8,43 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+## [2.4.0] — 2026-09-17
+
+### Added
+- **COGNIREPO-501 — independence grouping in hybrid retrieval.** `hybrid_retrieve()` now
+  annotates packed code hits with a `component_id` via a hop-capped (3 hops, 30-node visited
+  cap), union-find pass over structural edges only (`IMPORTS`/`CALLS`/`CALLED_BY`/`DEFINED_IN`) —
+  hits with no shared import/call path get distinct ids. Gated by an integrity check
+  (`_grouping_allowed`): a graph with more than 100 orphans or 20 dangling files disables
+  grouping entirely rather than risk false independence claims on a corrupt index.
+- **COGNIREPO-502 — `delegation_hints` in `context_pack()`.** When packed code hits span ≥2
+  independence groups, the response gains a `delegation_hints` key (absent entirely — not an
+  empty list — when there's only one group) naming each group's files and up to 3
+  pack-time-grepped TODO/FIXME lines from the hit files. Counted last against the token budget
+  and dropped first on overflow, so core retrieval content is never sacrificed for hints.
+
+### Fixed
+- **COGNIREPO-500-D01 — minimal graph attrs for weight-filtered symbols + key integrity cache
+  by graph.** Large-repo lite-graph mode was skipping node attrs/`DEFINED_IN` edges entirely for
+  below-weight-threshold symbols (this class of repo: ~80% of nodes), so `_reachable_files()`
+  couldn't connect a symbol to its own file at all — `delegation_hints` never fired on large
+  repos regardless of query. Now every symbol always gets a minimal `{type, file, line}` node +
+  `DEFINED_IN` edge; richer attrs/embeddings/FAISS writes stay gated as before. Also fixed the
+  integrity-gate TTL cache being a single flat dict shared process-wide — now keyed by the
+  graph's own disk path, so concurrent callers with different graphs can no longer read back
+  each other's cached verdict (reproduced 200/200 in a tight loop pre-fix).
+- **COGNIREPO-500-D02 — wizard tier-choice step + fix Tier 2 install resolution.** The
+  interactive setup wizard now asks for an indexing tier explicitly instead of silently assuming
+  one; fixed Tier 2 (background full-index resume) resolving the wrong install path on some
+  platforms.
+
+### Verified
+- Epic e2e suite (`COGNIREPO-500-TEST_SUITE.md`): delegation grouping confirmed working
+  end-to-end on a real 23k-file/182k-symbol repo — independent modules produce multiple
+  `delegation_hints` groups (with real TODO lines), a single connected module produces none, and
+  grouping is correctly suppressed on a degraded (orphaned-file) graph without affecting core
+  retrieval.
+
 ## [2.3.0] — 2026-08-24
 
 ### Added

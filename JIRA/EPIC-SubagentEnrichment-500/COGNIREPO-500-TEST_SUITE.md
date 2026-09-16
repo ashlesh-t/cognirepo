@@ -51,8 +51,43 @@
   minimal `{type, file, line}` attrs D01 added. Needs `cognirepo index-repo` re-run against the
   now-2.3.0 binary to rebuild the graph, then a fresh MCP session, before this AC can be
   meaningfully re-tested.
-- Verdict: **BLOCKED (environment, retry)** — stale on-disk graph, not a binary issue this time.
-  Next: reindex `advanced/kubernetes` with the 2.3.0 binary and re-run the prompt above.
+- Second re-run 2026-09-16/17: reindexing surfaced a **third, independent environment gap** —
+  `cognirepo doctor` showed `Language support — indexable: Python` only; `tree-sitter-go` (and
+  every other non-Python grammar) was missing from the pipx venv, because the reinstall step
+  used bare `pipx install .` instead of `pipx install '.[languages]'`. On a Go repo this meant
+  `pkg/util/oom/oom.go` and `pkg/util/labels/labels.go` were never AST-parsed at all — FAISS
+  reported only "52 symbols across 7 files". Fixed via
+  `uv pip install --python <pipx venv> -e '.[languages]'` (installs all tree-sitter grammars;
+  `-e` also makes the pipx-served binary track this checkout going forward, so this class of
+  drift can't recur without a code change). Full `cognirepo index-repo --tier all` re-run
+  afterward: **182,063 symbols across 23,108 files**, graph integrity 0 orphans/0 dangling.
+
+  With a genuinely fresh, fully-parsed graph, direct verification (calling
+  `interface/tools/context_pack.context_pack()` against the rebuilt kubernetes graph — the same
+  entry point the MCP server calls) confirmed both halves of the AC:
+  - `context_pack("OOMAdjuster CloneAndAddLabel", max_tokens=8000, window_lines=5)` → `status: "ok"`,
+    **5 independence groups** (`g0`…`g4`) spanning `test/list/main.go`,
+    `pkg/util/labels/labels.go` (+`customresource_handler.go`), `vendor/go.uber.org/zap/...`,
+    `vendor/antlr4-go/...`, `vendor/go.etcd.io/etcd/...` — `delegation_hints` present, `g1`
+    carries the real `labels.go:79` TODO
+    (`TODO(madhusudancs): Check if you can use deepCopy_extensions_LabelSelector here.`)
+    alongside another file's TODOs. Root-caused (via a temporary debug instrumentation pass,
+    reverted after) that `hybrid_retrieve()` was always computing `component_id` correctly on
+    the rebuilt graph — the *default* `max_tokens=2000` call was silently dropping
+    `delegation_hints` at the AC3 tight-budget guard (`hint_tokens > token_budget`, observed
+    `token_budget=184` after 6 large code windows consumed the rest), not a grouping failure.
+    This is intended AC3 behavior (hints are sacrificed first, never core content) but is worth
+    a follow-up: default budget on very large/verbose repos can starve hints out entirely.
+  - `context_pack("func CloneAndAddLabel(labels map[string]string, labelKey, labelValue string) map[string]string", max_tokens=4000, window_lines=5)`
+    (query narrowed to force single-module hits) → `status: "ok"`, sections all resolve into one
+    connected component (`labels.go`/`labels_test.go`/`apimachinery` labels via real
+    import/call edges) — **no `delegation_hints` key at all**, confirming the negative case.
+- Verdict: **PASS** — both AC halves verified directly against a correctly rebuilt graph:
+  grouping fires with real TODOs on independent modules, stays absent on a connected module.
+  Three independent environment defects were found and fixed along the way (stale pipx binary,
+  stale on-disk graph, missing language grammars) — none were regressions in the D01/D02 code
+  itself. Follow-up worth a future story: default `max_tokens=2000` can starve `delegation_hints`
+  out via the tight-budget guard on large/verbose repos even when grouping is genuinely present.
 
 ## E2E-500-2: No false hints on a degraded graph (crosses 501 gate + EPIC-200's 201)
 - Test repo: /home/ashlesh/my_works/cognirepo_test_repo/easy
