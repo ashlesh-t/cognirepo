@@ -40,12 +40,19 @@
   Did not attempt a corrected re-run: reinstalling/upgrading the pipx package and restarting the
   MCP server mid-session risks disrupting the active tool connection and wasn't authorized for
   this pass.
-- Verdict: (previously **BLOCKED (environment)** on stale pipx install 2.2.0 pre-dating D01/D02.
-  2026-09-16: `pipx install .` from `development` @ `1910897` reinstalled `cognirepo` at
-  **2.3.0** — `ast_indexer.py` mtime now 2026-09-16 19:37, confirming both the D01 minimal-attrs
-  fix and D02 are in the served binary. Needs the `cognirepo-kubernetes` MCP server (and this
-  session) restarted before re-running the prompt above — leaving blank for the user to re-run
-  and fill in per skill.md §F.4.)
+- Re-run 2026-09-16 (after pipx reinstall to 2.3.0 + fresh session): `context_pack` returned only
+  low-relevance license-header boilerplate (~0.35–0.39 score), no TODO-line hits, no
+  `delegation_hints` key — feature still doesn't fire. User read both files directly and did the
+  parallelization split manually (sound reasoning, but not evidence of the tool feature working).
+  **Second root cause identified**: the D01 fix lives in `ast_indexer.py`'s lite-graph mode,
+  which only runs at *index-build* time — reinstalling the binary doesn't retroactively repair a
+  graph.pkl already built by the old (pre-D01) indexer. This repo's `.cognirepo/graph` was last
+  built 2026-09-03, while the pipx binary was still 2.2.0 — so the on-disk graph still lacks the
+  minimal `{type, file, line}` attrs D01 added. Needs `cognirepo index-repo` re-run against the
+  now-2.3.0 binary to rebuild the graph, then a fresh MCP session, before this AC can be
+  meaningfully re-tested.
+- Verdict: **BLOCKED (environment, retry)** — stale on-disk graph, not a binary issue this time.
+  Next: reindex `advanced/kubernetes` with the 2.3.0 binary and re-run the prompt above.
 
 ## E2E-500-2: No false hints on a degraded graph (crosses 501 gate + EPIC-200's 201)
 - Test repo: /home/ashlesh/my_works/cognirepo_test_repo/easy
@@ -55,5 +62,15 @@
 - Prompt: "Use context_pack for '<query>' and tell me if it flagged parallelizable work."
 - Expected results: grouping suppressed (high-orphan gate), no delegation_hints emitted; core
   retrieval unaffected.
-- Obtained results:
-- Verdict:
+- Obtained results: Ran `context_pack(query="password hashing utility functions")` against the
+  `easy/fastapi` repo after deleting `fastapi/security/utils.py` (tracked file, had incoming
+  edges, removed via `rm`, not reindexed). `status: "ok"`, `token_count: 2000`,
+  `truncated: false`, 20 `bucket: "code"` sections from `docs_src/security/tutorial00{3,4,5}*.py`
+  and `docs_src/extra_models/*.py`. `fastapi/security/utils.py` did not appear anywhere in the
+  output — not as a hit, not as a broken/orphan reference. No `delegation_hints` field, no
+  parallelization signal. Core retrieval stayed functional (returned relevant sections from the
+  remaining live files); the stale orphan reference produced no visible error, warning, or
+  degraded-mode signal.
+- Verdict: **PASS** — grouping suppressed (no `delegation_hints` on the degraded graph), core
+  retrieval unaffected. Note: no staleness/orphan warning surfaced in the response, but that's
+  outside this AC's scope (AC only requires suppression + unaffected retrieval).
