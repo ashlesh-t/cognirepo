@@ -18,7 +18,7 @@ defects:
     pr: https://github.com/ashlesh-t/cognirepo/pull/65
     test_status: pass  # TC-D01-1/2/3, all PASS
   - id: COGNIREPO-D02
-    status: in-review  # 2026-09-03, PR #66 opened
+    status: signed-off  # 2026-09-16, PR #66 merged, no review comments
     branch: defect/COGNIREPO-500-D02
     pr: https://github.com/ashlesh-t/cognirepo/pull/66
     test_status: pass  # TC-D02-1/2/3 verified by inspection, TC-D02-4/4b live-verified on kubernetes, TC-D02-5 unaffected
