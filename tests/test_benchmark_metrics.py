@@ -251,3 +251,45 @@ class TestBenchmarkRepoRootFix:
         assert mock_run.called
         grepped_path = mock_run.call_args[0][0][-1]
         assert grepped_path == str(tmp_path)
+
+
+# ── COGNIREPO-600-D02: _BENCHMARK_QUERIES was CogniRepo-specific vocabulary ───────────────────
+# _sample_repo_symbols/_BENCHMARK_SYMBOLS already had this fix (v1.1.3); _sample_repo_queries is
+# the analogous fix for the query-based metrics (token_reduction/cache_speedup/context_relevance).
+
+class TestSampleRepoQueries:
+    def test_prefers_repo_specific_golden_fixture_when_cwd_name_matches(self, tmp_path, monkeypatch):
+        """A real bundled fixture (tests/fixtures/benchmark_golden_fastapi.json) must be picked
+        up purely from the cwd's directory name matching, independent of index/golden content
+        actually describing this tmp dir's (dummy) source."""
+        from interface.tools.benchmark import _sample_repo_queries
+
+        fastapi_dir = tmp_path / "fastapi"
+        fastapi_dir.mkdir()
+        monkeypatch.chdir(fastapi_dir)
+
+        queries = _sample_repo_queries(5)
+        assert queries == [
+            "Depends dependency injection FastAPI",
+            "APIRouter include router prefix tags",
+            "HTTPException status code detail raise",
+            "BackgroundTasks add task background",
+            "Request body JSON validation pydantic",
+        ]
+
+    def test_falls_back_to_defaults_with_no_golden_and_sparse_index(self):
+        """isolated_cognirepo's dummy index (2 symbols) is below _sample_repo_symbols' n=5
+        threshold, so it falls to _BENCHMARK_SYMBOLS — _sample_repo_queries must then use
+        _DEFAULT_BENCHMARK_QUERIES rather than building nonsense queries from the fallback
+        symbol list."""
+        from interface.tools.benchmark import _sample_repo_queries, _DEFAULT_BENCHMARK_QUERIES
+
+        queries = _sample_repo_queries(5)
+        assert queries == _DEFAULT_BENCHMARK_QUERIES[:5]
+
+    def test_returns_n_nonempty_query_strings(self):
+        from interface.tools.benchmark import _sample_repo_queries
+
+        queries = _sample_repo_queries(5)
+        assert len(queries) == 5
+        assert all(isinstance(q, str) and q for q in queries)

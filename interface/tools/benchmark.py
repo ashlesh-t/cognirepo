@@ -409,7 +409,9 @@ def measure_context_relevance(queries: list[str]) -> dict:
 
 # ─── full benchmark run ───────────────────────────────────────────────────────
 
-_BENCHMARK_QUERIES = [
+# Last-resort fallback only (COGNIREPO-600-D02) — CogniRepo's own vocabulary, relevant when
+# benchmarking CogniRepo itself but not any external repo. Prefer _sample_repo_queries().
+_DEFAULT_BENCHMARK_QUERIES = [
     "store_memory implementation",
     "context_pack token budget",
     "hybrid_retrieve BM25 vector",
@@ -444,6 +446,38 @@ def _sample_repo_symbols(n: int = 5) -> list[str]:
         pass
     return list(_BENCHMARK_SYMBOLS)
 
+
+def _sample_repo_queries(n: int = 5) -> list[str]:
+    """
+    Build n natural-language queries relevant to the repo actually being benchmarked
+    (COGNIREPO-600-D02 — _BENCHMARK_QUERIES/_DEFAULT_BENCHMARK_QUERIES is CogniRepo's own
+    vocabulary and produced 0.0/unrepresentative token_reduction_pct on external repos).
+
+    Same fallback shape as _sample_repo_symbols:
+      1. Prefer the repo-specific golden fixture (tests/fixtures/benchmark_golden_<repo>.json) —
+         already hand-curated, repo-relevant queries, reused rather than re-invented.
+      2. Else sample real symbol names from the target repo's own AST index and build simple
+         queries from them.
+      3. Else fall back to _DEFAULT_BENCHMARK_QUERIES (correct when benchmarking CogniRepo
+         itself — its own vocabulary IS the relevant one there).
+    """
+    try:
+        _repo_name = os.path.basename(os.getcwd())
+        _repo_specific = _PACKAGE_ROOT / "tests" / "fixtures" / f"benchmark_golden_{_repo_name}.json"
+        if _repo_specific.exists():
+            golden = json.loads(_repo_specific.read_text(encoding="utf-8"))
+            queries = [g["query"] for g in golden if g.get("query")]
+            if queries:
+                return queries[:n]
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+    symbols = _sample_repo_symbols(n)
+    if symbols and symbols != list(_BENCHMARK_SYMBOLS):
+        return [f"{sym} implementation" for sym in symbols]
+
+    return list(_DEFAULT_BENCHMARK_QUERIES)[:n]
+
 def _benchmark_memories() -> list[str]:
     """Generate unique benchmark memories using timestamp to avoid FAISS pollution."""
     ts = int(time.time())
@@ -460,9 +494,11 @@ def run_benchmark() -> dict:
 
     print("Running CogniRepo benchmark...", flush=True)
 
+    _repo_queries = _sample_repo_queries(5)
+
     print("  [1/7] Token reduction...", flush=True)
     try:
-        token_metrics = measure_token_reduction(_BENCHMARK_QUERIES)
+        token_metrics = measure_token_reduction(_repo_queries)
     except CircuitOpenError as _cb_err:
         print(
             f"\n⚠  Benchmark aborted at step [1/7]: CogniRepo server is under memory pressure.\n"
@@ -483,13 +519,13 @@ def run_benchmark() -> dict:
         grep_metrics = measure_grep_equivalent(_repo_symbols[:2])  # grep is slow; test 2
 
         print("  [3/7] Cache speedup...", flush=True)
-        cache_metrics = measure_cache_speedup(_BENCHMARK_QUERIES[:3])
+        cache_metrics = measure_cache_speedup(_repo_queries[:3])
 
         print("  [4/7] Memory recall...", flush=True)
         recall_metrics = measure_memory_recall(_benchmark_memories())
 
         print("  [5/7] Context relevance...", flush=True)
-        relevance_metrics = measure_context_relevance(_BENCHMARK_QUERIES)
+        relevance_metrics = measure_context_relevance(_repo_queries)
 
         print("  [6/7] Precision@k (golden set)...", flush=True)
         precision_metrics = measure_precision_at_k()
