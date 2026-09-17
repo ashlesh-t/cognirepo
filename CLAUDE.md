@@ -62,6 +62,7 @@ Exactly three, each a concrete behavior delta, never a decorative label:
 | Session start | `get_session_brief()` → `get_last_context()` → `get_user_profile()` → `get_error_patterns()` |
 | Find where a function lives | `lookup_symbol("fn_name")` |
 | Understand a module or query | `context_pack("question")` |
+| `context_pack` returned `delegation_hints` (≥2 independent groups) | consider Task/subagent delegation — one subagent per group, per COGNIREPO-502 |
 | Find callers of a function | `who_calls("fn_name")` |
 | Past decisions / bugs | `episodic_search("topic")` |
 | Architecture overview | `architecture_overview()` |

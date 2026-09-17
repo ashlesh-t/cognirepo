@@ -78,12 +78,9 @@ _DOC_INTENT_PATTERN = re.compile(
 
 
 
-def _read_window(file_path: str, center_line: int, window_lines: int, repo_root: str | None = None) -> str:
-    """
-    Read ±window_lines around center_line from file_path.
-    Returns the extracted text, or empty string if the file is unreadable.
-    """
-    repo_root = repo_root or os.environ.get("COGNIREPO_ROOT", os.getcwd())
+def _safe_abs_path(file_path: str, repo_root: str) -> str | None:
+    """Resolve file_path against repo_root, refusing anything that escapes it
+    (symlink or ../ traversal). Returns the resolved absolute path, or None."""
     abs_path = (
         file_path if os.path.isabs(file_path)
         else os.path.join(repo_root, file_path)
@@ -91,6 +88,18 @@ def _read_window(file_path: str, center_line: int, window_lines: int, repo_root:
     real_abs = os.path.realpath(abs_path)
     real_root = os.path.realpath(repo_root)
     if not real_abs.startswith(real_root + os.sep) and real_abs != real_root:
+        return None
+    return real_abs
+
+
+def _read_window(file_path: str, center_line: int, window_lines: int, repo_root: str | None = None) -> str:
+    """
+    Read ±window_lines around center_line from file_path.
+    Returns the extracted text, or empty string if the file is unreadable.
+    """
+    repo_root = repo_root or os.environ.get("COGNIREPO_ROOT", os.getcwd())
+    real_abs = _safe_abs_path(file_path, repo_root)
+    if not real_abs:
         return ""
     try:
         lines = Path(real_abs).read_text(encoding="utf-8", errors="replace").splitlines()
@@ -99,6 +108,37 @@ def _read_window(file_path: str, center_line: int, window_lines: int, repo_root:
     start = max(0, center_line - window_lines - 1)
     end = min(len(lines), center_line + window_lines)
     return "\n".join(lines[start:end])
+
+
+# ── delegation hints (COGNIREPO-502) ────────────────────────────────────────────
+# ≤3 TODO/FIXME lines per independence group, grepped at pack time from the hit
+# files ONLY — no indexer/index-schema changes (Discovery §2: "pack-time grep over
+# HIT FILES ONLY keeps the index schema unchanged").
+_TODO_PATTERN = re.compile(r"\b(TODO|FIXME)\b")
+_MAX_TODOS_PER_GROUP = 3
+_MAX_TODO_LINE_LEN = 160
+
+
+def _scan_todos(files: list[str], repo_root: str) -> list[dict]:
+    """Grep the given files (already-retrieved hit files, not a repo-wide scan) for
+    TODO/FIXME lines. Stops at _MAX_TODOS_PER_GROUP total across all files."""
+    out: list[dict] = []
+    for fpath in files:
+        if len(out) >= _MAX_TODOS_PER_GROUP:
+            break
+        real_abs = _safe_abs_path(fpath, repo_root)
+        if not real_abs:
+            continue
+        try:
+            lines = Path(real_abs).read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for lineno, line in enumerate(lines, start=1):
+            if len(out) >= _MAX_TODOS_PER_GROUP:
+                break
+            if _TODO_PATTERN.search(line):
+                out.append({"file": fpath, "line": lineno, "text": line.strip()[:_MAX_TODO_LINE_LEN]})
+    return out
 
 
 def _is_doc_query(query: str) -> bool:
@@ -238,6 +278,15 @@ def context_pack(
     Optional keys when query enhancement fires:
         "enhanced_query": str,
         "enhancement_method": str
+
+    Optional key when the packed code hits span ≥2 structurally-independent groups
+    (COGNIREPO-501 component_id — no shared IMPORTS/CALLS/CALLED_BY/DEFINED_IN path):
+    dropped first if it would blow the token budget, absent entirely when there's
+    only one group (or grouping is integrity-gated off).
+        "delegation_hints": [
+            {"group": "g0", "files": [...], "reason": "no shared import/call path",
+             "todos": [{"file": ..., "line": ..., "text": ...}, ...]}  # optional, ≤3
+        ]
     """
     # ── file-mode: return all indexed context for a specific file ────────────
     if file:
@@ -253,6 +302,7 @@ def context_pack(
     token_budget = max_tokens
     truncated = False
     _cold_index = False
+    code_groups: dict[str, set[str]] = {}  # component_id -> file paths actually packed (COGNIREPO-502)
 
     # ── 0. pre-call query enhancement ────────────────────────────────────────
     _enhanced = None
@@ -384,6 +434,14 @@ def context_pack(
                 "bucket": "code" if source_label == "ast" else "doc",
             })
             token_budget -= tok
+
+            # COGNIREPO-502: track which independence group (hybrid.py's component_id)
+            # each packed code hit belongs to, for the delegation_hints pass below.
+            if is_code and file_ref:
+                comp_id = cand.get("component_id")
+                if comp_id:
+                    code_groups.setdefault(comp_id, set()).add(file_ref.rsplit(":", 1)[0])
+
             return True
 
         # ── relative-score noise gate ──────────────────────────────────────
@@ -433,6 +491,28 @@ def context_pack(
         except Exception as exc:  # pylint: disable=broad-except
             _logger.warning("episodic BM25 query failed: %s", exc)
 
+    # ── 3. delegation hints (COGNIREPO-502) ─────────────────────────────────
+    # Only when ≥2 independence groups exist among the packed code hits — absent
+    # (not an empty list) otherwise, so AC1's "connected fixture -> key ABSENT"
+    # holds without a separate on/off flag. Counted LAST against max_tokens and
+    # dropped FIRST on overflow — core sections above are never touched for this.
+    delegation_hints: list[dict] | None = None
+    if len(code_groups) >= 2:
+        _hint_root = repo_root or os.environ.get("COGNIREPO_ROOT", os.getcwd())
+        candidate_hints = []
+        for comp_id in sorted(code_groups):
+            files = sorted(code_groups[comp_id])
+            entry: dict = {"group": comp_id, "files": files, "reason": "no shared import/call path"}
+            todos = _scan_todos(files, _hint_root)
+            if todos:
+                entry["todos"] = todos
+            candidate_hints.append(entry)
+        hint_tokens = _count_tokens(json.dumps(candidate_hints))
+        if hint_tokens <= token_budget:
+            delegation_hints = candidate_hints
+            token_budget -= hint_tokens
+        # else: tight budget — drop hints entirely, core content stays intact (AC3)
+
     total_tokens = max_tokens - token_budget
     result: dict = {
         "query": query,
@@ -449,6 +529,8 @@ def context_pack(
     if include_symbols and _cold_index and not sections:
         result["status"] = "index_empty"
         result["suggestion"] = "run `cognirepo index-repo .` first"
+    if delegation_hints:
+        result["delegation_hints"] = delegation_hints
     _autosave_context(result)
     return result
 

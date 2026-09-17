@@ -1,15 +1,25 @@
 epic_id: COGNIREPO-500
-status: not-started
+status: signed-off  # 2026-09-17, epic e2e suite PASS
 stories:
   - id: COGNIREPO-501
-    status: not-started
+    status: signed-off  # 2026-08-30, PR #63 merged
     branch: story/COGNIREPO-501
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/63
+    test_status: pass  # TC-501-1 + TC-501-2, both PASS
   - id: COGNIREPO-502
-    status: not-started
+    status: signed-off  # 2026-08-30, PR #64 merged
     branch: story/COGNIREPO-502
-    pr: null
-    test_status: not-run
-defects: []
-epic_test_suite_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/64
+    test_status: pass  # TC-502-1 PASS
+defects:
+  - id: COGNIREPO-D01
+    status: signed-off  # 2026-08-30, PR #65 merged, no review comments
+    branch: defect/COGNIREPO-500-D01
+    pr: https://github.com/ashlesh-t/cognirepo/pull/65
+    test_status: pass  # TC-D01-1/2/3, all PASS
+  - id: COGNIREPO-D02
+    status: signed-off  # 2026-09-16, PR #66 merged, no review comments
+    branch: defect/COGNIREPO-500-D02
+    pr: https://github.com/ashlesh-t/cognirepo/pull/66
+    test_status: pass  # TC-D02-1/2/3 verified by inspection, TC-D02-4/4b live-verified on kubernetes, TC-D02-5 unaffected
+epic_test_suite_status: pass  # E2E-500-1 + E2E-500-2, both PASS

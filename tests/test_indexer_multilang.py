@@ -560,3 +560,62 @@ class TestIndexRepoSummary:
         _write(tmp_path, "funcs.py", "def a(): pass\ndef b(): pass\ndef c(): pass\n")
         summary = fresh_indexer.index_repo(str(tmp_path))
         assert summary["symbols"] >= 3
+
+
+class TestLiteGraphWeightFilter:
+    """COGNIREPO-500-D01 — a symbol below _graph_weight_min (lite-graph mode on large repos)
+    still gets a minimal graph node + DEFINED_IN edge, so intelligence/retrieval/hybrid.py's
+    independence grouping can still connect it to its own file and same-file siblings.
+    Confirmed as a real bug (not fixed here) by measuring 77-81% attr-less nodes on
+    cognirepo_test_repo/advanced/{moby,kubernetes}."""
+
+    def test_below_threshold_symbol_still_gets_minimal_node(self, fresh_indexer, tmp_path, monkeypatch):
+        from intelligence.indexer.ast_indexer import _LITE_GRAPH_WEIGHT_MIN
+        from data.graph.graph_utils import make_node_id
+
+        monkeypatch.chdir(tmp_path)
+        fresh_indexer._graph_weight_min = _LITE_GRAPH_WEIGHT_MIN  # simulate large-repo lite-graph mode
+        path = _write(tmp_path, "low_weight.py", "def a():\n    pass\n")
+        fresh_indexer.index_file("low_weight.py", str(path), weight=_LITE_GRAPH_WEIGHT_MIN - 0.1)
+
+        sym_node = make_node_id("FUNCTION", "a", file="low_weight.py")
+        assert fresh_indexer.graph.node_exists(sym_node)
+        attrs = fresh_indexer.graph.G.nodes[sym_node]
+        assert attrs.get("type") == "FUNCTION"
+        assert attrs.get("file") == "low_weight.py"
+        # Rich attrs stay gated — this is still lite-graph mode, no regression on memory savings.
+        assert "weight" not in attrs
+
+        file_node = make_node_id("FILE", "low_weight.py")
+        edge = fresh_indexer.graph.G.get_edge_data(sym_node, file_node)
+        assert edge is not None and edge.get("rel") == "DEFINED_IN"
+
+    def test_below_threshold_same_file_symbols_group_together(self, fresh_indexer, tmp_path, monkeypatch):
+        """End-to-end AC1 check: two low-weight symbols in the same file must land in the
+        same independence group (intelligence/retrieval/hybrid.py's component_id) — this was
+        the exact bug (they got different groups because neither had a DEFINED_IN edge)."""
+        from intelligence.indexer.ast_indexer import _LITE_GRAPH_WEIGHT_MIN
+        from data.graph.graph_utils import make_node_id
+        from intelligence.retrieval import hybrid as hybrid_mod
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        # Deterministic: bypass the (shared, TTL-cached) integrity gate entirely rather than
+        # depend on its state — this test is about grouping correctness, not the gate itself.
+        monkeypatch.setattr(hybrid_mod, "_grouping_allowed", lambda graph: True)
+
+        monkeypatch.chdir(tmp_path)
+        fresh_indexer._graph_weight_min = _LITE_GRAPH_WEIGHT_MIN
+        path = _write(tmp_path, "shared.py", "def a():\n    pass\n\n\ndef b():\n    pass\n")
+        low_weight = _LITE_GRAPH_WEIGHT_MIN - 0.1
+        fresh_indexer.index_file("shared.py", str(path), weight=low_weight)
+
+        n_a = make_node_id("FUNCTION", "a", file="shared.py")
+        n_b = make_node_id("FUNCTION", "b", file="shared.py")
+        r = HybridRetriever.__new__(HybridRetriever)
+        r.graph = fresh_indexer.graph
+        top = [
+            {"_symbol": n_a, "text": "x", "final_score": 0.9, "source": "ast"},
+            {"_symbol": n_b, "text": "x", "final_score": 0.8, "source": "ast"},
+        ]
+        grouped = r._annotate_independence_groups(top)
+        assert grouped[0]["component_id"] == grouped[1]["component_id"]

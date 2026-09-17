@@ -60,6 +60,12 @@ class TestTimelineMerge:
         """AC1: 2 sessions + 3 episodes + 1 decision + 1 error -> 7 ordered entries;
         rollup names the decision and the error."""
         from data.memory import timeline
+        from datetime import datetime, timezone
+
+        # Fixed "now" close to the fixture timestamps below (all within Aug 2026) so
+        # since="30d" stays deterministic instead of drifting out of range as real
+        # wall-clock time passes.
+        monkeypatch.setattr(timeline, "_now", lambda: datetime(2026, 8, 10, tzinfo=timezone.utc))
 
         sessions_dir = Path(get_path("sessions"))
         _write_session(sessions_dir, "s1", "2026-08-01T10:00:00+00:00", "how does auth work")

@@ -32,6 +32,28 @@ Call this **before reading any source file**.
 `status` is always one of: `"ok"` | `"no_confident_match"` | `"index_empty"`.
 When `status == "no_confident_match"` the response also includes `"best_score"` and `"suggestion"`.
 
+**`delegation_hints`** (optional, COGNIREPO-502): present only when the packed code hits span
+≥2 structurally-independent groups — no `IMPORTS`/`CALLS`/`CALLED_BY`/`DEFINED_IN` path between
+them (per-hit `component_id`, computed in `intelligence/retrieval/hybrid.py`, COGNIREPO-501).
+Absent (not an empty list) when everything is one group, or when the knowledge-graph integrity
+gate has disabled grouping. Counted last against `max_tokens` and dropped first on overflow —
+never displaces core `sections`.
+```json
+{
+  "delegation_hints": [
+    {
+      "group": "g0",
+      "files": ["retrieval/hybrid.py"],
+      "reason": "no shared import/call path",
+      "todos": [{"file": "retrieval/hybrid.py", "line": 88, "text": "# TODO: cache this"}]
+    },
+    {"group": "g1", "files": ["cli/daemon.py"], "reason": "no shared import/call path"}
+  ]
+}
+```
+Consider delegating each group to a separate subagent rather than working the groups
+sequentially — see the tool-routing note in `CLAUDE.md`.
+
 ---
 
 ## lookup_symbol

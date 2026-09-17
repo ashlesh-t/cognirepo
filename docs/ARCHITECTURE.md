@@ -90,6 +90,13 @@ Two additional components work alongside but are **not** blended into `final_sco
 - **AST pre-scorer** — expands the candidate pool before scoring (symbol lookup via `ASTIndexer`)
 - **BM25 episodic side-channel** — searches the episodic event log separately; results are surfaced next to, not merged into, the ranked list. BM25 also acts as a full fallback retriever when FAISS embeddings are unavailable (circuit breaker open).
 
+**Independence grouping (COGNIREPO-501):** a post-score pass over the truncated top-k adds a
+`component_id` to hits whose files are structurally disconnected (bounded undirected BFS,
+IMPORTS/CALLS/CALLED_BY/DEFINED_IN only, hop cap 3) — signals which hits a subagent could safely
+work on in parallel. Never touches ranking/scores; gated off entirely when the graph's
+orphan/dangling counts exceed a corruption threshold (`KnowledgeGraph.integrity_report()`,
+cached 5 min — too slow to run per-query otherwise).
+
 Do not call FAISS or the graph directly from tools — always go through `HybridRetriever`.
 
 ---
