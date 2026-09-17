@@ -18,8 +18,8 @@ stories:
     test_status: not-run
 defects:
   - id: COGNIREPO-D01
-    status: in-review  # found investigating 601's fastapi-recall root cause
+    status: in-review  # 2026-09-17, PR #68 opened
     branch: defect/COGNIREPO-600-D01
-    pr: null
+    pr: https://github.com/ashlesh-t/cognirepo/pull/68
     test_status: pass  # TC-D01-1/2/3/4, all PASS
 epic_test_suite_status: not-run
