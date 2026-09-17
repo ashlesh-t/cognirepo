@@ -23,8 +23,8 @@ defects:
     pr: https://github.com/ashlesh-t/cognirepo/pull/68
     test_status: pass  # TC-D01-1/2/3/4, all PASS
   - id: COGNIREPO-D02
-    status: in-review  # found re-running 601's benchmarks after D01 landed
+    status: in-review  # 2026-09-17, PR #69 opened
     branch: defect/COGNIREPO-600-D02
-    pr: null
+    pr: https://github.com/ashlesh-t/cognirepo/pull/69
     test_status: pass  # TC-D02-1/2/3/4, all PASS
 epic_test_suite_status: not-run
