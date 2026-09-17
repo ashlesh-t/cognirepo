@@ -3,10 +3,13 @@
 > Real measurements from live Claude + Gemini sessions on the CogniRepo codebase itself.
 > Automated regression numbers from `cognirepo benchmark` on external repos.
 >
-> **Last validated: 2026-06-17** — flask (83 files), fastapi (1,122 files), celery (416 files)
-> using `cognirepo benchmark --json`. Numbers in the Automated Benchmark section reflect actual
-> output from this run; the External Repo Validation table is updated accordingly. The Session
-> Comparison (Rounds A/B) and Gemini sections remain from the original live sessions.
+> **Last validated: 2026-09-17** — flask (92 files), fastapi (1,178 files), celery (444 files),
+> ansible (4,196 files) using `cognirepo benchmark --json` on v2.4.0+ with COGNIREPO-600-D01/D02
+> landed (see the Automated Benchmark section for what those fixed — the 2026-06-17 run's
+> token-reduction/relevance/precision/symbol-hit-rate numbers were unreliable pre-fix). moby and
+> kubernetes are indexable (Go support confirmed via COGNIREPO-500) but excluded from this pass —
+> scheduled separately, hours of indexing. The Session Comparison (Rounds A/B) and Gemini sections
+> remain from the original live sessions.
 
 ---
 
@@ -117,23 +120,33 @@ Savings compound across sessions because memories persist — second sessions st
 
 ## Automated Benchmark Numbers
 
-*From `cognirepo benchmark --json` on flask, fastapi, celery (2026-06-17, no human in loop):*
+*From `cognirepo benchmark --json` on flask, fastapi, celery, ansible (2026-09-17, v2.4.0+,
+no human in loop). Supersedes the 2026-06-17 run below — that run predates two defect fixes
+(COGNIREPO-600-D01: the benchmark's own baseline-comparison path was silently scanning
+CogniRepo's own source tree instead of the repo actually being benchmarked; COGNIREPO-600-D02:
+the token-reduction/context-relevance probe queries were CogniRepo's own vocabulary rather than
+the target repo's) that made every number below it unreliable for token-reduction/relevance/
+precision/symbol-hit-rate specifically — see `JIRA/EPIC-OSSGrowth-600/` for full evidence.*
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| Token reduction vs naive baseline | **97.7–99.1%** | flask 97.7%, fastapi 98.6%, celery 99.1% |
-| Token reduction vs targeted baseline | **~40–60%** | unchanged |
-| Symbol lookup latency | **0.002–0.005 ms** | well under 1 ms target |
-| grep equivalent latency | 60–1,673 ms | flask 130 ms, fastapi 60 ms, celery 1,673 ms |
-| Lookup speedup vs grep | **25,960×–557,500×** | scales with repo size |
-| Cache speedup (warm vs cold) | **18,000–27,000×** | |
-| Memory recall@1 | **67%** (2/3 repos) | fastapi: 0% — empty vector DB; under investigation |
-| Memory recall@3 | **67%** (2/3 repos) | same as @1 for this run |
-| Context relevance | **21.8–39.8%** | new metric; % of context_pack sections matching query keywords |
-| Symbol hit rate | **0%** ⚠️ | benchmark probe used CogniRepo symbols on external repos — fixed in v1.1.3 |
-| Precision@1 | **0%** ⚠️ | golden set was CogniRepo-specific — fixed in v1.1.3 |
-| Precision@3 | **0%** ⚠️ | fixed in v1.1.3; re-run benchmark after upgrade |
-| Knowledge graph | 2 259 nodes · 6 073 edges | from live Claude session on CogniRepo |
+| Token reduction vs naive baseline | **96.1–99.7%** | flask 97.3%, fastapi 97.6%, celery 99.7%, ansible 96.1% |
+| Symbol lookup latency | **0.002–0.008 ms** | well under 1 ms target |
+| grep equivalent latency | 2.3–19.5 ms | flask 2.3 ms, fastapi 7.8 ms, celery 5.8 ms, ansible 19.5 ms |
+| Lookup speedup vs grep | **1,150×–2,600×** | scales with repo size |
+| Cache speedup (warm vs cold) | **8,910×–42,674×** | |
+| Memory recall@1 | **100%** (4/4 repos) | fastapi's earlier "0% — empty vector DB" was a stale/transient artifact, not reproducible today |
+| Memory recall@3 | **100%** (4/4 repos) | |
+| Context relevance | **56.6–100.0%** | flask 80.5%, fastapi 97.1%, celery 100.0%, ansible 56.6% |
+| Symbol hit rate | **100%** (4/4 repos) | v1.1.3's `_sample_repo_symbols()` fix confirmed working |
+| Precision@1 | **40–100%** | flask 0.8, fastapi 0.4, celery 0.5, ansible 1.0 |
+| Precision@3 | **50–100%** | flask 0.9, fastapi 0.5, celery 0.6, ansible 1.0 |
+| Knowledge graph (this repo, cognirepo) | 184 002 nodes · 1 158 807 edges | from a full `cognirepo index-repo --tier all` re-index, 2026-09-16 |
+
+moby and kubernetes (Go, both 10k+ files) are excluded from this pass — they need hours of
+indexing on the maintainer's machine and are scheduled separately, not blocked on anything
+above. Go language support itself is confirmed working (COGNIREPO-500's epic e2e suite verified
+`delegation_hints`/AST parsing on a freshly-indexed kubernetes checkout, 2026-09-16/17).
 
 Run on your own codebase:
 ```bash
@@ -160,6 +173,29 @@ cognirepo index-repo .
 cognirepo benchmark
 ```
 
+### Reproduce the External Repo Validation table
+
+No API key needed — `cognirepo benchmark --json` is fully offline and automated. Anyone can
+reproduce the flask/fastapi/celery/ansible numbers above against a fresh clone of each repo:
+
+```bash
+pip install "cognirepo[languages]"   # [languages] only needed for non-Python repos (moby, k8s)
+for repo in flask fastapi celery ansible; do
+  git clone https://github.com/pallets/flask       flask       2>/dev/null || true
+  git clone https://github.com/fastapi/fastapi     fastapi     2>/dev/null || true
+  git clone https://github.com/celery/celery       celery      2>/dev/null || true
+  git clone https://github.com/ansible/ansible     ansible     2>/dev/null || true
+done
+for repo in flask fastapi celery ansible; do
+  (cd "$repo" && cognirepo init && cognirepo index-repo . --no-watch && cognirepo benchmark --json)
+done
+```
+
+Numbers will vary slightly run-to-run (embedding/index timing, upstream repo drift since this
+table's date) but should land in the same range. `tests/fixtures/benchmark_golden_<repo>.json`
+ships in this repo for all four — that's what drives `precision@k`/`context_relevance`'s repo-
+relevant queries (COGNIREPO-600-D02); no manual query-writing needed.
+
 For the cross-model test (requires Claude Desktop + Gemini CLI both pointed at same project):
 1. Run Claude prompt from `TEST_SUITE.md` Section 14 (or the benchmark prompt above)
 2. Run Gemini prompt — it will retrieve Claude's stored findings
@@ -171,42 +207,35 @@ For the cross-model test (requires Claude Desktop + Gemini CLI both pointed at s
 
 Measured on real-world Python projects. CPU-only embeddings, no GPU.
 Each repo indexed with `cognirepo index-repo . --no-watch` on a fresh init.
-**Re-validated 2026-06-17** using `cognirepo benchmark --json`.
+**Re-validated 2026-09-17** using `cognirepo benchmark --json`, on v2.4.0+ with
+COGNIREPO-600-D01/D02 landed (see the dated note above the automated numbers).
 
-| Repo | Size | Lookup latency | context_relevance | Symbol hit rate | precision@3 | Notes |
-|------|------|----------------|-------------------|-----------------|-------------|-------|
-| **flask** | 83 .py files | 0.005 ms | 21.8% | 0% ⚠️ | 0% ⚠️ | probe/golden-set bug (fixed v1.1.3) |
-| **fastapi** | 1,122 .py files | 0.002 ms | 36.0% | 0% ⚠️ | 0% ⚠️ | probe/golden-set bug (fixed v1.1.3) |
-| **celery** | 416 .py files | 0.003 ms | 39.8% | 0% ⚠️ | 0% ⚠️ | probe/golden-set bug (fixed v1.1.3) |
-| **ansible** | 1,813 .py files | 0.018 ms | — | — | — | not re-run in v1.1.3 |
+| Repo | Size | Lookup latency | context_relevance | Symbol hit rate | precision@1 | precision@3 |
+|------|------|----------------|-------------------|-----------------|-------------|-------------|
+| **flask** | 92 files, 1,832 symbols | 0.002 ms | 80.5% | 100% | 80% | 90% |
+| **fastapi** | 1,178 files, 7,700 symbols | 0.003 ms | 97.1% | 100% | 40% | 50% |
+| **celery** | 444 files, 10,311 symbols | 0.003 ms | 100.0% | 100% | 50% | 60% |
+| **ansible** | 4,196 files, 17,521 symbols | 0.008 ms | 56.6% | 100% | 100% | 100% |
 
-Prior run numbers (pre-v1.1.3 benchmark bug, from live sessions):
+moby and kubernetes: excluded from this table — hours of indexing, scheduled separately with
+the maintainer (not a Go-support gap; see note above).
 
-| Repo | precision@1 | precision@3 | Symbol hit rate |
-|------|-------------|-------------|-----------------|
-| flask | 87.5% | 100% | 5/5 |
-| fastapi | 66.7% | 88.9% | 5/5 |
-| celery | 87.5% | 100% | 5/5 |
-| ansible | 80.0% | 80.0% | 5/5 |
-
-Re-run `cognirepo benchmark` after upgrading to v1.1.3 to get updated precision and hit-rate numbers with the fixed probe.
-
-### Quality gates (v1.1.3 re-validation)
+### Quality gates (2026-09-17 re-validation)
 
 | Gate | Threshold | Result |
 |------|-----------|--------|
-| Symbol lookup latency | ≤ 10 ms | ✅ max 0.005 ms |
-| Token reduction vs naive | ≥ 95% | ✅ min 97.7% |
-| Cache speedup | ≥ 10,000× | ✅ min 18,000× |
-| Symbol hit rate | ≥ 80% | ⚠️ 0% — benchmark probe bug (fixed v1.1.3) |
-| precision@3 on external repos | ≥ 0.65 | ⚠️ 0% — golden set bug (fixed v1.1.3) |
+| Symbol lookup latency | ≤ 10 ms | ✅ max 0.008 ms |
+| Token reduction vs naive | ≥ 95% | ✅ min 96.1% |
+| Cache speedup | ≥ 10,000× | ⚠️ min 8,910× (flask) — below the 10,000× gate; still 3 of 4 repos clear it (celery 28,134×, ansible 42,674×, fastapi 26,453×). Flask's smaller index gives the cache less relative work to skip; not a regression, just a smaller repo's baseline being cheaper too |
+| Symbol hit rate | ≥ 80% | ✅ 100% on all 4 repos |
+| precision@3 on external repos | ≥ 0.65 | ⚠️ 50–100% — fastapi (50%) and celery (60%) sit below the 0.65 gate; flask (90%) and ansible (100%) clear it. Precision@3 depends on how well each repo's hand-curated 10-query golden set happens to match `context_pack`'s top-3 ranking — this is a real, repo-specific number now (not a bug artifact), and the two lower repos are candidates for follow-up golden-set tuning, not a code regression |
 
 ### Notes
 
-- Symbol lookup uses AST reverse index (O(1) hash) — not FAISS. Sub-millisecond even on 1,800-file repos.
+- Symbol lookup uses AST reverse index (O(1) hash) — not FAISS. Sub-millisecond even on 4,000+-file repos.
 - precision@k = fraction of natural-language queries where `context_pack()` returns the correct file in the top-k sections.
-- **v1.1.3 fix:** benchmark now samples symbols from the target repo's own AST index (not CogniRepo's hardcoded list) and loads repo-specific golden sets (`benchmark_golden_{repo}.json`) for precision@k.
-- kubernetes and moby (Go) skipped — Python-only index by default. Go needs `cognirepo[languages]`.
+- **COGNIREPO-600-D01/D02 fixes (2026-09-17):** the benchmark's own baseline-comparison path (`REPO_ROOT`) was pointing at CogniRepo's own source tree instead of the repo being benchmarked (D01), and the token-reduction/context-relevance probe queries were CogniRepo's own vocabulary rather than sampled from the target repo (D02, extending v1.1.3's analogous fix for `symbol_hit_rate`). Both fixed; this table is the first fully-trustworthy automated run since.
+- kubernetes and moby (Go) are indexable as of COGNIREPO-500 (`cognirepo[languages]` ships tree-sitter-go) — excluded from this specific table only for time budget, not a capability gap.
 
 ---
 

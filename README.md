@@ -15,7 +15,7 @@ mcp-name: io.github.ashlesh-t/cognirepo
 
 ---
 
-**`lookup_symbol` returns file:line very quickly — grep takes 2–8 seconds.** On Python repos ≥ 15K LOC, CogniRepo cuts AI coding agent token usage by **50–80%** compared to raw file reads — benchmarked on Flask, FastAPI, Celery, and Ansible (1,800+ files). Works with Claude Code, Cursor, and Gemini CLI. **Fully offline. No API keys required for indexing or any of the 35 MCP tools.**
+**`lookup_symbol` returns file:line very quickly — grep takes 2–8 seconds.** On Python repos ≥ 15K LOC, CogniRepo cuts AI coding agent token usage by **~30–78%** vs. a targeted grep+read baseline (up to 96–99% vs. reading every matching file naively) — benchmarked on Flask, FastAPI, Celery, and Ansible (5,900+ files). Works with Claude Code, Cursor, and Gemini CLI. **Fully offline. No API keys required for indexing or any of the 35 MCP tools.**
 
 ---
 
@@ -86,7 +86,7 @@ Benchmarked across 6 real open-source repos (FastAPI, Flask, Celery, Ansible, Mo
 | Accuracy vs. baseline | **equal or better in 100% of tests** | No regression observed; FA-2 accuracy improved Moderate → High |
 | Cross-agent context handoff | **✅ validated** | CE-4: Claude primed index, Gemini CLI consumed it — 35% token saving, same accuracy |
 | Dynamic dispatch coverage | **honest gap** | CE-3 (APScheduler beat dispatch) returned NA for both; CogniRepo does not fabricate call chains |
-| Go/multi-language coverage | **partial** | Moby MO-2 showed 67% savings; MO-3-5 / K8-* incomplete pending Go grammar improvements |
+| Go/multi-language coverage | **grammar now ships** | Moby MO-2 showed 67% savings; MO-3-5 / K8-* not yet re-run since Go tree-sitter grammar landed (COGNIREPO-500, 2026-09) |
 
 > **Honest limits:** CogniRepo adds the most value on Python repos with clear static structure.
 > Dynamic dispatch patterns (Celery beat, plugin registries), deep Go codebases, and Ansible's
@@ -95,16 +95,22 @@ Benchmarked across 6 real open-source repos (FastAPI, Flask, Celery, Ansible, Mo
 
 ### Measured: lookup latency and token reduction (4 external repos)
 
-Indexed 4 real repos, measured with `cognirepo index-repo` + `cognirepo benchmark --json`. CPU-only, no GPU.
+Indexed 4 real repos, measured with `cognirepo index-repo` + `cognirepo benchmark --json` on
+v2.4.0+ (2026-09-17). CPU-only, no GPU.
 
-| Repo | Files | Lookup latency | Token reduction | context_relevance |
-|------|-------|----------------|-----------------|-------------------|
-| flask | 83 | 0.005 ms | 97.7% | 21.8% |
-| fastapi | 1,122 | 0.002 ms | 98.6% | 36.0% |
-| celery | 416 | 0.003 ms | 99.1% | 39.8% |
-| ansible | 1,813 | 0.018 ms | — | — |
+| Repo | Files | Lookup latency | Token reduction (naive) | Token reduction (targeted) | context_relevance |
+|------|-------|----------------|--------------------------|------------------------------|-------------------|
+| flask | 92 | 0.002 ms | 97.3% | 29.5% | 80.5% |
+| fastapi | 1,178 | 0.003 ms | 97.6% | 63.5% | 97.1% |
+| celery | 444 | 0.003 ms | 99.7% | 77.7% | 100.0% |
+| ansible | 4,196 | 0.008 ms | 96.1% | 28.6% | 56.6% |
 
-Lookup latency < 0.1 ms on all repos. Precision@k re-validated after v1.1.3 benchmark fix — see [docs/METRICS.md](docs/METRICS.md) for full numbers and methodology.
+Measured 2026-09-17. Lookup latency < 0.1 ms on all repos. "Targeted" is the realistic baseline (grep + read top-2
+matching files, approximating what an agent would actually do); "naive" reads every matching
+file in full and is an upper bound, not a realistic comparison. moby and kubernetes are
+indexable (Go support confirmed, COGNIREPO-500) but not yet in this table — hours of indexing,
+scheduled separately. Full numbers and methodology, including precision@k, symbol hit rate, and
+memory recall: [docs/METRICS.md](docs/METRICS.md).
 
 Run `cognirepo benchmark` on your own codebase to reproduce. See [docs/METRICS.md](docs/METRICS.md).
 
