@@ -24,7 +24,7 @@ epics:
     blocked_by: []
   - id: COGNIREPO-600
     name: OSSGrowth
-    status: not-started
+    status: in-progress
     blocked_by: []   # only COGNIREPO-101 within EPIC-100; showcase sub-task additionally needs EPIC-300
   - id: COGNIREPO-700
     name: CognitiveDynamics
