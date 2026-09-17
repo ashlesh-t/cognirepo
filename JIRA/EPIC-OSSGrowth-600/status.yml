@@ -2,7 +2,7 @@ epic_id: COGNIREPO-600
 status: in-progress
 stories:
   - id: COGNIREPO-601
-    status: in-review  # 2026-09-17, PR #70 opened
+    status: signed-off  # 2026-09-17, PR #70 merged, no review comments
     branch: story/COGNIREPO-601
     pr: https://github.com/ashlesh-t/cognirepo/pull/70
     test_status: pass  # TC-601-1 PASS
