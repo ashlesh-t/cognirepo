@@ -1,5 +1,5 @@
 epic_id: COGNIREPO-600
-status: not-started
+status: in-progress
 stories:
   - id: COGNIREPO-601
     status: not-started
@@ -16,5 +16,10 @@ stories:
     branch: story/COGNIREPO-603
     pr: null
     test_status: not-run
-defects: []
+defects:
+  - id: COGNIREPO-D01
+    status: in-review  # 2026-09-17, PR #68 opened
+    branch: defect/COGNIREPO-600-D01
+    pr: https://github.com/ashlesh-t/cognirepo/pull/68
+    test_status: pass  # TC-D01-1/2/3/4, all PASS
 epic_test_suite_status: not-run

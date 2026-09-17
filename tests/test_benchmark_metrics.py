@@ -200,3 +200,54 @@ class TestLatencyHistogram:
         from interface.tools.benchmark import measure_latency
         result = measure_latency(golden=[], repeats=1)
         assert "latency_p50_ms" in result
+
+
+# ── COGNIREPO-600-D01: REPO_ROOT pointed at the wrong tree ────────────────────
+# Regression coverage for the bug the golden=[]/tests-always-pass-an-explicit-golden pattern
+# above never exercised: with no golden= argument, measure_precision_at_k/measure_latency must
+# still find CogniRepo's OWN bundled tests/fixtures/ (package-relative, regardless of cwd), while
+# measure_token_reduction/measure_grep_equivalent must scan the TARGET repo (cwd) — never
+# CogniRepo's own source tree. isolated_cognirepo (autouse) already chdirs every test to a tmp_path
+# outside this repo, which is exactly the condition that exposed the bug.
+
+class TestBenchmarkRepoRootFix:
+    def test_precision_at_k_finds_own_golden_fixture_with_no_explicit_arg(self):
+        """Pre-fix this always returned {"error": "golden file not found"} regardless of cwd,
+        because REPO_ROOT (Path(__file__).parent.parent) resolved to .../interface, not the repo
+        root — interface/tests/fixtures/ doesn't exist. isolated_cognirepo puts cwd in a tmp_path
+        with no .cognirepo/ index, so queries_tested legitimately stays 0 here (no retrievable
+        content) — the "error" key's absence is what proves the fixture file was actually found."""
+        from interface.tools.benchmark import measure_precision_at_k
+        result = measure_precision_at_k()
+        assert "error" not in result
+
+    def test_latency_default_golden_finds_own_fixture_with_no_explicit_arg(self):
+        from interface.tools.benchmark import measure_latency
+        result = measure_latency(repeats=1)
+        assert "latency_p50_ms" in result
+
+    def test_token_reduction_scans_target_repo_not_cognirepos_own_tree(self, tmp_path):
+        """A marker string that cannot appear anywhere in CogniRepo's own source is only
+        findable by measure_token_reduction if it scans the target repo (cwd) — proving it no
+        longer uses the fixed REPO_ROOT constant pointing at CogniRepo's own tree."""
+        from interface.tools.benchmark import measure_token_reduction
+
+        marker = "cognirepo_d01_marker_9f3c1a"
+        (tmp_path / "marker.py").write_text(
+            f"def {marker}():\n    return 'unique marker content for {marker} testing'\n",
+            encoding="utf-8",
+        )
+        result = measure_token_reduction([f"{marker} query"])
+        assert result["details"], "query was skipped — naive baseline found nothing"
+        assert result["details"][0]["naive_baseline_tokens"] > 0
+
+    def test_grep_equivalent_targets_target_repo_not_cognirepos_own_tree(self, tmp_path):
+        from interface.tools.benchmark import measure_grep_equivalent
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
+            measure_grep_equivalent(["anything"])
+
+        assert mock_run.called
+        grepped_path = mock_run.call_args[0][0][-1]
+        assert grepped_path == str(tmp_path)
