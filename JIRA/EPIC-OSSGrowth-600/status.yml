@@ -1,20 +1,30 @@
 epic_id: COGNIREPO-600
-status: not-started
+status: signed-off  # 2026-09-18, epic e2e suite PASS
 stories:
   - id: COGNIREPO-601
-    status: not-started
+    status: signed-off  # 2026-09-17, PR #70 merged, no review comments
     branch: story/COGNIREPO-601
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/70
+    test_status: pass  # TC-601-1 PASS
   - id: COGNIREPO-602
-    status: not-started
+    status: signed-off  # 2026-09-18, PR #71 merged, no review comments; 8 good-first-issues opened post-approval (#72-#79)
     branch: story/COGNIREPO-602
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/71
+    test_status: pass  # TC-602-1 link-resolution + AC3 (8 issues live) verified; full user walkthrough optional/left to user
   - id: COGNIREPO-603
-    status: not-started
+    status: signed-off  # 2026-09-18, PR #80 merged (rebased onto community PR #81 + #82 first), no review comments
     branch: story/COGNIREPO-603
-    pr: null
-    test_status: not-run
-defects: []
-epic_test_suite_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/80
+    test_status: pass  # TC-603-1/2 PASS
+defects:
+  - id: COGNIREPO-D01
+    status: signed-off  # 2026-09-17, PR #68 merged, no review comments
+    branch: defect/COGNIREPO-600-D01
+    pr: https://github.com/ashlesh-t/cognirepo/pull/68
+    test_status: pass  # TC-D01-1/2/3/4, all PASS
+  - id: COGNIREPO-D02
+    status: signed-off  # 2026-09-17, PR #69 merged, no review comments
+    branch: defect/COGNIREPO-600-D02
+    pr: https://github.com/ashlesh-t/cognirepo/pull/69
+    test_status: pass  # TC-D02-1/2/3/4, all PASS
+epic_test_suite_status: pass  # E2E-600-1 + E2E-600-2, both PASS

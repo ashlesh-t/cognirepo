@@ -1,6 +1,6 @@
 # CogniRepo MCP Tools Reference
 
-34 tools available via the MCP protocol. These are the functions Claude, Gemini, and Cursor can call.
+35 tools available via the MCP protocol. These are the functions Claude, Gemini, and Cursor can call.
 
 ---
 

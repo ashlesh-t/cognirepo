@@ -151,3 +151,38 @@ def test_dead_test_files_not_listed_in_feature_md():
             f"FEATURES.md §15 references {dead_file}, which does not exist in tests/"
         )
         assert not (ROOT / "tests" / dead_file).exists()
+
+
+# ── COGNIREPO-600-603: tool-count claims (README, MCP_TOOLS.md) ──────────────
+# README said "34 tools" in two places and docs/MCP_TOOLS.md's header said "34 tools available"
+# while the real, live tool count was already 35 (a tool was added without updating any of
+# these three plain-prose mentions). Nothing enforced them before — pin them to the same
+# source of truth test_manifest_drift.py already uses (_REGISTERED_TOOLS) so this can't
+# silently drift again.
+
+def _real_tool_count() -> int:
+    from interface.server.mcp_server import _REGISTERED_TOOLS
+    return len(_REGISTERED_TOOLS)
+
+
+def test_readme_tool_count_matches_registry():
+    readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
+    real_count = _real_tool_count()
+    for m in re.finditer(r"(\d+)\s+(?:MCP )?tools\b", readme_text):
+        claimed = int(m.group(1))
+        assert claimed == real_count, (
+            f"README.md claims {claimed} tools near {m.start()!r}, "
+            f"but the live registry has {real_count}. Update README.md."
+        )
+
+
+def test_mcp_tools_md_header_count_matches_registry():
+    text = (ROOT / "docs" / "MCP_TOOLS.md").read_text(encoding="utf-8")
+    m = re.search(r"(\d+)\s+tools available", text)
+    assert m is not None, "docs/MCP_TOOLS.md must state the tool count as '<N> tools available'"
+    doc_count = int(m.group(1))
+    real_count = _real_tool_count()
+    assert doc_count == real_count, (
+        f"docs/MCP_TOOLS.md claims {doc_count} tools, the live registry has {real_count}. "
+        "Update docs/MCP_TOOLS.md."
+    )
