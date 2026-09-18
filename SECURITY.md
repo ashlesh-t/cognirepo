@@ -29,8 +29,8 @@ Only the **latest release** receives security patches. Older versions are unsupp
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | ✓ Current |
-| < 0.1.0 | ✗         |
+| 2.x.x   | ✓ Current |
+| < 2.0.0 | ✗         |
 
 ---
 
