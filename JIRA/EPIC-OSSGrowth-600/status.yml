@@ -7,10 +7,10 @@ stories:
     pr: https://github.com/ashlesh-t/cognirepo/pull/70
     test_status: pass  # TC-601-1 PASS
   - id: COGNIREPO-602
-    status: in-review  # 2026-09-18, PR #71 opened; 8 draft good-first-issues ready, NOT opened on GitHub yet — needs user go-ahead
+    status: signed-off  # 2026-09-18, PR #71 merged, no review comments; 8 good-first-issues opened post-approval (#72-#79)
     branch: story/COGNIREPO-602
     pr: https://github.com/ashlesh-t/cognirepo/pull/71
-    test_status: pass  # TC-602-1 partial PASS (link-resolution); full walkthrough pending issues going live
+    test_status: pass  # TC-602-1 link-resolution + AC3 (8 issues live) verified; full user walkthrough optional/left to user
   - id: COGNIREPO-603
     status: not-started
     branch: story/COGNIREPO-603
