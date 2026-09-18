@@ -28,5 +28,5 @@ epics:
     blocked_by: []   # only COGNIREPO-101 within EPIC-100; showcase sub-task additionally needs EPIC-300
   - id: COGNIREPO-700
     name: CognitiveDynamics
-    status: not-started
+    status: in-progress
     blocked_by: []

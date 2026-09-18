@@ -1,5 +1,5 @@
 epic_id: COGNIREPO-700
-status: not-started
+status: in-progress
 stories:
   - id: COGNIREPO-701
     status: not-started
@@ -23,8 +23,8 @@ stories:
     test_status: not-run
 defects:
   - id: COGNIREPO-D01
-    status: not-started
+    status: in-review  # PR pending
     branch: defect/COGNIREPO-700-D01
     pr: null
-    test_status: not-run
+    test_status: pass  # TC-D01-1/2, both PASS
 epic_test_suite_status: not-run
