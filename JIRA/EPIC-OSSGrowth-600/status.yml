@@ -12,7 +12,7 @@ stories:
     pr: https://github.com/ashlesh-t/cognirepo/pull/71
     test_status: pass  # TC-602-1 link-resolution + AC3 (8 issues live) verified; full user walkthrough optional/left to user
   - id: COGNIREPO-603
-    status: in-review  # 2026-09-18, PR #80 opened
+    status: signed-off  # 2026-09-18, PR #80 merged (rebased onto community PR #81 + #82 first), no review comments
     branch: story/COGNIREPO-603
     pr: https://github.com/ashlesh-t/cognirepo/pull/80
     test_status: pass  # TC-603-1/2 PASS
