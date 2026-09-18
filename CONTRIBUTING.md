@@ -11,6 +11,7 @@ details.
 ```bash
 git clone https://github.com/ashlesh-t/cognirepo
 cd cognirepo
+git checkout development && git checkout -b your-feature-branch
 pip install -e ".[dev,security,languages]"   # or: pipx install -e ".[dev,security,languages]"
 cognirepo init
 pytest tests/ -v --tb=short
@@ -41,6 +42,9 @@ criteria, and links the relevant `DEVELOPER_GUIDE.md` recipe. Common categories:
 
 ## Before opening a PR
 
+- [ ] **Target the `development` branch, not `main`.** Feature and doc work lands in
+      `development` first and gets batched into `main` at release time — a PR opened against
+      `main` will need to be retargeted before it can merge.
 - [ ] Tests pass: `pytest tests/ -v --tb=short`
 - [ ] Lint passes: `pylint ... --fail-under=8.0`
 - [ ] New code has SPDX license headers (see any existing file for the exact header)
