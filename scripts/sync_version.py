@@ -69,13 +69,22 @@ def sync_manifest_json(version: str, *, check: bool) -> bool:
     return True
 
 
-def sync_server_json(version: str, *, check: bool) -> bool:
+def sync_server_json(version: str, meta: dict, *, check: bool) -> bool:
     path = REPO_ROOT / "server.json"
     data = json.loads(path.read_text())
+    mcp_meta = meta.get("mcp", {})
+    expected_title = mcp_meta.get("title")
+    expected_description = mcp_meta.get("description")
+
     top_ok = data.get("version") == version
     pkg_version = (data.get("packages") or [{}])[0].get("version")
     pkg_ok = pkg_version == version
-    if top_ok and pkg_ok:
+    # title/description are optional in version.yml's mcp section — only enforced when present,
+    # so this script doesn't require every version.yml to carry them.
+    title_ok = expected_title is None or data.get("title") == expected_title
+    description_ok = expected_description is None or data.get("description") == expected_description
+
+    if top_ok and pkg_ok and title_ok and description_ok:
         print(f"  server.json — already {version}")
         return True
     if check:
@@ -83,12 +92,21 @@ def sync_server_json(version: str, *, check: bool) -> bool:
             print(f"  DRIFT  server.json version — expected {version}, got {data.get('version')}")
         if not pkg_ok:
             print(f"  DRIFT  server.json packages[0].version — expected {version}, got {pkg_version}")
+        if not title_ok:
+            print(f"  DRIFT  server.json title — expected {expected_title!r}, got {data.get('title')!r}")
+        if not description_ok:
+            print(f"  DRIFT  server.json description — expected {expected_description!r}, got {data.get('description')!r}")
         return False
     data["version"] = version
     if data.get("packages"):
         data["packages"][0]["version"] = version
+    if expected_title is not None:
+        data["title"] = expected_title
+    if expected_description is not None:
+        data["description"] = expected_description
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-    print(f"  UPDATED  server.json → {version} (top-level + packages[0])")
+    print(f"  UPDATED  server.json → {version} (top-level + packages[0]"
+          f"{' + title/description' if (expected_title or expected_description) else ''})")
     return True
 
 
@@ -101,7 +119,7 @@ def main() -> None:
     results = [
         sync_pyproject(version, check=check),
         sync_manifest_json(version, check=check),
-        sync_server_json(version, check=check),
+        sync_server_json(version, meta, check=check),
     ]
 
     if check and not all(results):

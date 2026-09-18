@@ -53,7 +53,7 @@ across sessions, across tools, across time.
 ## When to use CogniRepo
 
 **Most effective on codebases ≥ 15K LOC.** On small repos (< 10K LOC), native file reads
-are fast enough that the MCP tool schema overhead (~4,100 tokens for 35 tools) takes more
+are fast enough that the MCP tool schema overhead (~3,500 tokens for 35 tools) takes more
 than you save. Break-even is roughly 4 tool calls on a medium-sized repo.
 
 **CogniRepo vs. claude-context / similar tools:**
@@ -309,6 +309,12 @@ All 35 tools are available to Claude, Cursor, and any MCP-compatible client.
 | `record_decision(summary, rationale="")` | Record architectural decision to episodic memory | When making non-obvious design choices |
 | `supersede_learning(old_memory_id, new_text)` | Deprecate and replace an outdated memory in one call | When a past decision or fact has changed |
 
+### Reporting
+
+| Tool | What it returns | When to use |
+|------|-------------|-------------|
+| `generate_insights(since="90d", repo_path=None)` | Self-contained HTML repo-history report (timeline, decisions, challenges, activity, index health), sourced only from real stored records | "What happened in this repo" / repo-history requests — see [Repo insights](#repo-insights) below |
+
 ### Cross-repo (organization)
 
 | Tool | Description | When to use |
@@ -496,6 +502,25 @@ cognirepo summarize
 
 ---
 
+## Repo insights
+
+What CogniRepo can tell you about your repo: `generate_insights()` (or `cognirepo insights`)
+turns everything CogniRepo has recorded about a project — episodic events, architectural
+decisions, open challenges, branch/commit activity, index health — into one self-contained HTML
+report. Sourced only from real stored records; nothing fabricated. Screenshots below are from a
+real report generated on this repo (`cognirepo insights --since 365d`), not mockups:
+
+<p align="center">
+  <img src="docs/assets/insights-report-light.jpg" alt="CogniRepo insights report, light mode" width="49%">
+  <img src="docs/assets/insights-report-dark.jpg" alt="CogniRepo insights report, dark mode" width="49%">
+</p>
+
+```bash
+cognirepo insights --since 90d   # writes .claude/insights/<repoName>-insights.html
+```
+
+---
+
 ## Multi-model orchestration
 
 `cognirepo ask` automatically picks the right model for each query:
@@ -666,6 +691,17 @@ some items below have since landed; each is annotated where that's the case.
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to add adapters, tools, and language support |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, data handling, trust model |
 | [docs/LANGUAGES.md](docs/LANGUAGES.md) | Language support details and roadmap |
+
+---
+
+## Community
+
+Questions, feedback, or just want to see what others are building? Join the
+[**CogniRepo Discord**](https://discord.com/channels/1488386981917360289/1488387271190380636).
+
+Want to contribute? See [CONTRIBUTING.md](CONTRIBUTING.md) — issues labeled
+[`good first issue`](https://github.com/ashlesh-t/cognirepo/labels/good%20first%20issue) are
+scoped for a first PR.
 
 ---
 
