@@ -23,8 +23,8 @@ stories:
     test_status: not-run
 defects:
   - id: COGNIREPO-D01
-    status: in-review  # PR pending
+    status: in-review  # 2026-09-19, PR #84 opened
     branch: defect/COGNIREPO-700-D01
-    pr: null
+    pr: https://github.com/ashlesh-t/cognirepo/pull/84
     test_status: pass  # TC-D01-1/2, both PASS
 epic_test_suite_status: not-run
