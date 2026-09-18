@@ -8,6 +8,48 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+## [2.4.1] — 2026-09-18
+
+### Fixed
+- **COGNIREPO-600-D01 — `benchmark.py`'s `REPO_ROOT` pointed at the wrong tree.** A refactor
+  (`719cf60`) moved `benchmark.py` one directory deeper without updating its parent-count
+  constant, so every `tests/fixtures/` golden-set lookup silently failed, and the
+  token-reduction/grep baselines scanned CogniRepo's own source tree instead of whichever repo
+  was actually being benchmarked. Split into `_PACKAGE_ROOT` (fixture lookups) and
+  `_target_repo_root()` (`Path.cwd()`, for the naive/targeted/grep baselines).
+- **COGNIREPO-600-D02 — benchmark probe queries were CogniRepo's own vocabulary.**
+  `_BENCHMARK_QUERIES` fed `measure_token_reduction`/`measure_cache_speedup`/
+  `measure_context_relevance` regardless of the target repo — the same class of bug
+  `_BENCHMARK_SYMBOLS` had already been fixed for in v1.1.3, never extended to the query-based
+  metrics. Added `_sample_repo_queries()` with the same fallback ladder (repo-specific golden
+  fixture → real symbol-sampled queries → hardcoded fallback).
+- **`sync_version.py` never propagated `title`/`description` into `server.json`** — only the
+  version number synced, so `server.json`'s description silently drifted from `version.yml`'s
+  `mcp.description` (still said "34 MCP tools" after a tool was added). Fixed; both fields now
+  sync on every version bump.
+- **README/`docs/MCP_TOOLS.md` stale tool counts** (3 mentions said 34, real count is 35) and a
+  **missing `generate_insights` row** in README's MCP Tools table — all fixed, and pinned with
+  new regression tests (`test_readme_tool_count_matches_registry`,
+  `test_mcp_tools_md_header_count_matches_registry`) so this class of drift can't recur
+  silently.
+
+### Added
+- **COGNIREPO-601 — dated benchmark re-run.** `docs/METRICS.md`/README's automated benchmark
+  numbers (flask/fastapi/celery/ansible) re-run fresh (2026-09-17) now that D01/D02 make them
+  trustworthy — zero unexplained 0%s, zero "fixed in v1.1.3, re-run pending" footnotes.
+  fastapi's old "0% memory recall — empty vector DB" traced to a stale/transient artifact, not
+  reproducible today (now 100%). README's headline claim corrected from a flat "50–80%" to the
+  honest measured range (~30–78% targeted baseline / 96–99% naive baseline).
+- **COGNIREPO-602 — contribution funnel.** Root `CONTRIBUTING.md` rewritten (was a redirect
+  stub with a broken self-referential link) with real setup/architecture/PR-checklist content
+  and a good-first-issue funnel section; added `.github/ISSUE_TEMPLATE/good_first_issue.md`;
+  opened 8 good-first-issues (#72–#79: Ruby/PHP/C#/Swift grammar mappings, README/SECURITY.md/
+  CLI_REFERENCE.md doc-accuracy fixes) — validated live by a genuine first-time external
+  contribution ([#81](https://github.com/ashlesh-t/cognirepo/pull/81)).
+- **COGNIREPO-603 — registry verification + Discord + insights showcase.** New README
+  "Community" section (Discord + good-first-issue label) and "Repo insights" section with real
+  screenshots (light + dark) of `cognirepo insights` run on this repo — not mockups.
+
 ## [2.4.0] — 2026-09-17
 
 ### Added

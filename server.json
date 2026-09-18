@@ -2,17 +2,17 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.ashlesh-t/cognirepo",
   "title": "CogniRepo",
-  "description": "FAISS, call graph, AST, BM25 — 35 MCP tools for AI agents. 50-80% token reduction. Offline.",
+  "description": "FAISS, call graph, AST, BM25 — 35 MCP tools for AI agents. 30-78% token reduction. Offline.",
   "repository": {
     "url": "https://github.com/ashlesh-t/cognirepo",
     "source": "github"
   },
-  "version": "2.4.0",
+  "version": "2.4.1",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "cognirepo",
-      "version": "2.4.0",
+      "version": "2.4.1",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
