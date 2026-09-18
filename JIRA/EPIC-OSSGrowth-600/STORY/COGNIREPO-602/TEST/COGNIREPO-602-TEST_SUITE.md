@@ -8,5 +8,11 @@
   PR for one good-first-issue."
 - Expected results: coherent path (label → issue → recipe → PR checklist); every link resolves;
   the chosen issue contains enough context to start without asking maintainers.
-- Obtained results:
-- Verdict:
+- Obtained results: Partial (mechanical) check done ahead of the full walkthrough — every link
+  in `CONTRIBUTING.md` resolves: `docs/DEVELOPER_GUIDE.md` (file exists),
+  `github.com/.../labels/good%20first%20issue` (200, label exists on the repo already), Discord
+  invite (200), `github.com/.../issues/new/choose` (302 → login, expected unauthenticated). The
+  full newcomer-walkthrough prompt itself is a live-agent/USER-FACING case per skill.md §F.4 —
+  needs the 8 drafted issues actually opened first (pending your go-ahead, per this story's
+  outward-facing constraint), then your own run-through.
+- Verdict: (partial — link-resolution sub-check PASS; full walkthrough pending issues going live)
