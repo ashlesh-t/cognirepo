@@ -23,7 +23,7 @@ stories:
     test_status: not-run
 defects:
   - id: COGNIREPO-D01
-    status: in-review  # 2026-09-19, PR #84 opened
+    status: signed-off  # 2026-09-19, PR #84 merged; review discussion spawned #86-89 (auto-fetch models feature, separate backlog item)
     branch: defect/COGNIREPO-700-D01
     pr: https://github.com/ashlesh-t/cognirepo/pull/84
     test_status: pass  # TC-D01-1/2, both PASS
