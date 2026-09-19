@@ -376,6 +376,104 @@ def search_episodes(query: str, limit: int = 10, include_archived: bool = False)
     return results
 
 
+# Consolidation candidate defaults — COGNIREPO-702. BM25Plus scores are unbounded absolute
+# magnitudes (not [0, 1] like cosine similarity) and, on the small corpora this feature
+# realistically sees (the decision_nudge gate itself only fires at >=5 episodes total), the
+# +1 smoothing delta term dominates enough that even an unrelated episode can score higher
+# than a real near-duplicate scores on a bigger corpus — an absolute cutoff tuned on one corpus
+# size doesn't transfer to another. Verified against real seeded data (3 near-duplicate "cache
+# invalidation" episodes + 1 unrelated "fixed a typo" episode, 4-doc corpus): the unrelated
+# episode still scored 5.3-9.7 against every query — an absolute threshold in that range would
+# have wrongly grouped it in. Comparing each candidate's score *relative to the query episode's
+# own self-score* (mirrors context_pack.py's _REL_NOISE_RATIO pattern) discriminates correctly
+# regardless of corpus size: the 3 real near-duplicates scored 0.70-0.91 of each other's
+# self-score; the unrelated episode scored 0.47 of every query's self-score.
+_CONSOLIDATION_REL_THRESHOLD = 0.7
+_CONSOLIDATION_MIN_GROUP_SIZE = 3
+
+
+def find_consolidation_candidates(
+    since: str = "30d",
+    min_group_size: int = _CONSOLIDATION_MIN_GROUP_SIZE,
+    rel_threshold: float = _CONSOLIDATION_REL_THRESHOLD,
+) -> list[dict]:
+    """
+    Cluster recurring/near-duplicate episodic events within `since` that were never promoted to
+    a decision, surfacing them as candidates for a human or agent to review — COGNIREPO-702
+    (Complementary Learning Systems: hippocampal one-shot encoding consolidated into neocortex
+    via replay — the same theory behind DQN's experience replay).
+
+    Reuses this module's own BM25 similarity machinery (the same primitive search_episodes()
+    uses) rather than inventing a new metric: each episode's own text becomes a query against
+    the rest of the time-windowed pool. A candidate must score >= `rel_threshold` of the query
+    episode's own self-score (not an absolute cutoff — see _CONSOLIDATION_REL_THRESHOLD for why)
+    to count as a near-duplicate; a group forms once it reaches `min_group_size`.
+
+    NEVER calls record_decision() or log_event() — proposes only; promotion is still a human/
+    agent judgment call, matching record_decision()'s own "non-obvious decision" contract.
+    Sparse/fresh stores or no repeated topics -> empty list, nothing fabricated.
+
+    Returns: [{"group_summary": str, "episode_ids": [str, ...], "suggested_decision_draft": str}]
+    """
+    from data.memory.timeline import _parse_since, _parse_ts  # pylint: disable=import-outside-toplevel
+
+    data = _load()
+    if not data:
+        return []
+
+    cutoff = _parse_since(since)
+    pool = [
+        e for e in data
+        if _parse_ts(e.get("time")) >= cutoff and (e.get("metadata") or {}).get("type") != "decision"
+    ]
+    if len(pool) < min_group_size:
+        return []
+
+    # Fresh, uncached index — the time/decision-filtered pool differs from the full live store,
+    # so it must never be written to the global _get_bm25() cache (same caveat _build_bm25's
+    # own docstring documents for the include_archived path).
+    bm25, event_ids = _build_bm25(pool)
+    if bm25 is None:
+        return []
+
+    id_to_pos = {eid: i for i, eid in enumerate(event_ids)}
+    visited: set[str] = set()
+    candidates: list[dict] = []
+
+    for entry in pool:
+        eid = entry["id"]
+        if eid in visited:
+            continue
+        tokens = _tokenize(entry.get("event", ""))
+        if not tokens:
+            continue
+        scores = bm25.get_scores(tokens)
+        self_score = scores[id_to_pos[eid]]
+        if self_score <= 0:
+            continue
+        floor = self_score * rel_threshold
+        matched_ids = [
+            other_id
+            for score, other_id in sorted(zip(scores, event_ids), reverse=True)
+            if score >= floor and other_id != eid and other_id not in visited
+        ]
+        group_ids = [eid] + matched_ids
+        if len(group_ids) < min_group_size:
+            continue
+        visited.update(group_ids)
+        summary = entry.get("event", "")[:200]
+        candidates.append({
+            "group_summary": summary,
+            "episode_ids": group_ids,
+            "suggested_decision_draft": (
+                f"record_decision(summary=..., rationale=...) — recurring pattern seen "
+                f"{len(group_ids)}x: {summary}"
+            ),
+        })
+
+    return candidates
+
+
 class EpisodicMemory:  # pylint: disable=missing-function-docstring
     """Class interface over the module-level episodic memory functions."""
 

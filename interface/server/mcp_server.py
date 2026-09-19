@@ -1955,11 +1955,23 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         # count at 0 even as episodes pile up — nudge once that gap is clear,
         # rather than relying on CLAUDE.md instructions alone.
         decision_nudge = ""
+        consolidation_candidates: list = []
         try:
             from data.memory.timeline import merge as _nudge_merge, rollup as _nudge_rollup  # pylint: disable=import-outside-toplevel
             _counts = _nudge_rollup(_nudge_merge(since="30d", limit=200))["counts"]
             if _counts.get("decision", 0) == 0 and _counts.get("episode", 0) >= 5:
-                decision_nudge = "no decisions recorded yet — use record_decision for architectural choices"
+                # COGNIREPO-702: extend the threshold-only nudge with actual content-aware
+                # evidence — which topics are recurring, not just "you have zero decisions".
+                # Never calls record_decision itself; only proposes.
+                from data.memory.episodic_memory import find_consolidation_candidates  # pylint: disable=import-outside-toplevel
+                consolidation_candidates = find_consolidation_candidates(since="30d")
+                if consolidation_candidates:
+                    decision_nudge = (
+                        f"{len(consolidation_candidates)} recurring topic(s) never promoted to "
+                        "a decision — see consolidation_candidates"
+                    )
+                else:
+                    decision_nudge = "no decisions recorded yet — use record_decision for architectural choices"
         except Exception:  # pylint: disable=broad-except
             pass
 
@@ -2004,6 +2016,8 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         result["child_services"] = child_services
     if decision_nudge:
         result["decision_nudge"] = decision_nudge
+    if consolidation_candidates:
+        result["consolidation_candidates"] = consolidation_candidates
     return result
 
 
