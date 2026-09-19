@@ -25,6 +25,25 @@
       }
     },
     {
+      "name": "check_precedent",
+      "description": "Before implementing a non-trivial instruction, check whether it contradicts a recorded decision or a CLAUDE.md invariant (COGNIREPO-704). ALWAYS advisory \u2014 never blocks; a human/agent still makes the final call. Fires only on an actual recorded contradiction (a structured invariant match, or a decision match gated behind a reversal/replacement cue in the instruction itself) \u2014 never a vibe or style preference, and never on an ordinary request with no relevant precedent.",
+      "inputSchema": {
+        "properties": {
+          "instruction": {
+            "type": "string"
+          },
+          "repo_path": {
+            "default": null,
+            "type": "string"
+          }
+        },
+        "required": [
+          "instruction"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "context_pack",
       "description": "Budget-pack the most relevant code + episodic context into a token-bounded block ready for injection into the next prompt. Call this BEFORE reading any source file to avoid wasting tokens on raw file reads. Returns at most max_tokens (default 2000) tokens \u2014 much smaller than raw files. Do NOT call for known short files (< 50 lines) \u2014 use Read directly instead.",
       "inputSchema": {
