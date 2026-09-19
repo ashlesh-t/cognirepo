@@ -723,6 +723,15 @@ class BehaviourTracker:
         """Returns {symbol_id: hit_count} for all tracked symbols."""
         return {k: float(v["hit_count"]) for k, v in self.data["symbol_weights"].items()}
 
+    def get_all_scores_with_recency(self) -> dict[str, dict]:
+        """Returns {symbol_id: {"hit_count": float, "last_hit": str | None}} for all tracked
+        symbols — COGNIREPO-701. Additive alongside get_all_scores(); first real reader of
+        last_hit (previously write-only telemetry)."""
+        return {
+            k: {"hit_count": float(v.get("hit_count", 0)), "last_hit": v.get("last_hit")}
+            for k, v in self.data["symbol_weights"].items()
+        }
+
     # ── interaction style summariser ──────────────────────────────────────────
 
     def summarize_interaction_style(self) -> bool:
