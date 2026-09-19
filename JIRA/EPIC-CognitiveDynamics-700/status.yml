@@ -12,9 +12,9 @@ stories:
     pr: https://github.com/ashlesh-t/cognirepo/pull/92
     test_status: pass  # TC-702-1/2, both PASS
   - id: COGNIREPO-703
-    status: in-review  # PR pending
+    status: in-review  # 2026-09-19, PR #93 opened
     branch: story/COGNIREPO-703
-    pr: null
+    pr: https://github.com/ashlesh-t/cognirepo/pull/93
     test_status: pass  # TC-703-1/2, both PASS
   - id: COGNIREPO-704
     status: not-started
