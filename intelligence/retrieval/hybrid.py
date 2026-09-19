@@ -28,6 +28,7 @@ import math
 import os
 import threading
 import time
+from datetime import datetime, timezone
 
 import numpy as np
 
@@ -169,6 +170,28 @@ def _load_weights() -> dict[str, float]:
     return DEFAULT_WEIGHTS
 
 
+# Reward-modulated salience decay (COGNIREPO-701) — eligibility-trace-inspired: a symbol hit
+# recently outranks one with equal hit_count but untouched for months. Separate config section
+# (not nested in retrieval_weights, which _load_weights() sums to a strict 1.0 invariant).
+_DEFAULT_DECAY_HALF_LIFE_DAYS = 30.0
+
+
+def _load_decay_half_life_days() -> float:
+    """config.json -> {"behaviour_decay": {"half_life_days": <float>}} (mirrors
+    ast_indexer.py's _similarity_gate_enabled/COGNIREPO-202 pattern: explicit config value
+    always wins, sensible default otherwise). <= 0 disables decay (factor always 1.0)."""
+    if os.path.exists(_config_file()):
+        try:
+            with open(_config_file(), encoding="utf-8") as f:
+                cfg = json.load(f)
+            val = cfg.get("behaviour_decay", {}).get("half_life_days")
+            if val is not None:
+                return float(val)
+        except (json.JSONDecodeError, OSError, TypeError, ValueError):
+            pass
+    return _DEFAULT_DECAY_HALF_LIFE_DAYS
+
+
 class HybridRetriever:  # pylint: disable=too-few-public-methods
     """
     Single entry point for all memory retrieval in CogniRepo.
@@ -178,6 +201,7 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
     def __init__(self) -> None:
         from core.vector_db.factory import get_vector_adapter  # pylint: disable=import-outside-toplevel
         self.weights = _load_weights()
+        self.decay_half_life_days = _load_decay_half_life_days()
         self.db = get_vector_adapter()
         self.graph = KnowledgeGraph()
         self.behaviour = BehaviourTracker(self.graph)
@@ -233,7 +257,7 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
             return []
 
         # 5. score
-        all_counts = self.behaviour.get_all_scores()
+        all_counts = self.behaviour.get_all_scores_with_recency()
         scored = self._score_candidates(all_candidates, entities, all_counts)
 
         # 6. sort + truncate
@@ -423,14 +447,14 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
         self,
         candidates: list[dict],
         query_entities: list[str],
-        all_counts: dict[str, float],
+        all_counts: dict[str, dict],
     ) -> list[dict]:
-        max_count = max(all_counts.values(), default=0.0)
+        max_count = max((v["hit_count"] for v in all_counts.values()), default=0.0)
         scored = []
         for c in candidates:
             v_score = c.get("vector_score", 0.0)
             g_score = self._graph_score(c, query_entities)
-            b_score = self._behaviour_score(c, all_counts, max_count)
+            b_score = self._behaviour_score(c, all_counts, max_count, self.decay_half_life_days)
             importance = c.get("importance", 0.5)
             # Cold-graph renormalization: when graph and behaviour are both zero
             # (fresh index, no behaviour history), blend vector similarity with
@@ -631,18 +655,43 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
         return top
 
     @staticmethod
+    def _decay_factor(last_hit: "str | None", half_life_days: float) -> float:
+        """Exponential recency decay in (0, 1] from a last-hit ISO timestamp — COGNIREPO-701,
+        reward-modulated-STDP-inspired (an eligibility trace decays over time; a hit "now" is
+        undiminished). Missing/unparseable last_hit -> 1.0 (no decay — legacy data with no
+        recency info is treated as neutral, never penalized). half_life_days <= 0 -> 1.0
+        (decay disabled)."""
+        if not last_hit or half_life_days <= 0:
+            return 1.0
+        try:
+            hit_dt = datetime.fromisoformat(last_hit)
+        except (ValueError, TypeError):
+            return 1.0
+        if hit_dt.tzinfo is None:
+            hit_dt = hit_dt.replace(tzinfo=timezone.utc)
+        age_days = max(0.0, (datetime.now(timezone.utc) - hit_dt).total_seconds() / 86400.0)
+        return 0.5 ** (age_days / half_life_days)
+
+    @staticmethod
     def _behaviour_score(
         candidate: dict,
-        all_counts: dict[str, float],
+        all_counts: dict[str, dict],
         max_count: float,
+        half_life_days: float = _DEFAULT_DECAY_HALF_LIFE_DAYS,
     ) -> float:
-        """log(1 + count) / log(1 + max_count) → [0, 1]."""
+        """log(1 + count) / log(1 + max_count) → [0, 1], scaled by an exponential recency decay
+        factor (COGNIREPO-701) so a symbol hit recently outranks one with equal hit_count but
+        untouched for months. A hit at age 0 has decay factor 1.0 — exactly the pre-701 formula
+        for fresh data (zero behavior change in the common case)."""
         if max_count <= 0:
             return 0.0
         # use _symbol node id if available, else text as fallback key
         sym_id = candidate.get("_symbol") or candidate.get("text", "")[:80]
-        raw = all_counts.get(sym_id, 0.0)
-        return math.log(1.0 + raw) / math.log(1.0 + max_count)
+        entry = all_counts.get(sym_id) or {}
+        raw = entry.get("hit_count", 0.0)
+        base = math.log(1.0 + raw) / math.log(1.0 + max_count)
+        decay = HybridRetriever._decay_factor(entry.get("last_hit"), half_life_days)
+        return base * decay
 
 
 # ── module-level convenience ──────────────────────────────────────────────────

@@ -32,6 +32,9 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
     "unskip_dirs": [],
     "debounce_ms": 500
   },
+  "behaviour_decay": {
+    "half_life_days": 30
+  },
   "redis": {
     "enabled": false
   }
@@ -58,6 +61,7 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 | `indexing.skip_dirs` | list | `[]` | Extra directory names to skip during indexing (merged with built-in defaults) |
 | `indexing.unskip_dirs` | list | `[]` | Built-in-skipped directories to index anyway (e.g. `["gen"]`) |
 | `indexing.debounce_ms` | int | `500` | File-watcher debounce window: events for the same path within this window collapse into one re-index/remove, and all pending changes in a batch are persisted with a single save. `0` disables batching — every event is processed synchronously and individually. |
+| `behaviour_decay.half_life_days` | float | `30` | Half-life for the exponential recency decay applied to symbol `behaviour_score` (COGNIREPO-701) — a symbol hit this many days ago scores half of an otherwise-identical symbol hit "now". `<= 0` disables decay entirely (behaviour score behaves exactly as before). |
 | `redis.enabled` | bool | `false` | Enable Redis caching layer |
 
 ---

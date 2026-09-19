@@ -520,3 +520,82 @@ class TestEpisodicBM25:
         assert "e0" not in returned_ids, "e0 is outside time_range and must be excluded"
         assert "e2" not in returned_ids, "e2 is outside time_range and must be excluded"
         assert "e1" in returned_ids, "e1 is within time_range and must be returned"
+
+
+# ── COGNIREPO-701: reward-modulated salience decay ────────────────────────────
+
+class TestSalienceDecay:
+    def test_decay_factor_zero_age_is_one(self):
+        """AC2: a hit 'now' has decay factor 1.0 -- fresh data behaves identically to pre-701."""
+        from datetime import datetime, timezone
+        from intelligence.retrieval.hybrid import HybridRetriever
+        now_iso = datetime.now(timezone.utc).isoformat()
+        factor = HybridRetriever._decay_factor(now_iso, half_life_days=30.0)
+        assert abs(factor - 1.0) < 1e-9
+
+    def test_decay_factor_at_half_life_is_half(self):
+        from datetime import datetime, timezone, timedelta
+        from intelligence.retrieval.hybrid import HybridRetriever
+        old = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        factor = HybridRetriever._decay_factor(old, half_life_days=30.0)
+        assert abs(factor - 0.5) < 0.01
+
+    def test_decay_factor_missing_last_hit_is_neutral(self):
+        from intelligence.retrieval.hybrid import HybridRetriever
+        assert HybridRetriever._decay_factor(None, half_life_days=30.0) == 1.0
+
+    def test_decay_factor_disabled_when_half_life_nonpositive(self):
+        from datetime import datetime, timezone, timedelta
+        from intelligence.retrieval.hybrid import HybridRetriever
+        old = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
+        assert HybridRetriever._decay_factor(old, half_life_days=0.0) == 1.0
+        assert HybridRetriever._decay_factor(old, half_life_days=-5.0) == 1.0
+
+    def test_behaviour_score_recent_hit_outranks_equal_old_hit_count(self):
+        """AC1: two symbols with equal hit_count, one hit this week and one 6+ months ago --
+        the recent one scores higher."""
+        from datetime import datetime, timezone, timedelta
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        old_iso = (datetime.now(timezone.utc) - timedelta(days=200)).isoformat()
+        all_counts = {
+            "symbol::recent": {"hit_count": 5.0, "last_hit": now_iso},
+            "symbol::stale": {"hit_count": 5.0, "last_hit": old_iso},
+        }
+        max_count = 5.0
+        recent_score = HybridRetriever._behaviour_score(
+            {"_symbol": "symbol::recent"}, all_counts, max_count, half_life_days=30.0
+        )
+        stale_score = HybridRetriever._behaviour_score(
+            {"_symbol": "symbol::stale"}, all_counts, max_count, half_life_days=30.0
+        )
+        assert recent_score > stale_score
+
+    def test_behaviour_score_fresh_data_matches_pre_701_formula(self):
+        """AC2: golden regression -- when every hit's timestamp is 'now', the decayed score
+        matches the plain log(1+count)/log(1+max_count) formula within float tolerance."""
+        import math
+        from datetime import datetime, timezone
+        from intelligence.retrieval.hybrid import HybridRetriever
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        all_counts = {"symbol::x": {"hit_count": 3.0, "last_hit": now_iso}}
+        max_count = 3.0
+        decayed = HybridRetriever._behaviour_score(
+            {"_symbol": "symbol::x"}, all_counts, max_count, half_life_days=30.0
+        )
+        pre_701 = math.log(1.0 + 3.0) / math.log(1.0 + 3.0)
+        assert abs(decayed - pre_701) < 1e-9
+
+    def test_load_decay_half_life_days_default(self, tmp_path, monkeypatch):
+        import intelligence.retrieval.hybrid as rh
+        assert rh._load_decay_half_life_days() == rh._DEFAULT_DECAY_HALF_LIFE_DAYS
+
+    def test_load_decay_half_life_days_config_override(self, tmp_path, monkeypatch):
+        """AC3: explicit config.json value wins over the default."""
+        import json
+        import intelligence.retrieval.hybrid as rh
+        with open(rh._config_file(), "w", encoding="utf-8") as f:
+            json.dump({"behaviour_decay": {"half_life_days": 7}}, f)
+        assert rh._load_decay_half_life_days() == 7.0
