@@ -192,6 +192,11 @@ STD_PROMPTS/                   — bundled markdown templates (inside the cognir
 - ≤9    → **COMPLEX** — moderate reasoning — Gemini Flash / Claude Sonnet
 - >9    → **EXPERT** — cross-file, architectural, ambiguous — Claude Opus
 
+**Confidence** (COGNIREPO-703): `ClassifierResult.confidence` (`[0, 1]`) is the normalized
+distance from the final score to the nearest tier boundary above — 1.0 far from any boundary
+(decisive), 0.0 sitting exactly on one (near-miss). Purely diagnostic; never affects which tier
+a query lands in.
+
 **Hard overrides** (bypass score):
 - `"full context"` / `"everything related"` → always EXPERT
 - Single word / single symbol → always **QUICK**

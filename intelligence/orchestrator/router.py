@@ -151,6 +151,7 @@ def route(
             local_clf = ClassifierResult(
                 tier="STANDARD", score=clf.score, model="local",
                 provider="local", signals=clf.signals, overrides=clf.overrides,
+                confidence=clf.confidence,
             )
             local_resp = ModelResponse(text=local_answer, model="local", provider="local")
             return RouteResult(
