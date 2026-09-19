@@ -16,13 +16,11 @@ from __future__ import annotations
 import time
 from typing import TypedDict
 
+from intelligence.orchestrator.classifier import DEFAULT_MODELS_BY_PROVIDER
+
 
 def _anthropic_default_model() -> str:
-    try:
-        from intelligence.orchestrator.classifier import DEFAULT_MODELS_BY_PROVIDER  # pylint: disable=import-outside-toplevel
-        return DEFAULT_MODELS_BY_PROVIDER.get("anthropic", "claude-haiku-4-5")
-    except ImportError:
-        return "claude-haiku-4-5"
+    return DEFAULT_MODELS_BY_PROVIDER["anthropic"]
 
 
 class ProbeResult(TypedDict):

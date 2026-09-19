@@ -173,11 +173,26 @@ def _load_model_registry() -> dict:
 
 
 # Single source of truth for default models per provider.
-# router.py and key_probes.py import from here — do NOT hardcode elsewhere.
+# router.py, key_probes.py, and model_adapters/*.py import from here — do NOT hardcode elsewhere.
 DEFAULT_MODELS_BY_PROVIDER: dict[str, str] = {
     "anthropic": "claude-haiku-4-5",
     "gemini": "gemini-2.0-flash",
     "openai": "gpt-4o-mini",
+}
+
+# Standalone defaults for model_adapters/*.py's own `call()` functions when invoked directly,
+# outside the tier router — e.g. interface/cli/main.py's _test_connection() ping, or router.py's
+# own fallback chain (_PROVIDER_DEFAULT_MODELS) for "grok", which classifier's tier registry
+# above doesn't route to. Deliberately NOT the same dict as DEFAULT_MODELS_BY_PROVIDER (that's
+# the QUICK-tier default): a connectivity check exercising a higher-capability model confirms
+# paid-tier access actually works, not just an unused free/cheap tier. anthropic's value matches
+# the COMPLEX tier's model in the registry above; gemini's happens to already match
+# DEFAULT_MODELS_BY_PROVIDER's.
+ADAPTER_STANDALONE_DEFAULTS: dict[str, str] = {
+    "anthropic": "claude-sonnet-4-6",
+    "gemini": "gemini-2.0-flash",
+    "openai": "gpt-4o",
+    "grok": "grok-beta",
 }
 
 

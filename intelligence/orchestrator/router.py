@@ -35,7 +35,7 @@ import traceback
 from dataclasses import dataclass
 from typing import Generator
 
-from intelligence.orchestrator.classifier import ClassifierResult, classify, DEFAULT_MODELS_BY_PROVIDER
+from intelligence.orchestrator.classifier import ADAPTER_STANDALONE_DEFAULTS, ClassifierResult, classify, DEFAULT_MODELS_BY_PROVIDER
 from intelligence.orchestrator.context_builder import ContextBundle, build as build_context
 from intelligence.orchestrator.model_adapters.anthropic_adapter import ModelResponse
 from intelligence.orchestrator.model_adapters.errors import ModelCallError
@@ -250,7 +250,7 @@ _PROVIDER_PRIORITY = ["anthropic", "gemini", "grok", "openai"]
 #: Default model IDs per provider — sourced from orchestrator/classifier.py (single source of truth)
 _PROVIDER_DEFAULT_MODELS: dict[str, str] = {
     **DEFAULT_MODELS_BY_PROVIDER,
-    "grok": "grok-beta",  # grok not in base classifier; extend here
+    "grok": ADAPTER_STANDALONE_DEFAULTS["grok"],  # grok not in base classifier; extend here
 }
 
 
@@ -336,7 +336,7 @@ def _promote_to_standard(
     if not available:
         return None
     provider = available[0]
-    model_id = _PROVIDER_DEFAULT_MODELS.get(provider, "claude-haiku-4-5")
+    model_id = _PROVIDER_DEFAULT_MODELS.get(provider, DEFAULT_MODELS_BY_PROVIDER["anthropic"])
     try:
         return _call_adapter(
             query=query, provider=provider, model_id=model_id,
@@ -688,7 +688,7 @@ def _stream_dispatch(
             available = _available_providers()
             if available:
                 promoted_provider = available[0]
-                promoted_model = _PROVIDER_DEFAULT_MODELS.get(promoted_provider, "claude-haiku-4-5")
+                promoted_model = _PROVIDER_DEFAULT_MODELS.get(promoted_provider, DEFAULT_MODELS_BY_PROVIDER["anthropic"])
                 kwargs["model_id"] = promoted_model
                 del kwargs["stream"]
                 kwargs["stream"] = True
