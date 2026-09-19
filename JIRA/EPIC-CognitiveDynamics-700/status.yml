@@ -7,9 +7,9 @@ stories:
     pr: https://github.com/ashlesh-t/cognirepo/pull/90
     test_status: pass  # TC-701-1/2, both PASS
   - id: COGNIREPO-702
-    status: in-review  # PR pending
+    status: in-review  # 2026-09-19, PR #92 opened
     branch: story/COGNIREPO-702
-    pr: null
+    pr: https://github.com/ashlesh-t/cognirepo/pull/92
     test_status: pass  # TC-702-1/2, both PASS
   - id: COGNIREPO-703
     status: not-started
