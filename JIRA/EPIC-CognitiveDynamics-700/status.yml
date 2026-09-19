@@ -7,20 +7,20 @@ stories:
     pr: https://github.com/ashlesh-t/cognirepo/pull/90
     test_status: pass  # TC-701-1/2, both PASS
   - id: COGNIREPO-702
-    status: not-started
+    status: in-review  # 2026-09-19, PR #92 opened
     branch: story/COGNIREPO-702
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/92
+    test_status: pass  # TC-702-1/2, both PASS
   - id: COGNIREPO-703
-    status: not-started
+    status: in-review  # 2026-09-19, PR #93 opened
     branch: story/COGNIREPO-703
-    pr: null
-    test_status: not-run
+    pr: https://github.com/ashlesh-t/cognirepo/pull/93
+    test_status: pass  # TC-703-1/2, both PASS
   - id: COGNIREPO-704
-    status: not-started
+    status: in-review  # PR pending
     branch: story/COGNIREPO-704
     pr: null
-    test_status: not-run
+    test_status: pass  # TC-704-1/2, both PASS
 defects:
   - id: COGNIREPO-D01
     status: signed-off  # 2026-09-19, PR #84 merged; review discussion spawned #86-89 (auto-fetch models feature, separate backlog item)
