@@ -2,9 +2,9 @@ epic_id: COGNIREPO-700
 status: in-progress
 stories:
   - id: COGNIREPO-701
-    status: in-review  # PR pending
+    status: in-review  # 2026-09-19, PR #90 opened
     branch: story/COGNIREPO-701
-    pr: null
+    pr: https://github.com/ashlesh-t/cognirepo/pull/90
     test_status: pass  # TC-701-1/2, both PASS
   - id: COGNIREPO-702
     status: not-started
