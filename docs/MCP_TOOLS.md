@@ -703,7 +703,14 @@ name (COGNIREPO-400-D01):
     {"ts": "2026-08-07T14:00:00+00:00", "kind": "error", "summary": "ImportError (x3)", "ref": "ImportError"},
     {"ts": "2026-08-06T11:00:00+00:00", "kind": "session", "summary": "how does scoring work", "ref": "sess_abc123"}
   ],
-  "decision_nudge": "no decisions recorded yet — use record_decision for architectural choices"
+  "decision_nudge": "2 recurring topic(s) never promoted to a decision — see consolidation_candidates",
+  "consolidation_candidates": [
+    {
+      "group_summary": "cache invalidation keeps breaking on concurrent writes",
+      "episode_ids": ["e_101", "e_107", "e_115"],
+      "suggested_decision_draft": "record_decision(summary=..., rationale=...) — recurring pattern seen 3x: cache invalidation keeps breaking on concurrent writes"
+    }
+  ]
 }
 ```
 
@@ -721,6 +728,17 @@ text), call `data.memory.timeline.merge()`/`rollup()` directly, or use the
 episodes but 0 decisions — a hint to use `record_decision` for architectural
 choices, since CLAUDE.md's instruction alone doesn't guarantee agents call it.
 Omitted from the payload entirely when there's nothing to nudge about.
+
+**consolidation_candidates** (COGNIREPO-702): computed alongside `decision_nudge`
+when that gap is detected — clusters recurring/near-duplicate episodic events
+(≥3 within 30 days, same topic, reused BM25 similarity from `search_episodes()`)
+that were never promoted to a decision. Each candidate cites the actual
+`episode_ids` as evidence and a `suggested_decision_draft`; **never calls
+`record_decision` automatically** — promotion stays a human/agent judgment call.
+Omitted entirely when there's nothing to consolidate, same honesty bar as
+`generate_insights`. Complementary Learning Systems theory (McClelland et al.
+1995) — the same hippocampus/neocortex consolidation account that directly
+inspired DQN's experience replay (Mnih et al. 2015).
 
 **Episodic events also include `index_event`-typed entries** (COGNIREPO-205):
 `cognirepo index-repo` and `cognirepo org rewire` completions are logged
