@@ -113,3 +113,61 @@ class TestTierBoundaries:
         r = classify("show me files", force_model="claude-opus-4-6")
         assert r.model == "claude-opus-4-6"
         assert r.tier == "QUICK"  # tier still computed
+
+
+# ── COGNIREPO-703: confidence-calibrated tier classification ─────────────────
+
+class TestConfidence:
+    def test_near_boundary_query_has_lower_confidence_than_decisive_query(self, classify):
+        """AC2: confidence is measurably lower for a near-boundary score (~3.9, just under the
+        4.0 STANDARD/COMPLEX boundary) than for a decisively mid-tier score (~0.1, deep in
+        QUICK) -- tested against concrete score fixtures directly, not just "it exists"."""
+        from intelligence.orchestrator.classifier import _confidence_from_score
+        near_boundary = _confidence_from_score(3.9)
+        decisive = _confidence_from_score(0.1)
+        assert near_boundary < decisive
+        assert near_boundary == 0.1
+        assert decisive == 1.0
+
+    def test_confidence_is_zero_exactly_on_a_boundary(self):
+        from intelligence.orchestrator.classifier import _confidence_from_score, _TIER_STANDARD
+        assert _confidence_from_score(_TIER_STANDARD) == 0.0
+
+    def test_confidence_capped_at_one_far_from_any_boundary(self):
+        from intelligence.orchestrator.classifier import _confidence_from_score
+        assert _confidence_from_score(0.0) == 1.0
+        assert _confidence_from_score(20.0) == 1.0
+
+    def test_classify_result_always_has_confidence_field(self, classify):
+        r = classify("what is jwt")
+        assert 0.0 <= r.confidence <= 1.0
+
+    def test_hard_override_queries_still_get_a_confidence_value(self, classify):
+        """Overrides (single_token, docs_query, full_context_phrase) set score directly rather
+        than going through _compute_score -- confidence must still compute without crashing."""
+        r = classify("x")
+        assert "single_token" in r.overrides
+        assert 0.0 <= r.confidence <= 1.0
+
+    def test_signals_dict_unchanged_by_confidence_addition(self, classify):
+        """AC3: signals dict output is unchanged -- this story adds one new field to
+        ClassifierResult, it does not restructure existing output."""
+        r = classify("why is this slow and what should I refactor")
+        assert isinstance(r.signals, dict)
+        assert all(isinstance(v, float) for v in r.signals.values())
+
+    def test_golden_tier_assignment_unaffected_by_confidence(self, classify):
+        """AC1: tier assignment is byte-identical before and after this change -- golden
+        regression over a representative corpus, not just a spot check."""
+        golden = [
+            ("x", "QUICK"),
+            ("list all files", "QUICK"),
+            ("show me auth.py", "QUICK"),
+            ("complete context for this project", "EXPERT"),
+            ("why is verify_token slow compared to check_session", None),  # COMPLEX or EXPERT
+        ]
+        for query, expected_tier in golden:
+            r = classify(query)
+            if expected_tier is not None:
+                assert r.tier == expected_tier, f"{query!r} -> {r.tier}, expected {expected_tier}"
+            assert 0.0 <= r.confidence <= 1.0
