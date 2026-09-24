@@ -15,7 +15,7 @@ mcp-name: io.github.ashlesh-t/cognirepo
 
 ---
 
-**`lookup_symbol` returns file:line very quickly — grep takes 2–8 seconds.** On Python repos ≥ 15K LOC, CogniRepo cuts AI coding agent token usage by **~30–78%** vs. a targeted grep+read baseline (up to 96–99% vs. reading every matching file naively) — benchmarked on Flask, FastAPI, Celery, and Ansible (5,900+ files). Works with Claude Code, Cursor, and Gemini CLI. **Fully offline. No API keys required for indexing or any of the 35 MCP tools.**
+**`lookup_symbol` returns file:line very quickly — grep takes 2–8 seconds.** On Python repos ≥ 15K LOC, CogniRepo cuts AI coding agent token usage by **~30–78%** vs. a targeted grep+read baseline (up to 96–99% vs. reading every matching file naively) — benchmarked on Flask, FastAPI, Celery, and Ansible (5,900+ files). Works with Claude Code, Cursor, and Gemini CLI. **Fully offline. No API keys required for indexing or any of the 36 MCP tools.**
 
 ---
 
@@ -53,7 +53,7 @@ across sessions, across tools, across time.
 ## When to use CogniRepo
 
 **Most effective on codebases ≥ 15K LOC.** On small repos (< 10K LOC), native file reads
-are fast enough that the MCP tool schema overhead (~3,500 tokens for 35 tools) takes more
+are fast enough that the MCP tool schema overhead (~3,700 tokens for 36 tools) takes more
 than you save. Break-even is roughly 4 tool calls on a medium-sized repo.
 
 **CogniRepo vs. claude-context / similar tools:**
@@ -257,7 +257,7 @@ docker compose up mcp         # MCP stdio server
 
 ## MCP Tools — complete reference
 
-All 35 tools are available to Claude, Cursor, and any MCP-compatible client.
+All 36 tools are available to Claude, Cursor, and any MCP-compatible client.
 
 ### Core retrieval
 
@@ -314,6 +314,12 @@ All 35 tools are available to Claude, Cursor, and any MCP-compatible client.
 | Tool | What it returns | When to use |
 |------|-------------|-------------|
 | `generate_insights(since="90d", repo_path=None)` | Self-contained HTML repo-history report (timeline, decisions, challenges, activity, index health), sourced only from real stored records | "What happened in this repo" / repo-history requests — see [Repo insights](#repo-insights) below |
+
+### Grounded pushback
+
+| Tool | What it returns | When to use |
+|------|-------------|-------------|
+| `check_precedent(instruction)` | `{conflicts: [...], advisory: true}` — flags an instruction that contradicts a recorded decision or a CLAUDE.md invariant, with a citation and a concrete alternative. Never blocks; always advisory. Empty `conflicts` on an ordinary request — no false positives | Before implementing a non-trivial instruction, to check it against recorded precedent first |
 
 ### Cross-repo (organization)
 

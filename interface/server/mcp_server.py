@@ -31,6 +31,7 @@ from interface.tools.context_pack import context_pack as _context_pack
 from interface.tools.semantic_search_code import semantic_search_code as _semantic_search_code
 from interface.tools.dependency_graph import dependency_graph as _dependency_graph
 from interface.tools.explain_change import explain_change as _explain_change
+from intelligence.precedent_check import check_precedent as _check_precedent
 from intelligence.retrieval.docs_search import search_docs as _search_docs
 from data.memory.episodic_memory import log_event, search_episodes
 from data.memory.learning_store import get_learning_store
@@ -1733,6 +1734,26 @@ def explain_change(
 
 
 @mcp.tool()
+def check_precedent(instruction: str, repo_path: str | None = None) -> dict:
+    """
+    Before implementing a non-trivial instruction, check whether it contradicts a recorded
+    decision or a CLAUDE.md invariant (COGNIREPO-704). ALWAYS advisory — never blocks; a
+    human/agent still makes the final call. Fires only on an actual recorded contradiction
+    (a structured invariant match, or a decision match gated behind a reversal/replacement
+    cue in the instruction itself) — never a vibe or style preference, and never on an
+    ordinary request with no relevant precedent.
+
+    Returns: {"conflicts": [{"type": "invariant"|"decision", "citation": str,
+    "description": str, "suggested_alternative": str, ...}], "advisory": true}
+    `conflicts` is an explicit empty list (not omitted) when nothing was flagged.
+
+    repo_path: optional absolute path to the target repository.
+    """
+    with _repo_ctx(repo_path):
+        return _check_precedent(instruction)
+
+
+@mcp.tool()
 def architecture_overview(scope: str = "root", repo_path: str | None = None) -> str:
     """
     Retrieve pre-computed architectural summaries.
@@ -2365,7 +2386,7 @@ _REGISTERED_TOOLS: set[str] = {
     "cross_repo_traverse", "episodic_search", "org_wide_search", "list_org_context",
     "get_user_profile", "record_error", "get_error_patterns", "link_repos",
     "record_user_preference", "supersede_learning", "get_agent_bootstrap",
-    "find_symbol_path", "get_service_endpoints", "generate_insights",
+    "find_symbol_path", "get_service_endpoints", "generate_insights", "check_precedent",
 }
 
 
