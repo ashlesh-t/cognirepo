@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 from typing import TYPE_CHECKING
 
@@ -193,7 +194,7 @@ class RepoFileHandler(FileSystemEventHandler):
                         removed_rel_paths.append(rel_path)
                     touched_symbol_names |= names
             except Exception as exc:  # pylint: disable=broad-except
-                print(f"[watcher] error processing {action} for {abs_path}: {exc}")
+                print(f"[watcher] error processing {action} for {abs_path}: {exc}", file=sys.stderr)
 
         self.indexer._build_reverse_index()  # pylint: disable=protected-access
         # Scoped stub resolution: reconcile only the symbols this batch touched
@@ -220,13 +221,13 @@ class RepoFileHandler(FileSystemEventHandler):
             self.indexer.save()
         except Exception as exc:  # pylint: disable=broad-except
             save_error = f"indexer.save failed: {exc}"
-            print(f"[watcher] {save_error}")
+            print(f"[watcher] {save_error}", file=sys.stderr)
 
         try:
             self.graph.save()
         except Exception as exc:  # pylint: disable=broad-except
             save_error = f"{save_error + '; ' if save_error else ''}graph.save failed: {exc}"
-            print(f"[watcher] graph.save failed: {exc}")
+            print(f"[watcher] graph.save failed: {exc}", file=sys.stderr)
 
         self._write_last_watcher_reindex(reindexed_rel_paths, removed_rel_paths, error=save_error)
 
@@ -234,7 +235,7 @@ class RepoFileHandler(FileSystemEventHandler):
             try:
                 self.behaviour.save()
             except Exception as exc:  # pylint: disable=broad-except
-                print(f"[watcher] behaviour.save failed: {exc}")
+                print(f"[watcher] behaviour.save failed: {exc}", file=sys.stderr)
 
         for rel_path in removed_rel_paths:
             try:
@@ -254,7 +255,7 @@ class RepoFileHandler(FileSystemEventHandler):
                 pass
 
         for rel_path in removed_rel_paths:
-            print(f"[watcher] removed {rel_path} from index")
+            print(f"[watcher] removed {rel_path} from index", file=sys.stderr)
 
     def _maybe_compact_faiss(self) -> None:
         """Reclaim dead/dangling ast_metadata.json rows once enough have piled up.
@@ -273,7 +274,7 @@ class RepoFileHandler(FileSystemEventHandler):
             if stats["dead"] + stats["dangling"] >= _FAISS_COMPACT_DEAD_THRESHOLD:
                 self.indexer.compact_faiss()
         except Exception as exc:  # pylint: disable=broad-except
-            print(f"[watcher] compact_faiss failed: {exc}")
+            print(f"[watcher] compact_faiss failed: {exc}", file=sys.stderr)
 
     def _write_last_watcher_reindex(
         self, reindexed: list[str], removed: list[str], error: str | None = None,
@@ -304,7 +305,7 @@ class RepoFileHandler(FileSystemEventHandler):
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(record, f, indent=2)
         except Exception as exc:  # pylint: disable=broad-except
-            print(f"[watcher] failed to write last_watcher_reindex.json: {exc}")
+            print(f"[watcher] failed to write last_watcher_reindex.json: {exc}", file=sys.stderr)
 
     # ── mutate-only helpers (no save/side-effects — used by flush()'s batch) ──
 
@@ -402,9 +403,9 @@ class RepoFileHandler(FileSystemEventHandler):
                 import logging as _logging  # pylint: disable=import-outside-toplevel
                 _logging.getLogger(__name__).warning("cache invalidation failed: %s", _exc)
 
-            print(f"[watcher] removed {rel_path} from index")
+            print(f"[watcher] removed {rel_path} from index", file=sys.stderr)
         except Exception as exc:  # pylint: disable=broad-except
-            print(f"[watcher] error removing {abs_path}: {exc}")
+            print(f"[watcher] error removing {abs_path}: {exc}", file=sys.stderr)
 
     def _reindex(self, abs_path: str) -> None:
         """
@@ -436,9 +437,9 @@ class RepoFileHandler(FileSystemEventHandler):
             except Exception:  # pylint: disable=broad-except
                 pass
 
-            print(f"[watcher] re-indexed {rel_path}")
+            print(f"[watcher] re-indexed {rel_path}", file=sys.stderr)
         except Exception as exc:  # pylint: disable=broad-except
-            print(f"[watcher] error re-indexing {abs_path}: {exc}")
+            print(f"[watcher] error re-indexing {abs_path}: {exc}", file=sys.stderr)
 
 
 def create_watcher(
