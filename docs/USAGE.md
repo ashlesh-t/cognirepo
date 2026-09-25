@@ -256,11 +256,16 @@ CogniRepo exposes 35 MCP tools over stdio transport (see [docs/MCP_TOOLS.md](MCP
 
 ### Circuit Breaker
 
-Prevents OOM by monitoring process RSS.
+Prevents OOM by monitoring process RSS. The default limit is `min(80% of system RAM, 3072 MB)`;
+override with the env var below or `circuit_breaker.rss_limit_mb` in `config.json`.
 
 ```bash
 export COGNIREPO_CB_RSS_LIMIT_MB=3000   # trip at 3 GB RSS
 ```
+
+`cognirepo serve` also runs a memory watchdog (samples RSS every 5 s). At 75% of the limit it
+evicts the embedding model/graph/indexer and runs `gc`; at the limit it trips the breaker so
+heavy operations shed load. It never kills the server; its actions are logged to stderr.
 
 ---
 
@@ -287,7 +292,7 @@ Safe to run on already-migrated configs.
 
 `cognirepo init` copies the packaged `.env.example` into the project root as `.env`.
 It is git-ignored and purely an **override layer** — every setting has a built-in
-default (circuit-breaker RSS limit: 80% of system RAM), so CogniRepo works fully
+default (circuit-breaker RSS limit: 80% of system RAM, capped at 3 GB), so CogniRepo works fully
 without a `.env`. The CLI/server resolve `.env` from the project directory upward
 (`find_dotenv(usecwd=True)`), never from the installed package location.
 
