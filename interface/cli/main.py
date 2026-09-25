@@ -472,11 +472,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     import importlib  # pylint: disable=import-outside-toplevel
 
     # ── version ───────────────────────────────────────────────────────────────
-    try:
-        from importlib.metadata import version as _pkg_version  # pylint: disable=import-outside-toplevel
-        _ver = _pkg_version("cognirepo")
-    except Exception:  # pylint: disable=broad-except
-        _ver = "dev"
+    from interface.cli import __version__ as _ver  # pylint: disable=import-outside-toplevel
 
     if not as_json:
         print(f"CogniRepo doctor — v{_ver}\n")
@@ -1072,6 +1068,54 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
                 _ok("Knowledge graph — no quarantined files")
     except Exception as _exc:  # pylint: disable=broad-except
         logger.debug("doctor: graph quarantine check failed: %s", _exc)
+
+    # ── Check 23: package importable from a neutral cwd ──────────────────────
+    # A stale editable install (e.g. left over from the pre-restructure layout)
+    # only resolves `interface`/`data`/`core` when cwd is the repo root, so
+    # `cognirepo serve` launched by an MCP client dies at import (#100).
+    try:
+        import subprocess as _sp  # pylint: disable=import-outside-toplevel
+        import tempfile as _tf  # pylint: disable=import-outside-toplevel
+        _probe_code = (
+            "import importlib.util, sys\n"
+            "try:\n"
+            "    ok = importlib.util.find_spec('interface.server.mcp_server') is not None\n"
+            "except ImportError:\n"
+            "    ok = False\n"
+            "sys.exit(0 if ok else 1)\n"
+        )
+        _env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        with _tf.TemporaryDirectory() as _neutral:
+            _r = _sp.run(
+                [sys.executable, "-c", _probe_code],
+                cwd=_neutral, env=_env, capture_output=True, timeout=30, check=False,
+            )
+        if _r.returncode != 0:
+            _fail(
+                "Install — interface.server.mcp_server is not importable outside the "
+                "repo directory (stale editable install?); `cognirepo serve` will fail "
+                "with CONNECTION_CLOSED",
+                _reinstall_hint(),
+            )
+            issues += 1
+        elif verbose:
+            _ok("Install — MCP server module importable from a neutral directory")
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: install importability check failed: %s", _exc)
+
+    # ── Check 24: installed metadata version vs source tree ──────────────────
+    try:
+        from importlib.metadata import version as _meta_version  # pylint: disable=import-outside-toplevel
+        _installed = _meta_version("cognirepo")
+        if _installed != _ver and _ver != "0.0.0+unknown":
+            _warn(
+                f"Install — installed metadata says v{_installed} but the code is v{_ver}",
+                _reinstall_hint(),
+            )
+        elif verbose:
+            _ok(f"Install — metadata version matches ({_ver})")
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: metadata version check failed: %s", _exc)
 
     # ── Check N: AI tool MCP configs (informational, not failures) ───────────
     _tool_checks = [
@@ -2585,15 +2629,20 @@ def _cmd_sessions(limit: int = 20) -> None:
         print(f"{short_id}  {created}  {exchanges:>2}x  \"{first_q}\"{marker}")
 
 
+def _reinstall_hint() -> str:
+    """Command that repairs a broken/stale cognirepo install for this checkout."""
+    from pathlib import Path  # pylint: disable=import-outside-toplevel
+    root = Path(__file__).resolve().parent.parent.parent
+    if (root / "pyproject.toml").exists():
+        return f"Run: {sys.executable} -m pip install -e {root}"
+    return "Run: pipx reinstall cognirepo   (or: pip install --force-reinstall cognirepo)"
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def _print_help() -> None:
     """Print a rich, formatted help screen for cognirepo."""
-    try:
-        from importlib.metadata import version as _pkg_ver  # pylint: disable=import-outside-toplevel
-        _ver = _pkg_ver("cognirepo")
-    except Exception:  # pylint: disable=broad-except
-        _ver = "dev"
+    from interface.cli import __version__ as _ver  # pylint: disable=import-outside-toplevel
 
     _C  = "\033[36m"    # cyan
     _G  = "\033[32m"    # green
@@ -3910,7 +3959,19 @@ def _main():
         sys.exit(0)
 
     if args.command == "serve":
-        from interface.server.mcp_server import run_server  # pylint: disable=import-outside-toplevel
+        try:
+            from interface.server.mcp_server import run_server  # pylint: disable=import-outside-toplevel
+        except ImportError as exc:
+            # MCP clients only report CONNECTION_CLOSED; stderr is where they (and
+            # `claude --debug`) look for the reason (#100).
+            print(
+                f"cognirepo serve: cannot import the MCP server: {exc}\n"
+                f"  interpreter: {sys.executable}\n"
+                f"  {_reinstall_hint()}\n"
+                "  Then run: cognirepo doctor",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         run_server(project_dir=getattr(args, "project_dir", None))
         return
 

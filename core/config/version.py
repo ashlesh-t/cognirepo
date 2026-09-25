@@ -33,7 +33,23 @@ def _project(key: str, fallback: str = "") -> str:
     return _load().get("project", {}).get(key, fallback)
 
 
-__version__: str = _project("version", "2.0.0")
+def _resolve_version() -> str:
+    """version.yml (source tree / editable install) wins; else installed metadata.
+
+    Installed-package metadata is frozen at install time, so a stale editable
+    install reports the version it was installed at, not the code that runs.
+    """
+    from_yml = _project("version")
+    if from_yml:
+        return str(from_yml)
+    try:
+        from importlib.metadata import version as _meta_version  # pylint: disable=import-outside-toplevel
+        return _meta_version("cognirepo")
+    except Exception:  # pylint: disable=broad-except
+        return "0.0.0+unknown"
+
+
+__version__: str = _resolve_version()
 APP_NAME: str = _project("name", "cognirepo")
 DESCRIPTION: str = _project("description", "Local cognitive infrastructure layer for AI agents")
 LICENSE: str = _project("license", "MIT")
