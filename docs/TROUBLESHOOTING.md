@@ -276,6 +276,16 @@ pip install --upgrade cognirepo
 
 ## General Fixes
 
+### Graph is empty / "encrypted but could not be decrypted"
+
+With `storage.encrypt: true`, every interpreter that touches `.cognirepo/` (the MCP server, the
+`UserPromptSubmit` hook) needs `keyring` and `cryptography`. If one lacks them, `graph.pkl` is
+left untouched (never quarantined) and saving is refused. Fix the interpreter, no reindex needed:
+```bash
+pipx inject cognirepo keyring cryptography   # or: pip install 'cognirepo[security]'
+cognirepo doctor                             # flags the missing packages
+```
+
 ### Full reset (nuclear option)
 
 Wipes all CogniRepo state and starts fresh:

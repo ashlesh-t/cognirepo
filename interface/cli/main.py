@@ -1073,6 +1073,32 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     except Exception as _exc:  # pylint: disable=broad-except
         logger.debug("doctor: graph quarantine check failed: %s", _exc)
 
+    # ── Check 22: encryption enabled but keyring/cryptography missing ────────
+    # Hooks and MCP servers may run under a different interpreter (e.g. a pipx
+    # venv) than the one that wrote the encrypted store. Without these two
+    # packages every encrypted store is unreadable there (COGNIREPO-97).
+    try:
+        from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
+        if get_storage_config()[0]:
+            _missing_sec = []
+            for _pkg in ("cryptography", "keyring"):
+                try:
+                    importlib.import_module(_pkg)
+                except ImportError:
+                    _missing_sec.append(_pkg)
+            if _missing_sec:
+                _fail(
+                    f"Encryption is on but {', '.join(_missing_sec)} not importable "
+                    f"in {sys.executable}",
+                    "Run: pipx inject cognirepo keyring cryptography  "
+                    "(or: pip install 'cognirepo[security]')",
+                )
+                issues += 1
+            elif verbose:
+                _ok("Encryption — keyring + cryptography available")
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: encryption deps check failed: %s", _exc)
+
     # ── Check N: AI tool MCP configs (informational, not failures) ───────────
     _tool_checks = [
         ("Claude Code", ".claude/settings.json", "mcpServers"),

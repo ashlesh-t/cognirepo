@@ -15,6 +15,8 @@ Persistence : pickle to .cognirepo/graph/graph.pkl
               On load failure (corruption, version drift, etc.) the unreadable file is
               quarantined to graph.pkl.corrupt-<unix_ts> and an empty graph is started —
               mirrors ast_indexer.py's ast_index.json .corrupt self-heal.
+              Exception: an intact but undecryptable (Fernet) file is never quarantined
+              and never overwritten — see GraphLockedError (COGNIREPO-97).
 """
 import os
 import pickle
@@ -70,6 +72,13 @@ PYTHON_BUILTINS: frozenset[str] = frozenset({
 })
 
 
+_FERNET_PREFIX = b"gAAAAA"  # every Fernet token starts with version byte 0x80, base64'd
+
+
+class GraphLockedError(RuntimeError):
+    """graph.pkl is encrypted and cannot be decrypted here; saving would destroy it."""
+
+
 def _graph_file() -> str:
     return get_path("graph/graph.pkl")
 
@@ -113,6 +122,8 @@ class KnowledgeGraph:
         # call inside a _repo_ctx() block names a different repo's graph.
         self._disk_stamp: tuple[int, int] | None = None
         self._disk_path: str | None = _graph_file()
+        # True when graph.pkl is ciphertext we could not decrypt; save() refuses.
+        self._locked = False
         self._load()
 
     # ── persistence ───────────────────────────────────────────────────────────
@@ -156,18 +167,35 @@ class KnowledgeGraph:
                 raw = f.read()
             from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
             encrypt, project_id = get_storage_config()
+            decrypt_error: Exception | None = None
             if encrypt:
                 from core.security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
                 try:
                     raw = decrypt_bytes(raw, get_or_create_key(project_id))
-                except Exception:  # pylint: disable=broad-except
+                except Exception as exc:  # pylint: disable=broad-except
                     # The file may have been written unencrypted (e.g. by a
                     # process that resolved the wrong config context before
                     # the _CTX_DIR fix). Fall through and try plaintext —
-                    # it will be encrypted on the next save(). A genuinely
-                    # encrypted-with-wrong-key file still fails the pickle
-                    # load below and is handled by the outer except.
-                    pass
+                    # it will be encrypted on the next save().
+                    decrypt_error = exc
+            if raw.startswith(_FERNET_PREFIX):
+                # Still ciphertext: decryption is unavailable (no keyring in
+                # this interpreter) or the key is wrong. The file is intact —
+                # do NOT quarantine it (COGNIREPO-97) and do NOT let save()
+                # overwrite it with the empty graph we start with here.
+                self._locked = True
+                self.G = nx.DiGraph()
+                self._disk_stamp = stamp
+                warnings.warn(
+                    f"KnowledgeGraph: {_graph_file()} is encrypted but could not be "
+                    f"decrypted ({decrypt_error or 'storage.encrypt is off'}). "
+                    "The file was left untouched; starting with an empty in-memory graph "
+                    "and refusing to save. Install the security extras in this interpreter "
+                    "(pipx inject cognirepo keyring cryptography).",
+                    stacklevel=2,
+                )
+                return
+            self._locked = False
             self.G = pickle.loads(raw)  # nosec B301
             self._disk_stamp = stamp
         except Exception as exc:  # pylint: disable=broad-except
@@ -200,6 +228,12 @@ class KnowledgeGraph:
         corrupting the pickle.
         """
         from data.memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+        if self._locked:
+            raise GraphLockedError(
+                f"{_graph_file()} is encrypted and could not be decrypted in this "
+                "interpreter; refusing to overwrite it with an empty graph. "
+                "Install keyring + cryptography (pipx inject cognirepo keyring cryptography)."
+            )
         breaker = get_breaker()
         breaker.check()
         os.makedirs(os.path.dirname(_graph_file()), exist_ok=True)
