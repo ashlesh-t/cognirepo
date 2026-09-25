@@ -11,6 +11,12 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [2.4.1] — 2026-09-18
 
 ### Fixed
+- **#99 — `[watcher:...]` lines on the MCP stdio stdout.** The auto-watcher started by
+  `cognirepo serve` printed status (`[watcher:<id>] started`, crash/stop messages in
+  `interface/cli/daemon.py`, and every `[watcher] re-indexed …`/error line in
+  `intelligence/indexer/file_watcher.py`) to stdout, corrupting the JSON-RPC stream. All now go to
+  stderr. Regression test spawns `serve`, triggers a watcher event and asserts every stdout line
+  is JSON (`tests/test_mcp_stdout_clean.py`).
 - **COGNIREPO-600-D01 — `benchmark.py`'s `REPO_ROOT` pointed at the wrong tree.** A refactor
   (`719cf60`) moved `benchmark.py` one directory deeper without updating its parent-count
   constant, so every `tests/fixtures/` golden-set lookup silently failed, and the
