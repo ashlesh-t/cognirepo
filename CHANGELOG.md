@@ -11,6 +11,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [2.4.1] — 2026-09-18
 
 ### Fixed
+- **#100 — stale editable install made `cognirepo serve` die at import with a bare
+  `CONNECTION_CLOSED`.** `serve` now catches the `ImportError` and prints the cause, the
+  interpreter and the reinstall command to stderr. `cognirepo doctor` gains two checks: the MCP
+  server module must resolve from a neutral cwd (fails loudly with the reinstall command), and
+  installed-metadata version vs code version (warns on drift). The version shown by the banner,
+  `doctor` and `--version` now comes from one place (`core.config.version`: `version.yml`, else
+  installed metadata) instead of three; its wrong `2.0.0` fallback is gone.
 - **COGNIREPO-600-D01 — `benchmark.py`'s `REPO_ROOT` pointed at the wrong tree.** A refactor
   (`719cf60`) moved `benchmark.py` one directory deeper without updating its parent-count
   constant, so every `tests/fixtures/` golden-set lookup silently failed, and the

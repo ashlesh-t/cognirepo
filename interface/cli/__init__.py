@@ -5,11 +5,10 @@
 # Licensed under MIT. See LICENSE file in repository root.
 
 try:
-    from importlib.metadata import version as _pkg_version
-    __version__: str = _pkg_version("cognirepo")
-except Exception:  # package not installed — fall back to version.yml
+    from core.config.version import __version__ as __version__  # single source: version.yml
+except Exception:  # pylint: disable=broad-except
     try:
-        from core.config.version import __version__ as _v  # type: ignore[import-untyped]
-        __version__ = _v
-    except Exception:
-        __version__ = "1.1.3"
+        from importlib.metadata import version as _pkg_version
+        __version__: str = _pkg_version("cognirepo")
+    except Exception:  # pylint: disable=broad-except
+        __version__ = "0.0.0+unknown"
