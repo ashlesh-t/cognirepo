@@ -11,6 +11,11 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [2.4.1] — 2026-09-18
 
 ### Fixed
+- **#98 — OOM-kill safety net (root cause of the 5 GB growth still unidentified).** The circuit
+  breaker's default RSS limit was 80 % of total RAM (~12 GB on a 15 GB host), so it could never
+  trip before the kernel OOM killer; it is now `min(80 % RAM, 3072 MB)`. The MCP server also runs
+  a memory watchdog (`interface/server/memory_watchdog.py`): at 75 % of the limit it evicts
+  heavy resources and runs `gc`, at the limit it trips the breaker so heavy ops shed load.
 - **COGNIREPO-600-D01 — `benchmark.py`'s `REPO_ROOT` pointed at the wrong tree.** A refactor
   (`719cf60`) moved `benchmark.py` one directory deeper without updating its parent-count
   constant, so every `tests/fixtures/` golden-set lookup silently failed, and the

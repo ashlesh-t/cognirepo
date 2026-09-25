@@ -2450,6 +2450,13 @@ def run_server(project_dir: str | None = None) -> None:
             pass
     _threading.Thread(target=_prewarm, daemon=True, name="cognirepo-prewarm").start()
 
+    # Degrade (evict + shed load) instead of growing until the kernel OOM-kills us (#98).
+    try:
+        from interface.server.memory_watchdog import start_memory_watchdog  # pylint: disable=import-outside-toplevel
+        start_memory_watchdog([_idle.force_evict])
+    except Exception:  # pylint: disable=broad-except
+        logger.exception("memory watchdog failed to start")
+
     mcp.run(transport="stdio")
 
 
