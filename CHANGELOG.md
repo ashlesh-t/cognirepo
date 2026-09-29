@@ -20,6 +20,11 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [2.4.1] — 2026-09-18
 
 ### Fixed
+- **#98 — OOM-kill safety net (root cause of the 5 GB growth still unidentified).** The circuit
+  breaker's default RSS limit was 80 % of total RAM (~12 GB on a 15 GB host), so it could never
+  trip before the kernel OOM killer; it is now `min(80 % RAM, 3072 MB)`. The MCP server also runs
+  a memory watchdog (`interface/server/memory_watchdog.py`): at 75 % of the limit it evicts
+  heavy resources and runs `gc`, at the limit it trips the breaker so heavy ops shed load.
 - **#100 — stale editable install made `cognirepo serve` die at import with a bare
   `CONNECTION_CLOSED`.** `serve` now catches the `ImportError` and prints the cause, the
   interpreter and the reinstall command to stderr. `cognirepo doctor` gains two checks: the MCP

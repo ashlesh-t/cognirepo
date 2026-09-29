@@ -16,7 +16,7 @@ HALF_OPEN— a probe call is allowed to test whether pressure has lifted
 
 Thresholds (configurable via .cognirepo/config.json or environment)
 -----------
-COGNIREPO_CB_RSS_LIMIT_MB   — RSS limit in MB (default: 80 % of total system RAM)
+COGNIREPO_CB_RSS_LIMIT_MB   — RSS limit in MB (default: min(80 % of total RAM, 3072 MB))
 COGNIREPO_CB_COOLDOWN_SEC   — seconds to wait in OPEN before retrying (default: 30)
 
 Usage
@@ -89,6 +89,13 @@ def _rss_mb() -> float:
     return 0.0
 
 
+# A CogniRepo process working on a normal store peaks well under 1 GB, so an
+# absolute ceiling is what actually protects the host: "80 % of RAM" is ~12 GB
+# on a 15 GB laptop and never trips before the kernel OOM killer does (#98).
+# Raise it via COGNIREPO_CB_RSS_LIMIT_MB or config circuit_breaker.rss_limit_mb.
+_DEFAULT_RSS_CAP_MB = 3072.0
+
+
 def _default_limit_mb() -> float:
     env_val = os.environ.get("COGNIREPO_CB_RSS_LIMIT_MB", "")
     if env_val:
@@ -106,7 +113,7 @@ def _default_limit_mb() -> float:
             return float(limit)
     except (OSError, json.JSONDecodeError, KeyError):
         pass
-    return _total_ram_mb() * 0.80  # 80 % of total RAM
+    return min(_total_ram_mb() * 0.80, _DEFAULT_RSS_CAP_MB)
 
 
 def _cooldown_sec() -> float:
