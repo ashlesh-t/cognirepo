@@ -459,3 +459,84 @@ class TestDoctorWorkingTreeDirty:
         out = capsys.readouterr().out
 
         assert "Working tree" not in out
+
+
+# ── #100: stale editable install detection + single-source version ───────────
+# pylint: disable=wrong-import-position,ungrouped-imports,import-outside-toplevel,protected-access
+import subprocess  # noqa: E402
+from pathlib import Path  # noqa: E402
+from unittest import mock  # noqa: E402
+
+import pytest  # noqa: E402
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _pyproject_version() -> str:
+    for line in (ROOT / "pyproject.toml").read_text().splitlines():
+        if line.startswith("version"):
+            return line.split("=")[1].strip().strip('"')
+    raise AssertionError("no version in pyproject.toml")
+
+
+def test_all_version_surfaces_agree_with_source():
+    from core.config.version import __version__ as core_v
+    from interface.cli import __version__ as cli_v
+    assert cli_v == core_v == _pyproject_version()
+
+
+def test_version_falls_back_to_metadata_without_version_yml(monkeypatch):
+    from core.config import version as v
+    monkeypatch.setattr(v, "_project", lambda key, fallback="": fallback)
+    with mock.patch("importlib.metadata.version", return_value="9.9.9"):
+        assert v._resolve_version() == "9.9.9"
+    with mock.patch("importlib.metadata.version", side_effect=Exception("nope")):
+        assert v._resolve_version() == "0.0.0+unknown"
+
+
+def test_doctor_passes_when_install_is_importable(capsys, monkeypatch):
+    assert _run_doctor(capsys, monkeypatch) == 0
+
+
+def test_doctor_fails_loudly_on_stale_install(capsys, monkeypatch):
+    real_run = subprocess.run
+
+    def fake_run(cmd, *a, **kw):
+        if isinstance(cmd, list) and cmd[:2] == [sys.executable, "-c"] and "find_spec" in cmd[2]:
+            return subprocess.CompletedProcess(cmd, 1, b"", b"")
+        return real_run(cmd, *a, **kw)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    code = _run_doctor(capsys, monkeypatch)
+    out = capsys.readouterr().out
+    assert code >= 2
+    assert "not importable" in out
+    assert "pip install -e" in out
+
+
+def test_neutral_cwd_probe_really_detects_missing_module(tmp_path):
+    """The probe code doctor runs must exit non-zero for a module that does not resolve."""
+    code = (
+        "import importlib.util, sys\n"
+        "try:\n"
+        "    ok = importlib.util.find_spec('interface.server.does_not_exist') is not None\n"
+        "except ImportError:\n"
+        "    ok = False\n"
+        "sys.exit(0 if ok else 1)\n"
+    )
+    r = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, capture_output=True, check=False,
+                       env={"PYTHONPATH": str(ROOT)})
+    assert r.returncode == 1
+
+
+def test_serve_reports_import_failure_on_stderr(capsys, monkeypatch):
+    from interface.cli import main as cli_main
+    monkeypatch.setitem(sys.modules, "interface.server.mcp_server", None)  # forces ImportError
+    monkeypatch.setattr(sys, "argv", ["cognirepo", "serve"])
+    with pytest.raises(SystemExit) as exc:
+        cli_main.main()
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "cannot import the MCP server" in err
+    assert sys.executable in err
+    assert "cognirepo doctor" in err
