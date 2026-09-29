@@ -9,6 +9,15 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Fixed
+- **#107 — knowledge graph never saved on medium/large repos (circuit breaker trips at `kg.save()`).**
+  `index-repo` on a real-world repo (celery: 416 files, 10,668 embedded symbols) peaked at 5276 MB
+  RSS at graph-save time, above even the pre-existing 4000 MB self-raised ceiling — the graph was
+  silently skipped every run. Root cause: the cached embedding model (~2 GB: ONNX session +
+  tokenizer) stayed resident through `kg.save()`, on top of the graph itself. `_direct_index()` now
+  evicts the model (`data.memory.embeddings.evict_model()`) right before saving — it's reloaded
+  cheaply at the next embed call — and retries once after the breaker's own cooldown if it still
+  trips. `CircuitBreaker` gained a public `cooldown` property. Verified live: the celery graph now
+  saves (10,936 nodes / 57,987 edges) with no breaker trip.
 - **#97 — encrypted `graph.pkl` silently quarantined when `keyring` is missing.** With
   `storage.encrypt: true`, a hook/server interpreter lacking `keyring` could not decrypt, so
   `KnowledgeGraph._load()` unpickled ciphertext, judged the file corrupt and moved it to

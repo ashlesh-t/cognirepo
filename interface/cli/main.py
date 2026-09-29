@@ -2127,20 +2127,40 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
     # Free large in-memory objects (FAISS index, AST dicts, pending embeds) before
     # serializing the graph — reduces RSS by ~400–700 MB on large repos.
     indexer.free_large_objects()
+    # The cached embedding model (~2 GB resident: ONNX session + tokenizer) is not
+    # needed again until stage 2 (summarizer) below, which tolerates the ~2-5s
+    # reload. Evicting it here was the gap that let kg.save() trip the circuit
+    # breaker on medium/large repos even after the 4000 MB self-raise above
+    # (COGNIREPO-107 — confirmed live: celery, 10,668 embedded symbols, peaked
+    # at 5276 MB at save time with the model still resident).
+    if embed:
+        from data.memory.embeddings import evict_model  # pylint: disable=import-outside-toplevel
+        evict_model()
 
-    try:
-        kg.save()
-    except Exception as _kg_exc:  # pylint: disable=broad-except
-        _exc_name = type(_kg_exc).__name__
-        if "CircuitOpen" in _exc_name or "CircuitBreaker" in _exc_name:
-            print(
-                f"  ⚠  Knowledge graph not saved (memory limit hit). "
-                "AST index and embeddings are intact. "
-                "Re-run with --no-graph to disable graph, or set "
-                "COGNIREPO_CB_RSS_LIMIT_MB=4000 to raise the memory limit."
-            )
-        else:
-            raise
+    def _save_graph() -> bool:
+        """Try kg.save(); on a circuit-breaker trip, wait out its cooldown and
+        retry once (the breaker's own HALF_OPEN semantics — nothing previously
+        acted on the "will retry in 30s" it logs). Returns whether it saved."""
+        from data.memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+        for _attempt in range(2):
+            try:
+                kg.save()
+                return True
+            except Exception as _kg_exc:  # pylint: disable=broad-except
+                _exc_name = type(_kg_exc).__name__
+                if "CircuitOpen" not in _exc_name and "CircuitBreaker" not in _exc_name:
+                    raise
+                if _attempt == 0:
+                    time.sleep(get_breaker().cooldown + 1)
+        return False
+
+    if not _save_graph():
+        print(
+            "  ⚠  Knowledge graph not saved (memory limit hit, retried once). "
+            "AST index and embeddings are intact. "
+            "Re-run with --no-graph to disable graph, or set "
+            "COGNIREPO_CB_RSS_LIMIT_MB=6000 to raise the memory limit."
+        )
 
     # ── Stage 2: file-summary vectors (summarizer → FAISS) ───────────────────
     if embed:
