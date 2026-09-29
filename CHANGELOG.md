@@ -8,6 +8,15 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Fixed
+- **#97 — encrypted `graph.pkl` silently quarantined when `keyring` is missing.** With
+  `storage.encrypt: true`, a hook/server interpreter lacking `keyring` could not decrypt, so
+  `KnowledgeGraph._load()` unpickled ciphertext, judged the file corrupt and moved it to
+  `graph.pkl.corrupt-<ts>`. A file that is still a Fernet token after the decrypt attempt is now
+  left untouched, the graph starts empty in memory, and `save()` raises `GraphLockedError` rather
+  than overwrite it. `cognirepo doctor` gains a check that `keyring` + `cryptography` are
+  importable when encryption is on.
+
 ## [2.4.1] — 2026-09-18
 
 ### Fixed
