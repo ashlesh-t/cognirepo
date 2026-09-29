@@ -154,6 +154,59 @@ class TestKnowledgeGraphIntegrity:
         assert report2["dangling_files"] == []
 
 
+class TestEncryptedGraphWithoutKeyring:
+    """COGNIREPO-97: undecryptable (Fernet) graph.pkl must never be quarantined or overwritten."""
+
+    CIPHERTEXT = b"gAAAAA" + b"B" * 200
+
+    def _setup(self, monkeypatch):
+        import sys
+        import core.security as sec
+        from data.graph.knowledge_graph import _graph_file
+
+        monkeypatch.setattr(sec, "get_storage_config", lambda: (True, "proj"))
+        monkeypatch.setitem(sys.modules, "keyring", None)  # ImportError on import
+        path = _graph_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(self.CIPHERTEXT)
+        return path
+
+    def test_missing_keyring_does_not_quarantine(self, tmp_path, monkeypatch):
+        import glob
+        import warnings
+        from data.graph.knowledge_graph import KnowledgeGraph
+
+        path = self._setup(monkeypatch)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            kg = KnowledgeGraph()  # must not raise
+
+        assert kg.G.number_of_nodes() == 0
+        assert os.path.exists(path)
+        assert open(path, "rb").read() == self.CIPHERTEXT
+        assert glob.glob(path + ".corrupt-*") == []
+        assert any("keyring" in str(w.message) for w in caught)
+
+    def test_locked_graph_refuses_to_save(self, tmp_path, monkeypatch):
+        import pytest
+        from data.graph.knowledge_graph import GraphLockedError, KnowledgeGraph
+
+        path = self._setup(monkeypatch)
+        kg = KnowledgeGraph()
+        kg.add_node("x", "CONCEPT")
+        with pytest.raises(GraphLockedError):
+            kg.save()
+        assert open(path, "rb").read() == self.CIPHERTEXT
+
+    def test_reload_if_changed_does_not_reload_loop(self, tmp_path, monkeypatch):
+        from data.graph.knowledge_graph import KnowledgeGraph
+
+        self._setup(monkeypatch)
+        kg = KnowledgeGraph()
+        assert kg.reload_if_changed() is False
+
+
 class TestKnowledgeGraphCorruptionQuarantine:
     """COGNIREPO-103 AC2: a corrupt graph.pkl is quarantined, not silently overwritten."""
 

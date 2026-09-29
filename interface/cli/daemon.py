@@ -295,13 +295,13 @@ def _run_watcher_loop(create_fn, stop_fn, watcher_path, session_id, restart_dela
         observer = None
         try:
             observer = create_fn()
-            print(f"[watcher:{session_id}] started (pid={pid}, path={watcher_path})", flush=True)
+            print(f"[watcher:{session_id}] started (pid={pid}, path={watcher_path})", file=sys.stderr, flush=True)
             while observer.is_alive():
                 time.sleep(1)
-            print(f"[watcher:{session_id}] observer exited cleanly.", flush=True)
+            print(f"[watcher:{session_id}] observer exited cleanly.", file=sys.stderr, flush=True)
             break  # clean exit — don't restart
         except KeyboardInterrupt:
-            print(f"[watcher:{session_id}] stopped by user.", flush=True)
+            print(f"[watcher:{session_id}] stopped by user.", file=sys.stderr, flush=True)
             # COGNIREPO-D05: this is the primary real-world shutdown path
             # (Ctrl+C / SIGTERM both raise KeyboardInterrupt here) — without
             # calling stop_fn(), _flush_and_stop_observer()'s flush() never
@@ -315,7 +315,7 @@ def _run_watcher_loop(create_fn, stop_fn, watcher_path, session_id, restart_dela
         except Exception as exc:  # pylint: disable=broad-except
             print(
                 f"[watcher:{session_id}] CRASH: {exc} — restarting in {restart_delay}s",
-                flush=True,
+                file=sys.stderr, flush=True,
             )
             if observer is not None:
                 try:

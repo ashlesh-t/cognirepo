@@ -276,6 +276,28 @@ pip install --upgrade cognirepo
 
 ## General Fixes
 
+### Graph is empty / "encrypted but could not be decrypted"
+
+With `storage.encrypt: true`, every interpreter that touches `.cognirepo/` (the MCP server, the
+`UserPromptSubmit` hook) needs `keyring` and `cryptography`. If one lacks them, `graph.pkl` is
+left untouched (never quarantined) and saving is refused. Fix the interpreter, no reindex needed:
+```bash
+pipx inject cognirepo keyring cryptography   # or: pip install 'cognirepo[security]'
+cognirepo doctor                             # flags the missing packages
+```
+
+### `cognirepo serve` exits immediately / Claude Code shows `CONNECTION_CLOSED`
+
+Usually a stale editable install (e.g. left over from an older repo layout): `interface`,
+`data`, `core` only resolve when your cwd is the repo root, so an MCP client launching
+`cognirepo serve` from elsewhere dies at import. `serve` now prints the import error, the
+interpreter and the fix to stderr, and `cognirepo doctor` checks importability from a neutral
+directory and compares the installed metadata version with the code's version:
+```bash
+pip install -e /path/to/cognirepo      # source checkout
+pipx reinstall cognirepo               # pipx install
+```
+
 ### Full reset (nuclear option)
 
 Wipes all CogniRepo state and starts fresh:

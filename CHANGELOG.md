@@ -8,6 +8,15 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Fixed
+- **#97 — encrypted `graph.pkl` silently quarantined when `keyring` is missing.** With
+  `storage.encrypt: true`, a hook/server interpreter lacking `keyring` could not decrypt, so
+  `KnowledgeGraph._load()` unpickled ciphertext, judged the file corrupt and moved it to
+  `graph.pkl.corrupt-<ts>`. A file that is still a Fernet token after the decrypt attempt is now
+  left untouched, the graph starts empty in memory, and `save()` raises `GraphLockedError` rather
+  than overwrite it. `cognirepo doctor` gains a check that `keyring` + `cryptography` are
+  importable when encryption is on.
+
 ## [2.4.1] — 2026-09-18
 
 ### Fixed
@@ -16,6 +25,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
   trip before the kernel OOM killer; it is now `min(80 % RAM, 3072 MB)`. The MCP server also runs
   a memory watchdog (`interface/server/memory_watchdog.py`): at 75 % of the limit it evicts
   heavy resources and runs `gc`, at the limit it trips the breaker so heavy ops shed load.
+- **#100 — stale editable install made `cognirepo serve` die at import with a bare
+  `CONNECTION_CLOSED`.** `serve` now catches the `ImportError` and prints the cause, the
+  interpreter and the reinstall command to stderr. `cognirepo doctor` gains two checks: the MCP
+  server module must resolve from a neutral cwd (fails loudly with the reinstall command), and
+  installed-metadata version vs code version (warns on drift). The version shown by the banner,
+  `doctor` and `--version` now comes from one place (`core.config.version`: `version.yml`, else
+  installed metadata) instead of three; its wrong `2.0.0` fallback is gone.
 - **COGNIREPO-600-D01 — `benchmark.py`'s `REPO_ROOT` pointed at the wrong tree.** A refactor
   (`719cf60`) moved `benchmark.py` one directory deeper without updating its parent-count
   constant, so every `tests/fixtures/` golden-set lookup silently failed, and the
