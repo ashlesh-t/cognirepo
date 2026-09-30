@@ -306,3 +306,127 @@ def test_cmd_update_directives_function():
 def test_main_dispatch_additional_commands(cmd):
     res = _run(*cmd)
     assert res.returncode in (0, 1, 2)
+
+
+# ── COGNIREPO-107: _direct_index evicts the embedding model before kg.save(),
+# and retries a circuit-breaker-blocked save once after its cooldown ─────────
+
+class _FakeCircuitOpenError(Exception):
+    """Stand-in for CircuitOpenError — matched by name, not type, in _direct_index."""
+
+
+class _StubASTIndexer:
+    def __init__(self, graph=None, progress_factory=None):  # pylint: disable=unused-argument
+        self.graph = graph
+
+    def index_repo(self, *_a, **_kw):
+        return {"symbols": 0, "files": 0, "tier2_queued": 0}
+
+    def free_large_objects(self):
+        pass
+
+
+def _patch_direct_index_deps(monkeypatch, fake_kg_cls):
+    import data.graph.knowledge_graph as kg_mod
+    import intelligence.indexer.ast_indexer as ast_mod
+    monkeypatch.setattr(kg_mod, "KnowledgeGraph", fake_kg_cls)
+    monkeypatch.setattr(ast_mod, "ASTIndexer", _StubASTIndexer)
+
+
+class TestDirectIndexGraphSave:
+    def test_evicts_model_before_kg_save_when_embed_true(self, tmp_path, monkeypatch):
+        calls = []
+
+        class _FakeKG:
+            def save(self):
+                calls.append("save")
+
+        _patch_direct_index_deps(monkeypatch, _FakeKG)
+        import data.memory.embeddings as emb_mod
+        monkeypatch.setattr(emb_mod, "evict_model", lambda: calls.append("evict"))
+
+        from interface.cli.main import _direct_index
+        _direct_index(str(tmp_path), embed=True, skip_graph=True)
+
+        assert calls == ["evict", "save"]
+
+    def test_does_not_evict_model_when_embed_false(self, tmp_path, monkeypatch):
+        calls = []
+
+        class _FakeKG:
+            def save(self):
+                calls.append("save")
+
+        _patch_direct_index_deps(monkeypatch, _FakeKG)
+        import data.memory.embeddings as emb_mod
+        monkeypatch.setattr(emb_mod, "evict_model", lambda: calls.append("evict"))
+
+        from interface.cli.main import _direct_index
+        _direct_index(str(tmp_path), embed=False, skip_graph=True)
+
+        assert calls == ["save"]
+
+    def test_retries_once_after_circuit_breaker_trip_then_succeeds(self, tmp_path, monkeypatch, capsys):
+        attempts = []
+
+        class _FakeKG:
+            def save(self):
+                attempts.append(1)
+                if len(attempts) == 1:
+                    raise _FakeCircuitOpenError("RSS over limit")
+
+        _patch_direct_index_deps(monkeypatch, _FakeKG)
+        import data.memory.embeddings as emb_mod
+        monkeypatch.setattr(emb_mod, "evict_model", lambda: None)
+
+        import interface.cli.main as main_mod
+        slept = []
+        monkeypatch.setattr(main_mod.time, "sleep", lambda s: slept.append(s))
+
+        class _FakeBreaker:
+            cooldown = 30.0
+        import data.memory.circuit_breaker as cb_mod
+        monkeypatch.setattr(cb_mod, "get_breaker", lambda: _FakeBreaker())
+
+        from interface.cli.main import _direct_index
+        _direct_index(str(tmp_path), embed=False, skip_graph=True)
+
+        assert len(attempts) == 2  # first trip, second succeeds
+        assert slept == [31.0]  # cooldown + 1, as implemented
+        assert "not saved" not in capsys.readouterr().out
+
+    def test_warns_once_after_exhausting_retry(self, tmp_path, monkeypatch, capsys):
+        class _FakeKG:
+            def save(self):
+                raise _FakeCircuitOpenError("still over limit")
+
+        _patch_direct_index_deps(monkeypatch, _FakeKG)
+        import data.memory.embeddings as emb_mod
+        monkeypatch.setattr(emb_mod, "evict_model", lambda: None)
+
+        import interface.cli.main as main_mod
+        monkeypatch.setattr(main_mod.time, "sleep", lambda s: None)
+
+        class _FakeBreaker:
+            cooldown = 30.0
+        import data.memory.circuit_breaker as cb_mod
+        monkeypatch.setattr(cb_mod, "get_breaker", lambda: _FakeBreaker())
+
+        from interface.cli.main import _direct_index
+        _direct_index(str(tmp_path), embed=False, skip_graph=True)  # must not raise
+
+        out = capsys.readouterr().out
+        assert "Knowledge graph not saved" in out
+
+    def test_non_circuit_exception_from_save_propagates(self, tmp_path, monkeypatch):
+        class _FakeKG:
+            def save(self):
+                raise ValueError("unrelated failure")
+
+        _patch_direct_index_deps(monkeypatch, _FakeKG)
+        import data.memory.embeddings as emb_mod
+        monkeypatch.setattr(emb_mod, "evict_model", lambda: None)
+
+        from interface.cli.main import _direct_index
+        with pytest.raises(Exception):  # propagates out of _direct_index's caller's try/except
+            _direct_index(str(tmp_path), embed=False, skip_graph=True)

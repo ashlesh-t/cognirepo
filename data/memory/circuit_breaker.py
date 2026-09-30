@@ -170,6 +170,11 @@ class CircuitBreaker:
         """Return the list of configured probes (read-only view)."""
         return list(self._probes)
 
+    @property
+    def cooldown(self) -> float:
+        """Seconds a caller should wait before probing again after a trip."""
+        return self._cooldown
+
     def _run_probes(self) -> tuple[bool, str]:
         """Run all probes; return (all_ok, first_failure_reason)."""
         for probe in self._probes:
