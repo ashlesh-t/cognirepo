@@ -20,6 +20,7 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from core.config.paths import get_path
+from data.memory.episodic_schema import EVENT, METADATA, METADATA_TYPE, TIME
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,7 @@ def _build_bm25(data: list):
     corpus: list[list[str]] = []
     event_ids: list[str] = []
     for entry in data:
-        text = entry.get("event", "") + " " + json.dumps(entry.get("metadata", {}))
+        text = entry.get(EVENT, "") + " " + json.dumps(entry.get(METADATA, {}))
         corpus.append(_tokenize(text))
         event_ids.append(entry["id"])
 
@@ -219,9 +220,9 @@ def log_event(event: str, metadata: dict = None) -> None:
     data = _rotate_if_needed(data)
     entry = {
         "id": _next_event_id(data),
-        "event": event,
-        "metadata": metadata or {},
-        "time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        EVENT: event,
+        METADATA: metadata or {},
+        TIME: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
     if data:
         entry["prev"] = data[-1]["id"]
@@ -293,7 +294,7 @@ def _semantic_episode_search(data: list, query: str, limit: int) -> list:
 
         scored = []
         for entry in data:
-            text = entry.get("event", "") or str(entry.get("metadata", ""))
+            text = entry.get(EVENT, "") or str(entry.get(METADATA, ""))
             if not text:
                 continue
             eid = entry.get("id")
@@ -424,7 +425,7 @@ def find_consolidation_candidates(
     cutoff = _parse_since(since)
     pool = [
         e for e in data
-        if _parse_ts(e.get("time")) >= cutoff and (e.get("metadata") or {}).get("type") != "decision"
+        if _parse_ts(e.get(TIME)) >= cutoff and (e.get(METADATA) or {}).get(METADATA_TYPE) != "decision"
     ]
     if len(pool) < min_group_size:
         return []
@@ -444,7 +445,7 @@ def find_consolidation_candidates(
         eid = entry["id"]
         if eid in visited:
             continue
-        tokens = _tokenize(entry.get("event", ""))
+        tokens = _tokenize(entry.get(EVENT, ""))
         if not tokens:
             continue
         scores = bm25.get_scores(tokens)
@@ -461,7 +462,7 @@ def find_consolidation_candidates(
         if len(group_ids) < min_group_size:
             continue
         visited.update(group_ids)
-        summary = entry.get("event", "")[:200]
+        summary = entry.get(EVENT, "")[:200]
         candidates.append({
             "group_summary": summary,
             "episode_ids": group_ids,
@@ -505,7 +506,7 @@ def mark_stale(file_path: str) -> int:
     for entry in data:
         if entry.get("stale"):
             continue
-        combined = entry.get("event", "") + json.dumps(entry.get("metadata", {}))
+        combined = entry.get(EVENT, "") + json.dumps(entry.get(METADATA, {}))
         if file_path in combined:
             entry["stale"] = True
             entry["stale_reason"] = "file_deleted"

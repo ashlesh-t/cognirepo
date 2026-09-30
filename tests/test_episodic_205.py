@@ -180,3 +180,63 @@ class TestNoDeprecatedUtcnow:
         import data.memory.episodic_memory as em
         source = inspect.getsource(em)
         assert "datetime.utcnow()" not in source
+
+
+# ── COGNIREPO-95: episodic_schema.py constants (folded in to keep the FEATURES.md test-file count stable) ──
+
+
+class TestEpisodicSchemaConstants:
+    def test_constant_values(self):
+        from data.memory.episodic_schema import EVENT, METADATA, METADATA_TYPE, TIME
+        assert (EVENT, METADATA, TIME, METADATA_TYPE) == ("event", "metadata", "time", "type")
+
+    def test_episodic_memory_uses_the_constants_not_literals(self):
+        import inspect
+        import data.memory.episodic_memory as em
+        source = inspect.getsource(em)
+        assert 'entry.get("event"' not in source
+        assert 'entry.get("metadata"' not in source
+        assert 'e.get("time")' not in source
+        assert '"event": event' not in source  # dict-construction site in log_event()
+
+    def test_timeline_uses_the_constants_not_literals(self):
+        import inspect
+        import data.memory.timeline as tl
+        source = inspect.getsource(tl)
+        assert 'e.get("metadata"' not in source
+        assert 'e.get("time")' not in source
+        assert 'e.get("event"' not in source
+        assert 'meta.get("type")' not in source
+
+    def test_log_event_writes_the_schema_keys(self, tmp_path, monkeypatch):
+        """End-to-end: log_event() actually writes EVENT/METADATA/TIME, not
+        some other spelling — the constants module isn't just decorative."""
+        from core.config.paths import set_cognirepo_dir
+        set_cognirepo_dir(str(tmp_path / ".cognirepo"))
+        monkeypatch.chdir(tmp_path)
+
+        from data.memory.episodic_schema import EVENT, METADATA, TIME
+        from data.memory.episodic_memory import log_event, _load
+
+        log_event("schema constants smoke test", metadata={"k": "v"})
+        entry = _load()[-1]
+        assert entry[EVENT] == "schema constants smoke test"
+        assert entry[METADATA] == {"k": "v"}
+        assert TIME in entry
+
+    def test_timeline_merge_reads_a_real_logged_event(self, tmp_path, monkeypatch):
+        """timeline.merge() correctly reads back a decision-shaped event written
+        by log_event() (the shape interface/server/mcp_server.py::record_decision
+        wraps), end-to-end through the shared schema constants."""
+        from core.config.paths import set_cognirepo_dir
+        set_cognirepo_dir(str(tmp_path / ".cognirepo"))
+        monkeypatch.chdir(tmp_path)
+
+        from data.memory.episodic_memory import log_event
+        from data.memory.timeline import merge
+
+        log_event("decision: use schema constants", metadata={
+            "type": "decision", "summary": "use schema constants",
+        })
+        entries = merge(since="7d")
+        assert any(e["kind"] == "decision" and "schema constants" in e["summary"] for e in entries)
