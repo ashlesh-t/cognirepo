@@ -12,6 +12,7 @@ tests/test_graph.py — knowledge graph node/edge/traversal/serialise tests.
 from __future__ import annotations
 
 import os
+import pickle
 
 
 class TestKnowledgeGraph:
@@ -77,6 +78,18 @@ class TestKnowledgeGraph:
         kg2 = KnowledgeGraph()
         assert kg2.node_exists("persist_me")
         assert kg2.node_exists("persist_file")
+
+    def test_save_streams_pickle_without_encryption(self):
+        """COGNIREPO-107 follow-up: plaintext save() streams pickle.dump()
+        straight to the file handle (no pickle.dumps() byte-buffer copy)."""
+        from data.graph.knowledge_graph import KnowledgeGraph, NodeType, _graph_file
+        kg = KnowledgeGraph()
+        kg.add_node("streamed", NodeType.FUNCTION)
+        kg.save()
+        with open(_graph_file(), "rb") as f:
+            raw = f.read()
+        assert not raw.startswith(b"gAAAAA")  # not Fernet — this is a raw pickle
+        assert pickle.loads(raw).has_node("streamed")
 
     def test_idempotent_add_node(self):
         from data.graph.knowledge_graph import KnowledgeGraph, NodeType

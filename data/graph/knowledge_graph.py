@@ -239,10 +239,6 @@ class KnowledgeGraph:
         os.makedirs(os.path.dirname(_graph_file()), exist_ok=True)
         from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
-        raw = pickle.dumps(self.G, protocol=pickle.HIGHEST_PROTOCOL)
-        if encrypt:
-            from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
-            raw = encrypt_bytes(raw, get_or_create_key(project_id))
         with store_lock():
             # Atomic promote. A plain open("wb") leaves graph.pkl truncated for
             # the duration of the write, and readers (MCP server revalidation,
@@ -254,10 +250,27 @@ class KnowledgeGraph:
                 dir=directory, prefix=os.path.basename(_graph_file()) + ".", suffix=".tmp",
             )
             try:
-                with os.fdopen(fd, "wb") as f:
-                    f.write(raw)
-                    f.flush()
-                    os.fsync(f.fileno())
+                if encrypt:
+                    # Fernet isn't a streaming cipher — encrypt_bytes() needs the
+                    # complete plaintext to compute its MAC, so there is no way to
+                    # avoid holding one full serialized copy in memory here (see
+                    # COGNIREPO-107 PR discussion). Unavoidable extra buffer is the
+                    # graph's own pickle size (single-digit MB on repos tested so
+                    # far), not the dominant cost — the cached embedding model was.
+                    from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+                    raw = pickle.dumps(self.G, protocol=pickle.HIGHEST_PROTOCOL)
+                    raw = encrypt_bytes(raw, get_or_create_key(project_id))
+                    with os.fdopen(fd, "wb") as f:
+                        f.write(raw)
+                        f.flush()
+                        os.fsync(f.fileno())
+                else:
+                    # Unencrypted path: stream the pickle straight to disk — no
+                    # intermediate in-memory byte buffer of the whole graph.
+                    with os.fdopen(fd, "wb") as f:
+                        pickle.dump(self.G, f, protocol=pickle.HIGHEST_PROTOCOL)
+                        f.flush()
+                        os.fsync(f.fileno())
                 os.replace(tmp_path, _graph_file())
             except BaseException:
                 try:
