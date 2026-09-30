@@ -1,8 +1,9 @@
 # RCA — `cognirepo` OOM-killed at ~5.2 GB RSS (issue #98)
 
-**Status: OPEN — root cause not found.** This document records what is confirmed, what has
-been ruled out, the mitigation already shipped, a repro attempt run today, and what's left.
-Tracking follow-up: #105. Mitigation PR: #102 (`fix/COGNIREPO-98-memory-guard`).
+**Status: root cause found and fixed (2026-10-01), pending verified reproduction of the exact
+original incident.** §6 has the finding. This document also records what was confirmed/ruled out
+along the way, the mitigation shipped first, and an earlier repro attempt that didn't reproduce it.
+Tracking follow-up: #105. Mitigation PR: #102. Root-cause fix PR: see §6.
 
 ## 1. Incident (from #98)
 
@@ -75,3 +76,37 @@ churn rather than a handful of read-only tool calls).
 Repro harness and raw RSS samples from this run: kept in the session scratchpad, not committed
 (temporary, machine-specific paths) — rerun via the method in §3 against any fixture repo to
 regenerate.
+
+## 6. Root cause found (2026-10-01)
+
+**#107** (a separate defect, filed after a PR-review discussion) found that `cognirepo index-repo`
+peaks at 5-6 GB RSS on this exact celery repo — the cached embedding model (~2 GB, confirmed by
+isolated measurement) staying resident through `kg.save()`, on top of the graph itself (~11k
+nodes / ~63k edges here). #107/#108 fixed that for the CLI's one-shot `_direct_index()` path:
+evict the model before saving, retry once if the breaker still trips.
+
+**The same exact pattern exists in `intelligence/indexer/file_watcher.py`'s `graph.save()` calls**
+(`_flush_locked()`, `_remove()`, `_reindex()`) — reached through `cognirepo serve`'s long-lived
+auto-watcher, not a manual `index-repo` run. This is a much better match for the original
+incident than anything tested in §3: the watcher runs *inside* the long-lived server process for
+the whole session (the model stays warm across edits — by design, since re-loading it on every
+keystroke-triggered reindex would be a bad interactive-latency tradeoff), had **no** circuit-breaker
+self-raise (unlike `_direct_index()`'s 4000 MB), and **no** recovery at all on a save failure — it
+just logged `graph.save failed: ...` to stderr and moved on. Over a long session with enough edits,
+the resident model + the growing graph + everything else the server holds (FAISS structures,
+chroma's own caches, MCP tool-call state) crossing several GB and then hitting a wall with no
+recovery path matches the original report's shape (kills during an active, ongoing session, not a
+single repro-able command) far better than the short-session repro in §3 did.
+
+**Fix**: `RepoFileHandler._save_graph()` — a reactive (not proactive) recovery: only evicts the
+model and retries once *if* `graph.save()` actually trips the breaker, preserving the warm-model
+fast path for the common case. Verified live against the real celery project with the breaker
+ceiling forced down to 50 MB: `graph.save()` tripped, `_save_graph()` evicted the model, slept the
+breaker's cooldown, retried, and succeeded — `graph.pkl` written correctly, no exception, no data
+loss.
+
+**What's still open**: this fix is grounded in the *same proven mechanism* as #107, reached through
+the code path that actually matches the original incident's shape — but it has not been verified
+against a true multi-hour, multi-process, MCP-reconnect session identical to the original incident
+(§4 item 1 is still nobody's done that). Treat this as the most likely root cause, well-evidenced,
+not as a confirmed-by-exact-reproduction one.

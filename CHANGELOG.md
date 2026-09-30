@@ -9,6 +9,18 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Fixed
+- **#98/#105 — likely root cause found: `cognirepo serve`'s auto-watcher had the same
+  graph-save gap as #107, with no self-raised breaker ceiling and no recovery at all.**
+  `intelligence/indexer/file_watcher.py`'s `graph.save()` calls (reached on every debounced
+  edit, inside the long-lived `serve` process where the embedding model stays resident for the
+  whole session) previously just logged `graph.save failed: ...` and moved on with no retry.
+  New `RepoFileHandler._save_graph()`: on an actual circuit-breaker trip, evict the model and
+  retry once (reactive, not proactive — evicting on every save would force a reload on every
+  keystroke-triggered reindex). Verified live against the real celery project with the breaker
+  ceiling forced to 50 MB: tripped, recovered, saved correctly. Grounded in the same mechanism
+  #107 confirmed, reached through the code path that actually matches the original incident's
+  shape (a long session, not a single command) — see `docs/rca/COGNIREPO-98-oom-memory-growth.md`
+  §6 for the full writeup and what's still unverified.
 - **#107 — knowledge graph never saved on medium/large repos (circuit breaker trips at `kg.save()`).**
   `index-repo` on a real-world repo (celery: 416 files, 10,668 embedded symbols) peaked at 5276 MB
   RSS at graph-save time, above even the pre-existing 4000 MB self-raised ceiling — the graph was
