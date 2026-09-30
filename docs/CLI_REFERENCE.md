@@ -304,3 +304,200 @@ View or set global user preferences stored in `~/.cognirepo/`.
 ```bash
 cognirepo user-prefs [KEY [VALUE]]
 ```
+
+---
+
+## cognirepo episodic-search
+
+Keyword search in episodic event history.
+
+```bash
+cognirepo episodic-search QUERY [OPTIONS]
+```
+
+| Arg / Flag | Default | Description |
+|------|---------|-------------|
+| `QUERY` | — | Search term to match against episodic events |
+| `--limit INT` | `10` | Max results to return |
+
+---
+
+## cognirepo lookup-symbol
+
+Find where a function or class is defined.
+
+```bash
+cognirepo lookup-symbol NAME [OPTIONS]
+```
+
+| Arg / Flag | Default | Description |
+|------|---------|-------------|
+| `NAME` | — | Symbol name to look up |
+| `--include-org` | `False` | Also search sibling repos in the same organization |
+
+---
+
+## cognirepo who-calls
+
+Trace callers of a function in the call graph.
+
+```bash
+cognirepo who-calls FUNCTION
+```
+
+| Arg | Description |
+|-----|-------------|
+| `FUNCTION` | Function name to trace callers of |
+
+---
+
+## cognirepo subgraph
+
+Print the knowledge-graph neighbourhood around an entity.
+
+```bash
+cognirepo subgraph ENTITY [OPTIONS]
+```
+
+| Arg / Flag | Default | Description |
+|------|---------|-------------|
+| `ENTITY` | — | Node ID (file, function, class, …) to center the subgraph on |
+| `--depth INT` | `2` | Hop distance to traverse from the entity |
+
+---
+
+## cognirepo graph
+
+Knowledge-graph integrity maintenance. Has one subcommand, `repair`.
+
+```bash
+cognirepo graph repair [--apply]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--apply` | `False` | Actually prune dangling file nodes (default: dry-run report only) |
+
+---
+
+## cognirepo mcp-setup
+
+Re-run MCP integration for Claude Code / Gemini CLI / Cursor / VS Code without repeating the full `cognirepo init` wizard.
+
+```bash
+cognirepo mcp-setup [OPTIONS]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--target {claude,gemini,cursor,vscode}` | `claude` | Repeatable — pass multiple times to configure more than one target |
+| `--global` | `False` | Also register the server user-wide, not just this project |
+
+---
+
+## cognirepo verify-index
+
+Verify that the AST index is fresh and untampered, by checking file hashes against `manifest.json`.
+
+```bash
+cognirepo verify-index [OPTIONS]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--verbose`, `-v` | `False` | List all dirty indexed files, not just the first 5 |
+
+---
+
+## cognirepo index-progress
+
+Live terminal view of background indexing and Tier-2 FAISS embedding progress.
+
+```bash
+cognirepo index-progress [OPTIONS]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--interval SECS` | `1.0` | Refresh interval in seconds |
+| `--once` | `False` | Print once and exit instead of refreshing continuously |
+
+---
+
+## cognirepo test-connection
+
+Verify an API key and connectivity for a model provider.
+
+```bash
+cognirepo test-connection [OPTIONS]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--provider {anthropic,gemini,grok,openai}` | none (tests all configured) | Provider to test; omit to test every configured provider |
+
+---
+
+## cognirepo setup-env
+
+Interactive wizard to set and verify model-provider API keys.
+
+```bash
+cognirepo setup-env [OPTIONS]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--skip-verify` | `False` | Write keys but skip the API verification call (useful in CI with real keys) |
+| `--non-interactive` | `False` | Skip the wizard entirely (for scripted environments) |
+
+---
+
+## cognirepo metrics
+
+Serve Prometheus `/metrics` on a standalone HTTP port — for MCP-only deployments where the MCP server process itself isn't reachable over HTTP.
+
+```bash
+cognirepo metrics [OPTIONS]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--host HOST` | `127.0.0.1` | Bind host |
+| `--port PORT` | `9090` | Port to listen on |
+
+---
+
+## cognirepo list
+
+List MCP servers, organizations, and running watcher daemons.
+
+```bash
+cognirepo list [OPTIONS]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-p`, `--processes` | `False` | List all running watcher daemon processes |
+| `-n`, `--name PID_OR_NAME` | `None` | Select a daemon by PID or name (use with `--view` or `--stop`) |
+| `--view` | `False` | Interactively tail the log of the daemon selected with `-n` |
+| `--stop` | `False` | Send SIGTERM to the daemon selected with `-n` |
+| `--org` | `False` | Show all organizations, repos, and projects from `orgs.json` |
+| `--mcp` | `False` | List registered MCP servers from `.mcp.json` and global configs |
+
+---
+
+## cognirepo delete
+
+Remove CogniRepo data: a project's local `.cognirepo/`, org entries, or global state.
+
+```bash
+cognirepo delete [PROJECT_NAME] [OPTIONS]
+```
+
+| Arg / Flag | Default | Description |
+|------|---------|-------------|
+| `PROJECT_NAME` | `None` | Delete shared memory for the named project and unlink all its repos |
+| `--org ORG_NAME` | `None` | Delete an org plus all its projects and all shared memory paths |
+| `--all` | `False` | Delete ALL CogniRepo traces system-wide (irreversible) |
+| `-y`, `--yes` | `False` | Skip the confirmation prompt |

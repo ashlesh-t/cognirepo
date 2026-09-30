@@ -645,7 +645,7 @@ cognirepo watch                 # manage background file-watcher daemon
 
 ## Future Plans
 
-Priorities drawn from the v0.3.0 benchmark findings and community feedback. Now at v2.0.0 —
+Priorities drawn from the v0.3.0 benchmark findings and community feedback. Now at v2.4.1 —
 some items below have since landed; each is annotated where that's the case.
 
 ### Near-term
