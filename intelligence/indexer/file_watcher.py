@@ -27,6 +27,7 @@ import json
 import os
 import sys
 import threading
+import time
 from typing import TYPE_CHECKING
 
 from pathlib import Path
@@ -224,7 +225,7 @@ class RepoFileHandler(FileSystemEventHandler):
             print(f"[watcher] {save_error}", file=sys.stderr)
 
         try:
-            self.graph.save()
+            self._save_graph()
         except Exception as exc:  # pylint: disable=broad-except
             save_error = f"{save_error + '; ' if save_error else ''}graph.save failed: {exc}"
             print(f"[watcher] graph.save failed: {exc}", file=sys.stderr)
@@ -256,6 +257,34 @@ class RepoFileHandler(FileSystemEventHandler):
 
         for rel_path in removed_rel_paths:
             print(f"[watcher] removed {rel_path} from index", file=sys.stderr)
+
+    def _save_graph(self) -> None:
+        """self.graph.save(), recovering once from a circuit-breaker trip.
+
+        COGNIREPO-98/105: the long-lived `serve` process keeps the embedding
+        model warm across edits (evicting it after every debounced save would
+        force a reload on the next keystroke-triggered reindex — unlike
+        `cognirepo index-repo`'s one-shot _direct_index(), there IS a "next
+        embed soon" here, so we don't evict proactively). But that means the
+        model (~2 GB, see COGNIREPO-107) stays resident for the whole session
+        alongside the growing graph, and a save here had no recovery at all
+        if that combination ever crossed the circuit breaker's limit — it
+        just logged and moved on, never freeing anything or retrying. This is
+        the same failure class #107 found and fixed in _direct_index(), just
+        reached through the watcher instead of a manual reindex. Reactive
+        fix: only evict + retry once, on an actual trip.
+        """
+        try:
+            self.graph.save()
+        except Exception as exc:  # pylint: disable=broad-except
+            exc_name = type(exc).__name__
+            if "CircuitOpen" not in exc_name and "CircuitBreaker" not in exc_name:
+                raise
+            from data.memory.embeddings import evict_model  # pylint: disable=import-outside-toplevel
+            from data.memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+            evict_model()
+            time.sleep(get_breaker().cooldown + 1)
+            self.graph.save()  # let a second failure propagate to the caller
 
     def _maybe_compact_faiss(self) -> None:
         """Reclaim dead/dangling ast_metadata.json rows once enough have piled up.
@@ -387,7 +416,7 @@ class RepoFileHandler(FileSystemEventHandler):
             )
             self._maybe_compact_faiss()
             self.indexer.save()
-            self.graph.save()
+            self._save_graph()
 
             try:
                 from data.memory.episodic_memory import mark_stale  # pylint: disable=import-outside-toplevel
@@ -428,7 +457,7 @@ class RepoFileHandler(FileSystemEventHandler):
             )
             self._maybe_compact_faiss()
             self.indexer.save()
-            self.graph.save()
+            self._save_graph()
             self.behaviour.save()
 
             try:
