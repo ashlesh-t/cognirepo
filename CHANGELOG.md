@@ -8,6 +8,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Changed
+- **#95 — episode dict schema keys extracted to `data/memory/episodic_schema.py`.**
+  `episodic_memory.py` and `timeline.py` both accessed the episode dict via duplicated hardcoded
+  string literals (`"event"`, `"metadata"`, `"time"`, and `"type"` within metadata). Pure
+  refactor, no behavior change — both files now import `EVENT`/`METADATA`/`TIME`/`METADATA_TYPE`
+  from the new module.
+
 ### Fixed
 - **#98/#105 — likely root cause found: `cognirepo serve`'s auto-watcher had the same
   graph-save gap as #107, with no self-raised breaker ceiling and no recovery at all.**

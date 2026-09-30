@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, timezone
 
 from core.config.paths import get_path
 from data.memory.episodic_memory import _archive_path, _load as _load_episodic
+from data.memory.episodic_schema import EVENT, METADATA, METADATA_TYPE, TIME
 
 _EPOCH = datetime.min.replace(tzinfo=timezone.utc)
 
@@ -135,11 +136,11 @@ def _episodic_entries(include_archived: bool) -> list[dict]:
                 pass
     entries = []
     for e in data:
-        meta = e.get("metadata", {}) or {}
-        kind = "decision" if meta.get("type") == "decision" else "episode"
-        summary = meta.get("summary") or e.get("event", "")
+        meta = e.get(METADATA, {}) or {}
+        kind = "decision" if meta.get(METADATA_TYPE) == "decision" else "episode"
+        summary = meta.get("summary") or e.get(EVENT, "")
         entries.append({
-            "ts": e.get("time"),
+            "ts": e.get(TIME),
             "kind": kind,
             "summary": summary[:160],
             "ref": e.get("id", ""),
