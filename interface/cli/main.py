@@ -2155,9 +2155,17 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
         return False
 
     if not _save_graph():
+        from data.graph.knowledge_graph import journal_file_exists  # pylint: disable=import-outside-toplevel
+        _journal_note = (
+            "Indexed graph data is preserved in .cognirepo/graph/graph.journal and is "
+            "replayed automatically on the next load; "
+            if journal_file_exists()
+            else "No graph journal exists, so graph data from this run was not preserved; "
+        )
         print(
-            "  ⚠  Knowledge graph not saved (memory limit hit, retried once). "
-            "AST index and embeddings are intact. "
+            "  ⚠  Knowledge graph not saved to graph.pkl (memory limit hit, retried once). "
+            + _journal_note
+            + "AST index and embeddings are intact. "
             "Re-run with --no-graph to disable graph, or set "
             "COGNIREPO_CB_RSS_LIMIT_MB=6000 to raise the memory limit."
         )

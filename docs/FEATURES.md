@@ -75,6 +75,8 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | Node types: FILE, FUNCTION, CLASS, CONCEPT, QUERY | ✅ | `NodeType` constants |
 | Edge types: RELATES_TO, DEFINED_IN, CALLED_BY, QUERIED_WITH, CO_OCCURS | ✅ | `EdgeType` constants in `data/graph/knowledge_graph.py` |
 | Persist/load (`graph.pkl`) | ✅ | Pickle serialization |
+| Incremental journal (`graph.journal`) | ✅ | Indexing appends graph mutations to an fsynced, crc-checked, per-segment-encrypted journal every N files / T seconds; `_load()` replays it over `graph.pkl`, `save()` compacts it away (COGNIREPO-109). Interrupted indexing or a failed final save loses at most the last unflushed segment |
+| `remove_node()`, `remove_edge()`, `set_node_attrs()`, `set_edge_attrs()`, `copy_edge()` | ✅ | Journaled mutation primitives — mutate through these (not `kg.G` directly) when the change must be crash-recoverable |
 | `add_node()`, `add_edge()` | ✅ | |
 | `nodes_for_file()` | ✅ | All nodes attributed to a file |
 | `remove_file_nodes()` | ✅ | Removes FILE + symbol nodes; returns removed list |
@@ -327,7 +329,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ## 15. Test Coverage
 
-104 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+105 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
 for the current test-function count). This table is representative, not exhaustive — see
 `tests/` for the full list. This count is pinned against `tests/test_docs_sync.py`,
 which fails if this number drifts from the real glob count.

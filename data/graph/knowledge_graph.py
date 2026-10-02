@@ -17,6 +17,10 @@ Persistence : pickle to .cognirepo/graph/graph.pkl
               mirrors ast_indexer.py's ast_index.json .corrupt self-heal.
               Exception: an intact but undecryptable (Fernet) file is never quarantined
               and never overwritten — see GraphLockedError (COGNIREPO-97).
+Journal     : while indexing, mutations are appended to .cognirepo/graph/graph.journal
+              (data/graph/journal.py) every N ops / T seconds; _load() replays it on top of
+              graph.pkl and save() compacts it away (COGNIREPO-109). Single writer: only the
+              indexer journals; other writers use plain save().
 """
 import os
 import pickle
@@ -31,6 +35,7 @@ import networkx as nx
 
 from core.config.paths import get_path
 from core.config.lock import store_lock
+from data.graph import journal as _journal
 
 # Python builtins + common dunder names that must never dominate the concept
 # space.  Exported so mcp_server.py can reuse the same set.
@@ -83,6 +88,20 @@ def _graph_file() -> str:
     return get_path("graph/graph.pkl")
 
 
+def _storage_config() -> tuple[bool, str]:
+    from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
+    return get_storage_config()
+
+
+def journal_file_exists() -> bool:
+    """True when an un-compacted graph.journal is on disk for the active repo."""
+    return os.path.exists(_journal_file())
+
+
+def _journal_file() -> str:
+    return get_path("graph/graph.journal")
+
+
 class NodeType:  # pylint: disable=too-few-public-methods
     """Node types for the knowledge graph."""
     FILE = "FILE"
@@ -115,15 +134,34 @@ class EdgeType:  # pylint: disable=too-few-public-methods
 class KnowledgeGraph:
     """Thin wrapper around a networkx DiGraph with CogniRepo-specific conventions."""
 
+    # Class-level defaults so instances built without __init__ (tests use __new__) behave
+    # as "journal off". _pending is always rebound per instance, never mutated here.
+    _journal_active = False
+    _pending: list[tuple] = []
+    _journal_seq = 0
+    _journal_bytes = 0
+    _flush_ops = 5000
+    _flush_secs = 30.0
+    _last_flush = 0.0
+    _locked = False
+
     def __init__(self) -> None:
         self.G: nx.DiGraph = nx.DiGraph()  # pylint: disable=invalid-name
         # (mtime_ns, size) of graph.pkl as of the last _load()/save(), plus the
         # path it refers to — _graph_file() is ContextVar-scoped, so the same
         # call inside a _repo_ctx() block names a different repo's graph.
-        self._disk_stamp: tuple[int, int] | None = None
+        self._disk_stamp: tuple | None = None
         self._disk_path: str | None = _graph_file()
         # True when graph.pkl is ciphertext we could not decrypt; save() refuses.
         self._locked = False
+        # Journal state (COGNIREPO-109). _pending only fills while begin_journal() is active.
+        self._journal_active = False
+        self._pending: list[tuple] = []
+        self._journal_seq = 0          # highest seq applied to / written for this graph
+        self._journal_bytes = 0        # journal size this instance knows it has fully applied
+        self._flush_ops = 5000
+        self._flush_secs = 30.0
+        self._last_flush = time.monotonic()
         self._load()
 
     # ── persistence ───────────────────────────────────────────────────────────
@@ -150,13 +188,52 @@ class KnowledgeGraph:
         path = _graph_file()
         if self._disk_path is not None and path != self._disk_path:
             return False  # a _repo_ctx() has repointed get_path() at another repo
-        current = self._stat_stamp(path)
+        if self._journal_active or self._pending:
+            return False  # this instance is the journal writer; its memory is authoritative
+        current = self._full_stamp()
         if current == self._disk_stamp:
             return False
+        if self._try_incremental_replay(current):
+            return True
         self._load()
         return True
 
+    def _try_incremental_replay(self, current: tuple) -> bool:
+        """graph.pkl unchanged and the journal only grew: replay just the new segments
+        instead of re-unpickling the whole graph on every indexer flush."""
+        old = self._disk_stamp
+        if (old is None or self._locked or current[0] != old[0]
+                or current[1] is None or old[1] is None or self._journal_bytes <= 0):
+            return False
+        if current[1][1] < self._journal_bytes:
+            return False  # journal shrank/was replaced: full reload
+        self._replay_journal(start=self._journal_bytes)
+        if self._locked:
+            return True
+        self._disk_stamp = current
+        return True
+
+    def _full_stamp(self) -> tuple:
+        """Stamp of graph.pkl AND graph.journal — a journal-only append must be seen too."""
+        return (self._stat_stamp(_graph_file()), self._stat_stamp(_journal_file()))
+
     def _load(self) -> None:
+        """Load graph.pkl, then replay graph.journal on top of it (COGNIREPO-109)."""
+        stamp = self._full_stamp()  # taken BEFORE reading so a concurrent write is re-seen
+        # The disk is authoritative on (re)load: drop stale in-memory state and any lock
+        # left by an earlier unreadable journal/pickle — _load_base()/replay re-set it.
+        self._locked = False
+        self.G = nx.DiGraph()
+        self._load_base()
+        # Seed from the marker pickled inside the graph so segment numbers keep rising
+        # across runs even when no journal file exists (COGNIREPO-109 review).
+        self._journal_seq = int(self.G.graph.get("journal_seq", 0))
+        self._journal_bytes = 0
+        if not self._locked:
+            self._replay_journal()
+        self._disk_stamp = stamp
+
+    def _load_base(self) -> None:
         """Load graph from disk; decrypt if needed."""
         if not os.path.exists(_graph_file()):
             self._disk_stamp = None
@@ -221,6 +298,167 @@ class KnowledgeGraph:
         """Public alias for reloading the graph from disk."""
         self._load()
 
+    # ── journal (COGNIREPO-109) ────────────────────────────────────────────────
+
+    @staticmethod
+    def _journal_key() -> bytes | None:
+        encrypt, project_id = _storage_config()
+        if not encrypt:
+            return None
+        from core.security.encryption import get_or_create_key  # pylint: disable=import-outside-toplevel
+        return get_or_create_key(project_id)
+
+    def _replay_journal(self, start: int = 0) -> None:
+        """Apply journal segments newer than the base pickle's ``journal_seq`` marker.
+
+        Read-only: a torn tail is ignored here (a reader may be racing the writer's
+        in-flight append); the writer truncates it in begin_journal().
+        """
+        path = _journal_file()
+        if not os.path.exists(path):
+            return
+        try:
+            try:
+                segments, good_end, _size = _journal.scan(path, self._journal_key(), start)
+            except _journal.JournalUnreadable:
+                if self._journal_key() is None:
+                    raise
+                # written plaintext under a context that resolved encrypt=false — mirror
+                # the graph.pkl fallback and try without a key.
+                segments, good_end, _size = _journal.scan(path, None, start)
+        except Exception as exc:  # pylint: disable=broad-except
+            # Intact but unreadable (wrong/missing key, damaged record). Never delete it
+            # and never let save() compact around it.
+            self._locked = True
+            warnings.warn(
+                f"KnowledgeGraph: {path} could not be read ({exc}). The journal was left "
+                "untouched and saving is disabled until it is readable again. Restore the "
+                "encryption key, or — if its contents are expendable — delete the file and "
+                "re-run `cognirepo index-repo`.",
+                stacklevel=2,
+            )
+            return
+        base_seq = self._journal_seq  # marker (full load) or last applied seq (incremental)
+        last_seq = base_seq
+        for seq, ops in segments:
+            last_seq = max(last_seq, seq)
+            if seq <= base_seq:
+                continue  # already folded into graph.pkl
+            for op in ops:
+                self._apply(op)
+        self._journal_seq = last_seq
+        self._journal_bytes = good_end
+
+    def begin_journal(self, flush_ops: int = 5000, flush_secs: float = 30.0) -> None:
+        """Start journaling mutations; call flush_journal()/maybe_flush() to persist them."""
+        if self._locked:
+            raise GraphLockedError("graph is locked; cannot journal")
+        path = _journal_file()
+        if os.path.exists(path):
+            # We are the single writer: drop any torn tail left by a killed run so
+            # new records append after the last intact one.
+            with store_lock():
+                _segs, good_end, size = _journal.scan(path, self._journal_key())
+                if good_end < size:
+                    _journal.truncate_to(path, good_end)
+                self._journal_bytes = good_end
+        self._pending = []
+        self._flush_ops = max(1, int(flush_ops))
+        self._flush_secs = float(flush_secs)
+        self._last_flush = time.monotonic()
+        self._journal_active = True
+
+    def end_journal(self) -> None:
+        """Flush what is pending and stop journaling."""
+        try:
+            if self._journal_active:
+                self.flush_journal()
+        finally:
+            # On a failed flush the ops are still in self.G and reach disk via save();
+            # don't leave them pending or reload_if_changed() would never run again.
+            self._journal_active = False
+            self._pending = []
+
+    def flush_journal(self) -> None:
+        """Append all pending mutations to the journal as one fsynced segment."""
+        if not self._pending:
+            return
+        if self._locked:
+            raise GraphLockedError("graph is locked; cannot journal")
+        seq = self._journal_seq + 1
+        key = self._journal_key()
+        with store_lock():
+            _journal.append_segment(_journal_file(), seq, self._pending, key)
+            self._journal_bytes = os.path.getsize(_journal_file())
+        self._journal_seq = seq
+        self._pending = []
+        self._last_flush = time.monotonic()
+
+    def maybe_flush(self) -> None:
+        """Flush if enough ops or time accumulated. Never raises: a journal problem must
+        not abort indexing — journaling is switched off and the final save() still runs."""
+        if not self._journal_active or not self._pending:
+            return
+        if (len(self._pending) < self._flush_ops
+                and time.monotonic() - self._last_flush < self._flush_secs):
+            return
+        try:
+            self.flush_journal()
+        except Exception as exc:  # pylint: disable=broad-except
+            self._journal_active = False
+            self._pending = []
+            warnings.warn(
+                f"KnowledgeGraph: journal flush failed ({exc}); continuing without the "
+                "journal — the graph is saved at the end of the run as before.",
+                stacklevel=2,
+            )
+
+    # ── mutation primitives (live path == replay path) ─────────────────────────
+
+    def _apply(self, op: tuple) -> None:
+        """Apply one primitive op. Used by live mutation AND journal replay."""
+        kind = op[0]
+        if kind == "n":
+            _, nid, ntype, attrs = op
+            if self.G.has_node(nid):
+                self.G.nodes[nid].update(attrs)
+            else:
+                self.G.add_node(nid, type=ntype, **attrs)
+        elif kind == "e":
+            _, src, dst, rel, weight, attrs = op
+            if self.G.has_edge(src, dst):
+                if weight is not None:
+                    self.G[src][dst]["weight"] = weight
+                self.G[src][dst].update(attrs)
+            else:
+                data = dict(attrs)
+                if rel is not None:
+                    data["rel"] = rel
+                if weight is not None:
+                    data["weight"] = weight
+                self.G.add_edge(src, dst, **data)
+        elif kind == "na":
+            if self.G.has_node(op[1]):
+                self.G.nodes[op[1]].update(op[2])
+        elif kind == "ea":
+            if self.G.has_edge(op[1], op[2]):
+                self.G[op[1]][op[2]].update(op[3])
+        elif kind == "rn":
+            if self.G.has_node(op[1]):
+                self.G.remove_node(op[1])
+        elif kind == "re":
+            if self.G.has_edge(op[1], op[2]):
+                self.G.remove_edge(op[1], op[2])
+        else:
+            raise ValueError(f"unknown graph journal op {kind!r}")
+
+    def _do(self, op: tuple) -> None:
+        self._apply(op)
+        if self._journal_active:
+            self._pending.append(op)
+            if len(self._pending) >= self._flush_ops:
+                self.maybe_flush()  # bounds segment size inside the post-loop passes too
+
     def save(self) -> None:
         """Serialize the graph to a pickle file; encrypt if needed.
         Acquires a cross-process file lock to prevent concurrent writes
@@ -239,6 +477,10 @@ class KnowledgeGraph:
         os.makedirs(os.path.dirname(_graph_file()), exist_ok=True)
         from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
+        # Marker pickled WITH the graph: replay skips journal records <= this seq, so a
+        # crash between os.replace() below and the journal unlink cannot double-apply.
+        # Pending (unflushed) ops are already reflected in self.G, hence in this pickle.
+        self.G.graph["journal_seq"] = self._journal_seq
         with store_lock():
             # Atomic promote. A plain open("wb") leaves graph.pkl truncated for
             # the duration of the write, and readers (MCP server revalidation,
@@ -278,18 +520,31 @@ class KnowledgeGraph:
                 except OSError:
                     pass
                 raise
-        self._disk_stamp = self._stat_stamp(_graph_file())
+            self._compact_journal_locked()
+        self._pending = []
+        self._disk_stamp = self._full_stamp()
         self._disk_path = _graph_file()
         breaker.record_success()
+
+    def _compact_journal_locked(self) -> None:
+        """Drop the journal now that graph.pkl contains it. Caller holds store_lock().
+
+        Only when its size is exactly what this instance applied/wrote — if another
+        process appended since, leave it; the journal_seq marker keeps replay correct.
+        """
+        path = _journal_file()
+        try:
+            if os.path.getsize(path) == self._journal_bytes:
+                os.unlink(path)
+                self._journal_bytes = 0
+        except OSError:
+            pass
 
     # ── mutation ──────────────────────────────────────────────────────────────
 
     def add_node(self, node_id: str, node_type: str, **attrs: Any) -> None:
         """Idempotent add — merges attrs if node already exists."""
-        if self.G.has_node(node_id):
-            self.G.nodes[node_id].update(attrs)
-        else:
-            self.G.add_node(node_id, type=node_type, **attrs)
+        self._do(("n", node_id, node_type, dict(attrs)))
 
     def add_edge(
         self,
@@ -300,16 +555,29 @@ class KnowledgeGraph:
         **attrs: Any,
     ) -> None:
         """Add a directed edge; if it exists, update its weight."""
-        if self.G.has_edge(src, dst):
-            self.G[src][dst]["weight"] = weight
-            self.G[src][dst].update(attrs)
-        else:
-            self.G.add_edge(src, dst, rel=edge_type, weight=weight, **attrs)
+        self._do(("e", src, dst, edge_type, weight, dict(attrs)))
+
+    def remove_node(self, node_id: str) -> None:
+        """Remove a node and its incident edges (no-op if absent)."""
+        self._do(("rn", node_id))
+
+    def remove_edge(self, src: str, dst: str) -> None:
+        """Remove one edge (no-op if absent)."""
+        self._do(("re", src, dst))
+
+    def set_node_attrs(self, node_id: str, **attrs: Any) -> None:
+        """Merge attrs into an existing node (no-op if absent)."""
+        self._do(("na", node_id, dict(attrs)))
+
+    def set_edge_attrs(self, src: str, dst: str, **attrs: Any) -> None:
+        """Merge attrs into an existing edge (no-op if absent)."""
+        self._do(("ea", src, dst, dict(attrs)))
 
     def remove_node_edges(self, node_id: str) -> None:
         """Remove all edges incident to node_id (but keep the node)."""
         edges = list(self.G.in_edges(node_id)) + list(self.G.out_edges(node_id))
-        self.G.remove_edges_from(edges)
+        for src, dst in edges:
+            self.remove_edge(src, dst)
 
     def nodes_for_file(self, file_path: str) -> list[str]:
         """Return all node IDs whose stored 'file' attr matches file_path."""
@@ -338,11 +606,11 @@ class KnowledgeGraph:
         for nid in self.nodes_for_file(file_path):
             if self.G.has_node(nid):
                 self._redirect_edges_to_stub(nid)
-                self.G.remove_node(nid)
+                self.remove_node(nid)
                 removed.append(nid)
         # FILE node's node_id == rel_path (see make_node_id("FILE", name) → name)
         if self.G.has_node(file_path):
-            self.G.remove_node(file_path)
+            self.remove_node(file_path)
             removed.append(file_path)
         return removed
 
@@ -378,15 +646,20 @@ class KnowledgeGraph:
         for pred in predecessors:
             if pred == stub:
                 continue
-            edge_data = dict(self.G[pred][nid])
             if not self.G.has_edge(pred, stub):
-                self.G.add_edge(pred, stub, **edge_data)
+                self.copy_edge(pred, nid, pred, stub)
         for succ in successors:
             if succ == stub:
                 continue
-            edge_data = dict(self.G[nid][succ])
             if not self.G.has_edge(stub, succ):
-                self.G.add_edge(stub, succ, **edge_data)
+                self.copy_edge(nid, succ, stub, succ)
+
+    def copy_edge(self, src: str, dst: str, new_src: str, new_dst: str) -> None:
+        """Re-create edge (src, dst) as (new_src, new_dst) with identical attributes."""
+        data = dict(self.G[src][dst])
+        rel = data.pop("rel", None)
+        weight = data.pop("weight", None)
+        self._do(("e", new_src, new_dst, rel, weight, data))
 
     # ── queries ───────────────────────────────────────────────────────────────
 

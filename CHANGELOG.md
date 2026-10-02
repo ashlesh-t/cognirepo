@@ -8,6 +8,22 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Added
+- **#109 — incremental knowledge-graph persistence (journal).** `index-repo` now appends graph
+  mutations to `.cognirepo/graph/graph.journal` every N files / T seconds instead of holding
+  everything until one end-of-run `graph.pkl` write. `KnowledgeGraph._load()` replays the journal
+  on top of `graph.pkl`; `save()` compacts it (`journal_seq` marker pickled inside the graph makes
+  replay idempotent across a crash between the atomic replace and the journal unlink). Records are
+  length-prefixed + crc32-checked (torn tail ignored by readers, truncated by the single writer) and
+  Fernet-encrypted per segment under `storage.encrypt`; an undecryptable journal is preserved and
+  blocks `save()` like `GraphLockedError`. A circuit-breaker-failed final save no longer loses the
+  graph. `graph.pkl` stays the single consolidated file for readers; `kg.G` remains the in-memory
+  read model. **Not** addressed (follow-up): the live graph is still fully resident, so this does not
+  lower query-time memory or the compaction-time peak. New primitives `remove_node`, `remove_edge`,
+  `set_node_attrs`, `set_edge_attrs`, `copy_edge`; `ASTIndexer` no longer mutates `kg.G` directly.
+  Mid-file journal damage is refused (never truncated away); readers replay only new segments when
+  `graph.pkl` is unchanged. Knobs: `indexing.graph_journal`, `graph_journal_flush_files`, `graph_journal_flush_secs`.
+
 ### Fixed
 - **#98/#105 — likely root cause found: `cognirepo serve`'s auto-watcher had the same
   graph-save gap as #107, with no self-raised breaker ceiling and no recovery at all.**
