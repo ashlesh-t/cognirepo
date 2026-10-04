@@ -12,13 +12,39 @@ import time
 from typing import Any
 
 from fastapi import Body, FastAPI, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StrictBool
 
 from interface.ui import security as sec
 from interface.ui.audit import AuditLog
 from interface.ui.services import ServiceError, ServiceManager
 from interface.ui.status import API_VERSION, collect_status
+
+_BOOTSTRAP_JS = """\
+// Swap the one-time URL-fragment token for an httpOnly SameSite=Strict cookie, then strip the URL.
+(async () => {
+  const m = /(?:^#|&)token=([^&]+)/.exec(location.hash);
+  const out = document.getElementById('out');
+  const say = (t) => { if (out) out.textContent = t; };
+  if (m) {
+    const token = decodeURIComponent(m[1]);
+    history.replaceState(null, '', location.pathname + location.search);  // strip FIRST
+    const r = await fetch('/api/v1/session', {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({token})});
+    if (!r.ok) { say('Session rejected (' + r.status + '). Re-run: cognirepo ui'); return; }
+  }
+  const s = await fetch('/api/v1/status', {credentials: 'same-origin'});
+  say(s.ok ? JSON.stringify(await s.json(), null, 2) : 'Not signed in. Run: cognirepo ui');
+})();
+"""
+
+_FALLBACK_PAGE = """<!doctype html><meta charset="utf-8"><title>CogniRepo</title>
+<body style="background:#080808;color:#e8e8e8;font:14px ui-monospace,monospace;padding:2rem">
+<h1>cognirepo</h1>
+<p>The Engram console package is not installed. Install it with <code>pip install cognirepo-console</code>.</p>
+<p>The local API is running; status below.</p><pre id="out">loading…</pre>
+<script src="/_cognirepo/bootstrap.js"></script>"""
 
 _CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
@@ -37,7 +63,7 @@ def _client(request: Request) -> str:
 
 
 def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None = None,
-               services: ServiceManager | None = None) -> FastAPI:
+               services: ServiceManager | None = None, console_dir: str | None = None) -> FastAPI:
     """Build the app. ``cfg`` fixes the token/port; ``repo_root`` is the repo this UI serves."""
     app = FastAPI(
         title="CogniRepo control API",
@@ -152,8 +178,32 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
     def stop_service(name: str, request: Request, body: ConfirmBody | None = Body(default=None)) -> JSONResponse:
         return _control("stop", name, body, request)
 
+    @app.get("/_cognirepo/bootstrap.js", include_in_schema=False)
+    def bootstrap_js() -> Response:
+        """Fragment->cookie swap script (no secrets in it; usable by any console build)."""
+        return Response(_BOOTSTRAP_JS, media_type="text/javascript")
+
     @app.on_event("shutdown")
     def _shutdown() -> None:
         svc.shutdown()
 
+    static = console_dir if console_dir is not None else _console_static_dir()
+    if static:
+        app.mount("/", StaticFiles(directory=static, html=True), name="console")
+    else:
+        @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+        def landing() -> str:
+            return _FALLBACK_PAGE
+
     return app
+
+
+def _console_static_dir() -> str | None:
+    """Static bundle of the optional ``cognirepo-console`` package (its ``STATIC_DIR``), if installed."""
+    import importlib  # pylint: disable=import-outside-toplevel
+    try:
+        mod = importlib.import_module("cognirepo_console")
+    except ImportError:
+        return None
+    path = getattr(mod, "STATIC_DIR", None)
+    return str(path) if path and os.path.isfile(os.path.join(str(path), "index.html")) else None
