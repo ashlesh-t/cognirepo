@@ -704,6 +704,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             ("Rust",       ".rs"),
             ("Java",       ".java"),
             ("C++",        ".cpp"),
+            ("PHP",        ".php"),
         ]
         _supported_langs: list[str] = []
         _missing_langs: list[tuple[str, str]] = []  # (lang, install_hint)
@@ -714,6 +715,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             ".rs":   "tree-sitter-rust",
             ".java": "tree-sitter-java",
             ".cpp":  "tree-sitter-cpp",
+            ".php":  "tree-sitter-php",
         }
         for _lang_name, _ext in _lang_checks:
             if _ext == ".py":
@@ -4051,6 +4053,7 @@ def _main():
             _supported_exts = {
                 ".py", ".js", ".ts", ".tsx", ".jsx", ".java",
                 ".cpp", ".c", ".h", ".go", ".rs", ".rb",
+                ".php",
             }
             _changed: list[str] = []
             try:

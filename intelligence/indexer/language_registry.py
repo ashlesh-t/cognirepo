@@ -39,6 +39,7 @@ _GRAMMAR_MAP: dict[str, str] = {
     ".rs":   "tree_sitter_rust",
     ".sh":   "tree_sitter_bash",
     ".bash": "tree_sitter_bash",
+    ".php":  "tree_sitter_php",
     ".yml":  "tree_sitter_yaml",
     ".yaml": "tree_sitter_yaml",
 }
@@ -48,6 +49,7 @@ _GRAMMAR_MAP: dict[str, str] = {
 _GRAMMAR_FUNC_OVERRIDE: dict[str, tuple[str, str]] = {
     ".ts":  ("tree_sitter_typescript", "language_typescript"),
     ".tsx": ("tree_sitter_typescript", "language_tsx"),
+    ".php": ("tree_sitter_php", "language_php"),  # language_php_only() rejects inline HTML
 }
 
 # Human-readable language labels (used in index-repo summary output)
@@ -66,6 +68,7 @@ _LANG_LABELS: dict[str, str] = {
     ".rs":   "Rust",
     ".sh":   "Shell",
     ".bash": "Shell",
+    ".php":  "PHP",
     ".pyi":  "Python",
     ".yml":  "YAML",
     ".yaml": "YAML",
@@ -87,6 +90,7 @@ _LANG_NAMES: dict[str, str] = {
     ".rs":   "rust",
     ".sh":   "bash",
     ".bash": "bash",
+    ".php":  "php",
     ".pyi":  "python",
     ".yml":  "yaml",
     ".yaml": "yaml",

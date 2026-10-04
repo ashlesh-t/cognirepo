@@ -231,6 +231,7 @@ _TS_CLASS_TYPES = frozenset({
     "struct_item",                # Rust
     "interface_declaration",      # Java, TS
     "type_alias_declaration",     # TypeScript type aliases
+    "trait_declaration",          # PHP traits
     "enum_declaration",           # TypeScript / Java enums
     "type_spec",                  # Go: type Foo struct{...} / type Bar interface{...}
                                   # (name field lives on type_spec, not type_declaration)
@@ -497,9 +498,12 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
                         receiver_type = _ts_text(obj_node, source)
                         if receiver_type and receiver_type[0].isupper():
                             out.append(f"{receiver_type}::{method_name}")
-    elif node.type == "method_invocation":  # Java
-        name_node = node.child_by_field_name("name")
-        if name_node:
+    elif node.type in ("method_invocation",          # Java
+                       "member_call_expression",     # PHP: $obj->foo()
+                       "scoped_call_expression",     # PHP: Foo::bar()
+                       "function_call_expression"):  # PHP: foo()
+        name_node = node.child_by_field_name("name") or node.child_by_field_name("function")
+        if name_node and name_node.type in ("identifier", "name"):
             out.append(_ts_text(name_node, source))
     for child in node.children:
         _ts_collect_calls(child, source, out, depth + 1)
@@ -543,6 +547,11 @@ def _detect_dynamic_dispatch(name: str, decorators: list[str], calls: list[str])
 def _ts_bases(node, source: bytes) -> list[str]:
     """Extract base class names from a class tree-sitter node."""
     bases: list[str] = []
+    # PHP: `class Foo extends Bar` — the parent is a name inside base_clause
+    for child in node.children:
+        if child.type == "base_clause":
+            bases.extend(_ts_text(c, source) for c in child.children
+                         if c.type in ("name", "qualified_name"))
     # Python: argument_list child of class_definition
     arg_list = node.child_by_field_name("superclasses") or node.child_by_field_name("bases")
     if arg_list is None:

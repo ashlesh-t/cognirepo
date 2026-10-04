@@ -30,6 +30,7 @@ _LANG_EXTENSIONS: dict[str, set[str]] = {
     "java":       {".java"},
     "cpp":        {".cpp", ".cc", ".cxx", ".h", ".hpp"},
     "c":          {".c", ".h"},
+    "php":        {".php"},
 }
 
 
