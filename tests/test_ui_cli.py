@@ -166,3 +166,32 @@ class TestConsoleStatic:
             assert "engram" in c.get("/").text
             for evil in ("/../secret.txt", "/%2e%2e/secret.txt", "/..%2fsecret.txt"):
                 assert "TOP-SECRET" not in c.get(evil).text
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX signals")
+class TestGracefulShutdown:
+    def test_sigterm_cleans_session_and_audits_stop(self, tmp_path):
+        """uvicorn re-raises SIGTERM after shutdown; cleanup must still run (no stale token on disk)."""
+        import json
+        import signal
+        import subprocess
+        import sys
+        env = {**os.environ, "COGNIREPO_GLOBAL_DIR": str(tmp_path / "g")}
+        proc = subprocess.Popen([sys.executable, "-m", "interface.cli.main", "ui", "--serve", "--no-open", "--port", "0"],
+                                cwd=str(tmp_path), env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        sess_file = tmp_path / "g" / "ui" / "session.json"
+        try:
+            for _ in range(200):
+                if sess_file.exists() and ui_session.is_listening(json.loads(sess_file.read_text())["port"]):
+                    break
+                time.sleep(0.1)
+            else:
+                pytest.fail("server did not start")
+            proc.send_signal(signal.SIGTERM)
+            proc.wait(timeout=10)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        assert not sess_file.exists(), "stale session token left on disk"
+        audit = (tmp_path / "g" / "ui" / "audit.log").read_text()
+        assert "server_start" in audit and "server_stop" in audit

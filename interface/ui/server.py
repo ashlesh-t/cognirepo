@@ -7,9 +7,12 @@
 """Run the control API with uvicorn. Foreground; ``cognirepo ui`` spawns it detached."""
 from __future__ import annotations
 
+import contextlib
 import os
+import signal
 import socket
 import sys
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +22,35 @@ from interface.ui.audit import AuditLog
 from interface.ui.session import clear_session, write_session
 
 DEFAULT_PORT = 8731
+
+
+def _make_server_class():
+    import uvicorn  # pylint: disable=import-outside-toplevel
+
+    class _Server(uvicorn.Server):
+        """uvicorn re-raises SIGTERM with the default handler AFTER shutting down, which kills the
+        process before our ``finally`` runs — leaving a stale token file and no audit record.
+        Take over SIGINT/SIGTERM: just request a graceful exit and let ``serve()`` clean up."""
+
+        @contextlib.contextmanager
+        def capture_signals(self):  # type: ignore[override]
+            if threading.current_thread() is not threading.main_thread():
+                yield
+                return
+            previous = {}
+
+            def _graceful(_signum, _frame):
+                self.should_exit = True
+
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                previous[sig] = signal.signal(sig, _graceful)
+            try:
+                yield
+            finally:
+                for sig, handler in previous.items():
+                    signal.signal(sig, handler)
+
+    return _Server
 
 
 @dataclass
@@ -62,7 +94,7 @@ def build(repo_root: str, host: str = "127.0.0.1", port: int | None = None, unsa
     audit = AuditLog(get_global_path("ui/audit.log"))
     app = create_app(cfg, repo_root, audit)
     config = uvicorn.Config(app, log_level="warning", access_log=False, lifespan="on")
-    return Built(uvicorn.Server(config), sock, token, actual_port, host, audit)
+    return Built(_make_server_class()(config), sock, token, actual_port, host, audit)
 
 
 def serve(repo_root: str, host: str = "127.0.0.1", port: int | None = None, unsafe_bind: bool = False,
