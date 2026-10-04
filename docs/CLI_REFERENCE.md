@@ -43,7 +43,7 @@ cognirepo index-repo [PATH] [OPTIONS]
 | `PATH` | `.` | Directory to index |
 | `--no-watch` | `False` | Do not start the file watcher after indexing |
 | `--daemon`, `-d` | `False` | Run the watcher as a background daemon |
-| `--changed-only` | `False` | Auto-detect changed files via git and reindex |
+| `--changed-only` | `False` | Auto-detect changed files via git and reindex. Like `--files` (used by the post-commit hook) it only updates an existing **complete** graph: if the graph is missing, quarantined or a fragment it exits `2` without saving and tells you to run a full `cognirepo index-repo .` once (COGNIREPO-122) |
 
 ---
 

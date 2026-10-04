@@ -1707,6 +1707,9 @@ class ASTIndexer:
                 _entry_point_dispatch = self._apply_entry_points_dispatch()
             except Exception as _exc:  # pylint: disable=broad-except
                 log.warning("entry_points dispatch pass failed (graph still valid): %s", _exc)
+            # A full walk finished: this graph is a valid base for incremental runs
+            # (--files, --changed-only, the watcher). COGNIREPO-122.
+            self.graph.mark_complete()
         total_symbols = sum(
             len(f.get("symbols", [])) for f in self.index_data["files"].values()
         )
@@ -1768,6 +1771,10 @@ class ASTIndexer:
             "similarity_edges": _similarity_edges,
             "entry_point_dispatch": _entry_point_dispatch,
         }
+
+    def indexed_file_count(self) -> int:
+        """Number of files recorded in the (loaded) AST index — 0 if none."""
+        return len(self.index_data.get("files", {}))
 
     def index_file(self, rel_path: str, abs_path: str | None = None, weight: float = 1.0) -> dict:
         """

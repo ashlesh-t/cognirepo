@@ -8,6 +8,18 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Fixed
+- **#122 — incremental `index-repo --files` / `--changed-only` (the post-commit hook) and the file
+  watcher could replace a full graph with a fragment.** After a quarantine removed `graph.pkl`, the
+  hook saved a 2-node graph as the whole graph (41,327 → 1,122 → 2 nodes over time). A full
+  `index_repo` now stamps a journaled `complete` marker on the graph (`KnowledgeGraph.mark_complete`);
+  `--files`, `--changed-only` and the watcher's graph save go through
+  `KnowledgeGraph.incremental_base_status()` and **refuse to save** (CLI exit 2 with "run a full
+  `cognirepo index-repo .` once"; watcher warns once) when the base graph is missing, empty, locked,
+  or an unmarked fragment (fewer than half as many FILE nodes as the AST index has files; graphs
+  written before the marker keep working if they cover the repo). `skip_graph` runs never claim
+  completeness.
+
 ### Added
 - **#137/#139 (graph half) — multi-writer safety for the graph journal.** (1) A running
   `index-repo` takes an exclusive OS lock (`graph/graph.journal.writer`, the LevelDB/Lucene
