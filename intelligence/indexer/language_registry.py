@@ -41,6 +41,7 @@ _GRAMMAR_MAP: dict[str, str] = {
     ".bash": "tree_sitter_bash",
     ".yml":  "tree_sitter_yaml",
     ".yaml": "tree_sitter_yaml",
+    ".swift": "tree_sitter_swift",
 }
 
 # Some grammar packages expose multiple language() functions instead of
@@ -69,6 +70,7 @@ _LANG_LABELS: dict[str, str] = {
     ".pyi":  "Python",
     ".yml":  "YAML",
     ".yaml": "YAML",
+    ".swift": "Swift",
 }
 
 # Language identifiers used internally (e.g. for docstring extraction heuristics)
@@ -90,6 +92,7 @@ _LANG_NAMES: dict[str, str] = {
     ".pyi":  "python",
     ".yml":  "yaml",
     ".yaml": "yaml",
+    ".swift": "swift",
 }
 
 # Python can be indexed via stdlib ast even without tree-sitter-python

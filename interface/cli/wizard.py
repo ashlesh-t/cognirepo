@@ -164,6 +164,7 @@ _EXTRA_PACKAGES: dict[str, list[str]] = {
         "tree-sitter-rust>=0.23",
         "tree-sitter-bash>=0.23",
         "tree-sitter-yaml>=0.6",
+        "tree-sitter-swift>=0.7",
     ],
 }
 

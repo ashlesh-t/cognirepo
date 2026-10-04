@@ -220,11 +220,14 @@ _TS_FUNCTION_TYPES = frozenset({
     "arrow_function",             # JS/TS arrow functions
     "method_signature",           # TS interface methods
     "function_signature",         # TS ambient/overload signatures
+    "init_declaration",           # Swift init()
+    "protocol_function_declaration",  # Swift protocol requirements
 })
 
 # tree-sitter node types that represent named classes / types
 _TS_CLASS_TYPES = frozenset({
     "class_definition",           # Python
+    "protocol_declaration",       # Swift (class/struct/enum/actor/extension use class_declaration)
     "class_declaration",          # Java, JS, TS
     "abstract_class_declaration", # TypeScript abstract classes
     "class_specifier",            # C++
@@ -479,14 +482,19 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
         fn = (
             node.child_by_field_name("function")
             or node.child_by_field_name("name")
+            or (node.named_children[0] if node.named_children else None)  # Swift: no field names
         )
         if fn:
             prop = (
                 fn.child_by_field_name("property")  # JS/TS: obj.prop()
                 or fn.child_by_field_name("field")  # Go selector_expression: obj.Field()
             )
+            if prop is None and fn.type == "navigation_expression":  # Swift: obj.method()
+                suffix = fn.child_by_field_name("suffix")
+                prop = suffix.child_by_field_name("suffix") if suffix else None
             name_node = prop if prop else fn
-            if name_node.type in ("identifier", "property_identifier", "field_identifier"):
+            if name_node.type in ("identifier", "property_identifier", "field_identifier",
+                                  "simple_identifier"):  # simple_identifier: Swift
                 method_name = _ts_text(name_node, source)
                 out.append(method_name)
                 # For Go selector_expression, also record "receiver::method" so
@@ -557,6 +565,12 @@ def _ts_bases(node, source: bytes) -> list[str]:
                 name = _ts_text(child, source)
                 if name not in ("object", "ABC", "Enum", "IntEnum", ",", "(", ")"):
                     bases.append(name)
+    # Swift: `class Foo: Bar, Proto` — one inheritance_specifier child per parent
+    for child in node.children:
+        if child.type == "inheritance_specifier":
+            parent = child.child_by_field_name("inherits_from")
+            if parent:
+                bases.append(_ts_text(parent, source))
     return bases
 
 

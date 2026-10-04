@@ -68,6 +68,8 @@ _SERVICE_MARKERS: dict[str, tuple[str | None, str]] = {
     "*.csproj":             ("rest_api", "C#/.NET"),
     # Dart / Flutter
     "pubspec.yaml":         ("frontend", "Dart/Flutter"),
+    # Swift
+    "Package.swift":        ("worker",   "Swift/SwiftPM"),
 }
 
 # ── Node.js dep signals for service-type inference ────────────────────────────

@@ -20,6 +20,7 @@ pip install cognirepo[languages]     # all supported languages
 | Language | Extensions | Status | Grammar package |
 |----------|------------|--------|-----------------|
 | Python | `.py` | Stable — built-in | tree-sitter-python (optional, stdlib fallback) |
+| Swift | `.swift` | Stable | tree-sitter-swift |
 | JavaScript | `.js` `.jsx` | Stable | tree-sitter-javascript |
 | TypeScript | `.ts` `.tsx` | Stable | tree-sitter-typescript |
 | Java | `.java` | Stable | tree-sitter-java |
@@ -38,7 +39,6 @@ grammar package from `cognirepo[languages]`.
 | Language | Issue |
 |----------|-------|
 | Ruby | #TBD |
-| Swift | #TBD |
 | Kotlin | #TBD |
 | PHP | #TBD |
 
@@ -83,6 +83,6 @@ once symbols are extracted.
 
 ```bash
 cognirepo doctor --verbose
-# Shows: Language support — Python, JS, TS, Java, Go, Rust, C++
+# Shows: Language support — Python, JS, TS, Java, Go, Rust, C++, Swift
 # (or only "Python (built-in)" if cognirepo[languages] not installed)
 ```

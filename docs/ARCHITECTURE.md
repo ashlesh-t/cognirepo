@@ -151,7 +151,7 @@ See `docs/architecture/graph.md` for the full schema with query examples.
 | `intelligence/indexer/ast_indexer.py` | Multi-language AST parser + symbol extractor + FAISS ingestion |
 | `intelligence/indexer/file_watcher.py` | Watchdog-based hot reload — indexes on file change, prunes on delete |
 
-Supported languages: Python (stdlib `ast`), TypeScript, JavaScript, Go, Rust, Java, C++ (tree-sitter).
+Supported languages: Python (stdlib `ast`), TypeScript, JavaScript, Go, Rust, Java, C++, Swift (tree-sitter).
 
 On file deletion, the watcher:
 1. Removes FAISS vector IDs via `remove_ids()`
