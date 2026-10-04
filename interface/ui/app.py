@@ -11,7 +11,7 @@ import os
 import time
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -93,5 +93,15 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
     @app.get("/api/v1/status")
     async def status(request: Request) -> dict[str, Any]:
         return collect_status(app.state.repo_root, app.state.started_at, os.getpid())
+
+    @app.get("/api/v1/graph")
+    def graph(  # sync on purpose: runs in the threadpool, not the event loop
+        node: str | None = Query(default=None, max_length=512),
+        depth: int = Query(default=1, ge=0, le=3),
+        limit: int = Query(default=200, ge=1, le=2000),
+    ) -> dict[str, Any]:
+        """Read-only, bounded knowledge-graph slice (never the whole graph)."""
+        from interface.tools.graph_view import graph_view  # pylint: disable=import-outside-toplevel
+        return graph_view(node=node, depth=depth, limit=limit)
 
     return app

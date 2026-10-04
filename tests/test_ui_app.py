@@ -121,3 +121,53 @@ class TestStatusShape:
         assert data["daemon"]["state"] in {"running", "stale", "stopped"}
         assert data["mcp"]["tool_count"] > 0
         json.dumps(data)  # serialisable
+
+
+class TestGraph:
+    @pytest.fixture
+    def seeded(self, isolated_cognirepo):
+        from data.graph.knowledge_graph import EdgeType, KnowledgeGraph, NodeType
+        from interface.tools import graph_view
+        graph_view.reset_cache()
+        kg = KnowledgeGraph()
+        kg.add_node("a.py", NodeType.FILE)
+        for i in range(5):
+            kg.add_node(f"a.py::f{i}", NodeType.FUNCTION, file="a.py", line=i, secret="SHOULD-NOT-LEAK")
+            kg.add_edge(f"a.py::f{i}", "a.py", EdgeType.DEFINED_IN, internal="x")
+        kg.add_node("b.py::far", NodeType.FUNCTION, file="b.py")
+        kg.add_edge("a.py::f0", "b.py::far", EdgeType.CALLED_BY)
+        kg.save()
+        yield kg
+        graph_view.reset_cache()
+
+    def test_overview_and_bounds(self, client, seeded):
+        d = client.get("/api/v1/graph?limit=3", headers=AUTH).json()
+        assert d["stats"]["nodes"] == 7 and len(d["nodes"]) == 3 and d["truncated"] is True
+        assert client.get("/api/v1/graph?limit=2001", headers=AUTH).status_code == 422
+        assert client.get("/api/v1/graph?depth=9", headers=AUTH).status_code == 422
+
+    def test_neighbourhood_depth(self, client, seeded):
+        one = client.get("/api/v1/graph?node=a.py::f1&depth=1", headers=AUTH).json()
+        ids1 = {n["id"] for n in one["nodes"]}
+        assert ids1 == {"a.py::f1", "a.py"}
+        two = client.get("/api/v1/graph?node=a.py::f1&depth=3", headers=AUTH).json()
+        assert "b.py::far" in {n["id"] for n in two["nodes"]}
+
+    def test_unknown_node_and_whitelisted_attrs(self, client, seeded):
+        assert client.get("/api/v1/graph?node=nope", headers=AUTH).json()["found"] is False
+        raw = client.get("/api/v1/graph?node=a.py::f1&depth=1", headers=AUTH).text
+        assert "SHOULD-NOT-LEAK" not in raw and "internal" not in raw
+
+    def test_graph_view_is_read_only(self, client, seeded):
+        pkl = os.path.join(".cognirepo", "graph", "graph.pkl")
+        before = os.stat(pkl).st_mtime_ns
+        client.get("/api/v1/graph", headers=AUTH)
+        client.get("/api/v1/graph?node=a.py::f2&depth=2", headers=AUTH)
+        assert os.stat(pkl).st_mtime_ns == before
+        assert not os.path.exists(os.path.join(".cognirepo", "graph", "graph.journal"))
+
+    def test_missing_graph_is_empty_not_error(self, client, isolated_cognirepo):
+        from interface.tools import graph_view
+        graph_view.reset_cache()
+        d = client.get("/api/v1/graph", headers=AUTH).json()
+        assert d["stats"] == {"nodes": 0, "edges": 0} and d["nodes"] == []
