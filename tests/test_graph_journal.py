@@ -198,6 +198,7 @@ class TestCrashRecovery:
         kg = KnowledgeGraph()
         kg.begin_journal()
         _populate(kg, files=2, flush_each=True)
+        kg.end_journal()  # releases the writer lease (the "crashed" run is gone)
         path = _journal_path()
         with open(path, "ab") as f:
             f.write(b"\x00\x00\x01\x00garbage")  # half-written record
@@ -277,7 +278,10 @@ class TestReloadAndBounds:
     def test_journal_disabled_by_default_outside_indexing(self, isolated_cognirepo):
         kg = KnowledgeGraph()
         kg.add_node("a", NodeType.FILE)
-        assert kg._pending == [] and not os.path.exists(_journal_path())
+        # nothing reaches disk without begin_journal()/save(); the op is only remembered
+        # in memory so a later save() can rebase onto newer disk state
+        assert not os.path.exists(_journal_path())
+        assert kg._pending == [("n", "a", NodeType.FILE, {})]
 
     def test_flush_triggers_on_op_budget_and_segments_stay_bounded(self, isolated_cognirepo):
         from data.graph import journal
@@ -310,6 +314,7 @@ class TestReviewRegressions:
         run1.begin_journal()
         _populate(kg=run1, files=2, flush_each=True)  # seqs 1, 2
         run1.save()  # journal removed, marker = 2
+        run1.end_journal()
         run2 = KnowledgeGraph()  # no journal file on disk
         run2.begin_journal()
         run2.add_node("run2.py", NodeType.FILE)
@@ -370,14 +375,20 @@ class TestReviewRegressions:
         kg.end_journal()
         assert len(KnowledgeGraph().G) == 500
 
-    def test_failed_end_journal_does_not_wedge_reload(self, isolated_cognirepo):
+    def test_failed_end_journal_keeps_ops_and_does_not_wedge_reload(self, isolated_cognirepo):
         kg = KnowledgeGraph()
         kg.begin_journal(flush_ops=10_000)
         kg.add_node("x", NodeType.FILE)
         with mock.patch("data.graph.journal.append_segment", side_effect=OSError("full")):
             with pytest.raises(OSError):
                 kg.end_journal()
-        assert not kg._journal_active and kg._pending == []
+        assert not kg._journal_active
+        assert kg._pending, "failed flush must not discard the ops (they are the rebase log)"
+        other = KnowledgeGraph()
+        other.add_node("theirs", NodeType.FILE)
+        other.save()                      # disk moves on while our flush had failed
+        assert kg.reload_if_changed() is True
+        assert kg.G.has_node("x") and kg.G.has_node("theirs")
 
 
 _WRITER = """
@@ -463,8 +474,8 @@ class TestReviewRound2:
             f.write(b"\x00\x00\x10\x00torn")
         with mock.patch("core.security.encryption.decrypt_bytes", side_effect=AssertionError("decrypted")), \
              mock.patch("pickle.loads", side_effect=AssertionError("unpickled")):
-            good_end, total = journal.boundary_end(path)
-        assert good_end == size and total > size
+            good_end, total, last_seq = journal.boundary_end(path)
+        assert good_end == size and total > size and last_seq == 3
         resumed = KnowledgeGraph()
         resumed.begin_journal()  # truncates the torn tail without decrypting
         assert os.path.getsize(path) == size
@@ -484,3 +495,325 @@ class TestReviewRound2:
         from data.graph import journal
         journal.append_segment(_journal_path(), 1, [("n", "plain.py", NodeType.FILE, {})], None)
         assert KnowledgeGraph().G.has_node("plain.py")
+
+
+_HOLDER = """
+import sys, time
+sys.path.insert(0, {repo!r})
+from core.config.paths import set_cognirepo_dir
+set_cognirepo_dir({cdir!r})
+from data.graph.knowledge_graph import KnowledgeGraph
+kg = KnowledgeGraph()
+kg.begin_journal()
+print("LEASED", flush=True)
+time.sleep({hold})
+"""
+
+
+def _spawn(code):
+    import subprocess
+    import sys
+    return subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)  # pylint: disable=consider-using-with
+
+
+def _repo_root():
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+class TestWriterLease:
+    """COGNIREPO-137: one journal writer at a time, crash-safe."""
+
+    def test_second_writer_is_refused_with_owner_pid(self, isolated_cognirepo):
+        from data.graph.journal import JournalBusy
+        first = KnowledgeGraph()
+        first.begin_journal()
+        second = KnowledgeGraph()
+        with pytest.raises(JournalBusy) as busy:
+            second.begin_journal()
+        assert busy.value.pid == os.getpid()
+        assert "already running" in str(busy.value)
+        first.end_journal()
+        second.begin_journal()  # lease is free again
+        second.end_journal()
+
+    def test_lease_is_released_when_the_holder_is_killed(self, isolated_cognirepo):
+        from data.graph.journal import JournalBusy
+        code = _HOLDER.format(repo=_repo_root(), cdir=str(isolated_cognirepo / ".cognirepo"), hold=60)
+        holder = _spawn(code)
+        try:
+            assert holder.stdout.readline().strip() == "LEASED"
+            kg = KnowledgeGraph()
+            with pytest.raises(JournalBusy) as busy:
+                kg.begin_journal()
+            assert busy.value.pid == holder.pid
+            holder.kill()  # simulated crash: no end_journal(), no cleanup
+            holder.wait(timeout=10)
+            kg.begin_journal()  # the OS dropped the lease — no stale-lease cleanup needed
+            kg.end_journal()
+        finally:
+            if holder.poll() is None:
+                holder.kill()
+
+    def test_waiting_writer_gets_the_lease_when_it_frees(self, isolated_cognirepo):
+        import threading
+        import time
+        first = KnowledgeGraph()
+        first.begin_journal()
+        threading.Timer(0.4, first.end_journal).start()
+        second = KnowledgeGraph()
+        t0 = time.time()
+        second.begin_journal(wait=10)
+        assert 0.3 < time.time() - t0 < 8
+        second.end_journal()
+
+    def test_index_repo_refuses_while_another_indexer_runs(self, isolated_cognirepo, tmp_path):
+        from data.graph.journal import JournalBusy
+        from intelligence.indexer.ast_indexer import ASTIndexer
+        repo = tmp_path / "p"
+        repo.mkdir()
+        (repo / "a.py").write_text("def f():\n    return 1\n")
+        owner = KnowledgeGraph()
+        owner.begin_journal()
+        with pytest.raises(JournalBusy):
+            ASTIndexer(graph=KnowledgeGraph()).index_repo(str(repo), embed=False)
+        owner.end_journal()
+        ASTIndexer(graph=KnowledgeGraph()).index_repo(str(repo), embed=False)  # now fine
+
+    def test_cli_exits_cleanly_when_busy(self, isolated_cognirepo, tmp_path, capsys):
+        from interface.cli.main import _direct_index
+        owner = KnowledgeGraph()
+        owner.begin_journal()
+        with pytest.raises(SystemExit) as exc:
+            _direct_index(str(tmp_path), embed=False, skip_graph=True)
+        owner.end_journal()
+        assert exc.value.code == 1
+        assert "already running" in capsys.readouterr().err
+
+    def test_seq_comes_from_the_disk_tail_not_process_memory(self, isolated_cognirepo):
+        """Defence in depth: even if two writers somehow overlap, seq never collides."""
+        from data.graph import journal
+        a = KnowledgeGraph()
+        a.begin_journal()
+        a.add_node("a1", NodeType.FILE)
+        a.flush_journal()                      # seq 1
+        # a foreign appender (lease bypassed) writes seq 2 behind a's back
+        journal.append_segment(_journal_path(), 2, [("n", "foreign", NodeType.FILE, {})], None)
+        a.add_node("a2", NodeType.FILE)
+        a.flush_journal()                      # must become seq 3, not a colliding 2
+        a.end_journal()
+        _, _, last = journal.boundary_end(_journal_path())
+        seqs = [seq for seq, _ops in journal.scan(_journal_path(), None)[0]]
+        assert seqs == [1, 2, 3] and last == 3
+        replayed = KnowledgeGraph()
+        assert all(replayed.G.has_node(n) for n in ("a1", "foreign", "a2"))
+
+    def test_compaction_by_another_process_does_not_break_the_lease_holder(self, isolated_cognirepo):
+        writer = KnowledgeGraph()
+        writer.begin_journal()
+        writer.add_node("w1", NodeType.FILE)
+        writer.flush_journal()
+        watcher = KnowledgeGraph()             # e.g. the watcher: plain save() compacts + unlinks
+        watcher.add_node("watch1", NodeType.FILE)
+        watcher.save()
+        assert not os.path.exists(_journal_path())
+        writer.add_node("w2", NodeType.FILE)
+        writer.flush_journal()                 # file shrank under us -> restart offsets, keep seq rising
+        writer.end_journal()
+        final = KnowledgeGraph()
+        assert all(final.G.has_node(n) for n in ("w1", "w2", "watch1"))
+
+
+class TestRebaseOnSave:
+    """COGNIREPO-139 (graph half): a stale writer merges instead of overwriting."""
+
+    def test_stale_save_keeps_the_newer_disk_state(self, isolated_cognirepo):
+        watcher = KnowledgeGraph()             # long-lived, loaded before the index run
+        indexer = KnowledgeGraph()
+        indexer.add_node("indexed.py", NodeType.FILE)
+        indexer.add_edge("indexed.py", "indexed.py::f", EdgeType.DEFINED_IN)
+        indexer.save()                         # index-repo completes
+        watcher.add_node("edited.py", NodeType.FILE)
+        watcher.save()                         # watcher's next debounced save
+        final = KnowledgeGraph()
+        assert final.G.has_node("indexed.py") and final.G.has_node("edited.py")
+        assert final.G.has_edge("indexed.py", "indexed.py::f")
+
+    def test_stale_save_merges_with_an_unflushed_journal(self, isolated_cognirepo):
+        watcher = KnowledgeGraph()
+        indexer = KnowledgeGraph()
+        indexer.begin_journal()
+        indexer.add_node("j1.py", NodeType.FILE)
+        indexer.flush_journal()                # on disk only as journal records
+        watcher.add_node("w.py", NodeType.FILE)
+        watcher.save()                         # must fold j1.py in, not drop it
+        indexer.add_node("j2.py", NodeType.FILE)
+        indexer.end_journal()                  # lease holder keeps going after the compaction
+        indexer.save()
+        final = KnowledgeGraph()
+        assert all(final.G.has_node(n) for n in ("j1.py", "w.py", "j2.py"))
+
+    def test_concurrent_attribute_writes_last_op_wins_per_attribute(self, isolated_cognirepo):
+        a, b = KnowledgeGraph(), KnowledgeGraph()
+        a.add_node("n", NodeType.FILE, owner="a", only_a=1)
+        a.save()
+        b.add_node("n", NodeType.FILE, owner="b", only_b=2)
+        b.save()
+        node = dict(KnowledgeGraph().G.nodes["n"])
+        assert node["owner"] == "b" and node["only_a"] == 1 and node["only_b"] == 2
+
+    def test_reload_if_changed_rebases_unsaved_local_ops(self, isolated_cognirepo):
+        server, other = KnowledgeGraph(), KnowledgeGraph()
+        other.add_node("theirs", NodeType.FILE)
+        other.save()
+        server.add_node("mine", NodeType.FILE)  # not saved yet
+        assert server.reload_if_changed() is True
+        assert server.G.has_node("theirs") and server.G.has_node("mine")
+        server.save()
+        assert KnowledgeGraph().G.has_node("mine")
+
+    def test_save_without_foreign_changes_does_not_reload(self, isolated_cognirepo):
+        kg = KnowledgeGraph()
+        kg.add_node("a", NodeType.FILE)
+        kg.save()
+        kg.add_node("b", NodeType.FILE)
+        with mock.patch.object(KnowledgeGraph, "_load", side_effect=AssertionError("needless reload")):
+            kg.save()
+        assert KnowledgeGraph().G.has_node("b")
+
+    def test_overflowed_unsynced_log_falls_back_to_last_writer_wins_with_warning(
+            self, isolated_cognirepo, monkeypatch):
+        # patch the globals the class actually reads (other test files reload the module)
+        monkeypatch.setitem(KnowledgeGraph._do.__globals__, "_UNSYNCED_OPS_CAP", 5)
+        a, b = KnowledgeGraph(), KnowledgeGraph()
+        b.add_node("theirs", NodeType.FILE)
+        b.save()
+        for i in range(20):
+            a.add_node(f"mine{i}", NodeType.FILE)
+        with pytest.warns(UserWarning, match="last writer wins"):
+            a.save()
+        assert KnowledgeGraph().G.has_node("mine19")
+
+    def test_stale_save_when_disk_graph_is_locked_refuses(self, encrypted):
+        a = KnowledgeGraph()
+        a.add_node("x", NodeType.FILE)
+        other = KnowledgeGraph()
+        other.add_node("y", NodeType.FILE)
+        other.save()
+        with mock.patch("core.security.encryption.decrypt_bytes", side_effect=ValueError("no key")):
+            with pytest.warns(UserWarning):
+                with pytest.raises(GraphLockedError):
+                    a.save()
+
+    def test_two_process_concurrent_indexers_one_refused_no_ops_lost(self, isolated_cognirepo):
+        """Real processes: the holder journals while another process's plain save() lands."""
+        code = _WRITER.format(repo=_repo_root(), cdir=str(isolated_cognirepo / ".cognirepo"), segments=25)
+        proc = _spawn(code)
+        watcher = KnowledgeGraph()
+        n = 0
+        try:
+            while proc.poll() is None and n < 50:
+                watcher.add_node(f"watch{n}", NodeType.FILE)
+                watcher.save()
+                n += 1
+            assert proc.wait(timeout=60) == 0
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        final = KnowledgeGraph()
+        assert sum(1 for x in final.G.nodes if x.startswith("seg")) == 25 * 20
+        assert sum(1 for x in final.G.nodes if x.startswith("watch")) == n
+
+
+class TestReviewRound3:
+    def test_failed_flush_then_foreign_write_then_save_loses_nothing(self, isolated_cognirepo):
+        kg = KnowledgeGraph()
+        kg.begin_journal(flush_ops=1)
+        with mock.patch("data.graph.journal.append_segment", side_effect=OSError("disk full")):
+            with pytest.warns(UserWarning, match="journal flush failed"):
+                kg.add_node("mine", NodeType.FILE)   # flush fails softly, journaling stops
+        other = KnowledgeGraph()
+        other.add_node("theirs", NodeType.FILE)
+        other.save()
+        kg.save()                                    # CAS -> rebase must re-apply "mine"
+        final = KnowledgeGraph()
+        assert final.G.has_node("mine") and final.G.has_node("theirs")
+        from data.graph.journal import WriterLease
+        WriterLease(_journal_path()).acquire()       # lease was released on journal failure
+
+    def test_torn_tail_truncation_does_not_force_a_full_reload_at_save(self, isolated_cognirepo):
+        seed = KnowledgeGraph()
+        seed.begin_journal()
+        seed.add_node("seed", NodeType.FILE)
+        seed.end_journal()
+        with open(_journal_path(), "ab") as f:
+            f.write(b"\x00" * 5)                     # dead writer's torn tail
+        kg = KnowledgeGraph()
+        kg.begin_journal()                            # truncates it
+        kg.add_node("new", NodeType.FILE)
+        kg.end_journal()
+        with mock.patch.object(KnowledgeGraph, "_load", side_effect=AssertionError("needless reload")):
+            kg.save()
+        assert KnowledgeGraph().G.has_node("new")
+
+    def test_flush_never_trusts_a_stale_offset_in_a_regrown_file(self, isolated_cognirepo):
+        from data.graph import journal
+        kg = KnowledgeGraph()
+        kg.begin_journal()
+        _populate(kg, files=2, flush_each=True)       # journal_bytes = N
+        os.unlink(_journal_path())                    # compacted away by someone
+        # file regrows past N with records that do NOT line up with the old offset
+        for seq in (7, 8, 9, 10):
+            journal.append_segment(_journal_path(), seq, [("n", f"f{seq}", NodeType.FILE, {"pad": "x" * 200})], None)
+        kg.add_node("late", NodeType.FILE)
+        kg.flush_journal()
+        seqs = [seq for seq, _ in journal.scan(_journal_path(), None)[0]]
+        assert seqs == [7, 8, 9, 10, 11]              # nothing truncated, seq continues
+        kg.end_journal()
+
+    def test_prune_does_not_delete_a_node_another_writer_just_connected(self, isolated_cognirepo):
+        base = KnowledgeGraph()
+        base.add_node("orphan", NodeType.CONCEPT)
+        base.save()
+        pruner = KnowledgeGraph()
+        victims = [n for n in pruner.G if pruner.G.degree(n) == 0]
+        other = KnowledgeGraph()
+        other.add_node("user.py::f", NodeType.FUNCTION)
+        other.add_edge("user.py::f", "orphan", EdgeType.RELATES_TO)
+        other.save()                                  # orphan is no longer an orphan
+        for n in victims:
+            pruner.remove_node_if_degree_at_most(n, 0)
+        pruner.save()                                 # rebased onto the newer state
+        final = KnowledgeGraph()
+        assert final.G.has_node("orphan") and final.G.has_edge("user.py::f", "orphan")
+
+    def test_overflow_flag_survives_begin_journal(self, isolated_cognirepo):
+        kg = KnowledgeGraph()
+        kg._pending_overflow = True
+        kg.begin_journal()
+        assert kg._pending_overflow
+        kg.end_journal()
+
+    def test_unsynced_log_is_bounded_by_estimated_bytes(self, isolated_cognirepo, monkeypatch):
+        monkeypatch.setitem(KnowledgeGraph._do.__globals__, "_UNSYNCED_COST_CAP", 10_000)
+        kg = KnowledgeGraph()
+        for i in range(100):
+            kg.add_node(f"n{i}", NodeType.CONCEPT, candidates=[f"f{k}.py" for k in range(50)])
+        assert kg._pending_overflow and kg._pending_cost < 10_000 + 5_000
+
+    def test_new_built_instances_do_not_share_a_pending_list(self, isolated_cognirepo):
+        a = KnowledgeGraph.__new__(KnowledgeGraph)
+        b = KnowledgeGraph.__new__(KnowledgeGraph)
+        import networkx as nx
+        a.G, b.G = nx.DiGraph(), nx.DiGraph()
+        a.add_node("only_a", NodeType.FILE)
+        assert b._pending == () and a._pending is not b._pending
+
+    def test_in_process_lease_exclusion_is_deterministic(self, isolated_cognirepo):
+        from data.graph.journal import JournalBusy, WriterLease
+        one, two = WriterLease(_journal_path()), WriterLease(_journal_path())
+        one.acquire()
+        with pytest.raises(JournalBusy):
+            two.acquire()
+        one.release()
+        two.acquire()
+        two.release()

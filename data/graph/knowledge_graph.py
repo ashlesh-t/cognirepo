@@ -20,7 +20,15 @@ Persistence : pickle to .cognirepo/graph/graph.pkl
 Journal     : while indexing, mutations are appended to .cognirepo/graph/graph.journal
               (data/graph/journal.py) every N ops / T seconds; _load() replays it on top of
               graph.pkl and save() compacts it away (COGNIREPO-109). Single writer: only the
-              indexer journals; other writers use plain save().
+              indexer journals (one at a time, via journal.WriterLease); other writers use
+              plain save(), which rebases onto newer disk state instead of overwriting it.
+Concurrency : every mutation is an op (see _apply) and is remembered in ``_pending`` until
+              it is on disk. save() holds store_lock and, if graph.pkl/graph.journal changed
+              since this instance last synced, reloads the fresh state and re-applies the
+              unsynced ops on top (rebase) — the Git ref-update "compare-and-swap, then redo"
+              pattern — so a long-lived watcher can no longer replace a newer index-repo
+              result with its stale copy (COGNIREPO-137/139). Mutate through the primitives,
+              not ``kg.G`` directly, or the change is invisible to a rebase.
 """
 import os
 import pickle
@@ -76,6 +84,11 @@ PYTHON_BUILTINS: frozenset[str] = frozenset({
     "__all__", "__name__", "__file__", "__spec__", "__path__",
 })
 
+
+# Ops remembered for rebase while no journal is flushing them. Beyond this a long-lived
+# writer degrades to last-writer-wins (with a warning) rather than growing without bound.
+_UNSYNCED_OPS_CAP = 200_000
+_UNSYNCED_COST_CAP = 64 << 20  # estimated bytes (see _op_cost) — bounds attr-heavy ops too
 
 _FERNET_PREFIX = b"gAAAAA"  # every Fernet token starts with version byte 0x80, base64'd
 
@@ -151,9 +164,9 @@ class KnowledgeGraph:
     """Thin wrapper around a networkx DiGraph with CogniRepo-specific conventions."""
 
     # Class-level defaults so instances built without __init__ (tests use __new__) behave
-    # as "journal off". _pending is always rebound per instance, never mutated here.
+    # as "journal off". _pending is a per-instance list created in __init__ (or on first _do).
     _journal_active = False
-    _pending: list[tuple] = []
+    _pending: tuple = ()  # replaced by a per-instance list on first use (see _do)
     _journal_seq = 0
     _journal_bytes = 0
     _flush_ops = 5000
@@ -162,6 +175,9 @@ class KnowledgeGraph:
     _flush_secs = 30.0
     _last_flush = 0.0
     _locked = False
+    _disk_stamp: tuple | None = None
+    _lease: "_journal.WriterLease | None" = None
+    _pending_overflow = False
 
     def __init__(self) -> None:
         self.G: nx.DiGraph = nx.DiGraph()  # pylint: disable=invalid-name
@@ -172,7 +188,8 @@ class KnowledgeGraph:
         self._disk_path: str | None = _graph_file()
         # True when graph.pkl is ciphertext we could not decrypt; save() refuses.
         self._locked = False
-        # Journal state (COGNIREPO-109). _pending only fills while begin_journal() is active.
+        # Journal/rebase state (COGNIREPO-109/137/139). _pending = ops not yet on disk: flushed
+        # to the journal while begin_journal() is active, otherwise kept so save() can rebase.
         self._journal_active = False
         self._pending: list[tuple] = []
         self._journal_seq = 0          # highest seq applied to / written for this graph
@@ -206,15 +223,42 @@ class KnowledgeGraph:
         path = _graph_file()
         if self._disk_path is not None and path != self._disk_path:
             return False  # a _repo_ctx() has repointed get_path() at another repo
-        if self._journal_active or self._pending:
+        if self._journal_active:
             return False  # this instance is the journal writer; its memory is authoritative
         current = self._full_stamp()
         if current == self._disk_stamp:
             return False
         if self._try_incremental_replay(current):
             return True
-        self._load()
+        self._rebase()
         return True
+
+    def _rebase(self) -> None:
+        """Reload disk state and re-apply this instance's unsynced ops on top of it.
+
+        Replaces "last writer wins" (our whole stale graph over newer disk state) with a
+        merge: foreign changes are kept and ours are redone, per attribute. If the unsynced
+        log overflowed we cannot redo it, so keep our graph and warn instead.
+        """
+        ops = self._pending
+        if self._pending_overflow:
+            warnings.warn(
+                "KnowledgeGraph: too many unsaved changes to rebase onto newer on-disk state; "
+                "keeping this process's graph (last writer wins).",
+                stacklevel=3,
+            )
+            self._disk_stamp = self._full_stamp()
+            return
+        self._pending = []
+        self._pending_cost = 0
+        self._load()  # drops the stale graph, then loads graph.pkl + replays graph.journal
+        if self._locked:
+            self._pending = ops
+            return
+        for op in ops:
+            self._apply(op)  # not _do(): no auto-flush while save() holds store_lock
+        self._pending = ops
+        self._pending_cost = sum(_op_cost(o) for o in ops)
 
     def _try_incremental_replay(self, current: tuple) -> bool:
         """graph.pkl unchanged and the journal only grew: replay just the new segments
@@ -360,31 +404,47 @@ class KnowledgeGraph:
 
     def begin_journal(
         self, flush_ops: int = 5000, flush_secs: float = 30.0, flush_bytes: int = 4 << 20,
+        wait: float = 0.0,
     ) -> None:
         """Start journaling mutations; call flush_journal()/maybe_flush() to persist them.
 
-        A segment is flushed when ANY of ``flush_ops``, ``flush_bytes`` (estimated
-        payload size — attrs such as ``candidates`` lists vary widely) or ``flush_secs``
-        is reached, which bounds ``_pending`` in addition to the live graph.
+        Takes the exclusive writer lease first (raises journal.JournalBusy after ``wait``
+        seconds if another process is indexing). A segment is flushed when ANY of
+        ``flush_ops``, ``flush_bytes`` (estimated payload size — attrs such as
+        ``candidates`` lists vary widely) or ``flush_secs`` is reached, which bounds
+        ``_pending`` in addition to the live graph.
         """
         if self._locked:
             raise GraphLockedError("graph is locked; cannot journal")
         path = _journal_file()
-        if os.path.exists(path):
-            # Single writer: drop any torn tail left by a killed run so new records
-            # append after the last intact one. Boundary scan only checks length + crc —
-            # no decrypt/unpickle — so the lock is held briefly even on a large journal.
-            with store_lock():
-                good_end, size = _journal.boundary_end(path)
-                if good_end < size:
-                    _journal.truncate_to(path, good_end)
-                self._journal_bytes = good_end
-        self._pending = []
-        self._pending_cost = 0
+        lease = _journal.WriterLease(path)
+        lease.acquire(wait)
+        try:
+            if os.path.exists(path):
+                # We hold the lease, so any torn tail is a dead writer's: drop it so new
+                # records append after the last intact one, and continue numbering from the
+                # on-disk tail. The scan checks only header + crc (no decrypt/unpickle), so
+                # the lock is held briefly even on a large journal.
+                with store_lock():
+                    in_sync = self._full_stamp() == self._disk_stamp
+                    good_end, size, tail_seq = _journal.boundary_end(path)
+                    if good_end < size:
+                        _journal.truncate_to(path, good_end)
+                    self._journal_bytes = good_end
+                    self._journal_seq = max(self._journal_seq, tail_seq)
+                    if in_sync:  # dropping a torn tail changes the stamp, not the content
+                        self._disk_stamp = self._full_stamp()
+        except BaseException:
+            lease.release()
+            raise
+        self._lease = lease
         self._flush_ops = max(1, int(flush_ops))
         self._flush_bytes = max(1, int(flush_bytes))
         self._flush_secs = float(flush_secs)
         self._last_flush = time.monotonic()
+        self._pending_cost = sum(_op_cost(o) for o in self._pending)
+        # NB: _pending_overflow is deliberately NOT cleared — ops dropped earlier by the cap
+        # are gone from the log, so a rebase must stay disabled until save() resyncs.
         self._journal_active = True
 
     def end_journal(self) -> None:
@@ -393,23 +453,45 @@ class KnowledgeGraph:
             if self._journal_active:
                 self.flush_journal()
         finally:
-            # On a failed flush the ops are still in self.G and reach disk via save();
-            # don't leave them pending or reload_if_changed() would never run again.
+            # On a failed flush the ops stay in the unsynced log (they are still in self.G
+            # and reach disk via save(), which rebases them if disk changed meanwhile).
             self._journal_active = False
-            self._pending = []
-            self._pending_cost = 0
+            if self._lease is not None:
+                self._lease.release()
+                self._lease = None
 
     def flush_journal(self) -> None:
-        """Append all pending mutations to the journal as one fsynced segment."""
+        """Append all pending mutations to the journal as one fsynced segment.
+
+        The sequence number comes from the journal file's tail, read under store_lock —
+        never from process memory alone — so two writers can never emit the same seq.
+        """
         if not self._pending:
             return
         if self._locked:
             raise GraphLockedError("graph is locked; cannot journal")
-        seq = self._journal_seq + 1
         key = self._journal_key()
+        path = _journal_file()
         with store_lock():
-            _journal.append_segment(_journal_file(), seq, self._pending, key)
-            self._journal_bytes = os.path.getsize(_journal_file())
+            in_sync = self._full_stamp() == self._disk_stamp
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                size = 0
+            if size != self._journal_bytes:
+                # Someone compacted or appended under us. We cannot know that our old
+                # offset is still a record boundary in a regrown/replaced file, so rescan
+                # from the start (header + crc only — cheap) rather than trust it.
+                good_end, _sz, tail_seq = _journal.boundary_end(path, 0)
+                if good_end < size:
+                    _journal.truncate_to(path, good_end)
+                self._journal_bytes = good_end
+                self._journal_seq = max(self._journal_seq, tail_seq)
+            seq = self._journal_seq + 1
+            _journal.append_segment(path, seq, self._pending, key)
+            self._journal_bytes = os.path.getsize(path)
+            if in_sync:  # our own append must not look like a foreign change
+                self._disk_stamp = self._full_stamp()
         self._journal_seq = seq
         self._pending = []
         self._pending_cost = 0
@@ -428,9 +510,12 @@ class KnowledgeGraph:
         try:
             self.flush_journal()
         except Exception as exc:  # pylint: disable=broad-except
+            # Stop journaling but KEEP the ops: they stay in the unsynced log so the final
+            # save() can still rebase them onto newer disk state instead of losing them.
             self._journal_active = False
-            self._pending = []
-            self._pending_cost = 0
+            if self._lease is not None:
+                self._lease.release()
+                self._lease = None
             warnings.warn(
                 f"KnowledgeGraph: journal flush failed ({exc}); continuing without the "
                 "journal — the graph is saved at the end of the run as before.",
@@ -473,16 +558,31 @@ class KnowledgeGraph:
         elif kind == "re":
             if self.G.has_edge(op[1], op[2]):
                 self.G.remove_edge(op[1], op[2])
+        elif kind == "rnd":  # remove node only if still (nearly) unconnected — see prune
+            if self.G.has_node(op[1]) and self.G.degree(op[1]) <= op[2]:
+                self.G.remove_node(op[1])
         else:
             raise ValueError(f"unknown graph journal op {kind!r}")
 
     def _do(self, op: tuple) -> None:
         self._apply(op)
         if self._journal_active:
-            self._pending.append(op)
+            self._remember(op)
             self._pending_cost += _op_cost(op)
             if len(self._pending) >= self._flush_ops or self._pending_cost >= self._flush_bytes:
                 self.maybe_flush()  # bounds segment size inside the post-loop passes too
+        elif (len(self._pending) < _UNSYNCED_OPS_CAP
+              and self._pending_cost < _UNSYNCED_COST_CAP):
+            self._remember(op)  # unsynced log: lets save()/reload rebase, see _rebase()
+            self._pending_cost += _op_cost(op)
+        else:
+            self._pending_overflow = True
+
+    def _remember(self, op: tuple) -> None:
+        try:
+            self._pending.append(op)
+        except AttributeError:  # instance built via __new__ (tests): class default is a tuple
+            self._pending = [op]
 
     def save(self) -> None:
         """Serialize the graph to a pickle file; encrypt if needed.
@@ -502,11 +602,20 @@ class KnowledgeGraph:
         os.makedirs(os.path.dirname(_graph_file()), exist_ok=True)
         from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
-        # Marker pickled WITH the graph: replay skips journal records <= this seq, so a
-        # crash between os.replace() below and the journal unlink cannot double-apply.
-        # Pending (unflushed) ops are already reflected in self.G, hence in this pickle.
-        self.G.graph["journal_seq"] = self._journal_seq
         with store_lock():
+            # Compare-and-swap: if graph.pkl / graph.journal changed since we last synced,
+            # rebase onto the fresh state instead of overwriting it (COGNIREPO-139).
+            if self._disk_stamp is not None and self._full_stamp() != self._disk_stamp:
+                self._rebase()
+                if self._locked:
+                    raise GraphLockedError(
+                        f"{_graph_file()} or its journal became unreadable during rebase; "
+                        "refusing to save."
+                    )
+            # Marker pickled WITH the graph: replay skips journal records <= this seq, so a
+            # crash between os.replace() below and the journal unlink cannot double-apply.
+            # Unflushed ops are already reflected in self.G, hence in this pickle.
+            self.G.graph["journal_seq"] = self._journal_seq
             # Atomic promote. A plain open("wb") leaves graph.pkl truncated for
             # the duration of the write, and readers (MCP server revalidation,
             # doctor, a second serve) take no lock — one of them reading mid-write
@@ -547,6 +656,8 @@ class KnowledgeGraph:
                 raise
             self._compact_journal_locked()
         self._pending = []
+        self._pending_cost = 0
+        self._pending_overflow = False
         self._disk_stamp = self._full_stamp()
         self._disk_path = _graph_file()
         breaker.record_success()
@@ -587,6 +698,15 @@ class KnowledgeGraph:
     def remove_node(self, node_id: str) -> None:
         """Remove a node and its incident edges (no-op if absent)."""
         self._do(("rn", node_id))
+
+    def remove_node_if_degree_at_most(self, node_id: str, max_degree: int) -> None:
+        """Remove a node only if its degree is still <= max_degree when the op is applied.
+
+        For maintenance that selects victims from a possibly stale snapshot (prune): when
+        the op is rebased onto newer disk state, a node another writer has since connected
+        is kept instead of being destroyed along with the new edges.
+        """
+        self._do(("rnd", node_id, int(max_degree)))
 
     def remove_edge(self, src: str, dst: str) -> None:
         """Remove one edge (no-op if absent)."""

@@ -63,6 +63,7 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 | `indexing.debounce_ms` | int | `500` | File-watcher debounce window: events for the same path within this window collapse into one re-index/remove, and all pending changes in a batch are persisted with a single save. `0` disables batching — every event is processed synchronously and individually. |
 | `indexing.graph_journal` | bool | `true` | Journal knowledge-graph mutations to `graph/graph.journal` while `index-repo` runs, so an interrupted run or a failed final `graph.pkl` save does not lose the indexed graph (COGNIREPO-109). `false` restores the old single end-of-run save. |
 | `indexing.graph_journal_flush_files` | int | `200` | Flush the journal roughly every this many files' worth of graph changes (~25 ops/file). |
+| `indexing.writer_wait_secs` | float | `0` | A second `index-repo` while another one holds the graph writer lease (`graph/graph.journal.writer`) refuses immediately with the owner's pid (`0`), or queues behind it for up to this many seconds (COGNIREPO-137). |
 | `indexing.graph_journal_flush_secs` | float | `30` | Also flush when this many seconds passed since the last flush. |
 | `behaviour_decay.half_life_days` | float | `30` | Half-life for the exponential recency decay applied to symbol `behaviour_score` (COGNIREPO-701) — a symbol hit this many days ago scores half of an otherwise-identical symbol hit "now". `<= 0` disables decay entirely (behaviour score behaves exactly as before). |
 | `redis.enabled` | bool | `false` | Enable Redis caching layer |
@@ -105,6 +106,8 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
     graph.journal           ← append-only mutation journal written during indexing; replayed on
                                load and removed when save() compacts it into graph.pkl
                                (encrypted per segment when storage.encrypt is on)
+    graph.journal.writer    ← OS lock file: the single-writer lease held by a running index-repo
+    graph.journal.writer.pid← pid of the lease holder (for the "already running" message)
   index/                    ← AST symbol index
     ast_index.json          ← full AST index + reverse_index dict (ast_indexer.py)
     ast_metadata.json       ← parallel FAISS metadata for AST vectors

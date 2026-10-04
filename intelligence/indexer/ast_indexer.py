@@ -44,6 +44,7 @@ import numpy as np
 import warnings
 
 from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
+from data.graph.journal import JournalBusy
 from data.graph.graph_utils import make_node_id, node_id_from_symbol_record
 from intelligence.indexer.index_utils import SymbolTable, build_symbol_table_from_index
 from intelligence.indexer.language_registry import (
@@ -184,8 +185,11 @@ def _effective_max_file_bytes() -> int:
     except Exception:  # pylint: disable=broad-except
         return _MAX_FILE_BYTES
 
-def _journal_settings() -> tuple[bool, int, float]:
-    """(enabled, flush_ops, flush_secs) for the KnowledgeGraph journal (COGNIREPO-109).
+def _journal_settings() -> tuple[bool, int, float, float]:
+    """(enabled, flush_ops, flush_secs, writer_wait_secs) for the KnowledgeGraph journal.
+
+    ``indexing.writer_wait_secs`` (default 0 = refuse immediately) is how long a second
+    ``index-repo`` queues behind the process holding the graph writer lease (#137).
 
     config.json → {"indexing": {"graph_journal": true, "graph_journal_flush_files": 200,
     "graph_journal_flush_secs": 30}}.  flush_files is converted to an op budget
@@ -200,9 +204,10 @@ def _journal_settings() -> tuple[bool, int, float]:
     try:
         files = max(1, int(_idx.get("graph_journal_flush_files", 200)))
         secs = float(_idx.get("graph_journal_flush_secs", 30))
+        wait = max(0.0, float(_idx.get("writer_wait_secs", 0)))
     except (TypeError, ValueError):
-        files, secs = 200, 30.0
-    return enabled, files * 25, secs
+        files, secs, wait = 200, 30.0, 0.0
+    return enabled, files * 25, secs, wait
 
 # tree-sitter node types that represent named functions / methods
 _TS_FUNCTION_TYPES = frozenset({
@@ -1448,11 +1453,13 @@ class ASTIndexer:
         final ``kg.save()`` — loses at most the last unflushed segment (COGNIREPO-109).
         """
         journaling = False
-        enabled, flush_ops, flush_secs = _journal_settings()
+        enabled, flush_ops, flush_secs, wait = _journal_settings()
         if enabled:
             try:
-                self.graph.begin_journal(flush_ops, flush_secs)
+                self.graph.begin_journal(flush_ops, flush_secs, wait=wait)
                 journaling = True
+            except JournalBusy:
+                raise  # another indexer owns the graph: refuse, don't race it (#137)
             except Exception as exc:  # pylint: disable=broad-except
                 log.debug("graph journal disabled for this run: %s", exc)
         try:

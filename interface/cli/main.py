@@ -1637,7 +1637,12 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
                 from interface.tools.bg_progress import TaskProgress  # pylint: disable=import-outside-toplevel
                 _kg = KnowledgeGraph()
                 _idx = ASTIndexer(graph=_kg, progress_factory=TaskProgress)
-                _idx.index_repo(parent_path)
+                from data.graph.journal import JournalBusy  # pylint: disable=import-outside-toplevel
+                try:
+                    _idx.index_repo(parent_path)
+                except JournalBusy as _busy:  # COGNIREPO-137
+                    print(f"  ✗ {_busy}", file=sys.stderr)
+                    sys.exit(1)
                 print("  ✓  Re-index complete.")
 
                 # ── Tier-2 prompt for large repos ─────────────────────────────
@@ -2120,7 +2125,14 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
 
     rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     t0 = time.time()
-    summary = indexer.index_repo(abs_path, embed=embed, skip_graph=skip_graph, tier=tier)
+    from data.graph.journal import JournalBusy  # pylint: disable=import-outside-toplevel
+    try:
+        summary = indexer.index_repo(abs_path, embed=embed, skip_graph=skip_graph, tier=tier)
+    except JournalBusy as busy:
+        # Another index-repo owns the graph writer lease (COGNIREPO-137). Racing it would
+        # interleave two indexers over the same stores — refuse instead.
+        print(f"  ✗ {busy}", file=sys.stderr)
+        sys.exit(1)
     elapsed = time.time() - t0
     rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 

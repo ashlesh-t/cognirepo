@@ -76,6 +76,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | Edge types: RELATES_TO, DEFINED_IN, CALLED_BY, QUERIED_WITH, CO_OCCURS | ✅ | `EdgeType` constants in `data/graph/knowledge_graph.py` |
 | Persist/load (`graph.pkl`) | ✅ | Pickle serialization |
 | Incremental journal (`graph.journal`) | ✅ | Indexing appends graph mutations to an fsynced, crc-checked, per-segment-encrypted journal every N files / T seconds; `_load()` replays it over `graph.pkl`, `save()` compacts it away (COGNIREPO-109). Interrupted indexing or a failed final save loses at most the last unflushed segment |
+| Single-writer lease + rebase-on-save | ✅ | A running `index-repo` holds an OS-level writer lease (released automatically if it crashes); a second one is refused with the owner's pid (or queues via `indexing.writer_wait_secs`). Journal sequence numbers come from the on-disk tail. `save()` compares disk state under `store_lock` and, if another process wrote since, reloads it and re-applies this process's unsaved ops instead of overwriting (COGNIREPO-137/139). Design: `docs/architecture/GRAPH_CONCURRENCY.md` |
 | `remove_node()`, `remove_edge()`, `set_node_attrs()`, `set_edge_attrs()`, `copy_edge()` | ✅ | Journaled mutation primitives — mutate through these (not `kg.G` directly) when the change must be crash-recoverable |
 | `add_node()`, `add_edge()` | ✅ | |
 | `nodes_for_file()` | ✅ | All nodes attributed to a file |

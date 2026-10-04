@@ -9,6 +9,21 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Added
+- **#137/#139 (graph half) — multi-writer safety for the graph journal.** (1) A running
+  `index-repo` takes an exclusive OS lock (`graph/graph.journal.writer`, the LevelDB/Lucene
+  write-lock pattern) for the whole run; a second one is refused with `indexing is already running
+  (pid N)` (exit 1) or queues for `indexing.writer_wait_secs`. The kernel drops the lock if the
+  holder dies, so a crash leaves no stale lease. (2) Journal records now carry their sequence
+  number in the frame header and the next seq is read from the file tail under `store_lock`
+  (length+crc scan, no decrypt) — two writers can no longer emit colliding seqs. (3) Every graph
+  mutation is remembered until it is on disk; `save()` and `reload_if_changed()` now compare disk
+  state and, if another process wrote since, reload it and re-apply the unsaved ops on top
+  (Git-style compare-and-swap-then-redo) instead of overwriting — a long-lived watcher can no
+  longer replace a newer `index-repo` result with its stale copy. `ops/cron/prune_memory.py` now
+  mutates through the journaled primitives (conditional `remove_node_if_degree_at_most`, so a rebased
+  prune never deletes a node another writer just connected). A failed journal flush keeps its ops in
+  the unsynced log instead of dropping them. Not covered: the AST index / FAISS stores still save
+  last-writer-wins (#139 remainder). Design + prior art: `docs/architecture/GRAPH_CONCURRENCY.md`.
 - **#109 — incremental knowledge-graph persistence (journal).** `index-repo` now appends graph
   mutations to `.cognirepo/graph/graph.journal` every N files / T seconds instead of holding
   everything until one end-of-run `graph.pkl` write. `KnowledgeGraph._load()` replays the journal

@@ -150,7 +150,8 @@ def _prune_graph(dry_run: bool) -> dict[str, int]:
         orphans = [n for n in list(kg.G.nodes()) if kg.G.degree(n) == 0]
         stats["orphans_removed"] = len(orphans)
         if not dry_run:
-            kg.G.remove_nodes_from(orphans)
+            for _nid in orphans:
+                kg.remove_node_if_degree_at_most(_nid, 0)
         # Remove concept nodes with no edges (very cold)
         cold = [
             n for n in list(kg.G.nodes())
@@ -159,7 +160,8 @@ def _prune_graph(dry_run: bool) -> dict[str, int]:
         ]
         stats["cold_nodes_removed"] = len(cold)
         if not dry_run:
-            kg.G.remove_nodes_from(cold)
+            for _nid in cold:
+                kg.remove_node_if_degree_at_most(_nid, 1)
             kg.save()
     except Exception as exc:  # pylint: disable=broad-except
         print(f"[prune] Graph pruning failed: {exc}", file=sys.stderr)
