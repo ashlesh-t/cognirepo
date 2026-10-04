@@ -146,7 +146,8 @@ All CogniRepo data lives under `.cognirepo/` in the project root. Nothing is wri
     episodic.json              — append-only episodic event journal (JSON lines)
     episodic_archive.json      — rotated events when episodic_max_events is exceeded
   graph/
-    graph.pkl                  — serialised NetworkX DiGraph
+    graph.pkl                  — serialised NetworkX DiGraph (carries G.graph["journal_seq"])
+    graph.journal              — append-only mutation journal (data/graph/journal.py); replay skips seq <= journal_seq; compacted by KnowledgeGraph.save()
   index/
     ast_index.json             — full AST index + reverse_index dict (indexer/ast_indexer.py)
     ast_metadata.json          — parallel FAISS metadata for AST symbol vectors

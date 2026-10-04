@@ -44,6 +44,7 @@ import numpy as np
 import warnings
 
 from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
+from data.graph.journal import JournalBusy
 from data.graph.graph_utils import make_node_id, node_id_from_symbol_record
 from intelligence.indexer.index_utils import SymbolTable, build_symbol_table_from_index
 from intelligence.indexer.language_registry import (
@@ -183,6 +184,30 @@ def _effective_max_file_bytes() -> int:
         return int(_cfg.get("indexing", {}).get("max_file_bytes", _MAX_FILE_BYTES))
     except Exception:  # pylint: disable=broad-except
         return _MAX_FILE_BYTES
+
+def _journal_settings() -> tuple[bool, int, float, float]:
+    """(enabled, flush_ops, flush_secs, writer_wait_secs) for the KnowledgeGraph journal.
+
+    ``indexing.writer_wait_secs`` (default 0 = refuse immediately) is how long a second
+    ``index-repo`` queues behind the process holding the graph writer lease (#137).
+
+    config.json → {"indexing": {"graph_journal": true, "graph_journal_flush_files": 200,
+    "graph_journal_flush_secs": 30}}.  flush_files is converted to an op budget
+    (~25 graph ops per file) so the flush trigger tracks work done, not just file count.
+    """
+    try:
+        with open(get_path("config.json"), encoding="utf-8") as _f:
+            _idx = json.load(_f).get("indexing", {})
+    except Exception:  # pylint: disable=broad-except
+        _idx = {}
+    enabled = bool(_idx.get("graph_journal", True))
+    try:
+        files = max(1, int(_idx.get("graph_journal_flush_files", 200)))
+        secs = float(_idx.get("graph_journal_flush_secs", 30))
+        wait = max(0.0, float(_idx.get("writer_wait_secs", 0)))
+    except (TypeError, ValueError):
+        files, secs, wait = 200, 30.0, 0.0
+    return enabled, files * 25, secs, wait
 
 # tree-sitter node types that represent named functions / methods
 _TS_FUNCTION_TYPES = frozenset({
@@ -1420,6 +1445,39 @@ class ASTIndexer:
         skip_graph: bool | None = None,
         tier: "int | str | None" = None,
     ) -> dict:
+        """Index *repo_root*, journaling graph mutations to disk as they happen.
+
+        Thin wrapper over :meth:`_index_repo_impl` (see there for parameters). With
+        ``indexing.graph_journal`` on (default) graph mutations are flushed to
+        ``graph.journal`` every N files / T seconds so an interrupted run — or a failed
+        final ``kg.save()`` — loses at most the last unflushed segment (COGNIREPO-109).
+        """
+        journaling = False
+        enabled, flush_ops, flush_secs, wait = _journal_settings()
+        if enabled:
+            try:
+                self.graph.begin_journal(flush_ops, flush_secs, wait=wait)
+                journaling = True
+            except JournalBusy:
+                raise  # another indexer owns the graph: refuse, don't race it (#137)
+            except Exception as exc:  # pylint: disable=broad-except
+                log.debug("graph journal disabled for this run: %s", exc)
+        try:
+            return self._index_repo_impl(repo_root, embed, skip_graph, tier)
+        finally:
+            if journaling:
+                try:
+                    self.graph.end_journal()
+                except Exception as exc:  # pylint: disable=broad-except
+                    log.warning("graph journal final flush failed: %s", exc)
+
+    def _index_repo_impl(
+        self,
+        repo_root: str,
+        embed: bool = True,
+        skip_graph: bool | None = None,
+        tier: "int | str | None" = None,
+    ) -> dict:
         """
         Walk *repo_root*, index every supported file (skipping _SKIP_DIRS),
         build the reverse index, and save everything to disk.
@@ -1726,6 +1784,7 @@ class ASTIndexer:
         if not is_supported(Path(rel_path)):
             return {}
 
+        self.graph.maybe_flush()  # no-op unless index_repo() started a journal
         self._ensure_faiss()
         if abs_path is None:
             abs_path = rel_path
@@ -2031,22 +2090,21 @@ class ASTIndexer:
                                         file=file_path, line=line)
                 # Redirect outgoing edges (CALLS → callers)
                 for successor in list(self.graph.G.successors(stub)):
-                    edge_data = dict(self.graph.G[stub][successor])
                     if not self.graph.G.has_edge(real_node, successor):
-                        self.graph.G.add_edge(real_node, successor, **edge_data)
+                        self.graph.copy_edge(stub, successor, real_node, successor)
                 # Redirect incoming edges (CALLED_BY from callers)
                 for predecessor in list(self.graph.G.predecessors(stub)):
-                    edge_data = dict(self.graph.G[predecessor][stub])
                     if not self.graph.G.has_edge(predecessor, real_node):
-                        self.graph.G.add_edge(predecessor, real_node, **edge_data)
-                self.graph.G.remove_node(stub)
+                        self.graph.copy_edge(predecessor, stub, predecessor, real_node)
+                self.graph.remove_node(stub)
 
             elif len(locations) > 1:
-                self.graph.G.nodes[stub]["ambiguous"] = True
-                self.graph.G.nodes[stub]["candidates"] = [loc[0] for loc in locations]
+                self.graph.set_node_attrs(
+                    stub, ambiguous=True, candidates=[loc[0] for loc in locations],
+                )
 
             else:
-                self.graph.G.nodes[stub]["unresolved"] = True
+                self.graph.set_node_attrs(stub, unresolved=True)
 
     def _similarity_gate_enabled(self, candidate_count: int) -> bool:
         """config.json → {"indexing": {"similarity_edges": true|false}}.
@@ -2183,7 +2241,7 @@ class ASTIndexer:
                 continue
             name = node_id.rsplit("::", 1)[-1]
             if name in targets and data.get("dispatch") != "dynamic":
-                self.graph.G.nodes[node_id]["dispatch"] = "dynamic"
+                self.graph.set_node_attrs(node_id, dispatch="dynamic")
                 self.graph.add_node(dispatch_node, NodeType.CONCEPT)
                 self.graph.add_edge(node_id, dispatch_node, EdgeType.RELATES_TO)
                 tagged += 1

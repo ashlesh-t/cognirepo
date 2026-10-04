@@ -1637,7 +1637,12 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
                 from interface.tools.bg_progress import TaskProgress  # pylint: disable=import-outside-toplevel
                 _kg = KnowledgeGraph()
                 _idx = ASTIndexer(graph=_kg, progress_factory=TaskProgress)
-                _idx.index_repo(parent_path)
+                from data.graph.journal import JournalBusy  # pylint: disable=import-outside-toplevel
+                try:
+                    _idx.index_repo(parent_path)
+                except JournalBusy as _busy:  # COGNIREPO-137
+                    print(f"  ✗ {_busy}", file=sys.stderr)
+                    sys.exit(1)
                 print("  ✓  Re-index complete.")
 
                 # ── Tier-2 prompt for large repos ─────────────────────────────
@@ -2120,7 +2125,14 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
 
     rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     t0 = time.time()
-    summary = indexer.index_repo(abs_path, embed=embed, skip_graph=skip_graph, tier=tier)
+    from data.graph.journal import JournalBusy  # pylint: disable=import-outside-toplevel
+    try:
+        summary = indexer.index_repo(abs_path, embed=embed, skip_graph=skip_graph, tier=tier)
+    except JournalBusy as busy:
+        # Another index-repo owns the graph writer lease (COGNIREPO-137). Racing it would
+        # interleave two indexers over the same stores — refuse instead.
+        print(f"  ✗ {busy}", file=sys.stderr)
+        sys.exit(1)
     elapsed = time.time() - t0
     rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
@@ -2155,9 +2167,18 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
         return False
 
     if not _save_graph():
+        from data.graph.knowledge_graph import journal_file_exists  # pylint: disable=import-outside-toplevel
+        _journal_note = (
+            "Graph data up to the last journal flush is preserved in "
+            ".cognirepo/graph/graph.journal and is replayed automatically on the next "
+            "load (anything after the last flush, or after a journal error, is not); "
+            if journal_file_exists()
+            else "No graph journal exists, so graph data from this run was not preserved; "
+        )
         print(
-            "  ⚠  Knowledge graph not saved (memory limit hit, retried once). "
-            "AST index and embeddings are intact. "
+            "  ⚠  Knowledge graph not saved to graph.pkl (memory limit hit, retried once). "
+            + _journal_note
+            + "AST index and embeddings are intact. "
             "Re-run with --no-graph to disable graph, or set "
             "COGNIREPO_CB_RSS_LIMIT_MB=6000 to raise the memory limit."
         )

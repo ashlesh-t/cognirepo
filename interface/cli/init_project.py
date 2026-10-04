@@ -1235,7 +1235,14 @@ def init_project(
     except ImportError:
         _ctx = None
 
-    summary = indexer.index_repo(cwd, skip_graph=True if no_graph else None, tier=tier)
+    from data.graph.journal import JournalBusy  # pylint: disable=import-outside-toplevel
+    try:
+        summary = indexer.index_repo(cwd, skip_graph=True if no_graph else None, tier=tier)
+    except JournalBusy as busy:  # COGNIREPO-137: another indexer owns the graph — don't race it
+        if _ctx is not None:
+            _ctx.close()
+        print(f"  ✗ {busy}", file=sys.stderr)
+        sys.exit(1)
     if _ctx is not None:
         _ctx.close()
 
