@@ -378,3 +378,109 @@ class TestReviewRegressions:
             with pytest.raises(OSError):
                 kg.end_journal()
         assert not kg._journal_active and kg._pending == []
+
+
+_WRITER = """
+import sys
+sys.path.insert(0, {repo!r})
+from core.config.paths import set_cognirepo_dir
+set_cognirepo_dir({cdir!r})
+from data.graph.knowledge_graph import KnowledgeGraph, NodeType
+kg = KnowledgeGraph()
+kg.begin_journal(flush_ops=10_000)
+for i in range({segments}):
+    for j in range(20):
+        kg.add_node(f"seg{{i}}::n{{j}}", NodeType.FUNCTION, seg=i)
+    kg.flush_journal()
+kg.end_journal()
+"""
+
+
+class TestReviewRound2:
+    def test_two_process_writer_reader_race(self, isolated_cognirepo):
+        """A reader polling reload_if_changed() while another PROCESS appends segments
+        must only ever see whole segments, never an error or a torn state."""
+        import subprocess
+        import sys
+        import time
+        segments = 40
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        code = _WRITER.format(repo=repo, cdir=str(isolated_cognirepo / ".cognirepo"),
+                              segments=segments)
+        reader = KnowledgeGraph()
+        proc = subprocess.Popen([sys.executable, "-c", code])  # pylint: disable=consider-using-with
+        try:
+            deadline = time.time() + 60
+            while proc.poll() is None and time.time() < deadline:
+                reader.reload_if_changed()
+                n = reader.G.number_of_nodes()
+                assert n % 20 == 0, f"reader observed a partial segment ({n} nodes)"
+            assert proc.wait(timeout=30) == 0
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+        reader.reload_if_changed()
+        assert reader.G.number_of_nodes() == segments * 20
+        assert not reader._locked
+
+    def test_replay_streams_one_segment_at_a_time(self, isolated_cognirepo):
+        """Pin the bounded-memory claim: iterating the journal never holds more than
+        ~one segment, however many segments exist (reviewer asked for a memory assertion)."""
+        import tracemalloc
+        from data.graph import journal
+        kg = KnowledgeGraph()
+        kg.begin_journal(flush_ops=10**9, flush_bytes=10**12)
+        for seg in range(30):
+            for j in range(2_000):
+                kg.add_node(f"s{seg}::n{j}", NodeType.FUNCTION, file="f.py", blob="x" * 50)
+            kg.flush_journal()
+        kg.end_journal()
+        path = _journal_path()
+
+        def peak_of(consume) -> int:
+            tracemalloc.start()
+            try:
+                consume()
+                return tracemalloc.get_traced_memory()[1]
+            finally:
+                tracemalloc.stop()
+
+        one = peak_of(lambda: next(journal.iter_segments(path, None)))
+        streamed = peak_of(lambda: [None for _ in journal.iter_segments(path, None)])
+        materialised = peak_of(lambda: journal.scan(path, None))
+        assert streamed < one * 3          # constant in the number of segments
+        assert materialised > streamed * 8  # the old list-based path scaled with the journal
+
+    def test_boundary_scan_needs_no_key_and_no_unpickle(self, encrypted):
+        from data.graph import journal
+        kg = KnowledgeGraph()
+        kg.begin_journal()
+        _populate(kg, files=3, flush_each=True)
+        kg.end_journal()
+        path = _journal_path()
+        size = os.path.getsize(path)
+        with open(path, "ab") as f:
+            f.write(b"\x00\x00\x10\x00torn")
+        with mock.patch("core.security.encryption.decrypt_bytes", side_effect=AssertionError("decrypted")), \
+             mock.patch("pickle.loads", side_effect=AssertionError("unpickled")):
+            good_end, total = journal.boundary_end(path)
+        assert good_end == size and total > size
+        resumed = KnowledgeGraph()
+        resumed.begin_journal()  # truncates the torn tail without decrypting
+        assert os.path.getsize(path) == size
+
+    def test_pending_is_bounded_by_estimated_bytes(self, isolated_cognirepo):
+        kg = KnowledgeGraph()
+        kg.begin_journal(flush_ops=10**9, flush_secs=3600, flush_bytes=20_000)
+        for i in range(200):
+            # few ops, but each carries a large attr list (e.g. ambiguous-stub candidates)
+            kg.add_node(f"n{i}", NodeType.CONCEPT, candidates=[f"f{k}.py" for k in range(100)])
+            assert kg._pending_cost < 20_000 + 10_000  # never runs away
+        kg.end_journal()
+        assert len(KnowledgeGraph().G) == 200
+
+    def test_plaintext_segment_still_readable_under_encrypt(self, encrypted):
+        """Journal written while encrypt resolved to false must still replay (mirrors graph.pkl)."""
+        from data.graph import journal
+        journal.append_segment(_journal_path(), 1, [("n", "plain.py", NodeType.FILE, {})], None)
+        assert KnowledgeGraph().G.has_node("plain.py")

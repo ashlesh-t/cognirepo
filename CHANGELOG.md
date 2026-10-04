@@ -21,6 +21,9 @@ Versioning: [Semantic Versioning](https://semver.org/)
   read model. **Not** addressed (follow-up): the live graph is still fully resident, so this does not
   lower query-time memory or the compaction-time peak. New primitives `remove_node`, `remove_edge`,
   `set_node_attrs`, `set_edge_attrs`, `copy_edge`; `ASTIndexer` no longer mutates `kg.G` directly.
+  Replay streams one segment at a time (peak = graph + one segment); `begin_journal()` finds the
+  append point with a length+crc-only boundary scan (no decrypt/unpickle under `store_lock`); pending
+  ops are bounded by an estimated byte budget as well as op count.
   Mid-file journal damage is refused (never truncated away); readers replay only new segments when
   `graph.pkl` is unchanged. Knobs: `indexing.graph_journal`, `graph_journal_flush_files`, `graph_journal_flush_secs`.
 

@@ -2157,8 +2157,9 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
     if not _save_graph():
         from data.graph.knowledge_graph import journal_file_exists  # pylint: disable=import-outside-toplevel
         _journal_note = (
-            "Indexed graph data is preserved in .cognirepo/graph/graph.journal and is "
-            "replayed automatically on the next load; "
+            "Graph data up to the last journal flush is preserved in "
+            ".cognirepo/graph/graph.journal and is replayed automatically on the next "
+            "load (anything after the last flush, or after a journal error, is not); "
             if journal_file_exists()
             else "No graph journal exists, so graph data from this run was not preserved; "
         )

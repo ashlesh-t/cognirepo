@@ -93,6 +93,22 @@ def _storage_config() -> tuple[bool, str]:
     return get_storage_config()
 
 
+def _op_cost(op: tuple) -> int:
+    """Cheap upper-ish estimate of an op's serialized size, used to bound ``_pending`` by
+    bytes. Strings/containers count by length; everything else is a flat 8."""
+    cost = 64
+    for item in op[1:]:
+        if isinstance(item, dict):
+            for key, val in item.items():
+                cost += 16 + len(key) + (len(val) * 24 if isinstance(val, (list, tuple, set, dict))
+                                         else len(val) if isinstance(val, (str, bytes)) else 8)
+        elif isinstance(item, (str, bytes)):
+            cost += len(item)
+        else:
+            cost += 8
+    return cost
+
+
 def journal_file_exists() -> bool:
     """True when an un-compacted graph.journal is on disk for the active repo."""
     return os.path.exists(_journal_file())
@@ -141,6 +157,8 @@ class KnowledgeGraph:
     _journal_seq = 0
     _journal_bytes = 0
     _flush_ops = 5000
+    _flush_bytes = 4 << 20
+    _pending_cost = 0
     _flush_secs = 30.0
     _last_flush = 0.0
     _locked = False
@@ -311,21 +329,23 @@ class KnowledgeGraph:
     def _replay_journal(self, start: int = 0) -> None:
         """Apply journal segments newer than the base pickle's ``journal_seq`` marker.
 
+        Streams one segment at a time (peak = graph + ONE segment, not the whole journal).
         Read-only: a torn tail is ignored here (a reader may be racing the writer's
-        in-flight append); the writer truncates it in begin_journal().
+        in-flight append); the writer truncates it in begin_journal(). If a record turns
+        out to be unreadable part-way, the segments before it stay applied, the graph is
+        locked and save() refuses — the journal file itself is never touched.
         """
         path = _journal_file()
         if not os.path.exists(path):
             return
+        base_seq = self._journal_seq  # marker (full load) or last applied seq (incremental)
         try:
-            try:
-                segments, good_end, _size = _journal.scan(path, self._journal_key(), start)
-            except _journal.JournalUnreadable:
-                if self._journal_key() is None:
-                    raise
-                # written plaintext under a context that resolved encrypt=false — mirror
-                # the graph.pkl fallback and try without a key.
-                segments, good_end, _size = _journal.scan(path, None, start)
+            for seq, ops, end in _journal.iter_segments(path, self._journal_key(), start):
+                if seq > base_seq:  # else: already folded into graph.pkl
+                    for op in ops:
+                        self._apply(op)
+                self._journal_seq = max(self._journal_seq, seq)
+                self._journal_bytes = end
         except Exception as exc:  # pylint: disable=broad-except
             # Intact but unreadable (wrong/missing key, damaged record). Never delete it
             # and never let save() compact around it.
@@ -337,33 +357,32 @@ class KnowledgeGraph:
                 "re-run `cognirepo index-repo`.",
                 stacklevel=2,
             )
-            return
-        base_seq = self._journal_seq  # marker (full load) or last applied seq (incremental)
-        last_seq = base_seq
-        for seq, ops in segments:
-            last_seq = max(last_seq, seq)
-            if seq <= base_seq:
-                continue  # already folded into graph.pkl
-            for op in ops:
-                self._apply(op)
-        self._journal_seq = last_seq
-        self._journal_bytes = good_end
 
-    def begin_journal(self, flush_ops: int = 5000, flush_secs: float = 30.0) -> None:
-        """Start journaling mutations; call flush_journal()/maybe_flush() to persist them."""
+    def begin_journal(
+        self, flush_ops: int = 5000, flush_secs: float = 30.0, flush_bytes: int = 4 << 20,
+    ) -> None:
+        """Start journaling mutations; call flush_journal()/maybe_flush() to persist them.
+
+        A segment is flushed when ANY of ``flush_ops``, ``flush_bytes`` (estimated
+        payload size — attrs such as ``candidates`` lists vary widely) or ``flush_secs``
+        is reached, which bounds ``_pending`` in addition to the live graph.
+        """
         if self._locked:
             raise GraphLockedError("graph is locked; cannot journal")
         path = _journal_file()
         if os.path.exists(path):
-            # We are the single writer: drop any torn tail left by a killed run so
-            # new records append after the last intact one.
+            # Single writer: drop any torn tail left by a killed run so new records
+            # append after the last intact one. Boundary scan only checks length + crc —
+            # no decrypt/unpickle — so the lock is held briefly even on a large journal.
             with store_lock():
-                _segs, good_end, size = _journal.scan(path, self._journal_key())
+                good_end, size = _journal.boundary_end(path)
                 if good_end < size:
                     _journal.truncate_to(path, good_end)
                 self._journal_bytes = good_end
         self._pending = []
+        self._pending_cost = 0
         self._flush_ops = max(1, int(flush_ops))
+        self._flush_bytes = max(1, int(flush_bytes))
         self._flush_secs = float(flush_secs)
         self._last_flush = time.monotonic()
         self._journal_active = True
@@ -378,6 +397,7 @@ class KnowledgeGraph:
             # don't leave them pending or reload_if_changed() would never run again.
             self._journal_active = False
             self._pending = []
+            self._pending_cost = 0
 
     def flush_journal(self) -> None:
         """Append all pending mutations to the journal as one fsynced segment."""
@@ -392,14 +412,17 @@ class KnowledgeGraph:
             self._journal_bytes = os.path.getsize(_journal_file())
         self._journal_seq = seq
         self._pending = []
+        self._pending_cost = 0
         self._last_flush = time.monotonic()
 
     def maybe_flush(self) -> None:
-        """Flush if enough ops or time accumulated. Never raises: a journal problem must
-        not abort indexing — journaling is switched off and the final save() still runs."""
+        """Flush if enough ops, estimated bytes or time accumulated. Never raises: a
+        journal problem must not abort indexing — journaling is switched off and the final
+        save() still runs (the journal then holds only what was flushed before the failure)."""
         if not self._journal_active or not self._pending:
             return
         if (len(self._pending) < self._flush_ops
+                and self._pending_cost < self._flush_bytes
                 and time.monotonic() - self._last_flush < self._flush_secs):
             return
         try:
@@ -407,6 +430,7 @@ class KnowledgeGraph:
         except Exception as exc:  # pylint: disable=broad-except
             self._journal_active = False
             self._pending = []
+            self._pending_cost = 0
             warnings.warn(
                 f"KnowledgeGraph: journal flush failed ({exc}); continuing without the "
                 "journal — the graph is saved at the end of the run as before.",
@@ -456,7 +480,8 @@ class KnowledgeGraph:
         self._apply(op)
         if self._journal_active:
             self._pending.append(op)
-            if len(self._pending) >= self._flush_ops:
+            self._pending_cost += _op_cost(op)
+            if len(self._pending) >= self._flush_ops or self._pending_cost >= self._flush_bytes:
                 self.maybe_flush()  # bounds segment size inside the post-loop passes too
 
     def save(self) -> None:
@@ -531,6 +556,8 @@ class KnowledgeGraph:
 
         Only when its size is exactly what this instance applied/wrote — if another
         process appended since, leave it; the journal_seq marker keeps replay correct.
+        Note the leftover file lingers until the next save() (or the next writer's
+        begin_journal) finds it fully covered by graph.pkl — it is safe, just not tidy.
         """
         path = _journal_file()
         try:
