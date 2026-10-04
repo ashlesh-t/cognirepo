@@ -53,9 +53,14 @@ class _MetricsHandler(http.server.BaseHTTPRequestHandler):
         logger.debug("metrics_server: " + fmt, *args)
 
 
+def create_metrics_server(host: str = "127.0.0.1", port: int = 9090) -> http.server.HTTPServer:
+    """Bind (but do not start) the /metrics server. ``port=0`` picks a free port."""
+    return http.server.HTTPServer((host, port), _MetricsHandler)
+
+
 def run_metrics_server(host: str = "127.0.0.1", port: int = 9090) -> None:
     """Block serving /metrics on host:port until KeyboardInterrupt."""
-    server = http.server.HTTPServer((host, port), _MetricsHandler)
+    server = create_metrics_server(host, port)
     logger.info("CogniRepo metrics server listening on %s:%d", host, port)
     print(f"Metrics available at http://{host}:{port}/metrics")
     try:

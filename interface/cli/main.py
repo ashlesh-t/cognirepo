@@ -3488,15 +3488,10 @@ def _cmd_update_directives() -> int:
 
 def _cmd_list_mcp() -> None:
     """Print MCP server registrations from all known config locations."""
-    sources = [
-        ("Project .mcp.json",             ".mcp.json",                        "mcpServers"),
-        ("Project .claude/settings.json", ".claude/settings.json",            "mcpServers"),
-        ("Global ~/.claude.json",         os.path.expanduser("~/.claude.json"), "mcpServers"),
-        ("Cursor .cursor/mcp.json",       ".cursor/mcp.json",                 "mcpServers"),
-        ("VS Code .vscode/mcp.json",      ".vscode/mcp.json",                 "servers"),
-    ]
+    from interface.tools.agent_clients import MCP_SOURCES  # pylint: disable=import-outside-toplevel
     found_any = False
-    for label, path, key in sources:
+    for label, path, key in [(lbl, os.path.expanduser(p), k) for lbl, p, k, _client in MCP_SOURCES
+                             if lbl != "Gemini CLI ~/.gemini/settings.json"]:
         if not os.path.exists(path):
             continue
         try:
