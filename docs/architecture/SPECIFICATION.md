@@ -219,7 +219,7 @@ Python indexing continues to work even without `tree-sitter-python` installed, v
 Install additional languages:
 
 ```bash
-pip install cognirepo[languages]   # Python, JS, TS, Java, Go, Rust, C++
+pip install cognirepo[languages]   # Python, JS, TS, Java, Go, Rust, Ruby, C++
 ```
 
 The `indexer/language_registry.py` module handles lazy grammar loading and caching.
