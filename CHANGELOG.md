@@ -461,6 +461,20 @@ Versioning: [Semantic Versioning](https://semver.org/)
   string literals (`"event"`, `"metadata"`, `"time"`, and `"type"` within metadata). Pure
   refactor, no behavior change — both files now import `EVENT`/`METADATA`/`TIME`/`METADATA_TYPE`
   from the new module.
+- **#129 — local-only control API + `cognirepo ui`.** Versioned `/api/v1` served by a new foreground
+  server (FastAPI/uvicorn, already dependencies): `GET status | graph | harness | services`,
+  `POST services/{watcher|metrics}/{start|stop}` (allowlist, strict `confirm: true`, fixed argv, audit-logged),
+  plus a committed OpenAPI contract (`docs/openapi/ui-v1.json`, drift-tested) and `docs/UI_API.md`.
+  Security: loopback-only bind (`--unsafe-bind` to override, with a loud warning), per-session random token
+  compared in constant time, exact `Host`/`Origin` allowlists (no wildcard CORS), bad-token lockout with
+  exponential backoff, CSP/nosniff/no-store headers, token delivered in the URL fragment and swapped for an
+  `httpOnly; SameSite=Strict` cookie, no endpoint that reads arbitrary files or runs commands. The UI process
+  is read-only and never imports `ASTIndexer`/`LocalVectorDB`. `cognirepo ui` spawns the server detached,
+  reuses a running one, `--stop` stops it, and prints install instructions if the optional `cognirepo-console`
+  package is missing (nothing is fetched at runtime). Opt-in autostart (`--autostart on|off`, first-run
+  prompt defaults to No) via systemd `--user` / launchd / Task Scheduler, idempotent and loopback-only.
+  `_cmd_list_mcp` now shares its config-source list with the new `interface/tools/agent_clients.py`;
+  `metrics_server` gains `create_metrics_server()`.
 
 ### Fixed
 - **#98/#105 — likely root cause found: `cognirepo serve`'s auto-watcher had the same

@@ -94,12 +94,19 @@ pip install 'cognirepo[security]'  # installs cryptography + keyring
 
 ---
 
+## Local control API (`cognirepo ui`)
+
+See [docs/UI_API.md](docs/UI_API.md). Loopback-only bind (`--unsafe-bind` to override, with a warning), per-session
+token (constant-time compare, URL fragment → `httpOnly; SameSite=Strict` cookie), exact `Host`/`Origin` allowlists,
+bad-token lockout with backoff, an allowlisted + `confirm`-gated service start/stop, a local audit log, and no
+endpoint that reads arbitrary files or executes commands. Remote access is out of scope.
+
 ## Network Surface
 
-CogniRepo has **no REST API and no authentication layer**. (An earlier REST API with JWT login was removed; its documentation lingered until this release.)
+CogniRepo has **no remote API and no user accounts**. (An earlier REST API with JWT login was removed.) The only authenticated surface is the local control API described above.
 
 - **MCP** (`cognirepo serve`) talks to your AI tool over **stdio**: no port is opened.
-- The only network listener is the optional **`cognirepo metrics`** exporter (Prometheus `/metrics`). It binds `127.0.0.1:9090` by default, has **no authentication**, and exposes operational counters only. Do not bind it to `0.0.0.0` on an untrusted network.
+- Network listeners are opt-in: the **`cognirepo ui`** control API (loopback only, token-authenticated — see above) and the optional **`cognirepo metrics`** exporter (Prometheus `/metrics`). It binds `127.0.0.1:9090` by default, has **no authentication**, and exposes operational counters only. Do not bind it to `0.0.0.0` on an untrusted network.
 - Model calls go out to the provider you configured (see "What leaves the machine").
 
 ---

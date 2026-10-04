@@ -306,3 +306,55 @@ class TestHarness:
                                                          "query": "private question", "sections": [1, 2]}))
         lc = client.get("/api/v1/harness", headers=AUTH).json()["last_context"]
         assert lc == {"generated_at": "t", "tool": "x", "repo": repo, "section_count": 2}
+
+
+class TestContract:
+    def test_committed_openapi_matches_generated(self):
+        from interface.ui.openapi import SPEC_PATH, render
+        committed = open(SPEC_PATH, encoding="utf-8").read()
+        assert committed == render(), "docs/openapi/ui-v1.json is stale: run `python -m interface.ui.openapi --write`"
+
+    def test_security_schemes_and_session_is_the_only_unauthenticated_op(self):
+        import json
+
+        from interface.ui.openapi import SPEC_PATH
+        spec = json.load(open(SPEC_PATH, encoding="utf-8"))
+        assert set(spec["components"]["securitySchemes"]) == {"bearerAuth", "cookieAuth"}
+        open_ops = [p for p, ops in spec["paths"].items() for o in ops.values() if o.get("security") == []]
+        assert open_ops == ["/api/v1/session"]
+        for ops in spec["paths"].values():
+            for o in ops.values():
+                assert {"403", "429"} <= set(o["responses"])
+
+    def test_every_endpoint_is_documented(self):
+        import json
+
+        from interface.ui.openapi import SPEC_PATH
+        doc = open(os.path.join(os.path.dirname(SPEC_PATH), "..", "UI_API.md"), encoding="utf-8").read()
+        for path in json.load(open(SPEC_PATH, encoding="utf-8"))["paths"]:
+            assert path in doc, f"{path} missing from docs/UI_API.md"
+
+
+class TestReadOnlyProcess:
+    def test_ui_never_loads_the_destructive_loaders(self, tmp_path):
+        """The UI process must not import ASTIndexer / LocalVectorDB: their load paths can rename or
+        sweep live index files while another process is writing (see issue #129)."""
+        import subprocess
+        import sys
+        code = f"""
+import sys
+from fastapi.testclient import TestClient
+from interface.ui import security as sec
+from interface.ui.app import create_app
+cfg = sec.SecurityConfig(token='t', port=8731)
+c = TestClient(create_app(cfg, {str(tmp_path)!r}), base_url='http://127.0.0.1:8731')
+h = {{'Authorization': 'Bearer t'}}
+for path in ('/api/v1/status', '/api/v1/graph', '/api/v1/harness', '/api/v1/services'):
+    assert c.get(path, headers=h).status_code == 200, path
+bad = [m for m in sys.modules if m.endswith('ast_indexer') or 'local_vector_db' in m or m == 'faiss']
+print('LOADED:' + ','.join(bad))
+"""
+        env = {**os.environ, "COGNIREPO_GLOBAL_DIR": str(tmp_path / "g")}
+        out = subprocess.run([sys.executable, "-c", code], cwd=str(tmp_path), env=env, capture_output=True, text=True, check=False)
+        assert out.returncode == 0, out.stderr[-800:]
+        assert "LOADED:" in out.stdout and out.stdout.strip().endswith("LOADED:"), out.stdout
