@@ -41,6 +41,12 @@ Versioning: [Semantic Versioning](https://semver.org/)
   ops are bounded by an estimated byte budget as well as op count.
   Mid-file journal damage is refused (never truncated away); readers replay only new segments when
   `graph.pkl` is unchanged. Knobs: `indexing.graph_journal`, `graph_journal_flush_files`, `graph_journal_flush_secs`.
+### Changed
+- **#95 — episode dict schema keys extracted to `data/memory/episodic_schema.py`.**
+  `episodic_memory.py` and `timeline.py` both accessed the episode dict via duplicated hardcoded
+  string literals (`"event"`, `"metadata"`, `"time"`, and `"type"` within metadata). Pure
+  refactor, no behavior change — both files now import `EVENT`/`METADATA`/`TIME`/`METADATA_TYPE`
+  from the new module.
 
 ### Fixed
 - **#98/#105 — likely root cause found: `cognirepo serve`'s auto-watcher had the same
