@@ -703,6 +703,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             ("Go",         ".go"),
             ("Rust",       ".rs"),
             ("Java",       ".java"),
+            ("C#",         ".cs"),
             ("C++",        ".cpp"),
         ]
         _supported_langs: list[str] = []
@@ -713,6 +714,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             ".go":   "tree-sitter-go",
             ".rs":   "tree-sitter-rust",
             ".java": "tree-sitter-java",
+            ".cs":   "tree-sitter-c-sharp",
             ".cpp":  "tree-sitter-cpp",
         }
         for _lang_name, _ext in _lang_checks:
@@ -4050,6 +4052,7 @@ def _main():
             from intelligence.indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
             _supported_exts = {
                 ".py", ".js", ".ts", ".tsx", ".jsx", ".java",
+                ".cs",
                 ".cpp", ".c", ".h", ".go", ".rs", ".rb",
             }
             _changed: list[str] = []

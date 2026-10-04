@@ -9,6 +9,11 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Added
+- **#74 — C# language support.** `.cs` files are indexed via `tree-sitter-c-sharp` (now part of
+  the `languages` extra): classes, interfaces, structs, records, enums, methods and local functions,
+  plus call edges for `Foo()`, `obj.Foo()` and generic `Foo<T>()` invocations. Constructors are
+  not indexed as functions (same as Java). `cognirepo doctor` lists C#; `semantic_search_code`
+  accepts `language="csharp"`. `record_declaration` also picks up Java 16+ records.
 - **#137/#139 (graph half) — multi-writer safety for the graph journal.** (1) A running
   `index-repo` takes an exclusive OS lock (`graph/graph.journal.writer`, the LevelDB/Lucene
   write-lock pattern) for the whole run; a second one is refused with `indexing is already running

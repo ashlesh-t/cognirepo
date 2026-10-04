@@ -106,6 +106,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | Go | `.go` | tree-sitter-go | ✅ (if installed) |
 | Rust | `.rs` | tree-sitter-rust | ✅ (if installed) |
 | Java | `.java` | tree-sitter-java | ✅ (if installed) |
+| C# | `.cs` | tree-sitter-c-sharp | ✅ (if installed) |
 | C++ | `.cpp`, `.cc`, `.h`, `.hpp` | tree-sitter-cpp | ✅ (if installed) |
 
 ### Indexer Features
@@ -330,7 +331,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ## 15. Test Coverage
 
-105 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+106 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
 for the current test-function count). This table is representative, not exhaustive — see
 `tests/` for the full list. This count is pinned against `tests/test_docs_sync.py`,
 which fails if this number drifts from the real glob count.

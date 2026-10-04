@@ -24,6 +24,7 @@ _FIXTURES: dict[str, tuple[str, str]] = {
     ".js":   ("tree_sitter_javascript", "var x = 1;\n"),
     ".ts":   ("tree_sitter_typescript", "let x: number = 1;\n"),
     ".java": ("tree_sitter_java",     "class A {}\n"),
+    ".cs":   ("tree_sitter_c_sharp",  "class A {}\n"),
     ".go":   ("tree_sitter_go",       "package main\n"),
     ".rs":   ("tree_sitter_rust",     "fn main() {}\n"),
     ".cpp":  ("tree_sitter_cpp",      "int main() { return 0; }\n"),

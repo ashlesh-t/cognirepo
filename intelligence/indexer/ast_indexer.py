@@ -214,6 +214,7 @@ _TS_FUNCTION_TYPES = frozenset({
     "function_definition",        # Python, C++
     "function_declaration",       # JS, TS, Java, Go, C
     "function_item",              # Rust
+    "local_function_statement",   # C# local functions
     "method_declaration",         # Java, C#
     "method_definition",          # JS/TS class methods
     "function_expression",        # JS assigned function
@@ -229,6 +230,8 @@ _TS_CLASS_TYPES = frozenset({
     "abstract_class_declaration", # TypeScript abstract classes
     "class_specifier",            # C++
     "struct_item",                # Rust
+    "struct_declaration",         # C#
+    "record_declaration",         # C# records (also Java 16+ records)
     "interface_declaration",      # Java, TS
     "type_alias_declaration",     # TypeScript type aliases
     "enum_declaration",           # TypeScript / Java enums
@@ -501,6 +504,14 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
         name_node = node.child_by_field_name("name")
         if name_node:
             out.append(_ts_text(name_node, source))
+    elif node.type == "invocation_expression":  # C#: Foo() / obj.Foo() / Foo<T>()
+        fn = node.child_by_field_name("function")
+        if fn is not None and fn.type == "member_access_expression":
+            fn = fn.child_by_field_name("name")
+        if fn is not None and fn.type == "generic_name":
+            fn = next((c for c in fn.children if c.type == "identifier"), None)
+        if fn is not None and fn.type == "identifier":
+            out.append(_ts_text(fn, source))
     for child in node.children:
         _ts_collect_calls(child, source, out, depth + 1)
 

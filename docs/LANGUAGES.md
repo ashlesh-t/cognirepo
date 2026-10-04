@@ -23,6 +23,7 @@ pip install cognirepo[languages]     # all supported languages
 | JavaScript | `.js` `.jsx` | Stable | tree-sitter-javascript |
 | TypeScript | `.ts` `.tsx` | Stable | tree-sitter-typescript |
 | Java | `.java` | Stable | tree-sitter-java |
+| C# | `.cs` | Stable | tree-sitter-c-sharp |
 | Go | `.go` | Stable | tree-sitter-go |
 | Rust | `.rs` | Stable | tree-sitter-rust |
 | C / C++ | `.c` `.cpp` `.cc` `.h` | Stable | tree-sitter-cpp |
@@ -83,6 +84,6 @@ once symbols are extracted.
 
 ```bash
 cognirepo doctor --verbose
-# Shows: Language support — Python, JS, TS, Java, Go, Rust, C++
+# Shows: Language support — Python, JS, TS, Java, C#, Go, Rust, C++
 # (or only "Python (built-in)" if cognirepo[languages] not installed)
 ```

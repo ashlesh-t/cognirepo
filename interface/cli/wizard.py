@@ -160,6 +160,7 @@ _EXTRA_PACKAGES: dict[str, list[str]] = {
         "tree-sitter-typescript>=0.23",
         "tree-sitter-java>=0.23",
         "tree-sitter-cpp>=0.23",
+        "tree-sitter-c-sharp>=0.23",
         "tree-sitter-go>=0.23",
         "tree-sitter-rust>=0.23",
         "tree-sitter-bash>=0.23",
