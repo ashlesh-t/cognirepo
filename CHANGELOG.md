@@ -9,6 +9,19 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Fixed
+- **#136 — unlocked read-modify-write lost updates and duplicated ids.** Every RMW of a shared store
+  now runs under the cross-process lock and reloads *inside* it: `episodic.log_event` /
+  `mark_stale` (ids allocated inside the lock), the learnings `store()` / `deprecate()` (a per-store
+  lock file, since the global learnings live in `~/.cognirepo` outside any repo-local lock),
+  `LocalVectorDB` (`add` / `add_batch` remember unsaved vectors and `save()` merges them into newer
+  disk state via `_sync_locked` instead of overwriting another process's vectors; `update_behaviour_score`
+  / `deprecate_row` / `suppress_row` reload under the lock before editing), and `ProjectMemory.add`
+  (reloads from disk inside the lock; an unreadable store is never written over). Measured against
+  the old code with real processes: 8 × 50 `log_event` kept 116 of 400 events, 8 × 25 learnings kept
+  158 of 200, 8 × 15 vector adds kept 40 of 120; all now exact. `store_lock()` is now **re-entrant
+  for the same thread** (nested use used to block 15 s on its own fd — part of #141) and accepts
+  `lock_path=`. Still open from #141: catching `filelock.Timeout`, shorter lock holds in
+  `ASTIndexer.save` / `KnowledgeGraph.save`, the org-graph lock timeout.
 - **#135 — readers no longer rename, sweep or overwrite live stores on a failed read.** New
   `core/config/safe_read.py` (`read_retry`, `StoreUnreadableError`, `looks_encrypted`,
   `quarantine_if_stably_corrupt`). Readers retry briefly and then raise or serve an empty value *in

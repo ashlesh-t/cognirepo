@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from core.config.atomic import atomic_write
+from core.config.lock import store_lock
 from core.config.safe_read import StoreUnreadableError, quarantine_if_stably_corrupt, read_retry
 
 
@@ -124,6 +125,14 @@ class _LearningBackend:
     def _index_path(self) -> Path:
         return self._root / "learnings.json"
 
+    def _rmw_lock(self):
+        """Cross-process lock for a read-modify-write of THIS store (COGNIREPO-136).
+
+        Keyed to the store's own directory, not the repo-local .cognirepo lock: the global
+        learnings live in ~/.cognirepo and are shared by every repo, so a repo-local lock would
+        neither serialize them nor be the same lock in two repos."""
+        return store_lock(lock_path=str(self._index_path().parent / "learnings.lock"))
+
     def _read(self) -> list[dict]:
         return json.loads(self._index_path().read_text(encoding="utf-8"))
 
@@ -170,46 +179,48 @@ class _LearningBackend:
         Observed without this: the same memory stored 3× across retries,
         which then multiplies conflict/supersede churn.
         """
-        records = self._load(writer=True)
-        norm = " ".join(text.lower().split())
-        for r in records:
-            if (
-                not r.get("deprecated", False)
-                and r.get("type") == learning_type
-                and " ".join(r.get("text", "").lower().split()) == norm
-            ):
-                logger.debug("Dedup: learning text already stored as %s", r.get("id"))
-                return r["id"]
-        record_id = uuid.uuid4().hex
-        record = {
-            "id": record_id,
-            "type": learning_type,
-            "scope": scope,
-            "text": text,
-            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
-            **metadata,
-        }
-        records.append(record)
-        self._save(records)
-        logger.debug("Stored learning %s (type=%s scope=%s)", record_id, learning_type, scope)
-        return record_id
+        with self._rmw_lock():  # reload → mutate → save is one atomic step across processes
+            records = self._load(writer=True)
+            norm = " ".join(text.lower().split())
+            for r in records:
+                if (
+                    not r.get("deprecated", False)
+                    and r.get("type") == learning_type
+                    and " ".join(r.get("text", "").lower().split()) == norm
+                ):
+                    logger.debug("Dedup: learning text already stored as %s", r.get("id"))
+                    return r["id"]
+            record_id = uuid.uuid4().hex
+            record = {
+                "id": record_id,
+                "type": learning_type,
+                "scope": scope,
+                "text": text,
+                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+                **metadata,
+            }
+            records.append(record)
+            self._save(records)
+            logger.debug("Stored learning %s (type=%s scope=%s)", record_id, learning_type, scope)
+            return record_id
 
     def deprecate(self, record_id: str) -> bool:
         """
         Soft-delete a learning by ID.  Returns True if the record was found.
         Deprecated records are excluded from all future retrieve() calls.
         """
-        records = self._load(writer=True)
-        updated = False
-        for r in records:
-            if r.get("id") == record_id and not r.get("deprecated", False):
-                r["deprecated"] = True
-                r["deprecated_at"] = datetime.now(tz=timezone.utc).isoformat()
-                updated = True
-                break
-        if updated:
-            self._save(records)
-        return updated
+        with self._rmw_lock():  # reload → mutate → save is one atomic step across processes
+            records = self._load(writer=True)
+            updated = False
+            for r in records:
+                if r.get("id") == record_id and not r.get("deprecated", False):
+                    r["deprecated"] = True
+                    r["deprecated_at"] = datetime.now(tz=timezone.utc).isoformat()
+                    updated = True
+                    break
+            if updated:
+                self._save(records)
+            return updated
 
     @staticmethod
     def _is_numeric_token(tok: str) -> bool:

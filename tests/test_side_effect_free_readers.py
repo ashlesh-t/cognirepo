@@ -367,8 +367,20 @@ class TestASTIndexerLoad:
         open(scratch, "w").write("stale")
         old = time.time() - 7200
         os.utime(scratch, (old, old))
-        with store_lock():                               # a writer is active
+        held, release = threading.Event(), threading.Event()
+
+        def other_writer():                              # a DIFFERENT holder (the lock is
+            with store_lock():                           # re-entrant for the same thread)
+                held.set()
+                release.wait(10)
+        t = threading.Thread(target=other_writer)
+        t.start()
+        assert held.wait(10)
+        try:
             self._idx().load()
+        finally:
+            release.set()
+            t.join()
         assert os.path.exists(scratch), "sweep must not delete files without the lock"
         self._idx().load()                               # lock free + old enough → swept
         assert not os.path.exists(scratch)

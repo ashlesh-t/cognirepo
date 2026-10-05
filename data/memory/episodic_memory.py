@@ -20,6 +20,7 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from core.config.atomic import atomic_write, atomic_write_with, atomic_json_dump
+from core.config.lock import store_lock
 from core.config.safe_read import (
     StoreUnreadableError, looks_encrypted, quarantine_if_stably_corrupt, read_retry,
 )
@@ -262,18 +263,22 @@ def log_event(event: str, metadata: dict = None) -> None:
     Raises ``StoreUnreadableError`` (without touching the file) if the store is unreadable
     and cannot be safely recovered — the event is not recorded, history is not overwritten.
     """
-    data = _load(writer=True)
-    data = _rotate_if_needed(data)
-    entry = {
-        "id": _next_event_id(data),
-        EVENT: event,
-        METADATA: metadata or {},
-        TIME: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-    }
-    if data:
-        entry["prev"] = data[-1]["id"]
-    data.append(entry)
-    _save(data)
+    # Read-modify-write under the cross-process lock (COGNIREPO-136): without it two processes
+    # both load N events, both mint e_N and the later save drops the other's event. The id is
+    # allocated inside the lock, from the freshly loaded store.
+    with store_lock():
+        data = _load(writer=True)
+        data = _rotate_if_needed(data)
+        entry = {
+            "id": _next_event_id(data),
+            EVENT: event,
+            METADATA: metadata or {},
+            TIME: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        if data:
+            entry["prev"] = data[-1]["id"]
+        data.append(entry)
+        _save(data)
 
 
 def get_history(limit: int = 100) -> list:
@@ -547,16 +552,17 @@ def mark_stale(file_path: str) -> int:
 
     Returns the count of entries tagged.
     """
-    data = _load(writer=True)
-    tagged = 0
-    for entry in data:
-        if entry.get("stale"):
-            continue
-        combined = entry.get(EVENT, "") + json.dumps(entry.get(METADATA, {}))
-        if file_path in combined:
-            entry["stale"] = True
-            entry["stale_reason"] = "file_deleted"
-            tagged += 1
-    if tagged:
-        _save(data)
+    with store_lock():  # RMW: reload inside the lock so concurrent log_event()s aren't lost
+        data = _load(writer=True)
+        tagged = 0
+        for entry in data:
+            if entry.get("stale"):
+                continue
+            combined = entry.get(EVENT, "") + json.dumps(entry.get(METADATA, {}))
+            if file_path in combined:
+                entry["stale"] = True
+                entry["stale_reason"] = "file_deleted"
+                tagged += 1
+        if tagged:
+            _save(data)
     return tagged

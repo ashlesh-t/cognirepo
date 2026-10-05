@@ -221,6 +221,25 @@ returning `[]` that the next write persists — destroys good data (COGNIREPO-13
 `tests/test_side_effect_free_readers.py` shows the pattern for episodic, learnings, the vector store
 and the AST index.
 
+## How to Read-Modify-Write a Shared Store (locking)
+
+Load → change → save is only safe if nobody else saves in between. Without the lock, two
+processes both load N events, both mint `e_N`, and the later save drops the other's event
+(COGNIREPO-136). Rules:
+
+1. Do the **whole cycle** inside `core.config.lock.store_lock()` and **reload inside it** — never
+   mutate a snapshot loaded before the lock. Allocate ids inside the lock.
+2. `store_lock()` is **re-entrant for the same thread** (a nested `with store_lock():` only bumps a
+   depth counter), so helpers may lock defensively. Other threads/processes still exclude each other.
+3. Stores that live outside the repo (global learnings in `~/.cognirepo`) lock their own file:
+   `store_lock(lock_path=...)`. Never nest two *different* locks; if you must, keep the order
+   graph → ast → vector → episodic → behaviour.
+4. Hold the lock only for the cycle — no network, subprocess or embedding calls inside it.
+5. For in-memory structures that outlive one call (`LocalVectorDB`): remember unsaved changes and,
+   on save, merge them into whatever is on disk (`_sync_locked`) instead of overwriting it.
+
+`tests/test_locked_rmw.py` has the multi-process stress pattern (`_run_workers`) to copy.
+
 ## PR Checklist
 
 Before submitting a pull request:
