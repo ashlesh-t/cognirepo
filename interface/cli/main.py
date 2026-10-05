@@ -2420,7 +2420,8 @@ def _write_last_indexed_sha(repo_path: str) -> None:
         ).strip()
         path = get_path("index/last_indexed.json")
         atomic_json_dump(
-            path, {"commit_sha": sha, "indexed_at": datetime.now(timezone.utc).isoformat()}, indent=None,
+            path, {"commit_sha": sha, "indexed_at": datetime.now(timezone.utc).isoformat()},
+            indent=None, fsync=False,  # hint file: atomic, no fsync
         )
     except Exception:  # pylint: disable=broad-except
         pass  # non-git repos silently skip
