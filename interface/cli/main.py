@@ -2104,6 +2104,30 @@ def _direct_history(limit):
     return get_history(limit)
 
 
+def _require_complete_base_graph(kg, indexer, mode: str) -> None:
+    """Exit(2) unless ``kg`` is a safe base for an incremental save (COGNIREPO-122).
+
+    ``--files`` / ``--changed-only`` rewrite graph.pkl from whatever graph they loaded. If
+    that graph is missing/quarantined/a fragment they would publish a tiny graph as the
+    whole graph (observed: 41,327 nodes -> 1,122 -> 2). Refuse instead, and say how to fix it.
+    """
+    try:
+        indexer.load()  # AST index → file count for the fragment check (no-op if absent)
+    except Exception as exc:  # pylint: disable=broad-except
+        log.debug("index-repo %s: AST index not loadable: %s", mode, exc)
+    ok, reason = kg.incremental_base_status(indexer.indexed_file_count())
+    if ok:
+        return
+    print(
+        f"  ✗ index-repo {mode}: not updating the graph — {reason}.\n"
+        "    An incremental run must not replace a full graph with a fragment.\n"
+        "    Run `cognirepo index-repo .` (full) once to build a base graph; later "
+        "incremental runs and the watcher then work as usual.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
 def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier: "int | str | None" = None):
     """Index a repository directly. Exits with code 1 if *path* does not exist."""
     import resource  # pylint: disable=import-outside-toplevel
@@ -4075,6 +4099,7 @@ def _main():
             if _changed:
                 _kg = _KG()
                 _indexer = _AI(graph=_kg)
+                _require_complete_base_graph(_kg, _indexer, "--changed-only")
                 _indexed = 0
                 for _rel in _changed:
                     _abs = os.path.abspath(_rel)
@@ -4103,6 +4128,7 @@ def _main():
             from intelligence.indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
             _kg = _KG()
             _indexer = _AI(graph=_kg)
+            _require_complete_base_graph(_kg, _indexer, "--files")
             _indexed = 0
             for _rel in args.files:
                 _abs = os.path.abspath(_rel)
