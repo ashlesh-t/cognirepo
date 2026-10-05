@@ -32,6 +32,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from core.config.atomic import atomic_write
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ def _write_defaults(path: Path) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
-            path.write_text(_DEFAULT_TOML, encoding="utf-8")
+            atomic_write(str(path), _DEFAULT_TOML)
     except Exception as exc:  # pylint: disable=broad-except
         logger.debug("cli_config: could not write defaults to %s: %s", path, exc)
 

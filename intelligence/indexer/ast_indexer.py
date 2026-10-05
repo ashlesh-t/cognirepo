@@ -43,6 +43,7 @@ import faiss
 import numpy as np
 import warnings
 
+from core.config.atomic import atomic_json_dump, atomic_path
 from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
 from data.graph.journal import JournalBusy
 from data.graph.graph_utils import make_node_id, node_id_from_symbol_record
@@ -309,8 +310,7 @@ def _write_manifest(repo_root: str | None = None, symbol_count: int = 0, file_co
         "symbol_count": symbol_count,
     }
     try:
-        with open(_manifest_file(), "w", encoding="utf-8") as f:
-            json.dump(manifest, f, indent=2)
+        atomic_json_dump(_manifest_file(), manifest, indent=2)
     except OSError as exc:
         log.warning("Could not write index manifest: %s", exc)
 
@@ -1728,6 +1728,9 @@ class ASTIndexer:
                 _entry_point_dispatch = self._apply_entry_points_dispatch()
             except Exception as _exc:  # pylint: disable=broad-except
                 log.warning("entry_points dispatch pass failed (graph still valid): %s", _exc)
+            # A full walk finished: this graph is a valid base for incremental runs
+            # (--files, --changed-only, the watcher). COGNIREPO-122.
+            self.graph.mark_complete()
         total_symbols = sum(
             len(f.get("symbols", [])) for f in self.index_data["files"].values()
         )
@@ -1789,6 +1792,10 @@ class ASTIndexer:
             "similarity_edges": _similarity_edges,
             "entry_point_dispatch": _entry_point_dispatch,
         }
+
+    def indexed_file_count(self) -> int:
+        """Number of files recorded in the (loaded) AST index — 0 if none."""
+        return len(self.index_data.get("files", {}))
 
     def index_file(self, rel_path: str, abs_path: str | None = None, weight: float = 1.0) -> dict:
         """
@@ -2339,16 +2346,16 @@ class ASTIndexer:
             import filelock as _fl  # pylint: disable=import-outside-toplevel
             _lock = _fl.FileLock(pending_tier2_path() + ".lock", timeout=10)
             with _lock:
-                with open(pending_tier2_path(), "w", encoding="utf-8") as _f:
-                    _json.dump(
-                        {
-                            "repo_root": repo_root,
-                            "files": pending,
-                            "embed_pending": embed_pending,
-                            "total_queued": len(pending),
-                        },
-                        _f, indent=2,
-                    )
+                atomic_json_dump(
+                    pending_tier2_path(),
+                    {
+                        "repo_root": repo_root,
+                        "files": pending,
+                        "embed_pending": embed_pending,
+                        "total_queued": len(pending),
+                    },
+                    indent=2,
+                )
         except Exception as _exc:  # pylint: disable=broad-except
             log.warning("Could not write pending_tier2.json: %s", _exc)
 
@@ -2418,9 +2425,7 @@ class ASTIndexer:
             try:
                 import filelock as _fl  # pylint: disable=import-outside-toplevel
                 with _fl.FileLock(_queue_path + ".lock", timeout=10):
-                    with open(_queue_path, "w", encoding="utf-8") as _qf:
-                        import json as _j2  # pylint: disable=import-outside-toplevel
-                        _j2.dump(_data, _qf, indent=2)
+                    atomic_json_dump(_queue_path, _data, indent=2)
             except Exception:  # pylint: disable=broad-except
                 pass
 
@@ -2480,12 +2485,17 @@ class ASTIndexer:
                 self._build_reverse_index()
                 self.save()
                 try:
-                    import json as _j  # pylint: disable=import-outside-toplevel
                     with _fl.FileLock(_queue_path + ".lock", timeout=10):
-                        with open(_queue_path, "w", encoding="utf-8") as _qf:
-                            _j.dump({"repo_root": repo_root, "files": _remaining, "embed_pending": False}, _qf, indent=2)
-                    with open(tier2_progress_path(), "w", encoding="utf-8") as _pf:
-                        _j.dump({"processed": total_files, "remaining": len(_remaining)}, _pf, indent=2)
+                        atomic_json_dump(
+                            _queue_path,
+                            {"repo_root": repo_root, "files": _remaining, "embed_pending": False},
+                            indent=2,
+                        )
+                    atomic_json_dump(
+                        tier2_progress_path(),
+                        {"processed": total_files, "remaining": len(_remaining)},
+                        indent=2,
+                    )
                 except Exception:  # pylint: disable=broad-except
                     pass
 
@@ -2687,27 +2697,12 @@ class ASTIndexer:
              large-monorepo ast_index.json" this function was written to fix.
 
         mkstemp() in the destination directory gives every writer its own
-        scratch file, so the only shared operation is the atomic rename.
+        scratch file, so the only shared operation is the atomic rename. The
+        recipe now lives in core/config/atomic.py (COGNIREPO-134).
         Callers that need the *group* of index files to be mutually
         consistent must additionally hold store_lock() — see save().
         """
-        directory = os.path.dirname(path) or "."
-        fd, tmp_path = tempfile.mkstemp(
-            dir=directory, prefix=os.path.basename(path) + ".", suffix=".tmp",
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(obj, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, path)
-        except BaseException:
-            # Never leave an orphaned scratch file behind on failure.
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        atomic_json_dump(path, obj, indent=2)
 
     @staticmethod
     def _sweep_stale_tmp(path: str) -> None:
@@ -2773,7 +2768,8 @@ class ASTIndexer:
             self.index_data["indexed_at"] = _now()
             self._atomic_json_dump(self.index_data, _ast_index_file())
             if self.faiss_index is not None:
-                faiss.write_index(self.faiss_index, _ast_faiss_file())
+                with atomic_path(_ast_faiss_file()) as _tmp:
+                    faiss.write_index(self.faiss_index, _tmp)
             self._atomic_json_dump(self.faiss_meta, _ast_meta_file())
 
             # Write integrity manifest after all index files are on disk

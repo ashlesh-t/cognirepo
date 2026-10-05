@@ -23,6 +23,7 @@ import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Callable
+from core.config.atomic import atomic_json_dump
 
 logger = logging.getLogger(__name__)
 
@@ -423,9 +424,7 @@ class SummarizationEngine:
         }
 
         save_path = os.path.join(self.project_root, ".cognirepo", "index", "summaries.json")
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        with open(save_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, indent=2)
+        atomic_json_dump(save_path, result, indent=2)
 
         print(
             f"  Done: {len(file_summaries)} files, "

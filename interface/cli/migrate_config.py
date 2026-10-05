@@ -21,6 +21,7 @@ import logging
 import shutil
 from pathlib import Path
 
+from core.config.atomic import atomic_json_dump
 from core.config.paths import get_path
 
 logger = logging.getLogger(__name__)
@@ -83,8 +84,7 @@ def migrate_config(dry_run: bool = False) -> dict[str, str]:
         new_models[new_key] = value
     cfg["models"] = new_models
 
-    with open(cfg_path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    atomic_json_dump(cfg_path, cfg, indent=2, ensure_ascii=False)
 
     for old, new in renames_applied.items():
         print(f"  Renamed: {old!r} → {new!r}")

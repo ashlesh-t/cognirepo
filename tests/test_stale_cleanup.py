@@ -164,6 +164,7 @@ class TestFileWatcherRemove:
 
         kg = KnowledgeGraph.__new__(KnowledgeGraph)
         kg.G = nx.DiGraph()
+        kg.G.graph["complete"] = True  # a finished full index (COGNIREPO-122)
 
         indexer = MagicMock()
         indexer.faiss_index = None  # no FAISS in unit test

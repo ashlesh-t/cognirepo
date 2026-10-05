@@ -41,6 +41,7 @@ from watchdog.events import (
 )
 from watchdog.observers import Observer
 
+from core.config.atomic import atomic_json_dump
 from core.config.paths import get_cognirepo_dir_for_repo
 from intelligence.indexer.language_registry import is_supported
 
@@ -273,7 +274,24 @@ class RepoFileHandler(FileSystemEventHandler):
         the same failure class #107 found and fixed in _direct_index(), just
         reached through the watcher instead of a manual reindex. Reactive
         fix: only evict + retry once, on an actual trip.
+
+        COGNIREPO-122: the watcher only ever applies per-file edits, so it must not
+        publish a graph that is not a superset of what is on disk. If the graph it
+        loaded is missing/quarantined/a fragment, skip the graph save (warn once) until a
+        full `index-repo` provides a complete base.
         """
+        ok, reason = self.graph.incremental_base_status(
+            len(getattr(self.indexer, "index_data", {}).get("files", {}))
+        )
+        if not ok:
+            if not getattr(self, "_warned_incomplete_base", False):
+                self._warned_incomplete_base = True
+                print(
+                    f"[watcher] not saving the graph: {reason}. "
+                    "Run `cognirepo index-repo .` once to build a complete base graph.",
+                    file=sys.stderr,
+                )
+            return
         try:
             self.graph.save()
         except Exception as exc:  # pylint: disable=broad-except
@@ -330,9 +348,7 @@ class RepoFileHandler(FileSystemEventHandler):
                 "error": error,
             }
             path = os.path.join(get_cognirepo_dir_for_repo(self.repo_root), "index", "last_watcher_reindex.json")
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(record, f, indent=2)
+            atomic_json_dump(path, record, indent=2)
         except Exception as exc:  # pylint: disable=broad-except
             print(f"[watcher] failed to write last_watcher_reindex.json: {exc}", file=sys.stderr)
 

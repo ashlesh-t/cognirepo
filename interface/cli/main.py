@@ -30,6 +30,7 @@ import traceback
 logger = logging.getLogger(__name__)
 log = logger  # legacy alias — some handlers reference `log`
 
+from core.config.atomic import atomic_json_dump, atomic_path
 from core.config.logging import setup_logging
 setup_logging()
 
@@ -2001,7 +2002,8 @@ def _cmd_doctor_fix() -> int:
                 os.rename(faiss_path, stale)
                 import faiss  # pylint: disable=import-outside-toplevel,reimported
                 _new = faiss.IndexFlatL2(384)
-                faiss.write_index(_new, faiss_path)
+                with atomic_path(faiss_path) as _tmp:
+                    faiss.write_index(_new, _tmp)
                 print(f"     Fixed — empty index created at {faiss_path}")
                 print(f"     Run `cognirepo index-repo .` to rebuild embeddings")
                 fixes_applied += 1
@@ -2104,6 +2106,30 @@ def _direct_history(limit):
     """Fetch episodic history directly."""
     from data.memory.episodic_memory import get_history  # pylint: disable=import-outside-toplevel
     return get_history(limit)
+
+
+def _require_complete_base_graph(kg, indexer, mode: str) -> None:
+    """Exit(2) unless ``kg`` is a safe base for an incremental save (COGNIREPO-122).
+
+    ``--files`` / ``--changed-only`` rewrite graph.pkl from whatever graph they loaded. If
+    that graph is missing/quarantined/a fragment they would publish a tiny graph as the
+    whole graph (observed: 41,327 nodes -> 1,122 -> 2). Refuse instead, and say how to fix it.
+    """
+    try:
+        indexer.load()  # AST index → file count for the fragment check (no-op if absent)
+    except Exception as exc:  # pylint: disable=broad-except
+        log.debug("index-repo %s: AST index not loadable: %s", mode, exc)
+    ok, reason = kg.incremental_base_status(indexer.indexed_file_count())
+    if ok:
+        return
+    print(
+        f"  ✗ index-repo {mode}: not updating the graph — {reason}.\n"
+        "    An incremental run must not replace a full graph with a fragment.\n"
+        "    Run `cognirepo index-repo .` (full) once to build a base graph; later "
+        "incremental runs and the watcher then work as usual.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 
 def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier: "int | str | None" = None):
@@ -2395,9 +2421,9 @@ def _write_last_indexed_sha(repo_path: str) -> None:
             ["git", "rev-parse", "HEAD"], cwd=repo_path, text=True, stderr=_sp.DEVNULL
         ).strip()
         path = get_path("index/last_indexed.json")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as _f:
-            json.dump({"commit_sha": sha, "indexed_at": datetime.now(timezone.utc).isoformat()}, _f)
+        atomic_json_dump(
+            path, {"commit_sha": sha, "indexed_at": datetime.now(timezone.utc).isoformat()}, indent=None,
+        )
     except Exception:  # pylint: disable=broad-except
         pass  # non-git repos silently skip
 
@@ -4077,6 +4103,7 @@ def _main():
             if _changed:
                 _kg = _KG()
                 _indexer = _AI(graph=_kg)
+                _require_complete_base_graph(_kg, _indexer, "--changed-only")
                 _indexed = 0
                 for _rel in _changed:
                     _abs = os.path.abspath(_rel)
@@ -4105,6 +4132,7 @@ def _main():
             from intelligence.indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
             _kg = _KG()
             _indexer = _AI(graph=_kg)
+            _require_complete_base_graph(_kg, _indexer, "--files")
             _indexed = 0
             for _rel in args.files:
                 _abs = os.path.abspath(_rel)
