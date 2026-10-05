@@ -17,6 +17,9 @@ import faiss
 import numpy as np
 
 from core.config.atomic import atomic_write, atomic_path
+from core.config.safe_read import (
+    StoreUnreadableError, looks_encrypted, quarantine_if_stably_corrupt, read_retry,
+)
 from core.config.paths import get_path
 from core.config.lock import store_lock
 from core.vector_db.adapter import VectorStorageAdapter
@@ -52,29 +55,35 @@ class LocalVectorDB(VectorStorageAdapter):
         self.dim = dim
         self._breaker_factory = breaker_factory
         self._cleanup_queue_factory = cleanup_queue_factory
+        # COGNIREPO-135: loading is side-effect free. An unreadable file is NOT renamed or
+        # overwritten here (this constructor runs on every store_memory); it is remembered in
+        # _load_error and a writer decides in _ensure_writable() — see core/config/safe_read.py.
+        self._load_error: dict[str, StoreUnreadableError] = {}
         if os.path.exists(_index_file()):
             try:
-                self.index = faiss.read_index(_index_file())
-            except Exception as exc:  # pylint: disable=broad-except
-                logging.getLogger(__name__).warning(
-                    "semantic.index could not be loaded (%s). "
-                    "This may be a platform mismatch (e.g. x86 index on ARM) or "
-                    "a corrupted file. Starting with an empty index — re-run "
-                    "`cognirepo index-repo .` to rebuild.",
-                    exc,
+                self.index = read_retry(
+                    _index_file(), lambda: faiss.read_index(_index_file()), retry_on=(Exception,),
                 )
-                stale = _index_file() + ".stale"
-                try:
-                    os.rename(_index_file(), stale)
-                except OSError:
-                    pass
+            except StoreUnreadableError as exc:
+                logging.getLogger(__name__).warning(
+                    "semantic.index could not be loaded (%s). Starting with an empty in-memory "
+                    "index; the file is left untouched (this may be a platform mismatch or a "
+                    "concurrent writer). Re-run `cognirepo index-repo .` to rebuild.",
+                    exc.reason,
+                )
+                self._load_error["index"] = exc
                 self.index = faiss.IndexFlatL2(dim)
         else:
             self.index = faiss.IndexFlatL2(dim)
 
         meta_path = _meta_file()
         if os.path.exists(meta_path):
-            self.metadata = self._load_meta()
+            try:
+                self.metadata = self._load_meta()
+            except StoreUnreadableError as exc:
+                logging.getLogger(__name__).warning("%s", exc)
+                self._load_error["meta"] = exc
+                self.metadata = []
         else:
             # Initialize eagerly — atomic write prevents concurrent-first-write race
             os.makedirs(os.path.dirname(meta_path), exist_ok=True)
@@ -119,7 +128,7 @@ class LocalVectorDB(VectorStorageAdapter):
 
     # ── metadata persistence (with optional encryption) ───────────────────────
 
-    def _load_meta(self) -> list:
+    def _read_meta_once(self) -> list:
         with open(_meta_file(), "rb") as f:
             raw = f.read()
         from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
@@ -141,20 +150,51 @@ class LocalVectorDB(VectorStorageAdapter):
                 )
         try:
             return json.loads(raw)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            import logging  # pylint: disable=import-outside-toplevel
-            logging.getLogger(__name__).warning(
-                "semantic_metadata.json is not valid JSON. Backing up and starting fresh."
-            )
-            corrupt = _meta_file() + ".corrupt"
-            try:
-                os.rename(_meta_file(), corrupt)
-            except OSError:
-                pass
-            atomic_write(_meta_file(), b"[]")
-            return []
+        except ValueError:
+            if looks_encrypted(raw):
+                # intact ciphertext we cannot decrypt: locked, never "corrupt"
+                raise StoreUnreadableError(_meta_file(), "encrypted and cannot be decrypted",
+                                           locked=True)
+            raise
+
+    def _load_meta(self) -> list:
+        """Read the metadata. Side-effect free: never renames or rewrites the file; raises
+        StoreUnreadableError if it stays unreadable after a few retries (#135)."""
+        return read_retry(_meta_file(), self._read_meta_once)
+
+    def _ensure_writable(self) -> None:
+        """Writer-side gate: refuse to persist over a store that failed to load.
+
+        Saving the empty in-memory fallback would destroy a store that was merely unreadable
+        (concurrent writer, missing key). Only if the file stays unreadable AND unchanged is
+        it moved aside (bytes kept in ``<file>.corrupt-<ts>``) so a fresh one can be written.
+        """
+        if not getattr(self, "_load_error", None):
+            return
+        probes = {
+            "index": (_index_file(), lambda: faiss.read_index(_index_file())),
+            "meta": (_meta_file(), self._read_meta_once),
+        }
+        for key, exc in list(self._load_error.items()):
+            if exc.locked:
+                raise exc
+            path, read = probes[key]
+
+            def _readable(read=read) -> bool:
+                try:
+                    read()
+                    return True
+                except Exception:  # pylint: disable=broad-except
+                    return False
+            if _readable():
+                raise StoreUnreadableError(
+                    path, "store failed to load but is readable now (transient) — retry")
+            if quarantine_if_stably_corrupt(path, _readable) is None:
+                raise exc
+            del self._load_error[key]
 
     def _save_meta(self) -> None:
+        self._ensure_writable()
         from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
         content = json.dumps(self.metadata, indent=2).encode()
@@ -174,6 +214,7 @@ class LocalVectorDB(VectorStorageAdapter):
         if breaker is not None:
             breaker.check()
         with store_lock():
+            self._ensure_writable()
             with atomic_path(_index_file()) as _tmp:
                 faiss.write_index(self.index, _tmp)
             self._save_meta()

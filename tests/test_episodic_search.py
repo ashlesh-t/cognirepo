@@ -33,7 +33,7 @@ def _patch_episodic(monkeypatch, tmp_path):
     import data.memory.episodic_memory as em
     em._BM25_CORPUS = None
     em._BM25_INDEX = None
-    monkeypatch.setattr(em, "_load", lambda: _raw_load(tmp_path))
+    monkeypatch.setattr(em, "_load", lambda **_kw: _raw_load(tmp_path))
     monkeypatch.setattr(em, "_save", lambda data: (
         _raw_save(tmp_path, data),
         em.__dict__.update({"_BM25_CORPUS": None, "_BM25_INDEX": None}),
@@ -155,7 +155,7 @@ class TestBM25CacheLifecycle:
         import data.memory.episodic_memory as em
 
         # Use real _save but patch file paths
-        monkeypatch.setattr(em, "_load", lambda: _raw_load(tmp_path))
+        monkeypatch.setattr(em, "_load", lambda **_kw: _raw_load(tmp_path))
 
         def _capturing_save(data):
             _raw_save(tmp_path, data)
