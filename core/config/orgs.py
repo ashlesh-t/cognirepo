@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from core.config.atomic import atomic_json_dump
 from core.config.paths import get_orgs_path
 
 logger = logging.getLogger(__name__)
@@ -55,8 +56,7 @@ def _load_orgs() -> dict:
                 dirty = True
         if dirty:
             try:
-                with open(path, "w", encoding="utf-8") as wf:
-                    json.dump(data, wf, indent=2)
+                atomic_json_dump(path, data, indent=2)
             except OSError:
                 pass
         return data
@@ -69,8 +69,7 @@ def _save_orgs(orgs: dict) -> None:
     path = get_orgs_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(orgs, f, indent=2)
+        atomic_json_dump(path, orgs, indent=2)
     except OSError as exc:
         logger.error("Failed to save orgs.json: %s", exc)
 

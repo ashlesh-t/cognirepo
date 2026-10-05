@@ -558,6 +558,8 @@ class KnowledgeGraph:
         elif kind == "re":
             if self.G.has_edge(op[1], op[2]):
                 self.G.remove_edge(op[1], op[2])
+        elif kind == "ga":  # graph-level attribute (G.graph), e.g. the "complete" marker
+            self.G.graph[op[1]] = op[2]
         elif kind == "rnd":  # remove node only if still (nearly) unconnected — see prune
             if self.G.has_node(op[1]) and self.G.degree(op[1]) <= op[2]:
                 self.G.remove_node(op[1])
@@ -719,6 +721,46 @@ class KnowledgeGraph:
     def set_edge_attrs(self, src: str, dst: str, **attrs: Any) -> None:
         """Merge attrs into an existing edge (no-op if absent)."""
         self._do(("ea", src, dst, dict(attrs)))
+
+    # ── completeness (COGNIREPO-122) ──────────────────────────────────────────
+
+    #: ``G.graph`` key stamped by a finished full index. Pickled with the graph.
+    COMPLETE_KEY = "complete"
+
+    def mark_complete(self) -> None:
+        """Record that a full index built this graph (incremental runs may extend it).
+
+        A journaled op, so the marker survives a full index whose final save() failed
+        (the journal replays it) and is re-applied by a rebase."""
+        self._do(("ga", self.COMPLETE_KEY, True))
+
+    def incremental_base_status(self, indexed_files: int | None = None) -> tuple[bool, str]:
+        """Is this graph a safe base for an incremental (--files / --changed-only / watcher) save?
+
+        An incremental run must never publish a graph that is not a superset of the
+        previous one. Returns ``(True, "")`` or ``(False, reason)``.
+
+        * marked complete by a full index → safe;
+        * locked (undecryptable) / empty (missing, quarantined, never built or graph
+          disabled) → unsafe: saving would replace a full graph with a fragment;
+        * unmarked but non-empty (graphs written before the marker existed) → safe only
+          if it plausibly covers the indexed repo: at least half as many FILE nodes as the
+          AST index has files. A fragment left by an earlier incremental run fails this.
+        """
+        if self._locked:
+            return False, "the graph on disk is encrypted and cannot be decrypted here"
+        if self.G.graph.get(self.COMPLETE_KEY):
+            return True, ""
+        if self.G.number_of_nodes() == 0:
+            return False, ("there is no graph on disk (missing, quarantined, never built, "
+                           "or disabled for this repo)")
+        if not indexed_files:
+            return False, "the graph is not marked complete and there is no AST index to verify it against"
+        file_nodes = sum(1 for _n, d in self.G.nodes(data=True) if d.get("type") == NodeType.FILE)
+        if file_nodes * 2 < indexed_files:
+            return False, (f"the graph covers {file_nodes} files but the AST index has "
+                           f"{indexed_files} — it looks like a fragment, not a full graph")
+        return True, ""
 
     def remove_node_edges(self, node_id: str) -> None:
         """Remove all edges incident to node_id (but keep the node)."""

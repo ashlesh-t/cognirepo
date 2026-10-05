@@ -99,9 +99,10 @@ class _ProjectLocalVectorDB:
         with store_lock():
             self.index.add(vec)
             self.metadata.append({"text": text, "importance": importance, "source": source})
-            faiss.write_index(self.index, self._idx_file)
-            with open(self._meta_file, "w", encoding="utf-8") as f:
-                json.dump(self.metadata, f, indent=2)
+            from core.config.atomic import atomic_json_dump, atomic_path  # pylint: disable=import-outside-toplevel
+            with atomic_path(self._idx_file) as _tmp:
+                faiss.write_index(self.index, _tmp)
+            atomic_json_dump(self._meta_file, self.metadata, indent=2)
 
     def search(self, vector, k: int = 5, source: str | None = None) -> list[dict]:
         import numpy as np  # pylint: disable=import-outside-toplevel

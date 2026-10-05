@@ -24,6 +24,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from core.config.atomic import atomic_json_dump
 
 # Set repo root in sys.path and CWD immediately so all cognirepo imports resolve
 # correctly regardless of what CWD Claude Code inherits when firing the hook.
@@ -149,8 +150,7 @@ def _save_visited(visited: dict[str, str]) -> None:
     path = _visited_files_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(visited, f, indent=2)
+        atomic_json_dump(path, visited, indent=2)
     except OSError:
         pass
 

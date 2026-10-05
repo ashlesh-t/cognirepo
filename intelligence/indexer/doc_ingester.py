@@ -33,6 +33,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from core.config.atomic import atomic_json_dump
 
 log = logging.getLogger(__name__)
 
@@ -180,8 +181,7 @@ class DocIngester:
                 "files": files,
                 "ingested_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
             }
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
+            atomic_json_dump(path, payload, indent=2)
         except Exception as exc:  # pylint: disable=broad-except
             log.debug("DocIngester: could not write ingest receipt (%s)", exc)
 

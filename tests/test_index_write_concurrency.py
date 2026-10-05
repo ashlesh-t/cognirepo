@@ -220,6 +220,7 @@ def _make_handler(tmp_path, debounce_ms):
 
     kg = KnowledgeGraph.__new__(KnowledgeGraph)
     kg.G = nx.DiGraph()
+    kg.G.graph["complete"] = True  # a finished full index (COGNIREPO-122)
     kg.nodes_for_file = MagicMock(return_value=[])
     kg.remove_node_edges = MagicMock()
     kg.remove_file_nodes = MagicMock()

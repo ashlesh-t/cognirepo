@@ -36,6 +36,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from core.config.atomic import atomic_write
+
 
 logger = logging.getLogger(__name__)
 
@@ -131,10 +133,7 @@ class _LearningBackend:
             return []
 
     def _save(self, records: list[dict]) -> None:
-        self._index_path().write_text(
-            json.dumps(records, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        atomic_write(str(self._index_path()), json.dumps(records, indent=2, ensure_ascii=False))
 
     def store(self, learning_type: str, text: str, metadata: dict, scope: str) -> str:
         """Persist a learning record; returns its ID.

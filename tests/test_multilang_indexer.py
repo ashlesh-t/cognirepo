@@ -241,6 +241,7 @@ class TestWatchdogCoverage:
         indexer.index_data = {"files": {}, "reverse_index": {}}
         graph = MagicMock()
         graph.nodes_for_file.return_value = []
+        graph.incremental_base_status.return_value = (True, "")
         behaviour = MagicMock()
         return RepoFileHandler(
             repo_root="/repo",
@@ -292,6 +293,7 @@ class TestWatchdogCoverage:
         indexer.index_data = {"files": {}, "reverse_index": {}}
         graph = MagicMock()
         graph.nodes_for_file.return_value = []
+        graph.incremental_base_status.return_value = (True, "")
         behaviour = MagicMock()
         handler = RepoFileHandler("/repo", indexer, graph, behaviour, "test")
 
@@ -312,6 +314,7 @@ class TestWatchdogCoverage:
         indexer.index_data = {"files": {"module.py": {}}, "reverse_index": {}}
         graph = MagicMock()
         graph.nodes_for_file.return_value = []
+        graph.incremental_base_status.return_value = (True, "")
         behaviour = MagicMock()
         handler = RepoFileHandler("/repo", indexer, graph, behaviour, "test")
 
