@@ -90,6 +90,29 @@ class _ProjectLocalVectorDB:
         else:
             self.metadata = []
 
+    def _reload_locked(self) -> None:
+        """Re-read index + metadata from disk. Caller holds store_lock().
+
+        Strict: an unreadable file raises (store() logs and skips) instead of falling back to
+        an empty in-memory store that the following write would persist over it (#135/#136)."""
+        import faiss  # pylint: disable=import-outside-toplevel
+        import json  # pylint: disable=import-outside-toplevel
+        import os  # pylint: disable=import-outside-toplevel
+        from core.config.safe_read import read_retry  # pylint: disable=import-outside-toplevel
+
+        if os.path.exists(self._idx_file):
+            self.index = read_retry(
+                self._idx_file, lambda: faiss.read_index(self._idx_file), retry_on=(Exception,))
+        else:
+            self.index = faiss.IndexFlatL2(self.dim)
+        if os.path.exists(self._meta_file):
+            def _read_meta():
+                with open(self._meta_file, encoding="utf-8") as f:
+                    return json.load(f)
+            self.metadata = read_retry(self._meta_file, _read_meta)
+        else:
+            self.metadata = []
+
     def add(self, vector, text: str, importance: float, source: str = "memory") -> None:
         import faiss  # pylint: disable=import-outside-toplevel
         import json  # pylint: disable=import-outside-toplevel
@@ -97,6 +120,7 @@ class _ProjectLocalVectorDB:
 
         vec = np.array([vector]).astype("float32")
         with store_lock():
+            self._reload_locked()  # COGNIREPO-136: append to the CURRENT disk state, not our snapshot
             self.index.add(vec)
             self.metadata.append({"text": text, "importance": importance, "source": source})
             from core.config.atomic import atomic_json_dump, atomic_path  # pylint: disable=import-outside-toplevel
