@@ -9,6 +9,22 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Fixed
+- **#135 — readers no longer rename, sweep or overwrite live stores on a failed read.** New
+  `core/config/safe_read.py` (`read_retry`, `StoreUnreadableError`, `looks_encrypted`,
+  `quarantine_if_stably_corrupt`). Readers retry briefly and then raise or serve an empty value *in
+  memory* — they never mutate the file. Only a **writer** quarantines, and only a file that stays
+  unreadable *and unchanged* across two checks (bytes kept in `<file>.corrupt-<ts>`, nothing deleted);
+  Fernet ciphertext that cannot be decrypted is treated as locked, never as corrupt. Fixed:
+  `episodic._load` / `learning_store._load` returned `[]` on a decode error and the next write saved
+  it (history wiped); `LocalVectorDB.__init__` (built on every `store_memory`) renamed
+  `semantic.index` to `.stale` on any read failure and `_load_meta` renamed the metadata and wrote
+  `[]` over it; `ASTIndexer.load()` renamed `ast.index` / `ast_index.json` / `ast_metadata.json` and
+  swept `*.tmp` files without the lock — deleting a live writer's scratch file made its
+  `os.replace` fail. The sweep now runs only under `store_lock`, only on files older than 10
+  minutes. A store that failed to load is never saved over (`LocalVectorDB`, `ASTIndexer.save()`
+  refuse until a writer quarantines it or it heals). Episodic rotation no longer trims entries when
+  the archive can't be read or written. A platform-mismatched FAISS binary is moved to `.stale` by
+  the writer, not on load.
 - **#134 — every store is now written atomically.** New `core/config/atomic.py`
   (`atomic_write` / `atomic_json_dump` / `atomic_write_with` / `atomic_path`: unique scratch file in
   the same directory → fsync → `os.replace` → fsync dir; the old file survives any failure). All

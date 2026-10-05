@@ -20,6 +20,9 @@ from collections import Counter
 from datetime import datetime, timezone
 
 from core.config.atomic import atomic_write, atomic_write_with, atomic_json_dump
+from core.config.safe_read import (
+    StoreUnreadableError, looks_encrypted, quarantine_if_stably_corrupt, read_retry,
+)
 from core.config.paths import get_path
 from data.memory.episodic_schema import EVENT, METADATA, METADATA_TYPE, TIME
 
@@ -60,11 +63,14 @@ def _rotate_if_needed(data: list) -> list:
         apath = _archive_path()
         existing: list = []
         if os.path.exists(apath):
-            with open(apath, "rb") as f:
-                existing = json.loads(f.read())
+            existing = read_retry(apath, lambda: json.loads(open(apath, "rb").read()))
         atomic_write(apath, json.dumps(existing + to_archive, indent=2).encode())
-    except OSError:
-        pass  # archive write failure is non-fatal; rotation still proceeds
+    except (OSError, StoreUnreadableError) as exc:
+        # The oldest entries are only removed from the live store once they are safely in
+        # the archive. If the archive can't be read or written, keep them (the store just
+        # grows past the cap until it can) rather than silently dropping history.
+        logger.warning("episodic rotation skipped, archive unavailable: %s", exc)
+        return data
     return trimmed
 
 
@@ -84,11 +90,8 @@ def _file_path() -> str:
     return get_path("memory/episodic.json")
 
 
-def _load() -> list:
-    path = _file_path()
-    if not os.path.exists(path):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        return []
+def _read_store(path: str) -> list:
+    """One attempt at reading + decrypting + parsing the store (re-reads the file)."""
     with open(path, "rb") as f:
         raw = f.read()
     from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
@@ -100,11 +103,53 @@ def _load() -> list:
         except Exception:  # InvalidToken — file predates encryption; migrate on next save
             pass
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
+        return json.loads(raw)
+    except ValueError:
+        if looks_encrypted(raw):
+            # Intact ciphertext we cannot decrypt (no keyring / wrong key) is LOCKED, not
+            # corrupt: it must never be quarantined or overwritten.
+            raise StoreUnreadableError(path, "encrypted and cannot be decrypted", locked=True)
+        raise
+
+
+def _load(*, writer: bool = False) -> list:
+    """Load the episodic store.
+
+    Never returns ``[]`` for an unreadable file — that value would be persisted by the next
+    ``_save()`` and wipe the history (#135). A reader gets ``StoreUnreadableError`` (see
+    ``_load_readonly``); the file is not touched. A *writer* (``writer=True``) may recover: if
+    the file stays unreadable and unchanged it is quarantined to ``episodic.json.corrupt-<ts>``
+    (never deleted) and the store restarts empty. Locked ciphertext is never recovered.
+    """
+    path = _file_path()
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        return []
+    try:
+        data = read_retry(path, lambda: _read_store(path))
+    except StoreUnreadableError as exc:
+        if not writer or exc.locked:
+            raise
+        def _readable() -> bool:
+            try:
+                _read_store(path)
+                return True
+            except Exception:  # pylint: disable=broad-except
+                return False
+        if quarantine_if_stably_corrupt(path, _readable) is None:
+            raise
         return []
     _warn_on_duplicate_ids(data)
     return data
+
+
+def _load_readonly() -> list:
+    """Reader view: an unreadable store yields no entries — and nothing is written."""
+    try:
+        return _load()
+    except StoreUnreadableError as exc:
+        logger.warning("%s", exc)
+        return []
 
 
 def _warn_on_duplicate_ids(data: list) -> None:
@@ -213,8 +258,11 @@ def log_event(event: str, metadata: dict = None) -> None:
     """
     Append an event (with optional metadata) to the episodic memory store.
     Rotates oldest entries to an archive file when episodic_max_events is exceeded.
+
+    Raises ``StoreUnreadableError`` (without touching the file) if the store is unreadable
+    and cannot be safely recovered — the event is not recorded, history is not overwritten.
     """
-    data = _load()
+    data = _load(writer=True)
     data = _rotate_if_needed(data)
     entry = {
         "id": _next_event_id(data),
@@ -232,7 +280,7 @@ def get_history(limit: int = 100) -> list:
     """
     Return the last `limit` episodic events.
     """
-    data = _load()
+    data = _load_readonly()
     return data[-limit:]
 
 
@@ -336,7 +384,7 @@ def search_episodes(query: str, limit: int = 10, include_archived: bool = False)
     include_archived: also search events rotated out to episodic_archive.json
     (default False — live store only). Archived hits are tagged {"archived": True}.
     """
-    data = _load()
+    data = _load_readonly()
     archived_ids: set = set()
     if include_archived:
         archive = _load_archive()
@@ -416,7 +464,7 @@ def find_consolidation_candidates(
     """
     from data.memory.timeline import _parse_since, _parse_ts  # pylint: disable=import-outside-toplevel
 
-    data = _load()
+    data = _load_readonly()
     if not data:
         return []
 
@@ -499,7 +547,7 @@ def mark_stale(file_path: str) -> int:
 
     Returns the count of entries tagged.
     """
-    data = _load()
+    data = _load(writer=True)
     tagged = 0
     for entry in data:
         if entry.get("stale"):

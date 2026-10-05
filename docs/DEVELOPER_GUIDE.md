@@ -204,6 +204,23 @@ read-modify-write cycle still needs `core.config.lock.store_lock()` (#136).
 `write_text`, `write_bytes`, `faiss.write_index` or `np.save` outside the helper. Genuine exceptions
 (append-only logs, files owned by other tools) go in its `_ALLOWED` table with a reason.
 
+## How to Read a Store File (never mutate from a reader)
+
+A read failure is not proof of corruption: it can be a concurrent writer, or ciphertext you simply
+cannot decrypt (no keyring). Acting on that belief — renaming the file, sweeping scratch files, or
+returning `[]` that the next write persists — destroys good data (COGNIREPO-135). Use
+`core/config/safe_read.py`:
+
+| Situation | Rule |
+|-----------|------|
+| any reader | `read_retry(path, load)` (short backoff). It raises `StoreUnreadableError`; it **never** renames, deletes or writes. Serve an empty value *in memory* if you must, but never persist it. |
+| ciphertext that fails to decrypt (`looks_encrypted(raw)`) | `StoreUnreadableError(..., locked=True)` — never quarantined, never overwritten. |
+| a writer meets an unreadable store | refuse to save (raise), or `quarantine_if_stably_corrupt(path, is_readable)` under `store_lock()`: moves it to `<file>.corrupt-<ts>` only if it stayed unreadable **and unchanged** across two checks; bytes are kept, nothing is deleted. |
+| scratch-file cleanup | only under `store_lock`, only files older than 10 minutes. |
+
+`tests/test_side_effect_free_readers.py` shows the pattern for episodic, learnings, the vector store
+and the AST index.
+
 ## PR Checklist
 
 Before submitting a pull request:
