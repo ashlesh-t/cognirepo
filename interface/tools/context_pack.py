@@ -177,7 +177,7 @@ def _autosave_context(result: dict) -> None:
             **result,
         }
         with store_lock():
-            atomic_json_dump(os.path.join(save_dir, "last_context.json"), out, indent=2)
+            atomic_json_dump(os.path.join(save_dir, "last_context.json"), out, indent=2, fsync=False)  # best-effort autosave
     except Exception:  # pylint: disable=broad-except
         pass  # autosave is always best-effort
 
@@ -228,7 +228,7 @@ def save_query_context(query: str, tool: str = "search") -> None:
             "sections": existing.get("sections", []),
         }
         with store_lock():
-            atomic_json_dump(ctx_path, out, indent=2)
+            atomic_json_dump(ctx_path, out, indent=2, fsync=False)  # best-effort autosave
     except Exception:  # pylint: disable=broad-except
         pass
 

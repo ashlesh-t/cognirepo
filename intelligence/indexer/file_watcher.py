@@ -348,7 +348,9 @@ class RepoFileHandler(FileSystemEventHandler):
                 "error": error,
             }
             path = os.path.join(get_cognirepo_dir_for_repo(self.repo_root), "index", "last_watcher_reindex.json")
-            atomic_json_dump(path, record, indent=2)
+            # status trail: atomic replace so readers never see a torn file, but no fsync —
+            # it runs after every batch, and on a slow disk two fsyncs here delayed the flush
+            atomic_json_dump(path, record, indent=2, fsync=False)
         except Exception as exc:  # pylint: disable=broad-except
             print(f"[watcher] failed to write last_watcher_reindex.json: {exc}", file=sys.stderr)
 
