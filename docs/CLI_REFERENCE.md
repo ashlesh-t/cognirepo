@@ -481,7 +481,7 @@ cognirepo list [OPTIONS]
 | `-p`, `--processes` | `False` | List all running watcher daemon processes |
 | `-n`, `--name PID_OR_NAME` | `None` | Select a daemon by PID or name (use with `--view` or `--stop`) |
 | `--view` | `False` | Interactively tail the log of the daemon selected with `-n` |
-| `--stop` | `False` | Send SIGTERM to the daemon selected with `-n` |
+| `--stop` | `False` | Stop the daemon selected with `-n`: sends SIGTERM and **waits** for the process to exit (up to 30 s), then SIGKILLs it; the registration is cleared only once the process is really gone. Exit 1 if it could not be stopped |
 | `--org` | `False` | Show all organizations, repos, and projects from `orgs.json` |
 | `--mcp` | `False` | List registered MCP servers from `.mcp.json` and global configs |
 
