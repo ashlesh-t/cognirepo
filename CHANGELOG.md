@@ -9,6 +9,19 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Fixed
+- **#124 — `doctor` now inspects the `cognirepo` on PATH, not just the interpreter running it.** Hooks and
+  MCP clients launch the PATH `cognirepo` (typically a pipx venv), which can differ from a dev checkout's
+  interpreter. New `interface/cli/install_probe.py` reads that script's shebang, probes the interpreter in
+  a read-only subprocess (imports `keyring`/`cryptography`, `keyring.get_keyring()` and a throw-away
+  `get_password`, version, and a content hash of its `interface/cli/main.py`) and `doctor` reports, with the
+  exact fix: `storage.encrypt: true` but the packages are missing (`pipx inject cognirepo keyring
+  cryptography`, or a `pip install` for that interpreter), a keyring with the fail/null backend or a failing
+  lookup (keys unreadable ⇒ encrypted stores stay locked), and a PATH install that is a stale snapshot of the
+  working tree (`pipx install --force <repo>`). Interpreters are compared by environment root, not
+  `realpath`: every venv's `python` symlinks to the same system python, so a pipx venv and a dev venv looked
+  identical and the PATH install was never checked (found by running it against a real pipx install).
+
+### Fixed
 - **#136 — unlocked read-modify-write lost updates and duplicated ids.** Every RMW of a shared store
   now runs under the cross-process lock and reloads *inside* it: `episodic.log_event` /
   `mark_stale` (ids allocated inside the lock), the learnings `store()` / `deprecate()` (a per-store
