@@ -392,7 +392,9 @@ class TestDirectIndexGraphSave:
         _direct_index(str(tmp_path), embed=False, skip_graph=True)
 
         assert len(attempts) == 2  # first trip, second succeeds
-        assert slept == [31.0]  # cooldown + 1, as implemented
+        # time.sleep is patched process-wide, so unrelated background threads (progress bars,
+        # lock polling) append their own tiny sleeps too — assert only the one that matters.
+        assert [s for s in slept if s >= 1] == [31.0]  # cooldown + 1, as implemented
         assert "not saved" not in capsys.readouterr().out
 
     def test_warns_once_after_exhausting_retry(self, tmp_path, monkeypatch, capsys):

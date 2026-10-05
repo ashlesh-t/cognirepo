@@ -25,6 +25,7 @@ import os
 import threading
 import time
 from typing import Callable
+from core.config.atomic import atomic_json_dump
 
 logger = logging.getLogger(__name__)
 
@@ -224,8 +225,6 @@ def write_prune_schedule(every_hours: int) -> str:
     """
     from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
     path = get_path(_SCHEDULE_FILE_NAME)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump({"every_hours": every_hours}, f)
+    atomic_json_dump(path, {"every_hours": every_hours}, indent=None)
     logger.info("Wrote prune schedule: every %d h → %s", every_hours, path)
     return path

@@ -30,6 +30,7 @@ import traceback
 logger = logging.getLogger(__name__)
 log = logger  # legacy alias — some handlers reference `log`
 
+from core.config.atomic import atomic_json_dump, atomic_path
 from core.config.logging import setup_logging
 setup_logging()
 
@@ -1999,7 +2000,8 @@ def _cmd_doctor_fix() -> int:
                 os.rename(faiss_path, stale)
                 import faiss  # pylint: disable=import-outside-toplevel,reimported
                 _new = faiss.IndexFlatL2(384)
-                faiss.write_index(_new, faiss_path)
+                with atomic_path(faiss_path) as _tmp:
+                    faiss.write_index(_new, _tmp)
                 print(f"     Fixed — empty index created at {faiss_path}")
                 print(f"     Run `cognirepo index-repo .` to rebuild embeddings")
                 fixes_applied += 1
@@ -2417,9 +2419,9 @@ def _write_last_indexed_sha(repo_path: str) -> None:
             ["git", "rev-parse", "HEAD"], cwd=repo_path, text=True, stderr=_sp.DEVNULL
         ).strip()
         path = get_path("index/last_indexed.json")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as _f:
-            json.dump({"commit_sha": sha, "indexed_at": datetime.now(timezone.utc).isoformat()}, _f)
+        atomic_json_dump(
+            path, {"commit_sha": sha, "indexed_at": datetime.now(timezone.utc).isoformat()}, indent=None,
+        )
     except Exception:  # pylint: disable=broad-except
         pass  # non-git repos silently skip
 

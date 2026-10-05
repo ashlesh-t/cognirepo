@@ -41,6 +41,7 @@ from watchdog.events import (
 )
 from watchdog.observers import Observer
 
+from core.config.atomic import atomic_json_dump
 from core.config.paths import get_cognirepo_dir_for_repo
 from intelligence.indexer.language_registry import is_supported
 
@@ -347,9 +348,7 @@ class RepoFileHandler(FileSystemEventHandler):
                 "error": error,
             }
             path = os.path.join(get_cognirepo_dir_for_repo(self.repo_root), "index", "last_watcher_reindex.json")
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(record, f, indent=2)
+            atomic_json_dump(path, record, indent=2)
         except Exception as exc:  # pylint: disable=broad-except
             print(f"[watcher] failed to write last_watcher_reindex.json: {exc}", file=sys.stderr)
 

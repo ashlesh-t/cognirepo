@@ -26,6 +26,7 @@ try:
 except ImportError:
     _KEYRING_AVAILABLE = False
 
+from core.config.atomic import atomic_write, atomic_json_dump
 from core.config.paths import get_path
 
 _KEYCHAIN_SERVICE = "cognirepo"
@@ -112,8 +113,7 @@ def _init_empty_stores(vector_backend: str = "faiss") -> None:
     ep_file = get_path("memory/episodic.json")
     if not os.path.exists(ep_file):
         try:
-            with open(ep_file, "w", encoding="utf-8") as f:
-                f.write("[]")
+            atomic_write(ep_file, "[]")
         except Exception:  # pylint: disable=broad-except
             pass
 
@@ -147,8 +147,7 @@ def _write_config(
             "behaviour_tracking": behaviour_tracking,
         }
 
-        with open(get_path("config.json"), "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2)
+        atomic_json_dump(get_path("config.json"), config, indent=2)
         print(f"Created {get_path('config.json')}")
         return project_id
 
@@ -198,8 +197,7 @@ def _write_config(
         changed = True
 
     if changed:
-        with open(get_path("config.json"), "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2)
+        atomic_json_dump(get_path("config.json"), config, indent=2)
         print(f"Updated {get_path('config.json')} with missing keys.")
     else:
         print(f"{get_path('config.json')} already up to date.")
@@ -966,8 +964,7 @@ def _write_parent_metadata_to_child(child_path: str, parent_path: str, parent_na
         with open(cfg_path, encoding="utf-8") as f:
             cfg = json.load(f)
         cfg["parent"] = {"path": parent_path, "project_name": parent_name, "role": "child"}
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2)
+        atomic_json_dump(cfg_path, cfg, indent=2)
     except Exception:  # pylint: disable=broad-except
         pass
 
