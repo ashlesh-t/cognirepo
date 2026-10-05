@@ -19,6 +19,7 @@ import threading
 from collections import Counter
 from datetime import datetime, timezone
 
+from core.config.atomic import atomic_write, atomic_write_with, atomic_json_dump
 from core.config.paths import get_path
 from data.memory.episodic_schema import EVENT, METADATA, METADATA_TYPE, TIME
 
@@ -61,8 +62,7 @@ def _rotate_if_needed(data: list) -> list:
         if os.path.exists(apath):
             with open(apath, "rb") as f:
                 existing = json.loads(f.read())
-        with open(apath, "wb") as f:
-            f.write(json.dumps(existing + to_archive, indent=2).encode())
+        atomic_write(apath, json.dumps(existing + to_archive, indent=2).encode())
     except OSError:
         pass  # archive write failure is non-fatal; rotation still proceeds
     return trimmed
@@ -155,9 +155,7 @@ def _save(data: list) -> None:
         from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
         content = encrypt_bytes(content, get_or_create_key(project_id))
     path = _file_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "wb") as f:
-        f.write(content)
+    atomic_write(path, content)
     # Invalidate BM25 cache so the next search reflects the updated corpus
     with _BM25_LOCK:
         _BM25_CORPUS = None
@@ -264,9 +262,9 @@ def _save_vec_cache(ids: list, vecs) -> None:
     try:
         import numpy as np  # pylint: disable=import-outside-toplevel
         vec_path, ids_path = _vec_cache_paths()
-        np.save(vec_path, vecs.astype("float32"))
-        with open(ids_path, "w", encoding="utf-8") as f:
-            json.dump(ids, f)
+        _arr = vecs.astype("float32")
+        atomic_write_with(vec_path, lambda f: np.save(f, _arr), binary=True)
+        atomic_json_dump(ids_path, ids, indent=None)
     except OSError:
         pass  # cache write failure is non-fatal — regenerable from source entries
 

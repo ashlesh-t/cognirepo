@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from core.config.atomic import atomic_write
 from data.memory.learning_store import auto_tag, get_learning_store
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ def _save_session(session_id: str, data: dict) -> None:
     if path is None:
         return
     try:
-        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        atomic_write(str(path), json.dumps(data, indent=2, ensure_ascii=False))
     except OSError as exc:
         logger.warning("session_listener: could not save session %s: %s", session_id, exc)
 

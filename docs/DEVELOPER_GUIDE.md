@@ -181,6 +181,29 @@ if args.command == "mycommand":
 
 ---
 
+## How to Write a Store File (atomic writes)
+
+Several processes (watcher, one `serve` per agent, the CLI) share `.cognirepo/`. A bare
+`open(path, "w")` truncates the live file first, so a concurrent reader or a crash sees an empty
+or half-written store — and code that treats "unreadable" as "corrupt" then acts on it
+(COGNIREPO-134/#135). Never write a store in place; use `core/config/atomic.py`:
+
+| Need | Call |
+|------|------|
+| bytes / text (encrypt *before* calling) | `atomic_write(path, data)` |
+| JSON | `atomic_json_dump(path, obj, indent=2)` |
+| writer takes a file object (`np.save`, pickle) | `atomic_write_with(path, lambda f: ..., binary=True)` |
+| writer takes a *filename* (`faiss.write_index`) | `with atomic_path(path) as tmp: faiss.write_index(idx, tmp)` |
+
+The helper writes a unique scratch file in the same directory, fsyncs, `os.replace`s it over the
+target and fsyncs the directory; on any error the old file is untouched. It keeps an existing file's
+mode (new files get 0644) and creates missing parent directories. It does **not** lock — a
+read-modify-write cycle still needs `core.config.lock.store_lock()` (#136).
+
+`tests/test_atomic_writes.py` has an AST lint that fails on any new `open(..., "w"/"a"/"x")`,
+`write_text`, `write_bytes`, `faiss.write_index` or `np.save` outside the helper. Genuine exceptions
+(append-only logs, files owned by other tools) go in its `_ALLOWED` table with a reason.
+
 ## PR Checklist
 
 Before submitting a pull request:

@@ -18,6 +18,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from core.config.atomic import atomic_json_dump
 
 log = logging.getLogger(__name__)
 
@@ -196,8 +197,7 @@ def scan_http_calls(repo_root: str) -> dict:
 
     out_path = http_calls_path()
     try:
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, indent=2)
+        atomic_json_dump(out_path, result, indent=2)
     except Exception as exc:  # pylint: disable=broad-except
         log.warning("http_call_scanner: failed to write: %s", exc)
 

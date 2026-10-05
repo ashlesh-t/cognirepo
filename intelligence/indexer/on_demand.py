@@ -14,6 +14,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from core.config.atomic import atomic_json_dump
 
 log = logging.getLogger(__name__)
 
@@ -32,8 +33,7 @@ def _save_queue(queue_path: str, data: dict) -> None:
     try:
         import filelock  # pylint: disable=import-outside-toplevel
         with filelock.FileLock(queue_path + ".lock", timeout=10):
-            with open(queue_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+            atomic_json_dump(queue_path, data, indent=2)
     except Exception as exc:  # pylint: disable=broad-except
         log.warning("on_demand: failed to update queue: %s", exc)
 
