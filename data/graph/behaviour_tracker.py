@@ -19,6 +19,7 @@ import re
 from datetime import datetime, timezone, timedelta
 from typing import Any, Callable
 
+from core.config.atomic import atomic_write
 from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
 from data.graph.graph_utils import make_node_id
 
@@ -275,8 +276,7 @@ class BehaviourTracker:
                     raw = encrypt_bytes(raw, get_or_create_key(project_id))
             except Exception:  # pylint: disable=broad-except
                 pass  # best-effort encryption
-            with open(path, "wb") as f:
-                f.write(raw)
+            atomic_write(path, raw)
 
     # ── query tracking ────────────────────────────────────────────────────────
 

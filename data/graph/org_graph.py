@@ -29,6 +29,7 @@ import pickle
 from typing import Literal
 
 import networkx as nx
+from core.config.atomic import atomic_write
 
 logger = logging.getLogger(__name__)
 
@@ -157,8 +158,7 @@ class OrgGraph:
                 if encrypt and project_id:
                     from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
                     raw = encrypt_bytes(raw, get_or_create_key(project_id))
-                with open(path, "wb") as f:
-                    f.write(raw)
+                atomic_write(path, raw)
         except OSError as exc:
             logger.error("OrgGraph: failed to save: %s", exc)
 

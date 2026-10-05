@@ -31,6 +31,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from core.config.atomic import atomic_json_dump
 from core.config.paths import get_path
 from core.config.lock import store_lock
 
@@ -135,9 +136,7 @@ class CleanupQueue:
 
     def _save(self, items: list[dict]) -> None:
         path = _queue_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(items, f, indent=2)
+        atomic_json_dump(path, items, indent=2)
 
     # ── priority formula ──────────────────────────────────────────────────────
 
