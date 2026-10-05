@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import faiss
 import numpy as np
 
+from core.config.atomic import atomic_write, atomic_path
 from core.config.paths import get_path
 from core.config.lock import store_lock
 from core.vector_db.adapter import VectorStorageAdapter
@@ -77,8 +78,7 @@ class LocalVectorDB(VectorStorageAdapter):
         else:
             # Initialize eagerly — atomic write prevents concurrent-first-write race
             os.makedirs(os.path.dirname(meta_path), exist_ok=True)
-            with open(meta_path, "wb") as f:
-                f.write(b"[]")
+            atomic_write(meta_path, b"[]")
             self.metadata = []
 
         self._loaded_disk_mtime = self._disk_mtime()
@@ -151,8 +151,7 @@ class LocalVectorDB(VectorStorageAdapter):
                 os.rename(_meta_file(), corrupt)
             except OSError:
                 pass
-            with open(_meta_file(), "wb") as f:
-                f.write(b"[]")
+            atomic_write(_meta_file(), b"[]")
             return []
 
     def _save_meta(self) -> None:
@@ -162,9 +161,7 @@ class LocalVectorDB(VectorStorageAdapter):
         if encrypt:
             from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
             content = encrypt_bytes(content, get_or_create_key(project_id))
-        os.makedirs(os.path.dirname(_meta_file()), exist_ok=True)
-        with open(_meta_file(), "wb") as f:
-            f.write(content)
+        atomic_write(_meta_file(), content)
 
     def save(self):
         """
@@ -177,7 +174,8 @@ class LocalVectorDB(VectorStorageAdapter):
         if breaker is not None:
             breaker.check()
         with store_lock():
-            faiss.write_index(self.index, _index_file())
+            with atomic_path(_index_file()) as _tmp:
+                faiss.write_index(self.index, _tmp)
             self._save_meta()
         self._loaded_disk_mtime = self._disk_mtime()
         if breaker is not None:

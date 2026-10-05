@@ -8,6 +8,32 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Fixed
+- **#134 — every store is now written atomically.** New `core/config/atomic.py`
+  (`atomic_write` / `atomic_json_dump` / `atomic_write_with` / `atomic_path`: unique scratch file in
+  the same directory → fsync → `os.replace` → fsync dir; the old file survives any failure). All
+  `.cognirepo` stores that were written in place now use it: FAISS indexes (`semantic.index`,
+  `ast.index`, project memory, docs index, doctor repair — via `faiss.write_index` to the scratch
+  path), their metadata, `episodic.json` / archive / vector cache, learnings, project memory, the
+  AST `manifest.json`, behaviour, org graph, orgs, sessions, cleanup queue, tier-2 queues,
+  scanners' outputs, summaries, last-indexed sha, watcher trail, last-context autosave, prune
+  outputs, `config.json`, and the watcher heartbeat / pid files. `ASTIndexer._atomic_json_dump`
+  delegates to the helper. Also fixes `cleanup_suppressed()` opening the vector metadata `"wb"`
+  *before* encrypting it, which left the file empty if encryption failed. A new AST lint test fails
+  on any new bare in-place write outside the helper (documented `_ALLOWED` exceptions: append-only
+  logs, other tools' config files, files that already do tmp+replace). Readers that quarantine on a
+  torn read (#135) and read-modify-write locking (#136) are separate issues.
+- **#122 — incremental `index-repo --files` / `--changed-only` (the post-commit hook) and the file
+  watcher could replace a full graph with a fragment.** After a quarantine removed `graph.pkl`, the
+  hook saved a 2-node graph as the whole graph (41,327 → 1,122 → 2 nodes over time). A full
+  `index_repo` now stamps a journaled `complete` marker on the graph (`KnowledgeGraph.mark_complete`);
+  `--files`, `--changed-only` and the watcher's graph save go through
+  `KnowledgeGraph.incremental_base_status()` and **refuse to save** (CLI exit 2 with "run a full
+  `cognirepo index-repo .` once"; watcher warns once) when the base graph is missing, empty, locked,
+  or an unmarked fragment (fewer than half as many FILE nodes as the AST index has files; graphs
+  written before the marker keep working if they cover the repo). `skip_graph` runs never claim
+  completeness.
+
 ### Added
 - **#75 — Swift language support.** `.swift` files are indexed via `tree-sitter-swift` (now part of
   the `languages` extra; the grammar is versioned 0.7.x, hence `>=0.7`): classes, structs, enums,

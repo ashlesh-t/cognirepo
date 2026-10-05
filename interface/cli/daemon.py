@@ -22,6 +22,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from core.config.atomic import atomic_write
 from core.config.paths import get_cognirepo_dir, get_cognirepo_dir_for_repo
 
 # fcntl is Linux/macOS only — imported lazily inside functions that need it
@@ -82,7 +83,7 @@ def write_heartbeat(pid: int, watcher_path: str) -> None:
         "path": watcher_path,
         "timestamp": datetime.utcnow().isoformat() + "Z",
     }
-    _heartbeat_file(watcher_path).write_text(json.dumps(data))
+    atomic_write(str(_heartbeat_file(watcher_path)), json.dumps(data))
 
 
 def read_heartbeat(repo_path: str | None = None) -> dict | None:
@@ -463,7 +464,7 @@ def register_watcher(pid: int, name: str, path: str, log_path: str) -> None:
         "started": datetime.now().isoformat(timespec="seconds"),
         "log": log_path,
     }
-    _pid_file(pid, path).write_text(json.dumps(record, indent=2))
+    atomic_write(str(_pid_file(pid, path)), json.dumps(record, indent=2))
 
 
 def _is_alive(pid: int) -> bool:

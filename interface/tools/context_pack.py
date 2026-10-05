@@ -27,6 +27,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from core.config.atomic import atomic_json_dump
 from core.config.lock import store_lock
 from intelligence.retrieval.hybrid import hybrid_retrieve, episodic_bm25_filter, is_index_cold, MAX_QUERY_LEN
 from intelligence.retrieval.query_enhancer import enhance_query
@@ -176,8 +177,7 @@ def _autosave_context(result: dict) -> None:
             **result,
         }
         with store_lock():
-            with open(os.path.join(save_dir, "last_context.json"), "w", encoding="utf-8") as f:
-                json.dump(out, f, indent=2)
+            atomic_json_dump(os.path.join(save_dir, "last_context.json"), out, indent=2)
     except Exception:  # pylint: disable=broad-except
         pass  # autosave is always best-effort
 
@@ -228,8 +228,7 @@ def save_query_context(query: str, tool: str = "search") -> None:
             "sections": existing.get("sections", []),
         }
         with store_lock():
-            with open(ctx_path, "w", encoding="utf-8") as f:
-                json.dump(out, f, indent=2)
+            atomic_json_dump(ctx_path, out, indent=2)
     except Exception:  # pylint: disable=broad-except
         pass
 
