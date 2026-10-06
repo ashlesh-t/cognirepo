@@ -277,8 +277,8 @@ class TestWatchdogCoverage:
         from watchdog.events import FileModifiedEvent
         handler = self._make_handler()
 
-        fake_file = tmp_path / "file.rb"
-        fake_file.write_text("# ruby")
+        fake_file = tmp_path / "file.lua"
+        fake_file.write_text("-- lua")
 
         with patch.object(handler, "_reindex") as mock_reindex:
             event = FileModifiedEvent(str(fake_file))

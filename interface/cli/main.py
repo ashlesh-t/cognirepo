@@ -718,6 +718,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             ("JavaScript", ".js"),
             ("Go",         ".go"),
             ("Rust",       ".rs"),
+            ("Ruby",       ".rb"),
             ("Java",       ".java"),
             ("C++",        ".cpp"),
         ]
@@ -728,6 +729,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             ".js":   "tree-sitter-javascript",
             ".go":   "tree-sitter-go",
             ".rs":   "tree-sitter-rust",
+            ".rb":   "tree-sitter-ruby",
             ".java": "tree-sitter-java",
             ".cpp":  "tree-sitter-cpp",
         }
