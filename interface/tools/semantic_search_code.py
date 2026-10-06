@@ -30,6 +30,7 @@ _LANG_EXTENSIONS: dict[str, set[str]] = {
     "rust":       {".rs"},
     "ruby":       {".rb"},
     "java":       {".java"},
+    "csharp":     {".cs"},
     "cpp":        {".cpp", ".cc", ".cxx", ".h", ".hpp"},
     "c":          {".c", ".h"},
     "php":        {".php"},

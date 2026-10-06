@@ -106,6 +106,8 @@ _SKIP_DIRS: frozenset[str] = frozenset({
     # Java / Kotlin / Gradle
     ".gradle", "gradle", "out", "classes", "generated", "generated-sources", "gen",
     ".idea",
+    # C# / .NET (MSBuild intermediate output is full of generated *.cs)
+    "obj", ".vs",
     # Go / Kubernetes
     # NOTE: "staging" is deliberately NOT skipped — in Kubernetes-style repos
     # staging/ holds real first-party source (k8s.io/apiserver etc.). Repos that
@@ -219,6 +221,7 @@ _TS_FUNCTION_TYPES = frozenset({
     "function_definition",        # Python, C++
     "function_declaration",       # JS, TS, Java, Go, C
     "function_item",              # Rust
+    "local_function_statement",   # C# local functions
     "method_declaration",         # Java, C#
     "method_definition",          # JS/TS class methods
     "function_expression",        # JS assigned function
@@ -238,6 +241,8 @@ _TS_CLASS_TYPES = frozenset({
     "abstract_class_declaration", # TypeScript abstract classes
     "class_specifier",            # C++
     "struct_item",                # Rust
+    "struct_declaration",         # C#
+    "record_declaration",         # C# records (also Java 16+ records)
     "interface_declaration",      # Java, TS
     "type_alias_declaration",     # TypeScript type aliases
     "trait_declaration",          # PHP traits
@@ -557,6 +562,19 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
             name_node = _php_last_name(name_node)
         if name_node and name_node.type in ("identifier", "name"):
             out.append(_ts_text(name_node, source))
+    elif node.type == "invocation_expression":  # C#: Foo() / obj.Foo() / Foo<T>()
+        fn = node.child_by_field_name("function")
+        if fn is not None and fn.type == "conditional_access_expression":
+            # `a?.Foo()` / `b.Bar?.Baz()` — the callee is the trailing member_binding_expression
+            binding = fn.named_children[-1] if fn.named_children else None
+            fn = (binding.child_by_field_name("name")
+                  if binding is not None and binding.type == "member_binding_expression" else None)
+        if fn is not None and fn.type == "member_access_expression":
+            fn = fn.child_by_field_name("name")
+        if fn is not None and fn.type == "generic_name":
+            fn = next((c for c in fn.children if c.type == "identifier"), None)
+        if fn is not None and fn.type == "identifier":
+            out.append(_ts_text(fn, source))
     for child in node.children:
         _ts_collect_calls(child, source, out, depth + 1)
 

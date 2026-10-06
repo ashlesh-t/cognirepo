@@ -157,6 +157,12 @@ Versioning: [Semantic Versioning](https://semver.org/)
   completeness.
 
 ### Added
+- **#74 — C# language support.** `.cs` files are indexed via `tree-sitter-c-sharp` (now part of
+  the `languages` extra): classes, interfaces, structs, records, enums, methods and local functions,
+  plus call edges for `Foo()`, `obj.Foo()`, generic `Foo<T>()` and null-conditional `a?.Foo()`
+  invocations. Constructors are not indexed as functions (same as Java). `cognirepo doctor` lists
+  C#; `semantic_search_code` accepts `language="csharp"`. `record_declaration` also picks up Java
+  16+ records (pinned by a test). `obj/` and `.vs/` are added to the indexer's skip dirs.
 - **#73 — PHP language support.** `.php` files are indexed via `tree-sitter-php` (now part of the
   `languages` extra, loaded with `language_php()` so files mixing HTML and `<?php` blocks parse):
   classes, interfaces, traits, enums, functions and methods, INHERITS edges for `extends`,
