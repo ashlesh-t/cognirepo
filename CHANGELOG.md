@@ -8,6 +8,16 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Security
+- **`fsspec` 2026.3.0 → 2026.6.0 (CVE-2026-104851, HIGH — arbitrary code execution via crafted reference
+  documents).** Flagged by Trivy and pip-audit. cognirepo never imports fsspec; it is a transitive
+  dependency of `huggingface_hub` (which `fastembed` uses to fetch the embedding model), and the affected
+  component is fsspec's reference filesystem, which cognirepo does not use — so the practical exposure was
+  nil, but it gated CI. Impact check: `huggingface_hub` requires only `fsspec>=2023.5.0` (no upper bound),
+  nothing in the 2026.4.0 / 2026.6.0 changelogs touches a feature this project or `huggingface_hub` use on
+  this path (HTTP `pipe_file`, tar/zip closing, `dirFS`, `referenceFS`, FTP, `expand_path` globbing), and
+  the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
+
 ### Fixed
 - **Heartbeat left behind for a dead watcher (intermittent CI failure).** The heartbeat thread had no stop
   signal, so a write still in flight — or the very first write, if the watcher exits straight away — could
