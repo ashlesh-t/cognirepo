@@ -68,8 +68,10 @@ languages = [
     "tree-sitter-cpp>=0.23",
     "tree-sitter-go>=0.23",
     "tree-sitter-rust>=0.23",
+    "tree-sitter-ruby>=0.23",
     "tree-sitter-bash>=0.23",
     "tree-sitter-yaml>=0.6",
+    "tree-sitter-swift>=0.7",  # alex-pinkus/tree-sitter-swift — versioned 0.x, not 0.23+
 ]
 cpp = [
     "pybind11>=2.12",
