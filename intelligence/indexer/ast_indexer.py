@@ -34,6 +34,7 @@ import os
 import platform
 import subprocess
 import tempfile
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,6 +45,7 @@ import numpy as np
 import warnings
 
 from core.config.atomic import atomic_json_dump, atomic_path
+from core.config.safe_read import StoreUnreadableError, quarantine_if_stably_corrupt, read_retry
 from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
 from data.graph.journal import JournalBusy
 from data.graph.graph_utils import make_node_id, node_id_from_symbol_record
@@ -2692,14 +2694,20 @@ class ASTIndexer:
         """
         atomic_json_dump(path, obj, indent=2)
 
+    #: scratch files younger than this may belong to a live writer (COGNIREPO-135)
+    _STALE_TMP_MIN_AGE_SECS = 600
+
     @staticmethod
-    def _sweep_stale_tmp(path: str) -> None:
+    def _sweep_stale_tmp(path: str, min_age: float = 600) -> None:
         """Delete orphaned `<path>.*.tmp` scratch files left by a crashed write.
 
         _atomic_json_dump() cleans up its own tmp on failure, but a SIGKILL
-        or power loss mid-write can still strand one. They are never valid
-        index state, so removing them on load() keeps the index dir clean.
-        Also removes the legacy fixed-name `<path>.tmp` from before D13.
+        or power loss mid-write can still strand one. Also removes the legacy
+        fixed-name `<path>.tmp` from before D13.
+
+        Only files older than ``min_age`` seconds are removed: a younger one may be a
+        live writer's scratch file, and deleting it makes that writer's os.replace()
+        raise FileNotFoundError (COGNIREPO-135). load() calls this under store_lock.
         """
         directory = os.path.dirname(path) or "."
         base = os.path.basename(path)
@@ -2707,31 +2715,87 @@ class ASTIndexer:
             entries = os.listdir(directory)
         except OSError:
             return
+        now = time.time()
         for name in entries:
             if name == base + ".tmp" or (name.startswith(base + ".") and name.endswith(".tmp")):
+                full = os.path.join(directory, name)
                 try:
-                    os.unlink(os.path.join(directory, name))
+                    if now - os.stat(full).st_mtime < min_age:
+                        continue
+                    os.unlink(full)
                     log.debug("removed orphaned index scratch file %s", name)
                 except OSError:
                     pass
 
-    @staticmethod
-    def _load_json_self_heal(path: str, default):
-        """Load JSON; on corruption rename the file to .corrupt and return default."""
+    def _sweep_stale_tmp_locked(self) -> None:
+        """Sweep old scratch files, but only if store_lock is free right now (never block a
+        reader on a writer, never delete anything unlocked)."""
         try:
+            from core.config.lock import store_lock  # pylint: disable=import-outside-toplevel
+            from filelock import Timeout  # pylint: disable=import-outside-toplevel
+            with store_lock(timeout=0):
+                self._sweep_stale_tmp(_ast_index_file(), self._STALE_TMP_MIN_AGE_SECS)
+                self._sweep_stale_tmp(_ast_meta_file(), self._STALE_TMP_MIN_AGE_SECS)
+        except (ImportError, Timeout, OSError):
+            pass  # lock busy or unavailable: skip — the sweep is housekeeping, not correctness
+
+    @staticmethod
+    def _read_json_or_default(path: str, default):
+        """Read JSON without touching the file. Returns ``(value, error)``.
+
+        A reader must never rename or overwrite an unreadable file (COGNIREPO-135): the
+        failure may be a concurrent writer. Retries briefly; on persistent failure returns
+        ``(default, StoreUnreadableError)`` so the caller can refuse to persist the default.
+        """
+        def _read():
             with open(path, encoding="utf-8") as f:
                 return json.load(f)
-        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
-            log.warning(
-                "%s is corrupt or unreadable (%s). Renaming to .corrupt and "
-                "starting fresh — re-run `cognirepo index-repo .` to rebuild.",
-                os.path.basename(path), exc,
-            )
-            try:
-                os.replace(path, path + ".corrupt")
-            except OSError:
-                pass
-            return default
+        try:
+            return read_retry(path, _read), None
+        except StoreUnreadableError as exc:
+            log.warning("%s is unreadable (%s); using an empty value in memory and leaving "
+                        "the file untouched.", os.path.basename(path), exc.reason)
+            return default, exc
+
+    def _resolve_load_errors(self) -> None:
+        """Writer-side gate, called by save() under store_lock.
+
+        Refuses to overwrite a store that failed to load: the in-memory fallback is empty and
+        saving it would destroy a file that was merely unreadable (concurrent writer, partial
+        read). Only a file that stays unreadable AND unchanged is quarantined (bytes kept in
+        ``<file>.corrupt-<ts>``), after which the fresh state may be written. A FAISS binary
+        built for another platform is moved to ``.stale`` here — by the writer, not on load.
+        """
+        errors = getattr(self, "_load_errors", None) or {}
+        for path, exc in list(errors.items()):
+            if path.endswith(".index"):
+                def _readable(p=path) -> bool:
+                    try:
+                        faiss.read_index(p)
+                        return True
+                    except Exception:  # pylint: disable=broad-except
+                        return False
+            else:
+                def _readable(p=path) -> bool:
+                    try:
+                        with open(p, encoding="utf-8") as f:
+                            json.load(f)
+                        return True
+                    except Exception:  # pylint: disable=broad-except
+                        return False
+            if _readable():
+                raise StoreUnreadableError(
+                    path, "store failed to load but is readable now (transient) — reload and retry")
+            if quarantine_if_stably_corrupt(path, _readable) is None:
+                raise exc
+            del errors[path]
+        if getattr(self, "_faiss_platform_mismatch", False):
+            if os.path.exists(_ast_faiss_file()):
+                try:
+                    os.replace(_ast_faiss_file(), _ast_faiss_file() + ".stale")
+                except OSError:
+                    pass
+            self._faiss_platform_mismatch = False
 
     def save(self) -> None:
         """Persist AST index, FAISS index, and metadata to disk.
@@ -2747,6 +2811,7 @@ class ASTIndexer:
         always taken this lock; ASTIndexer.save() did not. See COGNIREPO-D13.
         """
         with _store_lock_or_null():
+            self._resolve_load_errors()
             os.makedirs(os.path.dirname(_ast_index_file()), exist_ok=True)
             # Stamp every persist, not just full index_repo() runs. Without
             # this the watcher's incremental path leaves `indexed_at` frozen
@@ -2793,12 +2858,9 @@ class ASTIndexer:
                         recorded.get("arch"), recorded.get("faiss"),
                         platform.machine(), faiss.__version__,
                     )
-                    # Rename stale binary so _ensure_faiss() creates a fresh one
-                    if os.path.exists(_ast_faiss_file()):
-                        try:
-                            os.rename(_ast_faiss_file(), _ast_faiss_file() + ".stale")
-                        except OSError:
-                            pass
+                    # Do NOT rename the binary here: load() runs in readers (MCP server) too.
+                    # The next save() — a writer, under store_lock — moves it to .stale.
+                    self._faiss_platform_mismatch = True  # pylint: disable=attribute-defined-outside-init
                     self._ensure_faiss()
                     self._loaded = True
                     self._disk_stamp = self._stat_stamp(_ast_index_file())
@@ -2813,32 +2875,39 @@ class ASTIndexer:
         stamp = self._stat_stamp(_ast_index_file())
         self._disk_path = _ast_index_file()
 
-        # Clear scratch files stranded by a hard kill mid-write (COGNIREPO-D13).
-        self._sweep_stale_tmp(_ast_index_file())
-        self._sweep_stale_tmp(_ast_meta_file())
+        # Clear scratch files stranded by a hard kill mid-write (COGNIREPO-D13) — only old
+        # ones, and only while holding the lock (never delete a live writer's scratch file).
+        self._sweep_stale_tmp_locked()
 
+        # COGNIREPO-135: loading never renames or rewrites anything. Failures are recorded
+        # and save() decides (see _resolve_load_errors).
+        self._load_errors: dict[str, StoreUnreadableError] = {}  # pylint: disable=attribute-defined-outside-init
         if os.path.exists(_ast_index_file()):
-            loaded = self._load_json_self_heal(_ast_index_file(), None)
-            if loaded is not None:
+            loaded, err = self._read_json_or_default(_ast_index_file(), None)
+            if err is not None:
+                self._load_errors[_ast_index_file()] = err
+            elif loaded is not None:
                 self.index_data = loaded
         if os.path.exists(_ast_faiss_file()):
             try:
-                self.faiss_index = faiss.read_index(_ast_faiss_file())
-            except Exception as exc:  # pylint: disable=broad-except
-                log.warning(
-                    "ast.index could not be loaded (%s). "
-                    "Renaming to .stale and starting fresh. "
-                    "Re-run `cognirepo index-repo .` to rebuild.",
-                    exc,
+                self.faiss_index = read_retry(
+                    _ast_faiss_file(), lambda: faiss.read_index(_ast_faiss_file()),
+                    retry_on=(Exception,),
                 )
-                try:
-                    os.rename(_ast_faiss_file(), _ast_faiss_file() + ".stale")
-                except OSError:
-                    pass
+            except StoreUnreadableError as exc:
+                log.warning(
+                    "ast.index could not be loaded (%s). Starting with an empty in-memory "
+                    "index; the file is left untouched. Re-run `cognirepo index-repo .` "
+                    "to rebuild.", exc.reason,
+                )
+                self._load_errors[_ast_faiss_file()] = exc
                 self._ensure_faiss()
         else:
             self._ensure_faiss()
         if os.path.exists(_ast_meta_file()):
-            self.faiss_meta = self._load_json_self_heal(_ast_meta_file(), [])
+            meta, err = self._read_json_or_default(_ast_meta_file(), [])
+            if err is not None:
+                self._load_errors[_ast_meta_file()] = err
+            self.faiss_meta = meta
         self._loaded = True
         self._disk_stamp = stamp

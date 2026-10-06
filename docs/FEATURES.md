@@ -150,13 +150,14 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | Fork to background (`daemonize`) | ✅ | Double-fork UNIX daemon pattern |
 | PID file management | ✅ | `.cognirepo/watchers/<pid>.json` |
 | Singleton enforcement via `flock` | ✅ | `flock_register_watcher()` — prevents duplicate watchers |
-| Stale-PID detection | ✅ | `_is_alive(pid)` check before claiming slot |
+| Stale-PID detection | ✅ | `_is_alive(pid)` check before claiming slot (a zombie counts as dead) |
 | Heartbeat file (30s interval) | ✅ | `write_heartbeat()` + background thread |
 | `heartbeat_age_seconds()` | ✅ | Used by `cognirepo doctor` |
-| Crash-recovery loop | ✅ | `run_watcher_with_crash_guard()` — restarts on crash |
+| Crash-recovery loop | ✅ | `run_watcher_with_crash_guard()` — restarts on crash; SIGTERM stops it with a bounded final flush (`GRACEFUL_STOP_SECS`), a stop flag that can't be swallowed, and a forced exit on a second SIGTERM |
+| Foreground watcher (`watch --foreground`) | ✅ | Registers itself, logs to stderr, stops on SIGTERM — what the systemd unit runs (`--daemon-foreground` is a legacy alias) |
 | Systemd unit file generation | ✅ | `generate_systemd_unit()` / `write_systemd_unit()` |
 | `cognirepo list` — list running daemons | ✅ | `list_watchers()` |
-| `cognirepo list --stop` | ✅ | SIGTERM to selected daemon |
+| `cognirepo list --stop` | ✅ | SIGTERM, **waits for the process to be gone**, escalates to SIGKILL after 30 s (only if the pid still looks like cognirepo), and clears the registration only afterwards (`stop_watcher_and_wait()`) |
 | `cognirepo list --view` | ✅ | Interactive log tail |
 
 ---
@@ -331,7 +332,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ## 15. Test Coverage
 
-108 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+114 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
 for the current test-function count). This table is representative, not exhaustive — see
 `tests/` for the full list. This count is pinned against `tests/test_docs_sync.py`,
 which fails if this number drifts from the real glob count.

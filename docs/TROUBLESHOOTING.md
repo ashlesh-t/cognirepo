@@ -285,6 +285,11 @@ left untouched (never quarantined) and saving is refused. Fix the interpreter, n
 pipx inject cognirepo keyring cryptography   # or: pip install 'cognirepo[security]'
 cognirepo doctor                             # flags the missing packages
 ```
+`doctor` checks **both** the interpreter it runs in **and** the one behind the `cognirepo` on your
+`PATH` (what hooks and MCP clients launch — usually a pipx venv). It reports, with the exact fix:
+missing `keyring`/`cryptography` there, a keyring with no usable backend (fail/null — the key can't be
+read, so encrypted stores stay locked), and a PATH `cognirepo` that is a stale snapshot of your working
+tree (`pipx install --force <repo>`).
 
 ### `cognirepo serve` exits immediately / Claude Code shows `CONNECTION_CLOSED`
 
