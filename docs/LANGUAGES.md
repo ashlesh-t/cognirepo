@@ -28,6 +28,7 @@ pip install cognirepo[languages]     # all supported languages
 | Rust | `.rs` | Stable | tree-sitter-rust |
 | Ruby | `.rb` | Stable | tree-sitter-ruby |
 | C / C++ | `.c` `.cpp` `.cc` `.h` | Stable | tree-sitter-cpp |
+| PHP | `.php` | Stable | tree-sitter-php |
 
 **Python is always available.** Even without `tree-sitter-python` installed, CogniRepo
 falls back to the stdlib `ast` module for Python files. All other languages require the
@@ -40,7 +41,6 @@ grammar package from `cognirepo[languages]`.
 | Language | Issue |
 |----------|-------|
 | Kotlin | #TBD |
-| PHP | #TBD |
 
 ---
 
@@ -91,6 +91,6 @@ once symbols are extracted.
 
 ```bash
 cognirepo doctor --verbose
-# Shows: Language support — Python, JS, TS, Java, Go, Rust, Ruby, C++, Swift
+# Shows: Language support — Python, JS, TS, Java, Go, Rust, Ruby, C++, Swift, PHP
 # (or only "Python (built-in)" if cognirepo[languages] not installed)
 ```

@@ -157,6 +157,12 @@ Versioning: [Semantic Versioning](https://semver.org/)
   completeness.
 
 ### Added
+- **#73 — PHP language support.** `.php` files are indexed via `tree-sitter-php` (now part of the
+  `languages` extra, loaded with `language_php()` so files mixing HTML and `<?php` blocks parse):
+  classes, interfaces, traits, enums, functions and methods, INHERITS edges for `extends`,
+  `implements` and trait `use` (namespaced `\Ns\Base` reduced to `Base`), and call edges for
+  `foo()`, `$obj->foo()`, `Foo::bar()` and namespaced `\Ns\foo()`. `cognirepo doctor` lists PHP;
+  `semantic_search_code` accepts `language="php"`; `index-repo --changed-only` picks up `.php` files.
 - **#75 — Swift language support.** `.swift` files are indexed via `tree-sitter-swift` (now part of
   the `languages` extra; the grammar is versioned 0.7.x, hence `>=0.7`): classes, structs, enums,
   actors, extensions, protocols, functions, `init`/`deinit` and protocol requirements, inheritance lists,

@@ -722,6 +722,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             ("Ruby",       ".rb"),
             ("Java",       ".java"),
             ("C++",        ".cpp"),
+            ("PHP",        ".php"),
         ]
         _supported_langs: list[str] = []
         _missing_langs: list[tuple[str, str]] = []  # (lang, install_hint)
@@ -734,6 +735,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             ".rb":   "tree-sitter-ruby",
             ".java": "tree-sitter-java",
             ".cpp":  "tree-sitter-cpp",
+            ".php":  "tree-sitter-php",
         }
         for _lang_name, _ext in _lang_checks:
             if _ext == ".py":
@@ -4239,14 +4241,6 @@ def _main():
         # ── git-aware changed-only reindex ───────────────────────────────────
         if getattr(args, "changed_only", False):
             import subprocess as _sp  # pylint: disable=import-outside-toplevel
-            from data.graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
-            from intelligence.indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
-            _supported_exts = {
-                ".swift",
-                ".py", ".js", ".ts", ".tsx", ".jsx", ".java",
-                ".cpp", ".c", ".h", ".go", ".rs", ".rb",
-            }
-            _changed: list[str] = []
             from intelligence.indexer.language_registry import supported_extensions  # pylint: disable=import-outside-toplevel
             _supported_exts = set(supported_extensions())  # COGNIREPO-154: one source of truth
             _remove_lock = getattr(args, "remove_lock", None)

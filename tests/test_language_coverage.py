@@ -29,6 +29,7 @@ _FIXTURES: dict[str, tuple[str, str]] = {
     ".rs":   ("tree_sitter_rust",     "fn main() {}\n"),
     ".rb":   ("tree_sitter_ruby",     "def main; end\n"),
     ".cpp":  ("tree_sitter_cpp",      "int main() { return 0; }\n"),
+    ".php":  ("tree_sitter_php",      "<?php function main() {}\n"),
 }
 
 
@@ -59,6 +60,8 @@ def test_grammar_parses_fixture(ext, args):
         lang = Language(mod.language_typescript())
     elif ext == ".tsx":
         lang = Language(mod.language_tsx())
+    elif ext == ".php":
+        lang = Language(mod.language_php())
     else:
         lang = Language(mod.language())
 
