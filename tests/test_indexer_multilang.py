@@ -19,7 +19,7 @@ Covered:
              (pytest.importorskip("tree_sitter_javascript"))
   - Java file: class and method extracted
                (pytest.importorskip("tree_sitter_java"))
-  - Unsupported .rb file: returns [], no exception
+  - Unsupported .lua file: returns [], no exception
   - Missing grammar package: returns [], debug log, no crash
   - supported_extensions() returns only installed grammars
   - index_repo summary has per-language file counts
@@ -105,9 +105,9 @@ class TestPythonBaseline:
 
     def test_unsupported_file_returns_empty(self, fresh_indexer, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        rb = tmp_path / "script.rb"
-        rb.write_text("def hello; end\n")
-        record = fresh_indexer.index_file("script.rb", str(rb))
+        lua = tmp_path / "script.lua"
+        lua.write_text("function hello() end\n")
+        record = fresh_indexer.index_file("script.lua", str(lua))
         assert record == {}
 
     def test_syntax_error_py_returns_empty_symbols(self, fresh_indexer, tmp_path, monkeypatch):
@@ -493,7 +493,7 @@ class TestLanguageRegistry:
     def test_unsupported_ext_not_in_supported(self):
         from intelligence.indexer.language_registry import _get_language, clear_cache
         clear_cache()
-        lang = _get_language(".rb")
+        lang = _get_language(".lua")
         assert lang is None
 
     def test_missing_grammar_returns_none_no_crash(self, monkeypatch):
@@ -522,9 +522,9 @@ class TestLanguageRegistry:
         clear_cache()
         assert is_supported(Path("anything.py")) is True
 
-    def test_is_supported_ruby_false(self):
+    def test_is_supported_lua_false(self):
         from intelligence.indexer.language_registry import is_supported
-        assert is_supported(Path("script.rb")) is False
+        assert is_supported(Path("script.lua")) is False
 
 
 # ── index_repo summary ────────────────────────────────────────────────────────
@@ -546,14 +546,14 @@ class TestIndexRepoSummary:
     def test_summary_skips_unsupported_exts(self, fresh_indexer, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
         _write(tmp_path, "main.py", "def entry(): pass\n")
-        (tmp_path / "data.rb").write_text("def hello; end\n")
+        (tmp_path / "data.lua").write_text("function hello() end\n")
 
         summary = fresh_indexer.index_repo(str(tmp_path))
         out = capsys.readouterr().out
 
-        # .rb should appear in skipped extensions
-        assert ".rb" in summary["skipped_extensions"]
-        assert ".rb" in out or "Unsupported" in out
+        # .lua should appear in skipped extensions
+        assert ".lua" in summary["skipped_extensions"]
+        assert ".lua" in out or "Unsupported" in out
 
     def test_summary_symbol_count(self, fresh_indexer, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

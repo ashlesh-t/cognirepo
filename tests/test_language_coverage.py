@@ -26,6 +26,7 @@ _FIXTURES: dict[str, tuple[str, str]] = {
     ".java": ("tree_sitter_java",     "class A {}\n"),
     ".go":   ("tree_sitter_go",       "package main\n"),
     ".rs":   ("tree_sitter_rust",     "fn main() {}\n"),
+    ".rb":   ("tree_sitter_ruby",     "def main; end\n"),
     ".cpp":  ("tree_sitter_cpp",      "int main() { return 0; }\n"),
     ".php":  ("tree_sitter_php",      "<?php function main() {}\n"),
 }

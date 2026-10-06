@@ -105,6 +105,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | JavaScript | `.js`, `.jsx` | tree-sitter-javascript | ✅ (if installed) |
 | Go | `.go` | tree-sitter-go | ✅ (if installed) |
 | Rust | `.rs` | tree-sitter-rust | ✅ (if installed) |
+| Ruby | `.rb` | tree-sitter-ruby | ✅ (if installed) |
 | Java | `.java` | tree-sitter-java | ✅ (if installed) |
 | C++ | `.cpp`, `.cc`, `.h`, `.hpp` | tree-sitter-cpp | ✅ (if installed) |
 | PHP | `.php` | tree-sitter-php | ✅ (if installed) |

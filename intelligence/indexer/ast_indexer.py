@@ -240,6 +240,16 @@ _TS_CLASS_TYPES = frozenset({
                                   # (name field lives on type_spec, not type_declaration)
 })
 
+# Per-language node types, keyed by language_registry.lang_name().  Kept out of the
+# shared sets above because their names collide with other grammars' nodes — Ruby's
+# `class`/`module` would otherwise also match JS class expressions and TS `module` blocks.
+_TS_LANG_FUNCTION_TYPES: dict[str, frozenset[str]] = {
+    "ruby": frozenset({"method", "singleton_method"}),  # def foo / def self.foo
+}
+_TS_LANG_CLASS_TYPES: dict[str, frozenset[str]] = {
+    "ruby": frozenset({"class", "module"}),
+}
+
 
 # ── utility ───────────────────────────────────────────────────────────────────
 
@@ -459,6 +469,10 @@ def _ts_docstring(node, source: bytes, ext: str) -> str:
     return ""
 
 
+# Ruby callees that are language/runtime machinery rather than user symbols.
+_RUBY_NON_SYMBOL_CALLS = frozenset({"class", "new"})
+
+
 def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
     """Recursively collect function-call names from a tree-sitter subtree.
 
@@ -470,7 +484,7 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
     """
     if depth > 60:
         return
-    if node.type == "call":          # Python
+    if node.type == "call":          # Python, Ruby
         fn = node.child_by_field_name("function")
         if fn:
             attr = fn.child_by_field_name("attribute")
@@ -478,6 +492,15 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
                 out.append(_ts_text(attr, source))
             elif fn.type == "identifier":
                 out.append(_ts_text(fn, source))
+        else:
+            # Ruby: `foo(x)` / `recv.foo(x)` / `Mod::foo` — callee is the `method` field.
+            # `self.class.x` / `Foo.new` would record `class` / `new`, which can never
+            # resolve to a user symbol, so skip them.
+            meth = node.child_by_field_name("method")
+            if meth and meth.type in ("identifier", "constant"):
+                meth_name = _ts_text(meth, source)
+                if meth_name not in _RUBY_NON_SYMBOL_CALLS:
+                    out.append(meth_name)
     elif node.type == "call_expression":  # JS / Java / Go
         fn = (
             node.child_by_field_name("function")
@@ -583,7 +606,11 @@ def _ts_bases(node, source: bytes) -> list[str]:
                 if member.type == "use_declaration":
                     bases.extend(_php_type_names(member, source))
     # Python: argument_list child of class_definition
-    arg_list = node.child_by_field_name("superclasses") or node.child_by_field_name("bases")
+    arg_list = (
+        node.child_by_field_name("superclasses")
+        or node.child_by_field_name("bases")
+        or node.child_by_field_name("superclass")  # Ruby: class Foo < Bar
+    )
     if arg_list is None:
         # fallback: find argument_list or base_list child
         for child in node.children:
@@ -592,8 +619,13 @@ def _ts_bases(node, source: bytes) -> list[str]:
                 break
     if arg_list:
         for child in arg_list.children:
-            if child.type in ("identifier", "type_identifier", "attribute"):
+            if child.type in ("identifier", "type_identifier", "attribute",
+                              "constant", "scope_resolution"):  # Ruby: Bar / Mod::Bar
                 name = _ts_text(child, source)
+                if child.type == "scope_resolution":
+                    # Ruby `Auth::Base` → `Base`: call stubs resolve by simple name,
+                    # mirroring the Python path's dotted-base normalisation.
+                    name = name.rsplit("::", 1)[-1]
                 if name not in ("object", "ABC", "Enum", "IntEnum", ",", "(", ")"):
                     bases.append(name)
     return bases
@@ -610,7 +642,8 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
                 _walk_ts(child, source, ext, out, _parent_decs=decs)
         return
 
-    if node.type in _TS_FUNCTION_TYPES:
+    lang = lang_name(ext)
+    if node.type in _TS_FUNCTION_TYPES or node.type in _TS_LANG_FUNCTION_TYPES.get(lang, ()):
         name_node = node.child_by_field_name("name")
         # arrow functions assigned to a variable: capture parent's name via caller
         if name_node is None and node.type == "arrow_function":
@@ -636,7 +669,7 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
                 "faiss_id": -1,
                 "dispatch": "dynamic" if _detect_dynamic_dispatch(fn_name, fn_decs, fn_calls) else None,
             })
-    elif node.type in _TS_CLASS_TYPES:
+    elif node.type in _TS_CLASS_TYPES or node.type in _TS_LANG_CLASS_TYPES.get(lang, ()):
         name_node = node.child_by_field_name("name")
         if name_node:
             cls_name = _ts_text(name_node, source)

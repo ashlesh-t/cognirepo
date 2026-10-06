@@ -37,6 +37,7 @@ _GRAMMAR_MAP: dict[str, str] = {
     ".hpp":  "tree_sitter_cpp",
     ".go":   "tree_sitter_go",
     ".rs":   "tree_sitter_rust",
+    ".rb":   "tree_sitter_ruby",
     ".sh":   "tree_sitter_bash",
     ".bash": "tree_sitter_bash",
     ".php":  "tree_sitter_php",
@@ -66,6 +67,7 @@ _LANG_LABELS: dict[str, str] = {
     ".hpp":  "C++",
     ".go":   "Go",
     ".rs":   "Rust",
+    ".rb":   "Ruby",
     ".sh":   "Shell",
     ".bash": "Shell",
     ".php":  "PHP",
@@ -88,6 +90,7 @@ _LANG_NAMES: dict[str, str] = {
     ".hpp":  "cpp",
     ".go":   "go",
     ".rs":   "rust",
+    ".rb":   "ruby",
     ".sh":   "bash",
     ".bash": "bash",
     ".php":  "php",
@@ -176,6 +179,16 @@ def supported_extensions() -> list[str]:
         if _get_language(ext) is not None:
             result.append(ext)
     return result
+
+
+def known_extensions() -> list[str]:
+    """
+    Return every extension CogniRepo has a grammar mapping for, whether or not
+    the grammar package is installed.  Use this for artifacts that outlive the
+    current environment (e.g. the post-commit hook filter); use
+    supported_extensions() for what can be parsed right now.
+    """
+    return list(dict.fromkeys([*_PYTHON_FALLBACK_EXTS, *_GRAMMAR_MAP]))
 
 
 def is_supported(path: "Path | str") -> bool:

@@ -131,7 +131,7 @@ cognirepo index-repo . --no-watch
 ```
 
 Indexes all supported file types automatically. Install `cognirepo[languages]` for
-JS, TS, Java, Go, Rust, C++, and PHP support beyond Python.
+JS, TS, Java, Go, Rust, Ruby C++, and PHP support beyond Python.
 
 ---
 

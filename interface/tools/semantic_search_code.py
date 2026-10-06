@@ -27,6 +27,7 @@ _LANG_EXTENSIONS: dict[str, set[str]] = {
     "typescript": {".ts", ".tsx"},
     "go":         {".go"},
     "rust":       {".rs"},
+    "ruby":       {".rb"},
     "java":       {".java"},
     "cpp":        {".cpp", ".cc", ".cxx", ".h", ".hpp"},
     "c":          {".c", ".h"},
