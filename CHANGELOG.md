@@ -28,8 +28,18 @@ Versioning: [Semantic Versioning](https://semver.org/)
   Docs now state the real default backend (`chroma`). Chroma's own concurrent adds were measured to be safe
   once ids are unique; a long-lived reader's HNSW view of a peer's very recent writes was seen to lag (not
   addressed).
+- **#128 — deleting a file left an orphan degree-0 `symbol::<name>` stub in the graph.**
+  `KnowledgeGraph._redirect_edges_to_stub` decided "something references this symbol" from its raw
+  neighbours, which include its own `DEFINED_IN` edge to the FILE node being removed in the same
+  call, so even an unreferenced function got a stub. `remove_file_nodes` now excludes the nodes it is
+  removing, and a symbol only gets a stub if it is referenced from outside the file (an incoming
+  `CALLED_BY` or `INHERITS` edge — call edges are stored in both directions, so adjacency alone
+  can't tell a deleted *caller* from a deleted *callee*). Stubs that lose their last edge because
+  their caller file was removed are dropped too. New `orphan_stubs()` / `remove_orphan_stubs()`;
+  `integrity_report()` gains `orphan_stubs`, `cognirepo doctor` counts them and
+  `cognirepo graph repair --apply` removes existing leftovers. Callers in other files still keep
+  their edges via an unresolved stub (D10 behaviour unchanged).
 
-### Fixed
 - **#136 — unlocked read-modify-write lost updates and duplicated ids.** Every RMW of a shared store
   now runs under the cross-process lock and reloads *inside* it: `episodic.log_event` /
   `mark_stale` (ids allocated inside the lock), the learnings `store()` / `deprecate()` (a per-store
