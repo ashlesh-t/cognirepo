@@ -174,6 +174,16 @@ def supported_extensions() -> list[str]:
     return result
 
 
+def known_extensions() -> list[str]:
+    """
+    Return every extension CogniRepo has a grammar mapping for, whether or not
+    the grammar package is installed.  Use this for artifacts that outlive the
+    current environment (e.g. the post-commit hook filter); use
+    supported_extensions() for what can be parsed right now.
+    """
+    return list(dict.fromkeys([*_PYTHON_FALLBACK_EXTS, *_GRAMMAR_MAP]))
+
+
 def is_supported(path: "Path | str") -> bool:
     """
     Return True if *path* can be indexed — either a grammar is installed
