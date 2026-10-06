@@ -12,7 +12,7 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
   "port": 8000,
   "storage": {
     "encrypt": false,
-    "vector_backend": "faiss"
+    "vector_backend": "chroma"
   },
   "models": {
     "QUICK":    {"provider": "local",     "model": "local-resolver"},
@@ -48,7 +48,7 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 | `project_name` | string | auto-detected | Human-readable project name |
 | `port` | int | `8000` | REST API port |
 | `storage.encrypt` | bool | `false` | Enable AES-256 encryption at rest |
-| `storage.vector_backend` | string | `"faiss"` | Vector backend: `"faiss"` or `"chroma"` |
+| `storage.vector_backend` | string | `"chroma"` | Vector backend: `"chroma"` (default; `init` writes it, and it is used when the key is absent) or `"faiss"`. Falls back to faiss only if `chromadb` isn't installed. |
 | `models.QUICK.model` | string | `"local-resolver"` | Zero-API local resolver for trivial queries |
 | `models.STANDARD.model` | string | `"claude-haiku-4-5"` | Model for quick lookups (score ≤4) |
 | `models.COMPLEX.model` | string | `"claude-sonnet-4-6"` | Model for moderate reasoning (score ≤9) |
@@ -91,8 +91,12 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 ```
 .cognirepo/
   config.json               ← project settings (this file)
-  vector_db/                ← FAISS semantic index
-    semantic.index          ← FAISS IndexFlatL2 binary (local_vector_db.py)
+  vector_db/                ← semantic vector store
+    chroma/                 ← default backend (chromadb PersistentClient), incl. `.next_id` id counter,
+                               `.open.<pid>` markers (live openers) and `.opening.<pid>` sentinels (crash evidence)
+    chroma.lock             ← cross-process lock: store creation, id allocation, sentinel healing
+    chroma.corrupt-<ts>/    ← a store that crashed on open and was quarantined (kept, never deleted)
+    semantic.index          ← faiss backend only: FAISS IndexFlatL2 binary (local_vector_db.py)
   memory/                   ← embeddings metadata + episodic log
     semantic_metadata.json  ← per-vector metadata (text, source, importance, timestamp)
     episodic.json           ← append-only episodic event journal (JSON lines)

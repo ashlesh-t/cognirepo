@@ -17,10 +17,14 @@ get_storage_adapter() can give a clear error message.
 from __future__ import annotations
 
 import logging
+import os
+import time
 from typing import Optional
 
 import numpy as np
 
+from core.config.atomic import atomic_write
+from core.config.lock import store_lock
 from core.vector_db.adapter import VectorStorageAdapter
 
 log = logging.getLogger(__name__)
@@ -30,6 +34,19 @@ try:
     _CHROMA_AVAILABLE = True
 except ImportError:
     _CHROMA_AVAILABLE = False
+
+
+def chroma_lock_path(store_path: str) -> str:
+    """Lock file shared by every process using the chroma store at ``store_path``.
+
+    A sibling of the store directory (``vector_db/chroma.lock``), so it survives the store being
+    quarantined/renamed and is the same file for the factory and the adapter (COGNIREPO-142).
+    """
+    return os.path.join(os.path.dirname(os.path.abspath(store_path)), "chroma.lock")
+
+
+_COUNTER_FILE = ".next_id"
+_LOCK_TIMEOUT = 60.0
 
 
 class ChromaDBAdapter(VectorStorageAdapter):
@@ -57,12 +74,83 @@ class ChromaDBAdapter(VectorStorageAdapter):
             from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
             path = get_path("vector_db/chroma")
 
-        self._client = chromadb.PersistentClient(path=path)
-        self._col = self._client.get_or_create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "l2"},
-        )
+        self._path = path
+        self._lock_path = chroma_lock_path(path)
+        self._counter_path = os.path.join(path, _COUNTER_FILE)
+        self._client, self._col = self._open_store(path, collection_name)
+        #: id the NEXT add would use *in this process's view* — after an add it is last_id + 1, so
+        #: callers (mcp_server) can read ``str(db._next_id - 1)`` as the id they just stored.
         self._next_id = self._col.count()
+
+    # ── opening (COGNIREPO-142) ───────────────────────────────────────────────
+
+    def _attempt_open(self, path: str, name: str):
+        client = chromadb.PersistentClient(path=path)
+        col = client.get_or_create_collection(name=name, metadata={"hnsw:space": "l2"})
+        return client, col
+
+    def _open_store(self, path: str, name: str):
+        """Open (creating if needed) the store, safe against concurrent first-time creation.
+
+        Two processes creating a fresh store at once race inside chroma's schema migration and
+        one dies with ``InternalError: table collections already exists`` (observed: 1 of 6
+        concurrent workers). Creation is serialized behind the store lock; opening an existing
+        store takes no lock.
+        """
+        os.makedirs(path, exist_ok=True)
+        db_exists = os.path.exists(os.path.join(path, "chroma.sqlite3"))
+        if db_exists:
+            try:
+                return self._attempt_open(path, name)
+            except Exception as exc:  # pylint: disable=broad-except
+                if "already exists" not in str(exc):
+                    raise
+                # lost a creation race for the collection itself — retry under the lock below
+        with store_lock(timeout=_LOCK_TIMEOUT, lock_path=self._lock_path):
+            return self._attempt_open(path, name)
+
+    # ── collision-free ids (COGNIREPO-142) ────────────────────────────────────
+
+    def _scan_next_id(self) -> int:
+        """One past the highest numeric id in the collection (0 if empty)."""
+        try:
+            ids = self._col.get(include=[])["ids"]
+        except Exception:  # pylint: disable=broad-except
+            return 0
+        numeric = [int(i) for i in ids if str(i).isdigit()]
+        return (max(numeric) + 1) if numeric else 0
+
+    def _read_counter(self) -> "int | None":
+        try:
+            with open(self._counter_path, encoding="utf-8") as fh:
+                return int(fh.read().strip())
+        except (OSError, ValueError):
+            return None
+
+    def _alloc_ids(self, k: int) -> list[str]:
+        """Reserve ``k`` ids no other process can hand out.
+
+        The old scheme was ``id = col.count()`` read once at open. Two processes opening at the
+        same count minted the same ids and chroma silently ignores an ``add`` of an existing id —
+        the second writer's vectors vanished without an error (measured: 6 workers x 15 adds kept
+        20 of 90). It also collided after any ``remove()`` (count < highest id). Ids stay numeric
+        strings (callers use them as row ids); they come from a counter file advanced under the
+        store lock *before* the add, so a crash can leave gaps but never a duplicate. The start is
+        never below the live ``count()``, which also protects against an older writer that still
+        uses count-based ids.
+        """
+        with store_lock(timeout=_LOCK_TIMEOUT, lock_path=self._lock_path):
+            counter = self._read_counter()
+            if counter is None:
+                counter = self._scan_next_id()
+            try:
+                live = self._col.count()
+            except Exception:  # pylint: disable=broad-except
+                live = 0
+            start = max(counter, live)
+            atomic_write(self._counter_path, str(start + k), fsync=False)
+        self._next_id = start + k
+        return [str(start + i) for i in range(k)]
 
     # ── VectorStorageAdapter interface ────────────────────────────────────────
 
@@ -74,8 +162,7 @@ class ChromaDBAdapter(VectorStorageAdapter):
         source: str = "memory",
         behaviour_score: float = 0.0,
     ) -> None:
-        doc_id = str(self._next_id)
-        self._next_id += 1
+        (doc_id,) = self._alloc_ids(1)
         self._col.add(
             ids=[doc_id],
             embeddings=[vector.tolist()],
@@ -99,13 +186,11 @@ class ChromaDBAdapter(VectorStorageAdapter):
         """
         if not entries:
             return 0
-        ids, embeddings, documents, metadatas = [], [], [], []
+        ids = self._alloc_ids(len(entries))
+        embeddings, documents, metadatas = [], [], []
         for item in entries:
             vec, text, importance = item[0], item[1], item[2]
             entry_source = item[3] if len(item) > 3 else source
-            doc_id = str(self._next_id)
-            self._next_id += 1
-            ids.append(doc_id)
             embeddings.append(vec.tolist())
             documents.append(text)
             metadatas.append({
