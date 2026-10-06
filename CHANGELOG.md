@@ -8,7 +8,37 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Security
+- **`fsspec` 2026.3.0 → 2026.6.0 (CVE-2026-104851, HIGH — arbitrary code execution via crafted reference
+  documents).** Flagged by Trivy and pip-audit. cognirepo never imports fsspec; it is a transitive
+  dependency of `huggingface_hub` (which `fastembed` uses to fetch the embedding model), and the affected
+  component is fsspec's reference filesystem, which cognirepo does not use — so the practical exposure was
+  nil, but it gated CI. Impact check: `huggingface_hub` requires only `fsspec>=2023.5.0` (no upper bound),
+  nothing in the 2026.4.0 / 2026.6.0 changelogs touches a feature this project or `huggingface_hub` use on
+  this path (HTTP `pipe_file`, tar/zip closing, `dirFS`, `referenceFS`, FTP, `expand_path` globbing), and
+  the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
+
 ### Fixed
+- **#124 — `doctor` now inspects the `cognirepo` on PATH, not just the interpreter running it.** Hooks and
+  MCP clients launch the PATH `cognirepo` (typically a pipx venv), which can differ from a dev checkout's
+  interpreter. New `interface/cli/install_probe.py` reads that script's shebang, probes the interpreter in
+  a read-only subprocess (imports `keyring`/`cryptography`, `keyring.get_keyring()` and a throw-away
+  `get_password`, version, and a content hash of its `interface/cli/main.py`) and `doctor` reports, with the
+  exact fix: `storage.encrypt: true` but the packages are missing (`pipx inject cognirepo keyring
+  cryptography`, or a `pip install` for that interpreter), a keyring with the fail/null backend or a failing
+  lookup (keys unreadable ⇒ encrypted stores stay locked), and a PATH install that is a stale snapshot of the
+  working tree (`pipx install --force <repo>`). Interpreters are compared by environment root, not
+  `realpath`: every venv's `python` symlinks to the same system python, so a pipx venv and a dev venv looked
+  identical and the PATH install was never checked (found by running it against a real pipx install).
+- **Heartbeat left behind for a dead watcher (intermittent CI failure).** The heartbeat thread had no stop
+  signal, so a write still in flight — or the very first write, if the watcher exits straight away — could
+  land *after* `clear_heartbeat_if_owned()` and recreate a heartbeat for a dead process, which then reported
+  "Heartbeat: OK" for the next two minutes. `start_heartbeat_thread()` now has a stop event and
+  `stop_heartbeat_thread()` stops and joins it; `run_watcher_with_crash_guard()` does that *before* removing
+  the PID file and heartbeat. The fsync added to atomic writes in #134 had widened the window enough to fail
+  `test_pid_file_and_heartbeat_removed_on_clean_exit` on CI runners; a regression test reproduces the race
+  deterministically with a slow write.
+
 - **#128 — deleting a file left an orphan degree-0 `symbol::<name>` stub in the graph.**
   `KnowledgeGraph._redirect_edges_to_stub` decided "something references this symbol" from its raw
   neighbours, which include its own `DEFINED_IN` edge to the FILE node being removed in the same
@@ -21,7 +51,6 @@ Versioning: [Semantic Versioning](https://semver.org/)
   `cognirepo graph repair --apply` removes existing leftovers. Callers in other files still keep
   their edges via an unresolved stub (D10 behaviour unchanged).
 
-### Fixed
 - **#136 — unlocked read-modify-write lost updates and duplicated ids.** Every RMW of a shared store
   now runs under the cross-process lock and reloads *inside* it: `episodic.log_event` /
   `mark_stale` (ids allocated inside the lock), the learnings `store()` / `deprecate()` (a per-store
