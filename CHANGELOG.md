@@ -165,6 +165,12 @@ Versioning: [Semantic Versioning](https://semver.org/)
   `Package.swift` is detected as a Swift service marker; `cognirepo doctor` lists Swift. `Pods/`,
   `.build/`, `Carthage/` and `DerivedData/` are added to the indexer's skip dirs. The shared
   `call_expression` callee fallback only accepts Swift callee shapes, with a JS/TS/Go regression test.
+- **#72 — Ruby language support.** `.rb` files are indexed via `tree-sitter-ruby` (now part of
+  the `languages` extra): classes, modules, instance and `def self.` methods, call edges
+  (`foo()`, `recv.foo()`, `Mod::foo`; `class`/`new` are skipped as non-symbol callees) and
+  superclasses (namespaced `Mod::Base` is reduced to `Base` so INHERITS edges resolve). Ruby's `class`/`module` node types are
+  scoped to Ruby via the new per-language `_TS_LANG_FUNCTION_TYPES`/`_TS_LANG_CLASS_TYPES` maps so
+  they never match JS class expressions or TS `module` blocks. `cognirepo doctor` lists Ruby.
 - **#137/#139 (graph half) — multi-writer safety for the graph journal.** (1) A running
   `index-repo` takes an exclusive OS lock (`graph/graph.journal.writer`, the LevelDB/Lucene
   write-lock pattern) for the whole run; a second one is refused with `indexing is already running

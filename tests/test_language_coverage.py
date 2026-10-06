@@ -27,6 +27,7 @@ _FIXTURES: dict[str, tuple[str, str]] = {
     ".go":   ("tree_sitter_go",       "package main\n"),
     ".swift": ("tree_sitter_swift",   "func main() {}\n"),
     ".rs":   ("tree_sitter_rust",     "fn main() {}\n"),
+    ".rb":   ("tree_sitter_ruby",     "def main; end\n"),
     ".cpp":  ("tree_sitter_cpp",      "int main() { return 0; }\n"),
 }
 

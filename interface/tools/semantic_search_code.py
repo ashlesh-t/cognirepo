@@ -28,6 +28,7 @@ _LANG_EXTENSIONS: dict[str, set[str]] = {
     "swift":      {".swift"},
     "go":         {".go"},
     "rust":       {".rs"},
+    "ruby":       {".rb"},
     "java":       {".java"},
     "cpp":        {".cpp", ".cc", ".cxx", ".h", ".hpp"},
     "c":          {".c", ".h"},
