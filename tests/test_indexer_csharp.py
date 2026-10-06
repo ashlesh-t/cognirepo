@@ -58,6 +58,8 @@ _CS_SRC = """\
             public bool Verify(string token) {
                 var ok = helper.Check(token);
                 Decode(token);
+                cache?.Foo(token);
+                helper.Inner?.Baz();
                 return Helper.IsValid<string>(token);
             }
 
@@ -66,6 +68,8 @@ _CS_SRC = """\
                 return Add(1);
             }
         }
+
+        public record struct Pair(int A, int B);
     }
 """
 
@@ -85,7 +89,7 @@ class TestCSharpIndexing:
     def test_type_declarations_extracted(self, fresh_indexer, tmp_path, monkeypatch):
         syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
         classes = {s["name"] for s in syms if s["type"] == "CLASS"}
-        assert {"IVerifier", "UserDto", "Point", "Status", "TokenService"} <= classes
+        assert {"IVerifier", "UserDto", "Point", "Status", "TokenService", "Pair"} <= classes
 
     def test_methods_and_local_functions_extracted(self, fresh_indexer, tmp_path, monkeypatch):
         syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
@@ -100,11 +104,21 @@ class TestCSharpIndexing:
         syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
         verify = next(s for s in syms if s["name"] == "Verify" and s["start_line"] == 10)
         assert {"Check", "Decode", "IsValid"} <= set(verify["calls"])
+        # null-conditional calls: `a?.Foo()` / `b.Bar?.Baz()`
+        assert {"Foo", "Baz"} <= set(verify["calls"])
         assert "Add" in _by_name(syms, "Total", "FUNCTION")["calls"]
 
     def test_base_list_extracted(self, fresh_indexer, tmp_path, monkeypatch):
         syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
         assert _by_name(syms, "TokenService", "CLASS")["bases"] == ["BaseService", "IVerifier"]
+
+    def test_msbuild_obj_dir_skipped(self, fresh_indexer, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path, "TokenService.cs", _CS_SRC)
+        (tmp_path / "obj" / "Debug").mkdir(parents=True)
+        _write(tmp_path / "obj" / "Debug", "App.AssemblyInfo.cs", "class GeneratedInfo { }\n")
+        fresh_indexer.index_repo(str(tmp_path))
+        assert not any("obj" in Path(f).parts for f in fresh_indexer.index_data["files"])
 
     def test_index_repo_reports_csharp(self, fresh_indexer, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -112,6 +126,16 @@ class TestCSharpIndexing:
         summary = fresh_indexer.index_repo(str(tmp_path))
         assert summary["symbols"] > 0
         assert "C#" in summary["languages"]
+
+
+class TestJavaRecordsAreClasses:
+    def test_java_record_indexed_as_class(self, fresh_indexer, tmp_path, monkeypatch):
+        """`record_declaration` is shared with Java 16+ records — pin that intentionally."""
+        pytest.importorskip("tree_sitter_java")
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "Point.java", "record Point(int x, int y) {}\n")
+        record = fresh_indexer.index_file("Point.java", str(src))
+        assert ("CLASS", "Point") in {(s["type"], s["name"]) for s in record["symbols"]}
 
 
 class TestCSharpRegistry:

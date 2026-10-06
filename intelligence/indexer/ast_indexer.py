@@ -106,6 +106,8 @@ _SKIP_DIRS: frozenset[str] = frozenset({
     # Java / Kotlin / Gradle
     ".gradle", "gradle", "out", "classes", "generated", "generated-sources", "gen",
     ".idea",
+    # C# / .NET (MSBuild intermediate output is full of generated *.cs)
+    "obj", ".vs",
     # Go / Kubernetes
     # NOTE: "staging" is deliberately NOT skipped — in Kubernetes-style repos
     # staging/ holds real first-party source (k8s.io/apiserver etc.). Repos that
@@ -508,6 +510,11 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
             out.append(_ts_text(name_node, source))
     elif node.type == "invocation_expression":  # C#: Foo() / obj.Foo() / Foo<T>()
         fn = node.child_by_field_name("function")
+        if fn is not None and fn.type == "conditional_access_expression":
+            # `a?.Foo()` / `b.Bar?.Baz()` — the callee is the trailing member_binding_expression
+            binding = fn.named_children[-1] if fn.named_children else None
+            fn = (binding.child_by_field_name("name")
+                  if binding is not None and binding.type == "member_binding_expression" else None)
         if fn is not None and fn.type == "member_access_expression":
             fn = fn.child_by_field_name("name")
         if fn is not None and fn.type == "generic_name":

@@ -56,6 +56,14 @@ For each supported file, the indexer extracts:
 These become nodes and edges in the NetworkX knowledge graph, and entries in the
 `ast_index.json` reverse index (symbol name → list of `(file, line)` locations).
 
+### Language-specific notes
+
+- **C#** — calls made inside constructors, property accessors (`get`/`set`/expression-bodied
+  properties) and finalizers are not attributed to any symbol (constructors are not indexed as
+  FUNCTION symbols, same as Java). Since constructors are where DI wiring usually lives, those
+  call edges will be missing from `who_calls`. Null-conditional calls (`a?.Foo()`) are recorded.
+  MSBuild output (`obj/`, `bin/`) and `.vs/` are skipped during indexing.
+
 ---
 
 ## Adding a new language
