@@ -179,18 +179,37 @@ def start_heartbeat_thread(pid: int, watcher_path: str) -> threading.Thread:
     Start a daemon thread that updates the heartbeat file every
     _HEARTBEAT_INTERVAL seconds.  Thread is automatically killed when the
     process exits (daemon=True).
+
+    The thread has a stop event (``thread.stop_event``): shutdown MUST stop and join it
+    (``stop_heartbeat_thread``) BEFORE clearing the heartbeat file. Otherwise a write that is
+    still in flight — or the very first write, if the watcher exits straight away — lands after
+    the cleanup and leaves a heartbeat for a dead watcher, which then keeps reporting
+    "Heartbeat: OK" (the race behind the intermittent CI failure of
+    test_pid_file_and_heartbeat_removed_on_clean_exit).
     """
+    stop = threading.Event()
+
     def _loop():
-        while True:
+        while not stop.is_set():
             try:
                 write_heartbeat(pid, watcher_path)
             except OSError:
                 pass
-            time.sleep(_HEARTBEAT_INTERVAL)
+            if stop.wait(_HEARTBEAT_INTERVAL):   # wakes immediately when asked to stop
+                break
 
     t = threading.Thread(target=_loop, name="cognirepo-heartbeat", daemon=True)
+    t.stop_event = stop  # type: ignore[attr-defined]
     t.start()
     return t
+
+
+def stop_heartbeat_thread(thread: threading.Thread, timeout: float = 5.0) -> None:
+    """Stop the heartbeat thread and wait until no write can still be in flight."""
+    stop = getattr(thread, "stop_event", None)
+    if stop is not None:
+        stop.set()
+    thread.join(timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -277,11 +296,14 @@ def run_watcher_with_crash_guard(
     restart_delay   : seconds to wait before restarting after a crash
     """
     pid = os.getpid()
-    start_heartbeat_thread(pid, watcher_path)
+    heartbeat = start_heartbeat_thread(pid, watcher_path)
     _STOP_REQUESTED.clear()
     watchdog: list[threading.Timer] = []
 
     def _cleanup_registration() -> None:
+        # First: stop and join the heartbeat thread, so no write can land after the cleanup below
+        # and recreate a heartbeat for a dead watcher. Used by the normal exit AND the forced exit.
+        stop_heartbeat_thread(heartbeat)
         try:
             _pid_file(pid, watcher_path).unlink(missing_ok=True)
         except OSError:

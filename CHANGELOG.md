@@ -25,6 +25,15 @@ Versioning: [Semantic Versioning](https://semver.org/)
   a second SIGTERM exits immediately, and a stop during a crash never restarts. Also: a zombie
   (exited, un-reaped) process no longer counts as alive — `kill(pid, 0)` succeeds on one, which made a
   stopped watcher show as "running" forever.
+- **Heartbeat left behind for a dead watcher (intermittent CI failure).** The heartbeat thread had no stop
+  signal, so a write still in flight — or the very first write, if the watcher exits straight away — could
+  land *after* `clear_heartbeat_if_owned()` and recreate a heartbeat for a dead process, which then reported
+  "Heartbeat: OK" for the next two minutes. `start_heartbeat_thread()` now has a stop event and
+  `stop_heartbeat_thread()` stops and joins it; `run_watcher_with_crash_guard()` does that *before* removing
+  the PID file and heartbeat. The fsync added to atomic writes in #134 had widened the window enough to fail
+  `test_pid_file_and_heartbeat_removed_on_clean_exit` on CI runners; a regression test reproduces the race
+  deterministically with a slow write.
+
 - **#128 — deleting a file left an orphan degree-0 `symbol::<name>` stub in the graph.**
   `KnowledgeGraph._redirect_edges_to_stub` decided "something references this symbol" from its raw
   neighbours, which include its own `DEFINED_IN` edge to the FILE node being removed in the same
