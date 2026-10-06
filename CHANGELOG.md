@@ -35,6 +35,17 @@ Versioning: [Semantic Versioning](https://semver.org/)
   a second SIGTERM exits immediately, and a stop during a crash never restarts. Also: a zombie
   (exited, un-reaped) process no longer counts as alive — `kill(pid, 0)` succeeds on one, which made a
   stopped watcher show as "running" forever.
+- **#124 — `doctor` now inspects the `cognirepo` on PATH, not just the interpreter running it.** Hooks and
+  MCP clients launch the PATH `cognirepo` (typically a pipx venv), which can differ from a dev checkout's
+  interpreter. New `interface/cli/install_probe.py` reads that script's shebang, probes the interpreter in
+  a read-only subprocess (imports `keyring`/`cryptography`, `keyring.get_keyring()` and a throw-away
+  `get_password`, version, and a content hash of its `interface/cli/main.py`) and `doctor` reports, with the
+  exact fix: `storage.encrypt: true` but the packages are missing (`pipx inject cognirepo keyring
+  cryptography`, or a `pip install` for that interpreter), a keyring with the fail/null backend or a failing
+  lookup (keys unreadable ⇒ encrypted stores stay locked), and a PATH install that is a stale snapshot of the
+  working tree (`pipx install --force <repo>`). Interpreters are compared by environment root, not
+  `realpath`: every venv's `python` symlinks to the same system python, so a pipx venv and a dev venv looked
+  identical and the PATH install was never checked (found by running it against a real pipx install).
 - **Heartbeat left behind for a dead watcher (intermittent CI failure).** The heartbeat thread had no stop
   signal, so a write still in flight — or the very first write, if the watcher exits straight away — could
   land *after* `clear_heartbeat_if_owned()` and recreate a heartbeat for a dead process, which then reported

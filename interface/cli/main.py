@@ -1111,6 +1111,43 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     except Exception as _exc:  # pylint: disable=broad-except
         logger.debug("doctor: encryption deps check failed: %s", _exc)
 
+    # ── Check 22b: the `cognirepo` on PATH (COGNIREPO-124) ───────────────────
+    # Check 22 above inspects the interpreter RUNNING doctor. Hooks, MCP clients and cron run
+    # the `cognirepo` found on PATH — often a pipx venv — which can lack keyring/cryptography,
+    # have no usable keyring backend, or be a stale snapshot of an older working tree.
+    try:
+        from core.security import get_storage_config as _gsc  # pylint: disable=import-outside-toplevel
+        from interface.cli import install_probe as _ip  # pylint: disable=import-outside-toplevel
+        from pathlib import Path as _P  # pylint: disable=import-outside-toplevel
+        _encrypt_on = bool(_gsc()[0])
+        _ours_main = os.path.abspath(__file__)
+        _root = _P(__file__).resolve().parent.parent.parent
+        _src_root = str(_root) if (_root / "pyproject.toml").exists() else None
+        _cli_py = _ip.resolve_cli_interpreter()
+        _targets: list[tuple[str, str, bool, bool]] = []   # (label, python, check_modules, check_stale)
+        if _encrypt_on:
+            _targets.append(("this interpreter", sys.executable, False, False))
+        if _cli_py and not _ip.same_interpreter(_cli_py, sys.executable):
+            _targets.append(("`cognirepo` on PATH", _cli_py, True, True))
+        elif _cli_py is None and verbose:
+            print("  ○  PATH cognirepo — not found or not a script; interpreter unknown")
+        for _label, _py, _mods, _stale in _targets:
+            _probe = _ip.probe_interpreter(_py)
+            for _f in _ip.diagnose(
+                _probe, label=_label, python=_py, encrypt=_encrypt_on, check_modules=_mods,
+                ours_path=_ours_main, ours_sha=_ip.file_sha256(_ours_main), ours_version=_ver,
+                source_root=_src_root, check_stale=_stale,
+            ):
+                if _f.level == "fail":
+                    _fail(_f.message, _f.hint)
+                    issues += 1
+                elif _f.level == "warn":
+                    _warn(_f.message, _f.hint)
+                elif verbose:
+                    _ok(_f.message)
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: PATH install check failed: %s", _exc)
+
     # ── Check 23: package importable from a neutral cwd ──────────────────────
     # A stale editable install (e.g. left over from the pre-restructure layout)
     # only resolves `interface`/`data`/`core` when cwd is the repo root, so
