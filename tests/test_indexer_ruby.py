@@ -92,7 +92,38 @@ class TestRubyIndexing:
     def test_superclass_extracted(self, fresh_indexer, tmp_path, monkeypatch):
         syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
         assert syms["TokenService"]["bases"] == ["BaseService"]
-        assert syms["AdminService"]["bases"] == ["Auth::TokenService"]
+        # Namespaced bases are reduced to their last segment so they resolve by simple name
+        assert syms["AdminService"]["bases"] == ["TokenService"]
+
+    def test_namespaced_inherits_edge_lands_on_simple_symbol(
+        self, fresh_indexer, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "token_service.rb", _RUBY_SRC)
+        fresh_indexer.index_file("token_service.rb", str(src))
+        from data.graph.knowledge_graph import EdgeType
+        g = fresh_indexer.graph.G
+        inherits = [
+            dst for src_node, dst, data in g.edges(data=True)
+            if data.get("rel") == EdgeType.INHERITS and "AdminService" in src_node
+        ]
+        assert "symbol::TokenService" in inherits
+
+    def test_class_and_new_not_recorded_as_calls(self, fresh_indexer, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "builder.rb", """\
+            class Builder
+              def make
+                self.class.build
+                Widget.new(1)
+              end
+            end
+        """)
+        record = fresh_indexer.index_file("builder.rb", str(src))
+        calls = {s["name"]: s for s in record["symbols"]}["make"]["calls"]
+        assert "build" in calls
+        assert "class" not in calls
+        assert "new" not in calls
 
     def test_index_repo_reports_ruby(self, fresh_indexer, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

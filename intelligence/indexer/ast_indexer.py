@@ -468,6 +468,10 @@ def _ts_docstring(node, source: bytes, ext: str) -> str:
     return ""
 
 
+# Ruby callees that are language/runtime machinery rather than user symbols.
+_RUBY_NON_SYMBOL_CALLS = frozenset({"class", "new"})
+
+
 def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
     """Recursively collect function-call names from a tree-sitter subtree.
 
@@ -488,10 +492,14 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
             elif fn.type == "identifier":
                 out.append(_ts_text(fn, source))
         else:
-            # Ruby: `foo(x)` / `recv.foo(x)` / `Mod::foo` — callee is the `method` field
+            # Ruby: `foo(x)` / `recv.foo(x)` / `Mod::foo` — callee is the `method` field.
+            # `self.class.x` / `Foo.new` would record `class` / `new`, which can never
+            # resolve to a user symbol, so skip them.
             meth = node.child_by_field_name("method")
             if meth and meth.type in ("identifier", "constant"):
-                out.append(_ts_text(meth, source))
+                meth_name = _ts_text(meth, source)
+                if meth_name not in _RUBY_NON_SYMBOL_CALLS:
+                    out.append(meth_name)
     elif node.type == "call_expression":  # JS / Java / Go
         fn = (
             node.child_by_field_name("function")
@@ -577,6 +585,10 @@ def _ts_bases(node, source: bytes) -> list[str]:
             if child.type in ("identifier", "type_identifier", "attribute",
                               "constant", "scope_resolution"):  # Ruby: Bar / Mod::Bar
                 name = _ts_text(child, source)
+                if child.type == "scope_resolution":
+                    # Ruby `Auth::Base` → `Base`: call stubs resolve by simple name,
+                    # mirroring the Python path's dotted-base normalisation.
+                    name = name.rsplit("::", 1)[-1]
                 if name not in ("object", "ABC", "Enum", "IntEnum", ",", "(", ")"):
                     bases.append(name)
     return bases
