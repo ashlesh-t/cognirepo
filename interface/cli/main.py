@@ -2479,8 +2479,13 @@ def _write_last_indexed_sha(repo_path: str) -> None:
         pass  # non-git repos silently skip
 
 
-def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
-    """Start the file watcher, optionally forking into the background."""
+def _start_watcher(path: str, kg, indexer, daemon: bool = False, register_self: bool = False) -> None:
+    """Start the file watcher, optionally forking into the background.
+
+    ``register_self`` (foreground mode, ``watch --foreground`` / the systemd unit): write this
+    process's own PID file so ``list`` / ``watch --status`` / the singleton check / ``--stop`` see
+    it, exactly as for a forked daemon. The crash guard removes it on exit (COGNIREPO-125).
+    """
     import os  # pylint: disable=import-outside-toplevel
     from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
     from intelligence.indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
@@ -2522,6 +2527,13 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
             print(f"[cognirepo] View : cognirepo list -n {child_pid} --view")
             return
         # child (grandchild) continues below
+
+    if register_self and not daemon:
+        from interface.cli.daemon import flock_register_watcher  # pylint: disable=import-outside-toplevel
+        from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
+        flock_register_watcher(
+            os.getpid(), f"watcher-{_Path(abs_path).name}-{ts}", abs_path, "stderr (foreground)",
+        )
 
     behaviour = BehaviourTracker(graph=kg, store_fn=store_memory)
 
@@ -3644,6 +3656,15 @@ def _main():
         help="Start the watcher if it is not running or its heartbeat is stale (> 60s).",
     )
     p_watch_cmd.add_argument(
+        "--foreground", "--daemon-foreground",
+        dest="foreground",
+        action="store_true",
+        default=False,
+        help="Run the watcher in the foreground under the crash guard (for systemd/launchd). "
+             "Registers itself, logs to stderr, stops cleanly on SIGTERM. "
+             "(--daemon-foreground is the name older generated units use.)",
+    )
+    p_watch_cmd.add_argument(
         "--path",
         default=".",
         metavar="DIR",
@@ -4575,7 +4596,21 @@ def _main():
             _start_watcher(abs_watch_path, kg, indexer, daemon=True)
             return
 
-        print("Use --status or --ensure-running. See: cognirepo watch --help")
+        if getattr(args, "foreground", False):
+            running = is_watcher_running_for_path(abs_watch_path)
+            if running:
+                print(f"[cognirepo] Watcher already running for this path (PID {running['pid']}); "
+                      "not starting a second one.")
+                return
+            from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+            kg = KnowledgeGraph()
+            indexer = ASTIndexer(graph=kg)
+            indexer.load()
+            _start_watcher(abs_watch_path, kg, indexer, daemon=False, register_self=True)
+            return
+
+        print("Use --status, --ensure-running or --foreground. See: cognirepo watch --help")
         return
 
     if args.command == "install-hooks":
@@ -4588,7 +4623,10 @@ def _main():
         sys.exit(_cmd_update_directives())
 
     if args.command == "list":
-        from interface.cli.daemon import print_watcher_list, view_watcher_logs, stop_watcher  # pylint: disable=import-outside-toplevel
+        from interface.cli.daemon import (  # pylint: disable=import-outside-toplevel
+            print_watcher_list, view_watcher_logs, stop_watcher_and_wait,
+            CLI_STOP_WAIT_SECS,
+        )
         if args.view or args.stop:
             if not args.name:
                 print("--view and --stop require -n <PID_OR_NAME>.", file=sys.stderr)
@@ -4596,9 +4634,22 @@ def _main():
             if args.view:
                 view_watcher_logs(args.name)
             elif args.stop:
-                ok = stop_watcher(args.name)
-                if ok:
-                    print(f"[cognirepo] Sent SIGTERM to watcher '{args.name}'.")
+                # Waits for the process to be GONE before reporting success (COGNIREPO-126):
+                # it used to print "Sent SIGTERM" and clear the registration immediately, while
+                # the watcher was still flushing — and `--ensure-running` then started a second one.
+                outcome = stop_watcher_and_wait(args.name)
+                if outcome == "stopped":
+                    print(f"[cognirepo] Watcher '{args.name}' stopped.")
+                elif outcome == "killed":
+                    print(f"[cognirepo] Watcher '{args.name}' did not exit within "
+                          f"{CLI_STOP_WAIT_SECS:.0f}s and was killed (SIGKILL). Unflushed edits may be "
+                          "missing from the index — run: cognirepo index-repo --changed-only",
+                          file=sys.stderr)
+                elif outcome == "failed":
+                    print(f"[cognirepo] Could not stop watcher '{args.name}': it is still running. "
+                          "Its registration was left in place so no second watcher is started.",
+                          file=sys.stderr)
+                    sys.exit(1)
                 else:
                     print(f"[cognirepo] No running watcher found matching '{args.name}'.",
                           file=sys.stderr)
