@@ -166,8 +166,8 @@ Pluggable vector storage backend:
 
 | Class | Backend |
 |-------|---------|
-| `FAISSAdapter` | Default — FAISS flat index, no external dependency |
-| `ChromaDBAdapter` | Optional — ChromaDB, requires `pip install chromadb` |
+| `ChromaDBAdapter` | **Default** — ChromaDB (`chromadb`). Safe across processes: ids come from a lock-protected counter, creation is serialized, and a crashed opener only quarantines a store that really fails to open (`core/vector_db/factory.py`) |
+| `LocalVectorDB` (faiss) | Fallback / `vector_backend: "faiss"` — FAISS flat index, no external dependency |
 
 Configured via `storage.vector_backend` in `config.json`.
 Use `get_storage_adapter()` factory (`core/vector_db/__init__.py`) — do not instantiate directly.

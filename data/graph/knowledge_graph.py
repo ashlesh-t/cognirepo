@@ -792,18 +792,52 @@ class KnowledgeGraph:
         Returns the list of removed node IDs.
         """
         removed: list[str] = []
-        for nid in self.nodes_for_file(file_path):
+        file_nodes = self.nodes_for_file(file_path)
+        # Everything this call is about to delete. A neighbour inside this set is NOT an
+        # outside reference (COGNIREPO-128): a symbol's own DEFINED_IN edge to its FILE node,
+        # or a call to another symbol of the same file, must not make us keep a stub.
+        going = set(file_nodes)
+        if self.G.has_node(file_path):
+            going.add(file_path)
+        # Stubs that point at nodes we are removing may lose their last edge; remember them.
+        maybe_orphaned = {
+            nbr for nid in going if self.G.has_node(nid)
+            for nbr in (*self.G.predecessors(nid), *self.G.successors(nid))
+            if nbr not in going and self._is_stub(nbr)
+        }
+        for nid in file_nodes:
             if self.G.has_node(nid):
-                self._redirect_edges_to_stub(nid)
+                self._redirect_edges_to_stub(nid, going)
                 self.remove_node(nid)
                 removed.append(nid)
         # FILE node's node_id == rel_path (see make_node_id("FILE", name) → name)
         if self.G.has_node(file_path):
             self.remove_node(file_path)
             removed.append(file_path)
+        for stub in maybe_orphaned:
+            if self.G.has_node(stub) and self.G.degree(stub) == 0:
+                self.remove_node(stub)
         return removed
 
-    def _redirect_edges_to_stub(self, nid: str) -> None:
+    def _is_stub(self, node_id: str) -> bool:
+        """True for an unresolved ``symbol::<name>`` CONCEPT stub."""
+        return (
+            node_id.startswith("symbol::")
+            and self.G.nodes.get(node_id, {}).get("type") == NodeType.CONCEPT
+        )
+
+    def orphan_stubs(self) -> list[str]:
+        """``symbol::<name>`` stubs with no edges at all — nothing references or resolves them."""
+        return [n for n in self.G.nodes if self._is_stub(n) and self.G.degree(n) == 0]
+
+    def remove_orphan_stubs(self) -> list[str]:
+        """Drop every degree-0 stub (journaled). Returns the removed ids. See COGNIREPO-128."""
+        stubs = self.orphan_stubs()
+        for stub in stubs:
+            self.remove_node(stub)
+        return stubs
+
+    def _redirect_edges_to_stub(self, nid: str, exclude: "set[str] | frozenset[str]" = frozenset()) -> None:
         """
         Preserve a FUNCTION/CLASS node's call/inherit edges onto a
         `symbol::{name}` CONCEPT stub before the node itself is removed.
@@ -816,15 +850,31 @@ class KnowledgeGraph:
         discoverable via `who_calls`/`subgraph`, tagged as unresolved rather
         than deleted outright. Mirrors `_resolve_call_stubs()`'s edge-copy
         pattern in reverse. See COGNIREPO-D10.
+
+        ``exclude`` is the set of nodes being removed in the same call (the file's own
+        symbols and its FILE node). Neighbours in it are not external references: counting
+        the symbol's DEFINED_IN edge to the FILE node made every deleted function leave an
+        orphan, unresolved, degree-0 stub behind (COGNIREPO-128).
         """
         node_data = self.G.nodes.get(nid, {})
         if node_data.get("type") not in (NodeType.FUNCTION, NodeType.CLASS):
             return  # only symbol nodes participate in call/inherit stub edges
 
-        predecessors = list(self.G.predecessors(nid))
-        successors = list(self.G.successors(nid))
-        if not predecessors and not successors:
-            return  # nothing referenced this node — safe to just drop it
+        predecessors = [p for p in self.G.predecessors(nid) if p not in exclude]
+        successors = [s for s in self.G.successors(nid) if s not in exclude]
+        # "Referenced from outside" = an incoming CALLED_BY (a caller outside the file) or
+        # INHERITS (a subclass outside the file). Adjacency alone is not enough: call edges are
+        # stored in BOTH directions (caller→callee CALLED_BY, callee→caller CALLS), so a deleted
+        # *caller* also has outside predecessors — its callees — yet nothing references it, and
+        # a stub for it would be a dead, unreferenced node (COGNIREPO-128).
+        # An edge with no relation label at all (older graphs) can't be proven harmless, so it
+        # counts as a reference — keeping a stub is safe, dropping a real edge is not.
+        referenced = any(
+            self.G[p][nid].get("rel") in (None, EdgeType.CALLED_BY, EdgeType.INHERITS)
+            for p in predecessors
+        )
+        if not referenced:
+            return  # nothing outside the removed file refers to this node — just drop it
 
         name = nid.rsplit("::", 1)[-1]
         stub = f"symbol::{name}"
@@ -1005,6 +1055,9 @@ class KnowledgeGraph:
         orphans        : FILE/FUNCTION/CLASS node IDs with degree 0. Restricted to
                           these types — MEMORY/SESSION/ERROR/QUERY/USER_ACTION/CONCEPT
                           nodes are legitimately edge-free early in their lifecycle.
+        orphan_stubs   : ``symbol::<name>`` CONCEPT stubs with degree 0 — dead leftovers
+                          of deleted symbols (COGNIREPO-128); `graph repair --apply` drops
+                          them.
         dangling_files : unique file paths (FILE node IDs, or FUNCTION/CLASS nodes'
                           'file' attr) that no longer exist under repo_root — left
                           behind when a file is deleted outside a live watcher/server
@@ -1037,6 +1090,7 @@ class KnowledgeGraph:
         from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
         return {
             "orphans": orphans,
+            "orphan_stubs": self.orphan_stubs(),
             "dangling_files": dangling,
             "swept_at": datetime.now(tz=timezone.utc).isoformat(),
         }

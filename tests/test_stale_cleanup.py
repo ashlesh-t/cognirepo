@@ -110,7 +110,7 @@ class TestEpisodicMarkStale:
         )
         # Patch _save to avoid security/encryption calls
         monkeypatch.setattr(em, "_save", lambda data: _raw_save(tmp_path, data))
-        monkeypatch.setattr(em, "_load", lambda: _raw_load(tmp_path))
+        monkeypatch.setattr(em, "_load", lambda **_kw: _raw_load(tmp_path))
 
         _raw_save(tmp_path, [
             {"id": "e_0", "event": "indexed auth/auth.py", "metadata": {}, "time": "2026-01-01T00:00:00Z"},
@@ -129,7 +129,7 @@ class TestEpisodicMarkStale:
         """Stale entries are NOT deleted — get_history() still returns them."""
         from data.memory import episodic_memory as em
         monkeypatch.setattr(em, "_save", lambda data: _raw_save(tmp_path, data))
-        monkeypatch.setattr(em, "_load", lambda: _raw_load(tmp_path))
+        monkeypatch.setattr(em, "_load", lambda **_kw: _raw_load(tmp_path))
 
         _raw_save(tmp_path, [
             {"id": "e_0", "event": "indexed auth/auth.py", "metadata": {}, "time": "2026-01-01T00:00:00Z"},
@@ -144,7 +144,7 @@ class TestEpisodicMarkStale:
         """Calling mark_stale twice does not change the stale entry again."""
         from data.memory import episodic_memory as em
         monkeypatch.setattr(em, "_save", lambda data: _raw_save(tmp_path, data))
-        monkeypatch.setattr(em, "_load", lambda: _raw_load(tmp_path))
+        monkeypatch.setattr(em, "_load", lambda **_kw: _raw_load(tmp_path))
 
         _raw_save(tmp_path, [
             {"id": "e_0", "event": "deleted auth/auth.py", "metadata": {},

@@ -101,6 +101,11 @@ cognirepo doctor [OPTIONS]
 | `--verbose`, `-v` | `False` | Show optional component checks |
 | `--fix` | `False` | Auto-fix FAISS corruption or dimension mismatch |
 
+`doctor` also probes the interpreter behind the `cognirepo` on `PATH` (read-only, in a subprocess): with
+`storage.encrypt: true` it reports missing `keyring`/`cryptography` or an unusable keyring backend there,
+and it warns when that install is a stale copy of the current working tree, printing the exact
+`pipx inject` / `pipx install --force` command.
+
 ---
 
 ## cognirepo store-memory
@@ -376,7 +381,7 @@ cognirepo graph repair [--apply]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--apply` | `False` | Actually prune dangling file nodes (default: dry-run report only) |
+| `--apply` | `False` | Actually prune dangling file nodes **and orphan `symbol::<name>` stubs** — degree-0 leftovers of deleted symbols (default: dry-run report only) |
 
 ---
 
@@ -481,7 +486,7 @@ cognirepo list [OPTIONS]
 | `-p`, `--processes` | `False` | List all running watcher daemon processes |
 | `-n`, `--name PID_OR_NAME` | `None` | Select a daemon by PID or name (use with `--view` or `--stop`) |
 | `--view` | `False` | Interactively tail the log of the daemon selected with `-n` |
-| `--stop` | `False` | Send SIGTERM to the daemon selected with `-n` |
+| `--stop` | `False` | Stop the daemon selected with `-n`: sends SIGTERM and **waits** for the process to exit (up to 30 s), then SIGKILLs it; the registration is cleared only once the process is really gone. Exit 1 if it could not be stopped |
 | `--org` | `False` | Show all organizations, repos, and projects from `orgs.json` |
 | `--mcp` | `False` | List registered MCP servers from `.mcp.json` and global configs |
 
