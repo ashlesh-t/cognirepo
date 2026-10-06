@@ -715,6 +715,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         _lang_checks = [
             ("Python",     ".py"),
             ("TypeScript", ".ts"),
+            ("Swift",      ".swift"),
             ("JavaScript", ".js"),
             ("Go",         ".go"),
             ("Rust",       ".rs"),
@@ -727,6 +728,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         _missing_langs: list[tuple[str, str]] = []  # (lang, install_hint)
         _pkg_hints = {
             ".ts":   "tree-sitter-typescript",
+            ".swift": "tree-sitter-swift",
             ".js":   "tree-sitter-javascript",
             ".go":   "tree-sitter-go",
             ".rs":   "tree-sitter-rust",
@@ -4239,9 +4241,6 @@ def _main():
         # ── git-aware changed-only reindex ───────────────────────────────────
         if getattr(args, "changed_only", False):
             import subprocess as _sp  # pylint: disable=import-outside-toplevel
-            from data.graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
-            from intelligence.indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
-            _changed: list[str] = []
             from intelligence.indexer.language_registry import supported_extensions  # pylint: disable=import-outside-toplevel
             _supported_exts = set(supported_extensions())  # COGNIREPO-154: one source of truth
             _remove_lock = getattr(args, "remove_lock", None)

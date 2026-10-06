@@ -20,6 +20,7 @@ pip install cognirepo[languages]     # all supported languages
 | Language | Extensions | Status | Grammar package |
 |----------|------------|--------|-----------------|
 | Python | `.py` | Stable — built-in | tree-sitter-python (optional, stdlib fallback) |
+| Swift | `.swift` | Stable | tree-sitter-swift |
 | JavaScript | `.js` `.jsx` | Stable | tree-sitter-javascript |
 | TypeScript | `.ts` `.tsx` | Stable | tree-sitter-typescript |
 | Java | `.java` | Stable | tree-sitter-java |
@@ -39,7 +40,6 @@ grammar package from `cognirepo[languages]`.
 
 | Language | Issue |
 |----------|-------|
-| Swift | #TBD |
 | Kotlin | #TBD |
 
 ---
@@ -54,6 +54,14 @@ For each supported file, the indexer extracts:
 
 These become nodes and edges in the NetworkX knowledge graph, and entries in the
 `ast_index.json` reverse index (symbol name → list of `(file, line)` locations).
+
+### Language-specific notes
+
+- **Swift** — an `extension Foo { … }` is indexed as a CLASS symbol named `Foo` at the extension
+  site (its methods need a parent in the graph), so `lookup_symbol("Foo")` returns the type and
+  each of its extensions. `init` and `deinit` are FUNCTION symbols. Calls inside computed-property
+  bodies (`var x: Int { calc() }`) and property observers are not attributed to any symbol.
+  Vendored/build dirs (`Pods/`, `.build/`, `Carthage/`, `DerivedData/`) are skipped.
 
 ---
 
@@ -83,6 +91,6 @@ once symbols are extracted.
 
 ```bash
 cognirepo doctor --verbose
-# Shows: Language support — Python, JS, TS, Java, Go, Rust,Ruby, C++, PHP
+# Shows: Language support — Python, JS, TS, Java, Go, Rust, Ruby, C++, Swift, PHP
 # (or only "Python (built-in)" if cognirepo[languages] not installed)
 ```

@@ -163,6 +163,14 @@ Versioning: [Semantic Versioning](https://semver.org/)
   `implements` and trait `use` (namespaced `\Ns\Base` reduced to `Base`), and call edges for
   `foo()`, `$obj->foo()`, `Foo::bar()` and namespaced `\Ns\foo()`. `cognirepo doctor` lists PHP;
   `semantic_search_code` accepts `language="php"`; `index-repo --changed-only` picks up `.php` files.
+- **#75 — Swift language support.** `.swift` files are indexed via `tree-sitter-swift` (now part of
+  the `languages` extra; the grammar is versioned 0.7.x, hence `>=0.7`): classes, structs, enums,
+  actors, extensions, protocols, functions, `init`/`deinit` and protocol requirements, inheritance lists,
+  and call edges for `foo()` / `obj.foo()`. An `extension Foo {}` is recorded as a CLASS symbol named
+  `Foo` at the extension site, so `lookup_symbol("Foo")` returns the type and its extensions.
+  `Package.swift` is detected as a Swift service marker; `cognirepo doctor` lists Swift. `Pods/`,
+  `.build/`, `Carthage/` and `DerivedData/` are added to the indexer's skip dirs. The shared
+  `call_expression` callee fallback only accepts Swift callee shapes, with a JS/TS/Go regression test.
 - **#72 — Ruby language support.** `.rb` files are indexed via `tree-sitter-ruby` (now part of
   the `languages` extra): classes, modules, instance and `def self.` methods, call edges
   (`foo()`, `recv.foo()`, `Mod::foo`; `class`/`new` are skipped as non-symbol callees) and
