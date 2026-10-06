@@ -101,6 +101,11 @@ cognirepo doctor [OPTIONS]
 | `--verbose`, `-v` | `False` | Show optional component checks |
 | `--fix` | `False` | Auto-fix FAISS corruption or dimension mismatch |
 
+`doctor` also probes the interpreter behind the `cognirepo` on `PATH` (read-only, in a subprocess): with
+`storage.encrypt: true` it reports missing `keyring`/`cryptography` or an unusable keyring backend there,
+and it warns when that install is a stale copy of the current working tree, printing the exact
+`pipx inject` / `pipx install --force` command.
+
 ---
 
 ## cognirepo store-memory
