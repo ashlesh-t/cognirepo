@@ -487,6 +487,40 @@ class TestWatcherShutdownCleanup:
         assert not daemon._pid_file(pid).exists()
         assert daemon.read_heartbeat() is None
 
+    def test_a_slow_heartbeat_write_cannot_land_after_the_cleanup(self, monkeypatch):
+        """The race behind the intermittent CI failure: the heartbeat thread's write was still in
+        flight (slow disk / fsync, or simply not scheduled yet) when the watcher shut down, so it
+        landed AFTER clear_heartbeat_if_owned() and left a heartbeat for a dead watcher."""
+        from interface.cli import daemon
+
+        real_write = daemon.write_heartbeat
+
+        def slow_write(pid, watcher_path):
+            time.sleep(0.4)                       # a slow disk
+            real_write(pid, watcher_path)
+        monkeypatch.setattr(daemon, "write_heartbeat", slow_write)
+
+        class _Observer:
+            def is_alive(self):
+                return False                      # exits immediately
+
+        daemon.run_watcher_with_crash_guard(
+            create_fn=_Observer, stop_fn=lambda _o: None,
+            watcher_path=os.getcwd(), session_id="test",
+        )
+        time.sleep(0.6)                           # give any straggling write time to land
+        assert daemon.read_heartbeat() is None, "a heartbeat for a dead watcher was left behind"
+
+    def test_stop_heartbeat_thread_returns_promptly(self):
+        """The thread must wake on stop, not sleep out its 30 s interval."""
+        from interface.cli import daemon
+
+        t = daemon.start_heartbeat_thread(os.getpid(), os.getcwd())
+        t0 = time.time()
+        daemon.stop_heartbeat_thread(t)
+        assert not t.is_alive() and time.time() - t0 < 5
+        daemon.clear_heartbeat_if_owned(os.getpid(), os.getcwd())
+
     def test_pid_file_removed_even_when_the_loop_raises(self):
         from interface.cli import daemon
 
