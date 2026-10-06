@@ -28,7 +28,6 @@ Versioning: [Semantic Versioning](https://semver.org/)
   `test_pid_file_and_heartbeat_removed_on_clean_exit` on CI runners; a regression test reproduces the race
   deterministically with a slow write.
 
-### Fixed
 - **#128 — deleting a file left an orphan degree-0 `symbol::<name>` stub in the graph.**
   `KnowledgeGraph._redirect_edges_to_stub` decided "something references this symbol" from its raw
   neighbours, which include its own `DEFINED_IN` edge to the FILE node being removed in the same
@@ -41,7 +40,6 @@ Versioning: [Semantic Versioning](https://semver.org/)
   `cognirepo graph repair --apply` removes existing leftovers. Callers in other files still keep
   their edges via an unresolved stub (D10 behaviour unchanged).
 
-### Fixed
 - **#136 — unlocked read-modify-write lost updates and duplicated ids.** Every RMW of a shared store
   now runs under the cross-process lock and reloads *inside* it: `episodic.log_event` /
   `mark_stale` (ids allocated inside the lock), the learnings `store()` / `deprecate()` (a per-store
