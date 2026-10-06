@@ -38,6 +38,22 @@ Versioning: [Semantic Versioning](https://semver.org/)
   Docs now state the real default backend (`chroma`). Chroma's own concurrent adds were measured to be safe
   once ids are unique; a long-lived reader's HNSW view of a peer's very recent writes was seen to lag (not
   addressed).
+- **#125 — the generated systemd unit could never start.** It emitted `watch --daemon-foreground`, a flag
+  that did not exist, so systemd crash-looped. New `cognirepo watch --foreground` (alias
+  `--daemon-foreground`, so units already written start working) runs the watcher in the foreground under
+  the crash guard, registers its own PID file (so `list`, `watch --status`, the singleton check and
+  `--stop` see it) and logs to stderr/journald. The unit now uses it, quotes a repo path with spaces as one
+  argument and sets `TimeoutStopSec=60`. A test starts, queries and stops a real watcher with both flags.
+- **#126 — `cognirepo list --stop` reported success and cleared the registration while the watcher kept
+  running, so `watch --ensure-running` started a second watcher on the same repo.** `stop_watcher_and_wait()`
+  now sends SIGTERM, waits up to 30 s for the process to be gone, escalates to SIGKILL (only if
+  `/proc/<pid>/cmdline` still looks like cognirepo — never a recycled pid), and removes the PID/heartbeat
+  files only afterwards; outcomes are `stopped` / `killed` (warns about unflushed edits) / `failed`
+  (registration kept, exit 1) / `not_found`. In the watcher: SIGTERM sets a stop flag the loop checks even if
+  the `KeyboardInterrupt` is swallowed, arms a watchdog that forces exit if the final flush hangs for 20 s,
+  a second SIGTERM exits immediately, and a stop during a crash never restarts. Also: a zombie
+  (exited, un-reaped) process no longer counts as alive — `kill(pid, 0)` succeeds on one, which made a
+  stopped watcher show as "running" forever.
 - **#124 — `doctor` now inspects the `cognirepo` on PATH, not just the interpreter running it.** Hooks and
   MCP clients launch the PATH `cognirepo` (typically a pipx venv), which can differ from a dev checkout's
   interpreter. New `interface/cli/install_probe.py` reads that script's shebang, probes the interpreter in
