@@ -284,9 +284,9 @@ def _cmd_graph_repair(apply: bool = False) -> int:
     Dry-run by default — reports what integrity_report() found without
     mutating the graph. --apply removes them via remove_file_nodes(), which
     redirects any live call/inherit edges onto an unresolved CONCEPT stub
-    rather than dropping them, and leaves orphan CONCEPT stubs untouched
-    (they carry no 'file' attr, so nodes_for_file() never matches them).
-    See COGNIREPO-201.
+    rather than dropping them. It also drops degree-0 ``symbol::<name>`` stubs
+    (dead leftovers of deleted symbols — COGNIREPO-128); other edge-free
+    CONCEPT nodes are left alone. See COGNIREPO-201.
     """
     # pylint: disable=import-outside-toplevel
     from data.graph.knowledge_graph import KnowledgeGraph
@@ -295,14 +295,22 @@ def _cmd_graph_repair(apply: bool = False) -> int:
     repo_root = os.path.dirname(os.path.abspath(get_path("")))
     report = kg.integrity_report(repo_root)
     dangling = report["dangling_files"]
+    stubs = report.get("orphan_stubs", [])
 
-    if not dangling:
+    if not dangling and not stubs:
         print("graph repair: no dangling file nodes found.")
         return 0
 
-    print(f"graph repair: {len(dangling)} dangling file path(s) found:")
-    for f in dangling:
-        print(f"  {f}")
+    if dangling:
+        print(f"graph repair: {len(dangling)} dangling file path(s) found:")
+        for f in dangling:
+            print(f"  {f}")
+    if stubs:
+        print(f"graph repair: {len(stubs)} orphan symbol stub(s) (degree 0) found:")
+        for s in stubs[:10]:
+            print(f"  {s}")
+        if len(stubs) > 10:
+            print(f"  … and {len(stubs) - 10} more")
 
     if not apply:
         print("\nDry run — no changes made. Re-run with --apply to prune.")
@@ -311,8 +319,13 @@ def _cmd_graph_repair(apply: bool = False) -> int:
     removed_total = 0
     for f in dangling:
         removed_total += len(kg.remove_file_nodes(f))
+    # after the file removals: they can orphan further stubs, and old graphs carry leftovers
+    stubs_removed = len(kg.remove_orphan_stubs())
     kg.save()
-    print(f"\nRemoved {removed_total} node(s) across {len(dangling)} dangling file path(s).")
+    if dangling:
+        print(f"\nRemoved {removed_total} node(s) across {len(dangling)} dangling file path(s).")
+    if stubs_removed:
+        print(f"Removed {stubs_removed} orphan symbol stub(s).")
     return 0
 
 
@@ -559,12 +572,14 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         _integrity = _kg.integrity_report(_repo_root)
         _n_orphans = len(_integrity["orphans"])
         _n_dangling = len(_integrity["dangling_files"])
-        if _n_orphans == 0 and _n_dangling == 0:
+        _n_stubs = len(_integrity.get("orphan_stubs", []))
+        if _n_orphans == 0 and _n_dangling == 0 and _n_stubs == 0:
             _ok("Graph integrity — 0 orphans · 0 dangling files")
         else:
             _warn(
                 f"Graph integrity — {_n_orphans} orphan node(s), "
-                f"{_n_dangling} dangling file(s)",
+                f"{_n_dangling} dangling file(s)"
+                + (f", {_n_stubs} orphan symbol stub(s)" if _n_stubs else ""),
                 "Run: cognirepo graph repair --apply",
             )
     except Exception as exc:  # pylint: disable=broad-except

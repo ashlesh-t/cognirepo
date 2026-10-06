@@ -381,7 +381,7 @@ cognirepo graph repair [--apply]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--apply` | `False` | Actually prune dangling file nodes (default: dry-run report only) |
+| `--apply` | `False` | Actually prune dangling file nodes **and orphan `symbol::<name>` stubs** — degree-0 leftovers of deleted symbols (default: dry-run report only) |
 
 ---
 
