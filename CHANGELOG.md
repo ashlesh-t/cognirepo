@@ -19,6 +19,22 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
+- **#154 — `index-repo --files` / `--changed-only` never saved the AST index.** Both incremental paths
+  (`--files` is what the post-commit hook runs) called `index_file()` then only `kg.save()`, so a
+  hook-indexed file landed in the graph but not in `ast_index.json`/FAISS/manifest: `who_calls` saw new
+  code while `lookup_symbol`/`context_pack` did not. Both now go through one helper
+  (`_incremental_index` in `interface/cli/main.py`) that runs the #122 base-graph guard first (which also
+  loads the existing AST index), re-indexes, rebuilds the reverse index / resolves touched call stubs /
+  recounts symbols like the watcher's flush, then `indexer.save()` (under `store_lock`) before `kg.save()`.
+  `--no-embed` is now honoured on these paths, and the hook passes it, so a commit no longer loads the
+  ~2 GB embedding model. The hook's extension filter (previously a hard-coded `py|js|ts|java|go|rs|cpp|c|h`)
+  is generated from `language_registry.known_extensions()`, and `--changed-only` uses
+  `supported_extensions()` instead of its own hard-coded set; re-running `install-hooks` replaces an
+  outdated block in place. New tests (`tests/test_incremental_persist.py`) check a fresh process can
+  `lookup_symbol` a hook-indexed function and fail if either extension list diverges from the registry.
+- **#155 — `index-repo --changed-only` claimed to "fall back to a full reindex" when git failed but did
+  nothing** (exit 0, last-indexed sha recorded). It now exits `1` with an accurate message, indexes nothing
+  and does not write `last_indexed.json`.
 - **#142 — Chroma (the default vector backend) lost writes across processes and could quarantine a healthy
   store.** Measured with real processes before the fix: 6 workers x 15 adds kept **20 of 90** vectors and one
   worker died creating the store. Causes and fixes: (1) ids were minted from `count()` read once at open, so
