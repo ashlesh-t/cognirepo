@@ -170,6 +170,19 @@ def _detect_blind_spots(index_health: dict) -> list[str]:
     except Exception:  # pylint: disable=broad-except
         pass
 
+    # ── 9. Post-commit hook's last run failed (COGNIREPO-123) ────────────────
+    try:
+        from interface.cli.hook_status import HOOK_LAST, read_last_run  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_cognirepo_dir, get_global_dir  # pylint: disable=import-outside-toplevel
+        run = read_last_run(get_cognirepo_dir(), get_global_dir())
+        if run is not None and not run.ok:
+            spots.append(
+                f"Post-commit hook {run.describe()} — commits are not being indexed. "
+                f"See {run.log_path}."
+            )
+    except Exception:  # pylint: disable=broad-except
+        pass
+
     return spots
 
 

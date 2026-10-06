@@ -1154,6 +1154,36 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     except Exception as _exc:  # pylint: disable=broad-except
         logger.debug("doctor: PATH install check failed: %s", _exc)
 
+    # ── Check 22c: the post-commit hook's last run (COGNIREPO-123) ───────────
+    # The hook used to discard all output, so a broken install (e.g. a pipx venv without keyring)
+    # failed every run silently for days. It now records each run; surface a failure here.
+    try:
+        from interface.cli import hook_status as _hs  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_cognirepo_dir as _gcd, get_global_dir as _ggd  # pylint: disable=import-outside-toplevel
+        _run = _hs.read_last_run(_gcd(), _ggd())
+        if _run is not None:
+            if _run.ok:
+                if verbose:
+                    _ok(f"Post-commit hook — {_run.describe()}")
+            else:
+                _warn(
+                    f"Post-commit hook — {_run.describe()}",
+                    f"Full output: {_run.log_path} — fix it, then run: cognirepo index-repo --changed-only",
+                )
+        _git_dir = _find_git_dir()
+        if _git_dir is not None:
+            _hook_path = _git_dir / "hooks" / "post-commit"
+            if _hook_path.exists() and _hs.hook_is_outdated(
+                    _hook_path.read_text(encoding="utf-8", errors="replace"),
+                    _hook_block(), _HOOK_SENTINEL_START):
+                _warn(
+                    "Post-commit hook — the installed block is outdated (older ones discarded "
+                    "errors or missed newer languages)",
+                    "Run: cognirepo install-hooks",
+                )
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: post-commit hook check failed: %s", _exc)
+
     # ── Check 23: package importable from a neutral cwd ──────────────────────
     # A stale editable install (e.g. left over from the pre-restructure layout)
     # only resolves `interface`/`data`/`core` when cwd is the repo root, so
@@ -3018,13 +3048,35 @@ def _hook_block() -> str:
     ``--no-embed``: the hook runs on every commit, and embedding would load the ~2 GB
     model each time. The AST index + graph are what lookup_symbol/who_calls need; vectors
     catch up on the next full ``index-repo``.
+
+    COGNIREPO-123: output is no longer discarded (``2>/dev/null``). Everything is appended to
+    ``<store>/hook.log`` (rotated at 256 KiB, one ``.1`` kept) and the outcome of the run is
+    written to ``<store>/hook.last`` (ts / exit / files) for ``doctor`` and ``get_session_brief``.
+    All of it is plain shell on purpose: the failure being reported may be that ``cognirepo``
+    itself does not start (command not found, an import error), so a ``cognirepo`` subcommand
+    could not be trusted to record it. ``--root`` makes a repo's very first commit visible to
+    ``diff-tree`` (it lists nothing for a root commit without it). The store is ``.cognirepo`` in the repo root, else
+    ``$COGNIREPO_DIR``, else ``~/.cognirepo``. Still backgrounded: the commit is never delayed.
     """
     return (
         _HOOK_SENTINEL_START + "\n"
-        "changed=$(git diff-tree --no-commit-id -r --name-only HEAD \\\n"
+        "changed=$(git diff-tree --root --no-commit-id -r --name-only HEAD \\\n"
         f"  | grep -E '{_hook_ext_regex()}')\n"
         "if [ -n \"$changed\" ]; then\n"
-        "  cognirepo index-repo --files $changed --no-watch --no-embed 2>/dev/null &\n"
+        "  (\n"
+        "    d=.cognirepo; [ -d \"$d\" ] || d=\"${COGNIREPO_DIR:-$HOME/.cognirepo}\"\n"
+        "    mkdir -p \"$d\" 2>/dev/null\n"
+        "    log=\"$d/hook.log\"\n"
+        "    if [ -f \"$log\" ] && [ \"$(wc -c < \"$log\" | tr -d ' ')\" -gt 262144 ]; then mv -f \"$log\" \"$log.1\"; fi\n"
+        "    {\n"
+        "      echo \"--- $(date -u +%Y-%m-%dT%H:%M:%SZ) post-commit $(git rev-parse --short HEAD 2>/dev/null)\"\n"
+        "      cognirepo index-repo --files $changed --no-watch --no-embed 2>&1\n"
+        "      rc=$?\n"
+        "      echo \"exit=$rc\"\n"
+        "    } >> \"$log\" 2>&1\n"
+        "    printf 'ts=%s\\nexit=%s\\nfiles=%s\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"$rc\" "
+        "\"$(echo \"$changed\" | wc -w | tr -d ' ')\" > \"$d/hook.last\"\n"
+        "  ) &\n"
         "fi\n"
         + _HOOK_SENTINEL_END + "\n"
     )

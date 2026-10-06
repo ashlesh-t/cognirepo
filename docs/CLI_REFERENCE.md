@@ -47,7 +47,7 @@ cognirepo index-repo [PATH] [OPTIONS]
 | `--files FILE…` | — | Re-index only these files (used by the post-commit hook). Persists the graph **and** the AST index, FAISS vectors and manifest, so `lookup_symbol` sees the change from any process (COGNIREPO-154). Same complete-graph guard as `--changed-only` |
 | `--changed-only` | `False` | Auto-detect changed files via git and reindex. Like `--files` it only updates an existing **complete** graph: if the graph is missing, quarantined or a fragment it exits `2` without saving and tells you to run a full `cognirepo index-repo .` once (COGNIREPO-122). File extensions come from `language_registry` (installed grammars). If git cannot list changes (not a repo, no commits, git missing) it exits `1` and indexes nothing (COGNIREPO-155) |
 
-`cognirepo install-hooks` writes a post-commit hook that runs `index-repo --files <changed> --no-watch --no-embed`. Its extension filter is generated from `language_registry` (every mapped extension), so re-run `install-hooks` after upgrading — it replaces an outdated cognirepo block in place and leaves your own hook lines alone.
+`cognirepo install-hooks` writes a post-commit hook that runs `index-repo --files <changed> --no-watch --no-embed`. Its extension filter is generated from `language_registry` (every mapped extension), The hook logs to `.cognirepo/hook.log` (rotated at 256 KiB) and records its last outcome in `.cognirepo/hook.last` (`ts`/`exit`/`files`); `doctor` and `get_session_brief` report a failed run. Re-run `install-hooks` after upgrading — it replaces an outdated cognirepo block in place and leaves your own hook lines alone.
 
 ---
 
