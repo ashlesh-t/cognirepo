@@ -93,6 +93,32 @@ class TestSwiftIndexing:
         point_lines = sorted(s["start_line"] for s in syms if s["name"] == "Point")
         assert point_lines == [4, 8]
 
+    def test_extension_indexed_as_class(self, fresh_indexer, tmp_path, monkeypatch):
+        """Extensions are deliberately CLASS symbols so their methods have a graph parent."""
+        syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
+        assert _by_name(syms, "Point", 8)["type"] == "CLASS"
+
+    def test_deinit_indexed_with_calls(self, fresh_indexer, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "Conn.swift", """\
+            class Conn {
+                deinit { cleanup() }
+            }
+        """)
+        record = fresh_indexer.index_file("Conn.swift", str(src))
+        deinit = next(s for s in record["symbols"] if s["name"] == "deinit")
+        assert deinit["type"] == "FUNCTION"
+        assert "cleanup" in deinit["calls"]
+
+    def test_vendored_dirs_skipped(self, fresh_indexer, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path, "TokenService.swift", _SWIFT_SRC)
+        for d in ("Pods/Alamofire", ".build/checkouts", "Carthage/Checkouts", "DerivedData/x"):
+            (tmp_path / d).mkdir(parents=True)
+            _write(tmp_path / d, "Vendored.swift", "func vendored() {}\n")
+        fresh_indexer.index_repo(str(tmp_path))
+        assert list(fresh_indexer.index_data["files"]) == ["TokenService.swift"]
+
     def test_functions_init_and_requirements_extracted(self, fresh_indexer, tmp_path, monkeypatch):
         syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
         functions = {(s["name"], s["start_line"]) for s in syms if s["type"] == "FUNCTION"}
@@ -114,6 +140,29 @@ class TestSwiftIndexing:
         summary = fresh_indexer.index_repo(str(tmp_path))
         assert summary["symbols"] > 0
         assert "Swift" in summary["languages"]
+
+
+class TestSharedCallExpressionBranch:
+    """The Swift callee fallback lives in the shared `call_expression` branch — pin that
+    JS/TS/Go call extraction is unchanged by it."""
+
+    @pytest.mark.parametrize("ext, grammar, code, expected", [
+        (".js", "tree_sitter_javascript",
+         b"function f() { foo(); obj.bar(); a.b.baz(); }", {"foo", "bar", "baz"}),
+        (".ts", "tree_sitter_typescript",
+         b"function f(): void { foo(); obj.bar<T>(); }", {"foo", "bar"}),
+        (".go", "tree_sitter_go",
+         b"package m\nfunc f() { foo(); obj.Bar(); Svc.Run() }", {"foo", "Bar", "Run", "Svc::Run"}),
+    ])
+    def test_calls_unchanged(self, ext, grammar, code, expected):
+        pytest.importorskip(grammar)
+        from tree_sitter import Parser
+        from intelligence.indexer.ast_indexer import _ts_collect_calls
+        from intelligence.indexer.language_registry import _get_language, clear_cache
+        clear_cache()
+        out: list[str] = []
+        _ts_collect_calls(Parser(_get_language(ext)).parse(code).root_node, code, out)
+        assert set(out) == expected
 
 
 class TestSwiftRegistry:

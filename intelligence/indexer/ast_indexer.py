@@ -112,6 +112,8 @@ _SKIP_DIRS: frozenset[str] = frozenset({
     # use staging/ as a build artifact dir can re-add it via config.json:
     #   {"indexing": {"skip_dirs": ["staging"]}}
     "vendor", "third_party", "_output", "_artifacts",
+    # Swift / iOS (CocoaPods, SwiftPM, Carthage, Xcode build output)
+    "Pods", ".build", "Carthage", "DerivedData",
     # Bazel
     "bazel-bin", "bazel-out", "bazel-testlogs", "bazel-genfiles",
     # General build
@@ -224,6 +226,7 @@ _TS_FUNCTION_TYPES = frozenset({
     "method_signature",           # TS interface methods
     "function_signature",         # TS ambient/overload signatures
     "init_declaration",           # Swift init()
+    "deinit_declaration",         # Swift deinit (no `name` field — see _walk_ts)
     "protocol_function_declaration",  # Swift protocol requirements
 })
 
@@ -461,6 +464,19 @@ def _ts_docstring(node, source: bytes, ext: str) -> str:
     return ""
 
 
+def _swift_callee(node):
+    """Callee of a Swift call_expression, which has no field names.
+
+    Only accept the node shapes tree-sitter-swift actually produces for a callee so this
+    fallback can't misfire on another grammar (or grammar version) that reaches the shared
+    `call_expression` branch without a `function`/`name` field.
+    """
+    first = node.named_children[0] if node.named_children else None
+    if first is not None and first.type in ("simple_identifier", "navigation_expression"):
+        return first
+    return None
+
+
 def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
     """Recursively collect function-call names from a tree-sitter subtree.
 
@@ -484,7 +500,7 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
         fn = (
             node.child_by_field_name("function")
             or node.child_by_field_name("name")
-            or (node.named_children[0] if node.named_children else None)  # Swift: no field names
+            or _swift_callee(node)  # Swift: no field names
         )
         if fn:
             prop = (
@@ -589,6 +605,9 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
 
     if node.type in _TS_FUNCTION_TYPES:
         name_node = node.child_by_field_name("name")
+        if name_node is None and node.type == "deinit_declaration":
+            # Swift `deinit { … }` has no name field; use the `deinit` keyword token
+            name_node = next((c for c in node.children if c.type == "deinit"), None)
         # arrow functions assigned to a variable: capture parent's name via caller
         if name_node is None and node.type == "arrow_function":
             for child in node.children:
