@@ -20,13 +20,16 @@ pip install cognirepo[languages]     # all supported languages
 | Language | Extensions | Status | Grammar package |
 |----------|------------|--------|-----------------|
 | Python | `.py` | Stable — built-in | tree-sitter-python (optional, stdlib fallback) |
+| Swift | `.swift` | Stable | tree-sitter-swift |
 | JavaScript | `.js` `.jsx` | Stable | tree-sitter-javascript |
 | TypeScript | `.ts` `.tsx` | Stable | tree-sitter-typescript |
 | Java | `.java` | Stable | tree-sitter-java |
 | C# | `.cs` | Stable | tree-sitter-c-sharp |
 | Go | `.go` | Stable | tree-sitter-go |
 | Rust | `.rs` | Stable | tree-sitter-rust |
+| Ruby | `.rb` | Stable | tree-sitter-ruby |
 | C / C++ | `.c` `.cpp` `.cc` `.h` | Stable | tree-sitter-cpp |
+| PHP | `.php` | Stable | tree-sitter-php |
 
 **Python is always available.** Even without `tree-sitter-python` installed, CogniRepo
 falls back to the stdlib `ast` module for Python files. All other languages require the
@@ -38,10 +41,7 @@ grammar package from `cognirepo[languages]`.
 
 | Language | Issue |
 |----------|-------|
-| Ruby | #TBD |
-| Swift | #TBD |
 | Kotlin | #TBD |
-| PHP | #TBD |
 
 ---
 
@@ -63,6 +63,12 @@ These become nodes and edges in the NetworkX knowledge graph, and entries in the
   FUNCTION symbols, same as Java). Since constructors are where DI wiring usually lives, those
   call edges will be missing from `who_calls`. Null-conditional calls (`a?.Foo()`) are recorded.
   MSBuild output (`obj/`, `bin/`) and `.vs/` are skipped during indexing.
+
+- **Swift** — an `extension Foo { … }` is indexed as a CLASS symbol named `Foo` at the extension
+  site (its methods need a parent in the graph), so `lookup_symbol("Foo")` returns the type and
+  each of its extensions. `init` and `deinit` are FUNCTION symbols. Calls inside computed-property
+  bodies (`var x: Int { calc() }`) and property observers are not attributed to any symbol.
+  Vendored/build dirs (`Pods/`, `.build/`, `Carthage/`, `DerivedData/`) are skipped.
 
 ---
 
@@ -92,6 +98,6 @@ once symbols are extracted.
 
 ```bash
 cognirepo doctor --verbose
-# Shows: Language support — Python, JS, TS, Java, C#, Go, Rust, C++
+# Shows: Language support — Python, JS, TS, Java, C#, Go, Rust, Ruby, C++, Swift, PHP
 # (or only "Python (built-in)" if cognirepo[languages] not installed)
 ```

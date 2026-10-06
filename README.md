@@ -554,12 +554,15 @@ All errors are logged to `.cognirepo/errors/<date>.log` — no raw tracebacks sh
 | Language | Extensions | Install |
 |----------|------------|---------|
 | Python | `.py` | built-in |
+| Swift | `.swift` | `cognirepo[languages]` |
 | JavaScript / TypeScript | `.js` `.ts` `.jsx` `.tsx` | `cognirepo[languages]` |
 | Java | `.java` | `cognirepo[languages]` |
 | C# | `.cs` | `cognirepo[languages]` |
 | Go | `.go` | `cognirepo[languages]` |
 | Rust | `.rs` | `cognirepo[languages]` |
+| Ruby | `.rb` | `cognirepo[languages]` |
 | C / C++ | `.c` `.cpp` `.h` | `cognirepo[languages]` |
+| PHP | `.php` | `cognirepo[languages]` |
 
 Full details and roadmap: [docs/LANGUAGES.md](docs/LANGUAGES.md)
 
@@ -681,7 +684,6 @@ some items below have since landed; each is annotated where that's the case.
 
 ### Longer-term
 - **`cognirepo ask` streaming REPL** — full interactive session with tier routing, session persistence, and sub-agent delegation.
-- **Ruby, PHP, Swift grammar support** — tree-sitter grammars exist; need `_TS_FUNCTION_TYPES`/`_TS_CLASS_TYPES` mappings and call-extraction rules per language.
 - **Similarity edges in knowledge graph** — *done (COGNIREPO-202):* post-index FAISS k-NN pass over already-embedded FUNCTION/CLASS symbol vectors adds a `SIMILAR_TO` edge (cosine ≥ 0.80, max 5/node, cross-file only) between near-duplicate symbols, both directions. Gated via `config.json` → `indexing.similarity_edges` (default on below 20k candidate symbols). Weighted (discounted) into `intelligence/retrieval/hybrid.py::_graph_score`.
 - **VS Code / JetBrains extension** — surface `lookup_symbol`, `context_pack`, and `who_calls` directly in the editor sidebar without requiring an MCP-capable host.
 

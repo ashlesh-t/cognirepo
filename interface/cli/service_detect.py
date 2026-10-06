@@ -68,6 +68,9 @@ _SERVICE_MARKERS: dict[str, tuple[str | None, str]] = {
     "*.csproj":             ("rest_api", "C#/.NET"),
     # Dart / Flutter
     "pubspec.yaml":         ("frontend", "Dart/Flutter"),
+    # Swift — a SwiftPM package may be a library, CLI or server; "worker" is the neutral
+    # default (nothing in Package.swift alone says it serves HTTP).
+    "Package.swift":        ("worker",   "Swift/SwiftPM"),
 }
 
 # ── Node.js dep signals for service-type inference ────────────────────────────

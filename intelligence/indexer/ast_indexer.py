@@ -114,6 +114,8 @@ _SKIP_DIRS: frozenset[str] = frozenset({
     # use staging/ as a build artifact dir can re-add it via config.json:
     #   {"indexing": {"skip_dirs": ["staging"]}}
     "vendor", "third_party", "_output", "_artifacts",
+    # Swift / iOS (CocoaPods, SwiftPM, Carthage, Xcode build output)
+    "Pods", ".build", "Carthage", "DerivedData",
     # Bazel
     "bazel-bin", "bazel-out", "bazel-testlogs", "bazel-genfiles",
     # General build
@@ -226,11 +228,15 @@ _TS_FUNCTION_TYPES = frozenset({
     "arrow_function",             # JS/TS arrow functions
     "method_signature",           # TS interface methods
     "function_signature",         # TS ambient/overload signatures
+    "init_declaration",           # Swift init()
+    "deinit_declaration",         # Swift deinit (no `name` field — see _walk_ts)
+    "protocol_function_declaration",  # Swift protocol requirements
 })
 
 # tree-sitter node types that represent named classes / types
 _TS_CLASS_TYPES = frozenset({
     "class_definition",           # Python
+    "protocol_declaration",       # Swift (class/struct/enum/actor/extension use class_declaration)
     "class_declaration",          # Java, JS, TS
     "abstract_class_declaration", # TypeScript abstract classes
     "class_specifier",            # C++
@@ -239,10 +245,21 @@ _TS_CLASS_TYPES = frozenset({
     "record_declaration",         # C# records (also Java 16+ records)
     "interface_declaration",      # Java, TS
     "type_alias_declaration",     # TypeScript type aliases
+    "trait_declaration",          # PHP traits
     "enum_declaration",           # TypeScript / Java enums
     "type_spec",                  # Go: type Foo struct{...} / type Bar interface{...}
                                   # (name field lives on type_spec, not type_declaration)
 })
+
+# Per-language node types, keyed by language_registry.lang_name().  Kept out of the
+# shared sets above because their names collide with other grammars' nodes — Ruby's
+# `class`/`module` would otherwise also match JS class expressions and TS `module` blocks.
+_TS_LANG_FUNCTION_TYPES: dict[str, frozenset[str]] = {
+    "ruby": frozenset({"method", "singleton_method"}),  # def foo / def self.foo
+}
+_TS_LANG_CLASS_TYPES: dict[str, frozenset[str]] = {
+    "ruby": frozenset({"class", "module"}),
+}
 
 
 # ── utility ───────────────────────────────────────────────────────────────────
@@ -463,6 +480,23 @@ def _ts_docstring(node, source: bytes, ext: str) -> str:
     return ""
 
 
+# Ruby callees that are language/runtime machinery rather than user symbols.
+_RUBY_NON_SYMBOL_CALLS = frozenset({"class", "new"})
+
+
+def _swift_callee(node):
+    """Callee of a Swift call_expression, which has no field names.
+
+    Only accept the node shapes tree-sitter-swift actually produces for a callee so this
+    fallback can't misfire on another grammar (or grammar version) that reaches the shared
+    `call_expression` branch without a `function`/`name` field.
+    """
+    first = node.named_children[0] if node.named_children else None
+    if first is not None and first.type in ("simple_identifier", "navigation_expression"):
+        return first
+    return None
+
+
 def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
     """Recursively collect function-call names from a tree-sitter subtree.
 
@@ -474,7 +508,7 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
     """
     if depth > 60:
         return
-    if node.type == "call":          # Python
+    if node.type == "call":          # Python, Ruby
         fn = node.child_by_field_name("function")
         if fn:
             attr = fn.child_by_field_name("attribute")
@@ -482,18 +516,32 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
                 out.append(_ts_text(attr, source))
             elif fn.type == "identifier":
                 out.append(_ts_text(fn, source))
+        else:
+            # Ruby: `foo(x)` / `recv.foo(x)` / `Mod::foo` — callee is the `method` field.
+            # `self.class.x` / `Foo.new` would record `class` / `new`, which can never
+            # resolve to a user symbol, so skip them.
+            meth = node.child_by_field_name("method")
+            if meth and meth.type in ("identifier", "constant"):
+                meth_name = _ts_text(meth, source)
+                if meth_name not in _RUBY_NON_SYMBOL_CALLS:
+                    out.append(meth_name)
     elif node.type == "call_expression":  # JS / Java / Go
         fn = (
             node.child_by_field_name("function")
             or node.child_by_field_name("name")
+            or _swift_callee(node)  # Swift: no field names
         )
         if fn:
             prop = (
                 fn.child_by_field_name("property")  # JS/TS: obj.prop()
                 or fn.child_by_field_name("field")  # Go selector_expression: obj.Field()
             )
+            if prop is None and fn.type == "navigation_expression":  # Swift: obj.method()
+                suffix = fn.child_by_field_name("suffix")
+                prop = suffix.child_by_field_name("suffix") if suffix else None
             name_node = prop if prop else fn
-            if name_node.type in ("identifier", "property_identifier", "field_identifier"):
+            if name_node.type in ("identifier", "property_identifier", "field_identifier",
+                                  "simple_identifier"):  # simple_identifier: Swift
                 method_name = _ts_text(name_node, source)
                 out.append(method_name)
                 # For Go selector_expression, also record "receiver::method" so
@@ -504,9 +552,15 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
                         receiver_type = _ts_text(obj_node, source)
                         if receiver_type and receiver_type[0].isupper():
                             out.append(f"{receiver_type}::{method_name}")
-    elif node.type == "method_invocation":  # Java
-        name_node = node.child_by_field_name("name")
-        if name_node:
+    elif node.type in ("method_invocation",          # Java
+                       "member_call_expression",     # PHP: $obj->foo()
+                       "scoped_call_expression",     # PHP: Foo::bar()
+                       "function_call_expression"):  # PHP: foo()
+        name_node = node.child_by_field_name("name") or node.child_by_field_name("function")
+        if name_node is not None and name_node.type == "qualified_name":
+            # PHP: `\Foo\bar()` / `Foo\bar()` — record the trailing `name`
+            name_node = _php_last_name(name_node)
+        if name_node and name_node.type in ("identifier", "name"):
             out.append(_ts_text(name_node, source))
     elif node.type == "invocation_expression":  # C#: Foo() / obj.Foo() / Foo<T>()
         fn = node.child_by_field_name("function")
@@ -560,11 +614,45 @@ def _detect_dynamic_dispatch(name: str, decorators: list[str], calls: list[str])
     return "register" in calls
 
 
+def _php_last_name(node):
+    """Return the trailing `name` of a PHP `qualified_name` (`\\Ns\\E` → `E`)."""
+    names = [c for c in node.named_children if c.type == "name"]
+    return names[-1] if names else None
+
+
+def _php_type_names(clause, source: bytes) -> list[str]:
+    """Simple names listed in a PHP extends/implements/use clause.
+
+    Namespaced names are reduced to their last segment so INHERITS edges resolve
+    to the symbol by simple name.
+    """
+    out: list[str] = []
+    for c in clause.named_children:
+        if c.type == "qualified_name":
+            c = _php_last_name(c)
+        if c is not None and c.type == "name":
+            out.append(_ts_text(c, source))
+    return out
+
+
 def _ts_bases(node, source: bytes) -> list[str]:
     """Extract base class names from a class tree-sitter node."""
     bases: list[str] = []
+    # PHP: `class Foo extends Bar implements I, K { use T; }` — parent in base_clause,
+    # interfaces in class_interface_clause, traits in a body-level use_declaration.
+    for child in node.children:
+        if child.type in ("base_clause", "class_interface_clause"):
+            bases.extend(_php_type_names(child, source))
+        elif child.type == "declaration_list":
+            for member in child.named_children:
+                if member.type == "use_declaration":
+                    bases.extend(_php_type_names(member, source))
     # Python: argument_list child of class_definition
-    arg_list = node.child_by_field_name("superclasses") or node.child_by_field_name("bases")
+    arg_list = (
+        node.child_by_field_name("superclasses")
+        or node.child_by_field_name("bases")
+        or node.child_by_field_name("superclass")  # Ruby: class Foo < Bar
+    )
     if arg_list is None:
         # fallback: find argument_list or base_list child
         for child in node.children:
@@ -573,10 +661,21 @@ def _ts_bases(node, source: bytes) -> list[str]:
                 break
     if arg_list:
         for child in arg_list.children:
-            if child.type in ("identifier", "type_identifier", "attribute"):
+            if child.type in ("identifier", "type_identifier", "attribute",
+                              "constant", "scope_resolution"):  # Ruby: Bar / Mod::Bar
                 name = _ts_text(child, source)
+                if child.type == "scope_resolution":
+                    # Ruby `Auth::Base` → `Base`: call stubs resolve by simple name,
+                    # mirroring the Python path's dotted-base normalisation.
+                    name = name.rsplit("::", 1)[-1]
                 if name not in ("object", "ABC", "Enum", "IntEnum", ",", "(", ")"):
                     bases.append(name)
+    # Swift: `class Foo: Bar, Proto` — one inheritance_specifier child per parent
+    for child in node.children:
+        if child.type == "inheritance_specifier":
+            parent = child.child_by_field_name("inherits_from")
+            if parent:
+                bases.append(_ts_text(parent, source))
     return bases
 
 
@@ -591,8 +690,12 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
                 _walk_ts(child, source, ext, out, _parent_decs=decs)
         return
 
-    if node.type in _TS_FUNCTION_TYPES:
+    lang = lang_name(ext)
+    if node.type in _TS_FUNCTION_TYPES or node.type in _TS_LANG_FUNCTION_TYPES.get(lang, ()):
         name_node = node.child_by_field_name("name")
+        if name_node is None and node.type == "deinit_declaration":
+            # Swift `deinit { … }` has no name field; use the `deinit` keyword token
+            name_node = next((c for c in node.children if c.type == "deinit"), None)
         # arrow functions assigned to a variable: capture parent's name via caller
         if name_node is None and node.type == "arrow_function":
             for child in node.children:
@@ -617,7 +720,7 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
                 "faiss_id": -1,
                 "dispatch": "dynamic" if _detect_dynamic_dispatch(fn_name, fn_decs, fn_calls) else None,
             })
-    elif node.type in _TS_CLASS_TYPES:
+    elif node.type in _TS_CLASS_TYPES or node.type in _TS_LANG_CLASS_TYPES.get(lang, ()):
         name_node = node.child_by_field_name("name")
         if name_node:
             cls_name = _ts_text(name_node, source)

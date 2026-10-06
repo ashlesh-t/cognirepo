@@ -101,13 +101,16 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | Language | Extensions | Backend | Status |
 |----------|-----------|---------|--------|
 | Python | `.py` | stdlib `ast` (always available) | ✅ |
+| Swift | `.swift` | tree-sitter-swift | ✅ (if installed) |
 | TypeScript | `.ts`, `.tsx` | tree-sitter-typescript | ✅ (if installed) |
 | JavaScript | `.js`, `.jsx` | tree-sitter-javascript | ✅ (if installed) |
 | Go | `.go` | tree-sitter-go | ✅ (if installed) |
 | Rust | `.rs` | tree-sitter-rust | ✅ (if installed) |
+| Ruby | `.rb` | tree-sitter-ruby | ✅ (if installed) |
 | Java | `.java` | tree-sitter-java | ✅ (if installed) |
 | C# | `.cs` | tree-sitter-c-sharp | ✅ (if installed) |
 | C++ | `.cpp`, `.cc`, `.h`, `.hpp` | tree-sitter-cpp | ✅ (if installed) |
+| PHP | `.php` | tree-sitter-php | ✅ (if installed) |
 
 ### Indexer Features
 | Feature | Status | Notes |
@@ -332,10 +335,11 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ## 15. Test Coverage
 
-114 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+118 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
 for the current test-function count). This table is representative, not exhaustive — see
-`tests/` for the full list. This count is pinned against `tests/test_docs_sync.py`,
-which fails if this number drifts from the real glob count.
+`tests/` for the full list. This count is checked by `tests/test_docs_sync.py`, which fails if it drifts
+more than 5 files from the real glob count (a small tolerance, so concurrent PRs that each add
+a test file don't collide on this line).
 
 | Test File | What it Covers |
 |-----------|---------------|

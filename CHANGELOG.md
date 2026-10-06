@@ -19,6 +19,22 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
+- **#154 — `index-repo --files` / `--changed-only` never saved the AST index.** Both incremental paths
+  (`--files` is what the post-commit hook runs) called `index_file()` then only `kg.save()`, so a
+  hook-indexed file landed in the graph but not in `ast_index.json`/FAISS/manifest: `who_calls` saw new
+  code while `lookup_symbol`/`context_pack` did not. Both now go through one helper
+  (`_incremental_index` in `interface/cli/main.py`) that runs the #122 base-graph guard first (which also
+  loads the existing AST index), re-indexes, rebuilds the reverse index / resolves touched call stubs /
+  recounts symbols like the watcher's flush, then `indexer.save()` (under `store_lock`) before `kg.save()`.
+  `--no-embed` is now honoured on these paths, and the hook passes it, so a commit no longer loads the
+  ~2 GB embedding model. The hook's extension filter (previously a hard-coded `py|js|ts|java|go|rs|cpp|c|h`)
+  is generated from `language_registry.known_extensions()`, and `--changed-only` uses
+  `supported_extensions()` instead of its own hard-coded set; re-running `install-hooks` replaces an
+  outdated block in place. New tests (`tests/test_incremental_persist.py`) check a fresh process can
+  `lookup_symbol` a hook-indexed function and fail if either extension list diverges from the registry.
+- **#155 — `index-repo --changed-only` claimed to "fall back to a full reindex" when git failed but did
+  nothing** (exit 0, last-indexed sha recorded). It now exits `1` with an accurate message, indexes nothing
+  and does not write `last_indexed.json`.
 - **#142 — Chroma (the default vector backend) lost writes across processes and could quarantine a healthy
   store.** Measured with real processes before the fix: 6 workers x 15 adds kept **20 of 90** vectors and one
   worker died creating the store. Causes and fixes: (1) ids were minted from `count()` read once at open, so
@@ -147,6 +163,26 @@ Versioning: [Semantic Versioning](https://semver.org/)
   invocations. Constructors are not indexed as functions (same as Java). `cognirepo doctor` lists
   C#; `semantic_search_code` accepts `language="csharp"`. `record_declaration` also picks up Java
   16+ records (pinned by a test). `obj/` and `.vs/` are added to the indexer's skip dirs.
+- **#73 — PHP language support.** `.php` files are indexed via `tree-sitter-php` (now part of the
+  `languages` extra, loaded with `language_php()` so files mixing HTML and `<?php` blocks parse):
+  classes, interfaces, traits, enums, functions and methods, INHERITS edges for `extends`,
+  `implements` and trait `use` (namespaced `\Ns\Base` reduced to `Base`), and call edges for
+  `foo()`, `$obj->foo()`, `Foo::bar()` and namespaced `\Ns\foo()`. `cognirepo doctor` lists PHP;
+  `semantic_search_code` accepts `language="php"`; `index-repo --changed-only` picks up `.php` files.
+- **#75 — Swift language support.** `.swift` files are indexed via `tree-sitter-swift` (now part of
+  the `languages` extra; the grammar is versioned 0.7.x, hence `>=0.7`): classes, structs, enums,
+  actors, extensions, protocols, functions, `init`/`deinit` and protocol requirements, inheritance lists,
+  and call edges for `foo()` / `obj.foo()`. An `extension Foo {}` is recorded as a CLASS symbol named
+  `Foo` at the extension site, so `lookup_symbol("Foo")` returns the type and its extensions.
+  `Package.swift` is detected as a Swift service marker; `cognirepo doctor` lists Swift. `Pods/`,
+  `.build/`, `Carthage/` and `DerivedData/` are added to the indexer's skip dirs. The shared
+  `call_expression` callee fallback only accepts Swift callee shapes, with a JS/TS/Go regression test.
+- **#72 — Ruby language support.** `.rb` files are indexed via `tree-sitter-ruby` (now part of
+  the `languages` extra): classes, modules, instance and `def self.` methods, call edges
+  (`foo()`, `recv.foo()`, `Mod::foo`; `class`/`new` are skipped as non-symbol callees) and
+  superclasses (namespaced `Mod::Base` is reduced to `Base` so INHERITS edges resolve). Ruby's `class`/`module` node types are
+  scoped to Ruby via the new per-language `_TS_LANG_FUNCTION_TYPES`/`_TS_LANG_CLASS_TYPES` maps so
+  they never match JS class expressions or TS `module` blocks. `cognirepo doctor` lists Ruby.
 - **#137/#139 (graph half) — multi-writer safety for the graph journal.** (1) A running
   `index-repo` takes an exclusive OS lock (`graph/graph.journal.writer`, the LevelDB/Lucene
   write-lock pattern) for the whole run; a second one is refused with `indexing is already running

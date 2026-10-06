@@ -38,10 +38,13 @@ _GRAMMAR_MAP: dict[str, str] = {
     ".cs":   "tree_sitter_c_sharp",
     ".go":   "tree_sitter_go",
     ".rs":   "tree_sitter_rust",
+    ".rb":   "tree_sitter_ruby",
     ".sh":   "tree_sitter_bash",
     ".bash": "tree_sitter_bash",
+    ".php":  "tree_sitter_php",
     ".yml":  "tree_sitter_yaml",
     ".yaml": "tree_sitter_yaml",
+    ".swift": "tree_sitter_swift",
 }
 
 # Some grammar packages expose multiple language() functions instead of
@@ -49,6 +52,7 @@ _GRAMMAR_MAP: dict[str, str] = {
 _GRAMMAR_FUNC_OVERRIDE: dict[str, tuple[str, str]] = {
     ".ts":  ("tree_sitter_typescript", "language_typescript"),
     ".tsx": ("tree_sitter_typescript", "language_tsx"),
+    ".php": ("tree_sitter_php", "language_php"),  # language_php_only() rejects inline HTML
 }
 
 # Human-readable language labels (used in index-repo summary output)
@@ -66,11 +70,14 @@ _LANG_LABELS: dict[str, str] = {
     ".cs":   "C#",
     ".go":   "Go",
     ".rs":   "Rust",
+    ".rb":   "Ruby",
     ".sh":   "Shell",
     ".bash": "Shell",
+    ".php":  "PHP",
     ".pyi":  "Python",
     ".yml":  "YAML",
     ".yaml": "YAML",
+    ".swift": "Swift",
 }
 
 # Language identifiers used internally (e.g. for docstring extraction heuristics)
@@ -88,11 +95,14 @@ _LANG_NAMES: dict[str, str] = {
     ".cs":   "csharp",
     ".go":   "go",
     ".rs":   "rust",
+    ".rb":   "ruby",
     ".sh":   "bash",
     ".bash": "bash",
+    ".php":  "php",
     ".pyi":  "python",
     ".yml":  "yaml",
     ".yaml": "yaml",
+    ".swift": "swift",
 }
 
 # Python can be indexed via stdlib ast even without tree-sitter-python
@@ -175,6 +185,16 @@ def supported_extensions() -> list[str]:
         if _get_language(ext) is not None:
             result.append(ext)
     return result
+
+
+def known_extensions() -> list[str]:
+    """
+    Return every extension CogniRepo has a grammar mapping for, whether or not
+    the grammar package is installed.  Use this for artifacts that outlive the
+    current environment (e.g. the post-commit hook filter); use
+    supported_extensions() for what can be parsed right now.
+    """
+    return list(dict.fromkeys([*_PYTHON_FALLBACK_EXTS, *_GRAMMAR_MAP]))
 
 
 def is_supported(path: "Path | str") -> bool:
