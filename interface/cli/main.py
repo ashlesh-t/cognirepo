@@ -2184,6 +2184,61 @@ def _require_complete_base_graph(kg, indexer, mode: str) -> None:
     sys.exit(2)
 
 
+def _remove_lock_file(path: "str | None") -> None:
+    """Best-effort removal of the ``--remove-lock`` sentinel file."""
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
+    """Re-index *files* and persist everything that changed (COGNIREPO-154).
+
+    Shared by ``index-repo --files`` (the post-commit hook) and ``--changed-only``.
+    Previously both only saved the graph, so the AST index / FAISS / manifest never
+    learned about hook-indexed files: ``who_calls`` saw new code while
+    ``lookup_symbol`` / ``context_pack`` did not.
+
+    Order matters:
+      1. the COGNIREPO-122 guard runs first (it also loads the existing AST index, so
+         ``indexer.save()`` below writes the full index, not just these files);
+      2. ``indexer.save()`` — AST index + FAISS + manifest under ``store_lock``;
+      3. ``kg.save()``.
+    Returns the number of files indexed.
+    """
+    from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+    kg = KnowledgeGraph()
+    indexer = ASTIndexer(graph=kg)
+    _require_complete_base_graph(kg, indexer, mode)
+    # Without this index_file() embeds inline and loads the model on every run.
+    indexer._embed_enabled = embed  # pylint: disable=protected-access
+    indexed = 0
+    touched: set[str] = set()
+    for rel in files:
+        old = indexer.index_data.get("files", {}).get(rel, {}).get("symbols", [])
+        touched |= {s["name"] for s in old}
+        try:
+            record = indexer.index_file(rel, os.path.abspath(rel))
+        except Exception as exc:  # pylint: disable=broad-except
+            log.debug("index-repo %s: skip %s: %s", mode, rel, exc)
+            continue
+        touched |= {s["name"] for s in (record or {}).get("symbols", [])}
+        indexed += 1
+    # Same post-batch bookkeeping as the watcher's flush (file_watcher.py).
+    indexer._build_reverse_index()  # pylint: disable=protected-access
+    if touched:
+        indexer._resolve_call_stubs(names=touched)  # pylint: disable=protected-access
+    indexer.index_data["total_symbols"] = sum(
+        len(f.get("symbols", [])) for f in indexer.index_data["files"].values()
+    )
+    indexer.save()
+    kg.save()
+    return indexed
+
+
 def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier: "int | str | None" = None):
     """Index a repository directly. Exits with code 1 if *path* does not exist."""
     import resource  # pylint: disable=import-outside-toplevel
@@ -2939,20 +2994,41 @@ def _find_git_dir() -> "Path | None":
 
 _HOOK_SENTINEL_START = "# >>> cognirepo-hook-start <<<"
 _HOOK_SENTINEL_END   = "# >>> cognirepo-hook-end <<<"
-_HOOK_BLOCK = (
-    _HOOK_SENTINEL_START + "\n"
-    "changed=$(git diff-tree --no-commit-id -r --name-only HEAD \\\n"
-    "  | grep -E '\\.(py|js|ts|java|go|rs|cpp|c|h)$')\n"
-    "if [ -n \"$changed\" ]; then\n"
-    "  cognirepo index-repo --files $changed --no-watch 2>/dev/null &\n"
-    "fi\n"
-    + _HOOK_SENTINEL_END + "\n"
-)
+
+
+def _hook_ext_regex() -> str:
+    """ERE matching every extension the language registry knows (COGNIREPO-154).
+
+    Derived from ``language_registry.known_extensions()`` — not the installed subset —
+    so a hook written today still fires after a grammar is installed later, and adding
+    a language to the registry can't silently leave the hook behind again.
+    """
+    from intelligence.indexer.language_registry import known_extensions  # pylint: disable=import-outside-toplevel
+    exts = sorted(e.lstrip(".") for e in known_extensions())
+    return "\\.(" + "|".join(exts) + ")$"
+
+
+def _hook_block() -> str:
+    """The post-commit hook body between the cognirepo sentinels.
+
+    ``--no-embed``: the hook runs on every commit, and embedding would load the ~2 GB
+    model each time. The AST index + graph are what lookup_symbol/who_calls need; vectors
+    catch up on the next full ``index-repo``.
+    """
+    return (
+        _HOOK_SENTINEL_START + "\n"
+        "changed=$(git diff-tree --no-commit-id -r --name-only HEAD \\\n"
+        f"  | grep -E '{_hook_ext_regex()}')\n"
+        "if [ -n \"$changed\" ]; then\n"
+        "  cognirepo index-repo --files $changed --no-watch --no-embed 2>/dev/null &\n"
+        "fi\n"
+        + _HOOK_SENTINEL_END + "\n"
+    )
 
 
 def _cmd_install_hooks() -> int:
     """Write a post-commit git hook that incrementally reindexes changed files."""
-    from pathlib import Path  # pylint: disable=import-outside-toplevel
+    import re  # pylint: disable=import-outside-toplevel
     git_dir = _find_git_dir()
     if git_dir is None:
         print("install-hooks: not a git repository (no .git/ found).")
@@ -2960,14 +3036,27 @@ def _cmd_install_hooks() -> int:
     hooks_dir = git_dir / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_file = hooks_dir / "post-commit"
+    block = _hook_block()
     if hook_file.exists():
         content = hook_file.read_text(encoding="utf-8")
         if _HOOK_SENTINEL_START in content:
-            print("install-hooks: cognirepo block already present.")
+            if block in content:
+                print("install-hooks: cognirepo block already present.")
+                return 0
+            # An older block (e.g. a stale extension list) — replace it in place so
+            # re-running install-hooks picks up new languages (COGNIREPO-154).
+            content = re.sub(
+                re.escape(_HOOK_SENTINEL_START) + r".*?" + re.escape(_HOOK_SENTINEL_END) + r"\n?",
+                lambda _m: block,
+                content,
+                flags=re.DOTALL,
+            )
+            hook_file.write_text(content, encoding="utf-8")
+            print(f"install-hooks: updated cognirepo block in {hook_file}")
             return 0
-        hook_file.write_text(content.rstrip("\n") + "\n\n" + _HOOK_BLOCK, encoding="utf-8")
+        hook_file.write_text(content.rstrip("\n") + "\n\n" + block, encoding="utf-8")
     else:
-        hook_file.write_text("#!/bin/sh\n" + _HOOK_BLOCK, encoding="utf-8")
+        hook_file.write_text("#!/bin/sh\n" + block, encoding="utf-8")
     hook_file.chmod(0o755)
     print(f"install-hooks: wrote post-commit hook → {hook_file}")
     return 0
@@ -4156,6 +4245,9 @@ def _main():
                 ".cpp", ".c", ".h", ".go", ".rs", ".rb",
             }
             _changed: list[str] = []
+            from intelligence.indexer.language_registry import supported_extensions  # pylint: disable=import-outside-toplevel
+            _supported_exts = set(supported_extensions())  # COGNIREPO-154: one source of truth
+            _remove_lock = getattr(args, "remove_lock", None)
             try:
                 # staged + unstaged changes relative to HEAD
                 _diff = _sp.check_output(
@@ -4169,55 +4261,34 @@ def _main():
                     stderr=_sp.DEVNULL,
                     text=True,
                 ).splitlines()
-                _changed = [
-                    f for f in _diff + _untracked
-                    if os.path.splitext(f)[1] in _supported_exts and os.path.isfile(f)
-                ]
             except (_sp.CalledProcessError, FileNotFoundError):
-                print("Warning: git not available — falling back to full reindex.", file=sys.stderr)
+                # COGNIREPO-155: fail honestly — no silent "fallback", no last-indexed sha.
+                print(
+                    "Error: index-repo --changed-only: cannot list changed files via git "
+                    "(not a git repo, no commits yet, or git missing). Nothing was indexed.\n"
+                    "  Run `cognirepo index-repo .` for a full reindex.",
+                    file=sys.stderr,
+                )
+                _remove_lock_file(_remove_lock)
+                sys.exit(1)
+            _changed = [
+                f for f in _diff + _untracked
+                if os.path.splitext(f)[1] in _supported_exts and os.path.isfile(f)
+            ]
             if _changed:
-                _kg = _KG()
-                _indexer = _AI(graph=_kg)
-                _require_complete_base_graph(_kg, _indexer, "--changed-only")
-                _indexed = 0
-                for _rel in _changed:
-                    _abs = os.path.abspath(_rel)
-                    try:
-                        _indexer.index_file(_rel, _abs)
-                        _indexed += 1
-                    except Exception as _exc:  # pylint: disable=broad-except
-                        log.debug("index-repo --changed-only: skip %s: %s", _rel, _exc)
-                _kg.save()
+                _indexed = _incremental_index(_changed, "--changed-only", embed=not args.no_embed)
                 print(f"Re-indexed {_indexed} changed file(s): {', '.join(_changed[:5])}"
                       + (" …" if len(_changed) > 5 else ""))
             else:
                 print("No changed files detected.")
             _write_last_indexed_sha(os.path.abspath(getattr(args, "path", ".")))
-            _remove_lock = getattr(args, "remove_lock", None)
-            if _remove_lock and os.path.exists(_remove_lock):
-                try:
-                    os.remove(_remove_lock)
-                except OSError:
-                    pass
+            _remove_lock_file(_remove_lock)
             return
 
         # ── selective reindex (--files) ──────────────────────────────────────
         if getattr(args, "files", None):
-            from data.graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
-            from intelligence.indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
-            _kg = _KG()
-            _indexer = _AI(graph=_kg)
-            _require_complete_base_graph(_kg, _indexer, "--files")
-            _indexed = 0
-            for _rel in args.files:
-                _abs = os.path.abspath(_rel)
-                if os.path.isfile(_abs):
-                    try:
-                        _indexer.index_file(_rel, _abs)
-                        _indexed += 1
-                    except Exception as _exc:  # pylint: disable=broad-except
-                        log.debug("index-repo --files: skip %s: %s", _rel, _exc)
-            _kg.save()
+            _files = [f for f in args.files if os.path.isfile(os.path.abspath(f))]
+            _indexed = _incremental_index(_files, "--files", embed=not args.no_embed)
             print(f"Re-indexed {_indexed} file(s).")
             return
         # ── full repo walk ────────────────────────────────────────────────────
