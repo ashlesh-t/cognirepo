@@ -27,24 +27,25 @@ class TestAtomicIndexPersistence:
             assert json.load(f) == {"a": 1}
         assert not os.path.exists(target + ".tmp")
 
-    def test_load_json_self_heal_returns_default_on_corruption(self, tmp_path):
+    def test_read_json_or_default_never_touches_a_corrupt_file(self, tmp_path):
+        """COGNIREPO-135: a reader returns the default and reports the error — it must NOT
+        rename the file (the 'corruption' may be a concurrent writer)."""
         from intelligence.indexer.ast_indexer import ASTIndexer
         target = str(tmp_path / "ast_index.json")
-        # Simulate the truncated-mid-write corruption observed on kubernetes
+        broken = '{"files": {"a.py": {"symbols": ['   # truncated-mid-write, as seen on kubernetes
         with open(target, "w", encoding="utf-8") as f:
-            f.write('{"files": {"a.py": {"symbols": [')
-        result = ASTIndexer._load_json_self_heal(target, {"files": {}})
-        assert result == {"files": {}}
-        # Corrupt file renamed aside, not left in place
-        assert not os.path.exists(target)
-        assert os.path.exists(target + ".corrupt")
+            f.write(broken)
+        value, err = ASTIndexer._read_json_or_default(target, {"files": {}})
+        assert value == {"files": {}} and err is not None
+        assert open(target, encoding="utf-8").read() == broken     # untouched, in place
+        assert [n for n in os.listdir(tmp_path) if n.startswith("ast_index.json")] == ["ast_index.json"]
 
-    def test_load_json_self_heal_reads_valid_file(self, tmp_path):
+    def test_read_json_or_default_reads_valid_file(self, tmp_path):
         from intelligence.indexer.ast_indexer import ASTIndexer
         target = str(tmp_path / "ok.json")
         with open(target, "w", encoding="utf-8") as f:
             json.dump([1, 2, 3], f)
-        assert ASTIndexer._load_json_self_heal(target, []) == [1, 2, 3]
+        assert ASTIndexer._read_json_or_default(target, []) == ([1, 2, 3], None)
 
 
 # ── skip dirs (indexer/ast_indexer.py) ────────────────────────────────────────

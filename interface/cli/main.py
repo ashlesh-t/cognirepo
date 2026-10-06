@@ -284,9 +284,9 @@ def _cmd_graph_repair(apply: bool = False) -> int:
     Dry-run by default — reports what integrity_report() found without
     mutating the graph. --apply removes them via remove_file_nodes(), which
     redirects any live call/inherit edges onto an unresolved CONCEPT stub
-    rather than dropping them, and leaves orphan CONCEPT stubs untouched
-    (they carry no 'file' attr, so nodes_for_file() never matches them).
-    See COGNIREPO-201.
+    rather than dropping them. It also drops degree-0 ``symbol::<name>`` stubs
+    (dead leftovers of deleted symbols — COGNIREPO-128); other edge-free
+    CONCEPT nodes are left alone. See COGNIREPO-201.
     """
     # pylint: disable=import-outside-toplevel
     from data.graph.knowledge_graph import KnowledgeGraph
@@ -295,14 +295,22 @@ def _cmd_graph_repair(apply: bool = False) -> int:
     repo_root = os.path.dirname(os.path.abspath(get_path("")))
     report = kg.integrity_report(repo_root)
     dangling = report["dangling_files"]
+    stubs = report.get("orphan_stubs", [])
 
-    if not dangling:
+    if not dangling and not stubs:
         print("graph repair: no dangling file nodes found.")
         return 0
 
-    print(f"graph repair: {len(dangling)} dangling file path(s) found:")
-    for f in dangling:
-        print(f"  {f}")
+    if dangling:
+        print(f"graph repair: {len(dangling)} dangling file path(s) found:")
+        for f in dangling:
+            print(f"  {f}")
+    if stubs:
+        print(f"graph repair: {len(stubs)} orphan symbol stub(s) (degree 0) found:")
+        for s in stubs[:10]:
+            print(f"  {s}")
+        if len(stubs) > 10:
+            print(f"  … and {len(stubs) - 10} more")
 
     if not apply:
         print("\nDry run — no changes made. Re-run with --apply to prune.")
@@ -311,8 +319,13 @@ def _cmd_graph_repair(apply: bool = False) -> int:
     removed_total = 0
     for f in dangling:
         removed_total += len(kg.remove_file_nodes(f))
+    # after the file removals: they can orphan further stubs, and old graphs carry leftovers
+    stubs_removed = len(kg.remove_orphan_stubs())
     kg.save()
-    print(f"\nRemoved {removed_total} node(s) across {len(dangling)} dangling file path(s).")
+    if dangling:
+        print(f"\nRemoved {removed_total} node(s) across {len(dangling)} dangling file path(s).")
+    if stubs_removed:
+        print(f"Removed {stubs_removed} orphan symbol stub(s).")
     return 0
 
 
@@ -559,12 +572,14 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         _integrity = _kg.integrity_report(_repo_root)
         _n_orphans = len(_integrity["orphans"])
         _n_dangling = len(_integrity["dangling_files"])
-        if _n_orphans == 0 and _n_dangling == 0:
+        _n_stubs = len(_integrity.get("orphan_stubs", []))
+        if _n_orphans == 0 and _n_dangling == 0 and _n_stubs == 0:
             _ok("Graph integrity — 0 orphans · 0 dangling files")
         else:
             _warn(
                 f"Graph integrity — {_n_orphans} orphan node(s), "
-                f"{_n_dangling} dangling file(s)",
+                f"{_n_dangling} dangling file(s)"
+                + (f", {_n_stubs} orphan symbol stub(s)" if _n_stubs else ""),
                 "Run: cognirepo graph repair --apply",
             )
     except Exception as exc:  # pylint: disable=broad-except
@@ -1097,6 +1112,43 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
                 _ok("Encryption — keyring + cryptography available")
     except Exception as _exc:  # pylint: disable=broad-except
         logger.debug("doctor: encryption deps check failed: %s", _exc)
+
+    # ── Check 22b: the `cognirepo` on PATH (COGNIREPO-124) ───────────────────
+    # Check 22 above inspects the interpreter RUNNING doctor. Hooks, MCP clients and cron run
+    # the `cognirepo` found on PATH — often a pipx venv — which can lack keyring/cryptography,
+    # have no usable keyring backend, or be a stale snapshot of an older working tree.
+    try:
+        from core.security import get_storage_config as _gsc  # pylint: disable=import-outside-toplevel
+        from interface.cli import install_probe as _ip  # pylint: disable=import-outside-toplevel
+        from pathlib import Path as _P  # pylint: disable=import-outside-toplevel
+        _encrypt_on = bool(_gsc()[0])
+        _ours_main = os.path.abspath(__file__)
+        _root = _P(__file__).resolve().parent.parent.parent
+        _src_root = str(_root) if (_root / "pyproject.toml").exists() else None
+        _cli_py = _ip.resolve_cli_interpreter()
+        _targets: list[tuple[str, str, bool, bool]] = []   # (label, python, check_modules, check_stale)
+        if _encrypt_on:
+            _targets.append(("this interpreter", sys.executable, False, False))
+        if _cli_py and not _ip.same_interpreter(_cli_py, sys.executable):
+            _targets.append(("`cognirepo` on PATH", _cli_py, True, True))
+        elif _cli_py is None and verbose:
+            print("  ○  PATH cognirepo — not found or not a script; interpreter unknown")
+        for _label, _py, _mods, _stale in _targets:
+            _probe = _ip.probe_interpreter(_py)
+            for _f in _ip.diagnose(
+                _probe, label=_label, python=_py, encrypt=_encrypt_on, check_modules=_mods,
+                ours_path=_ours_main, ours_sha=_ip.file_sha256(_ours_main), ours_version=_ver,
+                source_root=_src_root, check_stale=_stale,
+            ):
+                if _f.level == "fail":
+                    _fail(_f.message, _f.hint)
+                    issues += 1
+                elif _f.level == "warn":
+                    _warn(_f.message, _f.hint)
+                elif verbose:
+                    _ok(_f.message)
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: PATH install check failed: %s", _exc)
 
     # ── Check 23: package importable from a neutral cwd ──────────────────────
     # A stale editable install (e.g. left over from the pre-restructure layout)
@@ -2422,14 +2474,20 @@ def _write_last_indexed_sha(repo_path: str) -> None:
         ).strip()
         path = get_path("index/last_indexed.json")
         atomic_json_dump(
-            path, {"commit_sha": sha, "indexed_at": datetime.now(timezone.utc).isoformat()}, indent=None,
+            path, {"commit_sha": sha, "indexed_at": datetime.now(timezone.utc).isoformat()},
+            indent=None, fsync=False,  # hint file: atomic, no fsync
         )
     except Exception:  # pylint: disable=broad-except
         pass  # non-git repos silently skip
 
 
-def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
-    """Start the file watcher, optionally forking into the background."""
+def _start_watcher(path: str, kg, indexer, daemon: bool = False, register_self: bool = False) -> None:
+    """Start the file watcher, optionally forking into the background.
+
+    ``register_self`` (foreground mode, ``watch --foreground`` / the systemd unit): write this
+    process's own PID file so ``list`` / ``watch --status`` / the singleton check / ``--stop`` see
+    it, exactly as for a forked daemon. The crash guard removes it on exit (COGNIREPO-125).
+    """
     import os  # pylint: disable=import-outside-toplevel
     from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
     from intelligence.indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
@@ -2471,6 +2529,13 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
             print(f"[cognirepo] View : cognirepo list -n {child_pid} --view")
             return
         # child (grandchild) continues below
+
+    if register_self and not daemon:
+        from interface.cli.daemon import flock_register_watcher  # pylint: disable=import-outside-toplevel
+        from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
+        flock_register_watcher(
+            os.getpid(), f"watcher-{_Path(abs_path).name}-{ts}", abs_path, "stderr (foreground)",
+        )
 
     behaviour = BehaviourTracker(graph=kg, store_fn=store_memory)
 
@@ -3593,6 +3658,15 @@ def _main():
         help="Start the watcher if it is not running or its heartbeat is stale (> 60s).",
     )
     p_watch_cmd.add_argument(
+        "--foreground", "--daemon-foreground",
+        dest="foreground",
+        action="store_true",
+        default=False,
+        help="Run the watcher in the foreground under the crash guard (for systemd/launchd). "
+             "Registers itself, logs to stderr, stops cleanly on SIGTERM. "
+             "(--daemon-foreground is the name older generated units use.)",
+    )
+    p_watch_cmd.add_argument(
         "--path",
         default=".",
         metavar="DIR",
@@ -4524,7 +4598,21 @@ def _main():
             _start_watcher(abs_watch_path, kg, indexer, daemon=True)
             return
 
-        print("Use --status or --ensure-running. See: cognirepo watch --help")
+        if getattr(args, "foreground", False):
+            running = is_watcher_running_for_path(abs_watch_path)
+            if running:
+                print(f"[cognirepo] Watcher already running for this path (PID {running['pid']}); "
+                      "not starting a second one.")
+                return
+            from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+            kg = KnowledgeGraph()
+            indexer = ASTIndexer(graph=kg)
+            indexer.load()
+            _start_watcher(abs_watch_path, kg, indexer, daemon=False, register_self=True)
+            return
+
+        print("Use --status, --ensure-running or --foreground. See: cognirepo watch --help")
         return
 
     if args.command == "install-hooks":
@@ -4537,7 +4625,10 @@ def _main():
         sys.exit(_cmd_update_directives())
 
     if args.command == "list":
-        from interface.cli.daemon import print_watcher_list, view_watcher_logs, stop_watcher  # pylint: disable=import-outside-toplevel
+        from interface.cli.daemon import (  # pylint: disable=import-outside-toplevel
+            print_watcher_list, view_watcher_logs, stop_watcher_and_wait,
+            CLI_STOP_WAIT_SECS,
+        )
         if args.view or args.stop:
             if not args.name:
                 print("--view and --stop require -n <PID_OR_NAME>.", file=sys.stderr)
@@ -4545,9 +4636,22 @@ def _main():
             if args.view:
                 view_watcher_logs(args.name)
             elif args.stop:
-                ok = stop_watcher(args.name)
-                if ok:
-                    print(f"[cognirepo] Sent SIGTERM to watcher '{args.name}'.")
+                # Waits for the process to be GONE before reporting success (COGNIREPO-126):
+                # it used to print "Sent SIGTERM" and clear the registration immediately, while
+                # the watcher was still flushing — and `--ensure-running` then started a second one.
+                outcome = stop_watcher_and_wait(args.name)
+                if outcome == "stopped":
+                    print(f"[cognirepo] Watcher '{args.name}' stopped.")
+                elif outcome == "killed":
+                    print(f"[cognirepo] Watcher '{args.name}' did not exit within "
+                          f"{CLI_STOP_WAIT_SECS:.0f}s and was killed (SIGKILL). Unflushed edits may be "
+                          "missing from the index — run: cognirepo index-repo --changed-only",
+                          file=sys.stderr)
+                elif outcome == "failed":
+                    print(f"[cognirepo] Could not stop watcher '{args.name}': it is still running. "
+                          "Its registration was left in place so no second watcher is started.",
+                          file=sys.stderr)
+                    sys.exit(1)
                 else:
                     print(f"[cognirepo] No running watcher found matching '{args.name}'.",
                           file=sys.stderr)

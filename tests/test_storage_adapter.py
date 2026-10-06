@@ -17,6 +17,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -262,25 +263,24 @@ class TestChromaDBAdapter:
 # ── get_vector_adapter() factory ──────────────────────────────────────────────
 
 class TestGetVectorAdapter:
-    def test_default_returns_local_vector_db(self, tmp_path, monkeypatch):
-        """When config.json is absent (or has no vector_backend), return LocalVectorDB."""
+    def test_default_backend_is_chroma_and_never_touches_the_real_home(self, isolated_cognirepo, tmp_path, monkeypatch):
+        """No vector_backend configured -> chroma (the documented default), opened under the ACTIVE
+        .cognirepo dir. This test used to patch _find_config to None, which made the factory fall
+        back to ~/.cognirepo: it opened (and, via a stale sentinel, repeatedly quarantined) the
+        developer's REAL chroma store — the cause of this test's intermittent failures (#142)."""
+        from core.vector_db.chroma_adapter import ChromaDBAdapter, _CHROMA_AVAILABLE
         from core.vector_db.local_vector_db import LocalVectorDB
-        monkeypatch.setattr(
-            "core.vector_db.factory._find_config",
-            lambda: None,
-        )
         from core.vector_db.factory import get_vector_adapter
-        monkeypatch.setattr(
-            "core.vector_db.local_vector_db._index_file",
-            lambda: str(tmp_path / "semantic.index"),
-        )
-        monkeypatch.setattr(
-            "core.vector_db.local_vector_db._meta_file",
-            lambda: str(tmp_path / "semantic_metadata.json"),
-        )
-        monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
+        from core.config.paths import get_cognirepo_dir
+        fake_home = tmp_path / "fake-home"
+        monkeypatch.setenv("HOME", str(fake_home))
         adapter = get_vector_adapter()
-        assert isinstance(adapter, LocalVectorDB)
+        if _CHROMA_AVAILABLE:
+            assert isinstance(adapter, ChromaDBAdapter)
+            assert os.path.realpath(adapter._path).startswith(os.path.realpath(get_cognirepo_dir()))
+        else:
+            assert isinstance(adapter, LocalVectorDB)
+        assert not (fake_home / ".cognirepo").exists(), "the factory must not fall back to ~/.cognirepo"
 
     def test_chroma_config_returns_chroma_adapter_class(self, tmp_path, monkeypatch):
         """When config says 'chroma', the factory tries to return ChromaDBAdapter."""
