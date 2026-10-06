@@ -132,9 +132,9 @@ def _check_decisions(instruction: str) -> list[dict]:
     if not _REVERSAL_CUES.search(instruction):
         return []
 
-    from data.memory.episodic_memory import _load, _build_bm25, _tokenize  # pylint: disable=import-outside-toplevel
+    from data.memory.episodic_memory import _load_readonly, _build_bm25, _tokenize  # pylint: disable=import-outside-toplevel
 
-    data = _load()
+    data = _load_readonly()
     decisions = [e for e in data if (e.get("metadata") or {}).get("type") == "decision"]
     if not decisions:
         return []

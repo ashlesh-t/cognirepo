@@ -203,7 +203,6 @@ _ALLOWED: dict[tuple[str, str], str] = {
     ("interface/cli/daemon.py", "write_systemd_unit"): "generated user unit file, not a store",
     ("interface/server/mcp_server.py", "_spawn_background_reindex"): "O_EXCL lock-file creation is itself atomic",
     ("interface/server/mcp_server.py", "_write_manifest"): "dev-time package manifest, not .cognirepo data",
-    ("core/vector_db/factory.py", "get_vector_adapter"): "tiny pid sentinel; Chroma locking is tracked in #142",
     ("interface/tools/bg_progress.py", "_write"): "already tmp + os.replace",
     ("interface/tools/bg_progress.py", "request_stop"): "already tmp + os.replace",
     ("interface/tools/progress_window.py", "_request_stop"): "already tmp + os.replace",

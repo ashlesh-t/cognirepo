@@ -8,7 +8,113 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Security
+- **`fsspec` 2026.3.0 → 2026.6.0 (CVE-2026-104851, HIGH — arbitrary code execution via crafted reference
+  documents).** Flagged by Trivy and pip-audit. cognirepo never imports fsspec; it is a transitive
+  dependency of `huggingface_hub` (which `fastembed` uses to fetch the embedding model), and the affected
+  component is fsspec's reference filesystem, which cognirepo does not use — so the practical exposure was
+  nil, but it gated CI. Impact check: `huggingface_hub` requires only `fsspec>=2023.5.0` (no upper bound),
+  nothing in the 2026.4.0 / 2026.6.0 changelogs touches a feature this project or `huggingface_hub` use on
+  this path (HTTP `pipe_file`, tar/zip closing, `dirFS`, `referenceFS`, FTP, `expand_path` globbing), and
+  the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
+
 ### Fixed
+- **#142 — Chroma (the default vector backend) lost writes across processes and could quarantine a healthy
+  store.** Measured with real processes before the fix: 6 workers x 15 adds kept **20 of 90** vectors and one
+  worker died creating the store. Causes and fixes: (1) ids were minted from `count()` read once at open, so
+  concurrent processes — and any `add` after a `remove()` — re-used live ids and chroma **silently ignored**
+  the add; ids now come from a counter file advanced under a cross-process lock before the add (never below the
+  live count; numeric strings are kept because callers use them as row ids; `_next_id - 1` still names the id
+  just stored). (2) Concurrent first-time creation raced inside chroma's schema setup (`table collections
+  already exists`); creation is now serialized behind the lock. (3) The open-sentinel was one shared `.opening`
+  file: one opener's cleanup erased another's evidence, and a sentinel left by an opener that was merely
+  **killed** (OOM, hook timeout) made the next process rename the whole store — even while a peer had it open.
+  Sentinels are now per process (`.opening.<pid>`, pid + start time so pid reuse can't fool it), live openers
+  write `.open.<pid>` markers, and a store is quarantined only if no live peer holds it **and a throw-away
+  subprocess still fails to open it** — a store that opens fine is never renamed. After a quarantine chroma's
+  per-process client cache is cleared. (4) The store path is resolved through `get_cognirepo_dir()` like every
+  other store (it used to walk up from the cwd and fall back to `~/.cognirepo`, which is also why
+  `test_default_returns_local_vector_db` kept opening — and quarantining — the developer's REAL home store).
+  Docs now state the real default backend (`chroma`). Chroma's own concurrent adds were measured to be safe
+  once ids are unique; a long-lived reader's HNSW view of a peer's very recent writes was seen to lag (not
+  addressed).
+- **#125 — the generated systemd unit could never start.** It emitted `watch --daemon-foreground`, a flag
+  that did not exist, so systemd crash-looped. New `cognirepo watch --foreground` (alias
+  `--daemon-foreground`, so units already written start working) runs the watcher in the foreground under
+  the crash guard, registers its own PID file (so `list`, `watch --status`, the singleton check and
+  `--stop` see it) and logs to stderr/journald. The unit now uses it, quotes a repo path with spaces as one
+  argument and sets `TimeoutStopSec=60`. A test starts, queries and stops a real watcher with both flags.
+- **#126 — `cognirepo list --stop` reported success and cleared the registration while the watcher kept
+  running, so `watch --ensure-running` started a second watcher on the same repo.** `stop_watcher_and_wait()`
+  now sends SIGTERM, waits up to 30 s for the process to be gone, escalates to SIGKILL (only if
+  `/proc/<pid>/cmdline` still looks like cognirepo — never a recycled pid), and removes the PID/heartbeat
+  files only afterwards; outcomes are `stopped` / `killed` (warns about unflushed edits) / `failed`
+  (registration kept, exit 1) / `not_found`. In the watcher: SIGTERM sets a stop flag the loop checks even if
+  the `KeyboardInterrupt` is swallowed, arms a watchdog that forces exit if the final flush hangs for 20 s,
+  a second SIGTERM exits immediately, and a stop during a crash never restarts. Also: a zombie
+  (exited, un-reaped) process no longer counts as alive — `kill(pid, 0)` succeeds on one, which made a
+  stopped watcher show as "running" forever.
+- **#124 — `doctor` now inspects the `cognirepo` on PATH, not just the interpreter running it.** Hooks and
+  MCP clients launch the PATH `cognirepo` (typically a pipx venv), which can differ from a dev checkout's
+  interpreter. New `interface/cli/install_probe.py` reads that script's shebang, probes the interpreter in
+  a read-only subprocess (imports `keyring`/`cryptography`, `keyring.get_keyring()` and a throw-away
+  `get_password`, version, and a content hash of its `interface/cli/main.py`) and `doctor` reports, with the
+  exact fix: `storage.encrypt: true` but the packages are missing (`pipx inject cognirepo keyring
+  cryptography`, or a `pip install` for that interpreter), a keyring with the fail/null backend or a failing
+  lookup (keys unreadable ⇒ encrypted stores stay locked), and a PATH install that is a stale snapshot of the
+  working tree (`pipx install --force <repo>`). Interpreters are compared by environment root, not
+  `realpath`: every venv's `python` symlinks to the same system python, so a pipx venv and a dev venv looked
+  identical and the PATH install was never checked (found by running it against a real pipx install).
+- **Heartbeat left behind for a dead watcher (intermittent CI failure).** The heartbeat thread had no stop
+  signal, so a write still in flight — or the very first write, if the watcher exits straight away — could
+  land *after* `clear_heartbeat_if_owned()` and recreate a heartbeat for a dead process, which then reported
+  "Heartbeat: OK" for the next two minutes. `start_heartbeat_thread()` now has a stop event and
+  `stop_heartbeat_thread()` stops and joins it; `run_watcher_with_crash_guard()` does that *before* removing
+  the PID file and heartbeat. The fsync added to atomic writes in #134 had widened the window enough to fail
+  `test_pid_file_and_heartbeat_removed_on_clean_exit` on CI runners; a regression test reproduces the race
+  deterministically with a slow write.
+
+- **#128 — deleting a file left an orphan degree-0 `symbol::<name>` stub in the graph.**
+  `KnowledgeGraph._redirect_edges_to_stub` decided "something references this symbol" from its raw
+  neighbours, which include its own `DEFINED_IN` edge to the FILE node being removed in the same
+  call, so even an unreferenced function got a stub. `remove_file_nodes` now excludes the nodes it is
+  removing, and a symbol only gets a stub if it is referenced from outside the file (an incoming
+  `CALLED_BY` or `INHERITS` edge — call edges are stored in both directions, so adjacency alone
+  can't tell a deleted *caller* from a deleted *callee*). Stubs that lose their last edge because
+  their caller file was removed are dropped too. New `orphan_stubs()` / `remove_orphan_stubs()`;
+  `integrity_report()` gains `orphan_stubs`, `cognirepo doctor` counts them and
+  `cognirepo graph repair --apply` removes existing leftovers. Callers in other files still keep
+  their edges via an unresolved stub (D10 behaviour unchanged).
+
+- **#136 — unlocked read-modify-write lost updates and duplicated ids.** Every RMW of a shared store
+  now runs under the cross-process lock and reloads *inside* it: `episodic.log_event` /
+  `mark_stale` (ids allocated inside the lock), the learnings `store()` / `deprecate()` (a per-store
+  lock file, since the global learnings live in `~/.cognirepo` outside any repo-local lock),
+  `LocalVectorDB` (`add` / `add_batch` remember unsaved vectors and `save()` merges them into newer
+  disk state via `_sync_locked` instead of overwriting another process's vectors; `update_behaviour_score`
+  / `deprecate_row` / `suppress_row` reload under the lock before editing), and `ProjectMemory.add`
+  (reloads from disk inside the lock; an unreadable store is never written over). Measured against
+  the old code with real processes: 8 × 50 `log_event` kept 116 of 400 events, 8 × 25 learnings kept
+  158 of 200, 8 × 15 vector adds kept 40 of 120; all now exact. `store_lock()` is now **re-entrant
+  for the same thread** (nested use used to block 15 s on its own fd — part of #141) and accepts
+  `lock_path=`. Still open from #141: catching `filelock.Timeout`, shorter lock holds in
+  `ASTIndexer.save` / `KnowledgeGraph.save`, the org-graph lock timeout.
+- **#135 — readers no longer rename, sweep or overwrite live stores on a failed read.** New
+  `core/config/safe_read.py` (`read_retry`, `StoreUnreadableError`, `looks_encrypted`,
+  `quarantine_if_stably_corrupt`). Readers retry briefly and then raise or serve an empty value *in
+  memory* — they never mutate the file. Only a **writer** quarantines, and only a file that stays
+  unreadable *and unchanged* across two checks (bytes kept in `<file>.corrupt-<ts>`, nothing deleted);
+  Fernet ciphertext that cannot be decrypted is treated as locked, never as corrupt. Fixed:
+  `episodic._load` / `learning_store._load` returned `[]` on a decode error and the next write saved
+  it (history wiped); `LocalVectorDB.__init__` (built on every `store_memory`) renamed
+  `semantic.index` to `.stale` on any read failure and `_load_meta` renamed the metadata and wrote
+  `[]` over it; `ASTIndexer.load()` renamed `ast.index` / `ast_index.json` / `ast_metadata.json` and
+  swept `*.tmp` files without the lock — deleting a live writer's scratch file made its
+  `os.replace` fail. The sweep now runs only under `store_lock`, only on files older than 10
+  minutes. A store that failed to load is never saved over (`LocalVectorDB`, `ASTIndexer.save()`
+  refuse until a writer quarantines it or it heals). Episodic rotation no longer trims entries when
+  the archive can't be read or written. A platform-mismatched FAISS binary is moved to `.stale` by
+  the writer, not on load.
 - **#134 — every store is now written atomically.** New `core/config/atomic.py`
   (`atomic_write` / `atomic_json_dump` / `atomic_write_with` / `atomic_path`: unique scratch file in
   the same directory → fsync → `os.replace` → fsync dir; the old file survives any failure). All

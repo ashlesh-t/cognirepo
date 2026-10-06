@@ -147,6 +147,26 @@ _TEST_JWT_SECRET = "test-jwt-secret-32chars-for-tests"
 _TEST_PROJECT_ID = "test-project-00000000-0000-0000-0000"
 
 
+@pytest.fixture
+def real_path_install():
+    """Opt out of ``_hermetic_path_install``: the test resolves/probes the PATH ``cognirepo``."""
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_path_install(request, monkeypatch):
+    """`cognirepo doctor` probes the interpreter behind the `cognirepo` on PATH (COGNIREPO-124).
+
+    Which one that is — and whether it is stale — depends on the machine running the tests, and
+    a new warning changes doctor's exit code (0 healthy / 1 warnings / 2 errors). Without this,
+    every doctor test fails on a dev box with an old pipx install. Tests that exercise the
+    PATH check request the ``real_path_install`` fixture instead.
+    """
+    if "real_path_install" in request.fixturenames:
+        return
+    from interface.cli import install_probe
+    monkeypatch.setattr(install_probe, "resolve_cli_interpreter", lambda *_a, **_k: None)
+
+
 @pytest.fixture(autouse=True)
 def isolated_cognirepo(tmp_path, monkeypatch):
     """
