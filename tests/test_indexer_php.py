@@ -97,9 +97,27 @@ class TestPhpIndexing:
         assert {"decode", "check", "strlen"} <= set(verify["calls"])
         assert "error_log" in _by_name(syms, "log", 7)["calls"]
 
-    def test_extends_base_extracted(self, fresh_indexer, tmp_path, monkeypatch):
+    def test_extends_and_implements_extracted(self, fresh_indexer, tmp_path, monkeypatch):
         syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
-        assert _by_name(syms, "TokenService", 10)["bases"] == ["BaseService"]
+        assert _by_name(syms, "TokenService", 10)["bases"] == ["BaseService", "Verifier"]
+
+    def test_namespaced_bases_interfaces_traits_and_calls(
+        self, fresh_indexer, tmp_path, monkeypatch
+    ):
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "A.php", """\
+            <?php
+            class A extends \\Ns\\E implements I, \\X\\K {
+                use T, \\Y\\U;
+                function f() { \\Foo\\bar(); Foo\\baz(); }
+            }
+        """)
+        record = fresh_indexer.index_file("A.php", str(src))
+        a = next(s for s in record["symbols"] if s["name"] == "A")
+        # namespaces stripped so INHERITS edges resolve by simple name
+        assert a["bases"] == ["E", "I", "K", "T", "U"]
+        f = next(s for s in record["symbols"] if s["name"] == "f")
+        assert {"bar", "baz"} <= set(f["calls"])
 
     def test_inline_html_file_parses(self, fresh_indexer, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)

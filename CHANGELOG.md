@@ -143,9 +143,10 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ### Added
 - **#73 — PHP language support.** `.php` files are indexed via `tree-sitter-php` (now part of the
   `languages` extra, loaded with `language_php()` so files mixing HTML and `<?php` blocks parse):
-  classes, interfaces, traits, enums, functions and methods, `extends` bases, and call edges for
-  `foo()`, `$obj->foo()` and `Foo::bar()`. `cognirepo doctor` lists PHP; `semantic_search_code`
-  accepts `language="php"`; `index-repo --changed-only` picks up `.php` files.
+  classes, interfaces, traits, enums, functions and methods, INHERITS edges for `extends`,
+  `implements` and trait `use` (namespaced `\Ns\Base` reduced to `Base`), and call edges for
+  `foo()`, `$obj->foo()`, `Foo::bar()` and namespaced `\Ns\foo()`. `cognirepo doctor` lists PHP;
+  `semantic_search_code` accepts `language="php"`; `index-repo --changed-only` picks up `.php` files.
 - **#137/#139 (graph half) — multi-writer safety for the graph journal.** (1) A running
   `index-repo` takes an exclusive OS lock (`graph/graph.journal.writer`, the LevelDB/Lucene
   write-lock pattern) for the whole run; a second one is refused with `indexing is already running

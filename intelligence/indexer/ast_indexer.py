@@ -505,6 +505,9 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
                        "scoped_call_expression",     # PHP: Foo::bar()
                        "function_call_expression"):  # PHP: foo()
         name_node = node.child_by_field_name("name") or node.child_by_field_name("function")
+        if name_node is not None and name_node.type == "qualified_name":
+            # PHP: `\Foo\bar()` / `Foo\bar()` — record the trailing `name`
+            name_node = _php_last_name(name_node)
         if name_node and name_node.type in ("identifier", "name"):
             out.append(_ts_text(name_node, source))
     for child in node.children:
@@ -546,14 +549,39 @@ def _detect_dynamic_dispatch(name: str, decorators: list[str], calls: list[str])
     return "register" in calls
 
 
+def _php_last_name(node):
+    """Return the trailing `name` of a PHP `qualified_name` (`\\Ns\\E` → `E`)."""
+    names = [c for c in node.named_children if c.type == "name"]
+    return names[-1] if names else None
+
+
+def _php_type_names(clause, source: bytes) -> list[str]:
+    """Simple names listed in a PHP extends/implements/use clause.
+
+    Namespaced names are reduced to their last segment so INHERITS edges resolve
+    to the symbol by simple name.
+    """
+    out: list[str] = []
+    for c in clause.named_children:
+        if c.type == "qualified_name":
+            c = _php_last_name(c)
+        if c is not None and c.type == "name":
+            out.append(_ts_text(c, source))
+    return out
+
+
 def _ts_bases(node, source: bytes) -> list[str]:
     """Extract base class names from a class tree-sitter node."""
     bases: list[str] = []
-    # PHP: `class Foo extends Bar` — the parent is a name inside base_clause
+    # PHP: `class Foo extends Bar implements I, K { use T; }` — parent in base_clause,
+    # interfaces in class_interface_clause, traits in a body-level use_declaration.
     for child in node.children:
-        if child.type == "base_clause":
-            bases.extend(_ts_text(c, source) for c in child.children
-                         if c.type in ("name", "qualified_name"))
+        if child.type in ("base_clause", "class_interface_clause"):
+            bases.extend(_php_type_names(child, source))
+        elif child.type == "declaration_list":
+            for member in child.named_children:
+                if member.type == "use_declaration":
+                    bases.extend(_php_type_names(member, source))
     # Python: argument_list child of class_definition
     arg_list = node.child_by_field_name("superclasses") or node.child_by_field_name("bases")
     if arg_list is None:
