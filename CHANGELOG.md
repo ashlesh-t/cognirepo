@@ -19,6 +19,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
+- **#123 — the post-commit hook no longer discards its errors.** It ran `index-repo --files … 2>/dev/null &`,
+  so when the pipx venv lost `keyring` every hook run failed to save the encrypted graph and nobody saw it.
+  The hook now appends all output to `<store>/hook.log` (rotated at 256 KiB, one `.1` kept) and writes the
+  run's `ts`/`exit`/`files` to `<store>/hook.last` — in plain shell, so it also records `cognirepo: command
+  not found` (exit 127). It is still backgrounded, and a repo's very first commit is now seen
+  (`diff-tree --root`). `cognirepo doctor` warns about a failed last run and about an outdated installed
+  block (re-run `install-hooks`); `get_session_brief` lists a failed hook run under `known_blind_spots`.
 - **#154 — `index-repo --files` / `--changed-only` never saved the AST index.** Both incremental paths
   (`--files` is what the post-commit hook runs) called `index_file()` then only `kg.save()`, so a
   hook-indexed file landed in the graph but not in `ast_index.json`/FAISS/manifest: `who_calls` saw new
