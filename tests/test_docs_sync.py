@@ -115,11 +115,26 @@ def test_no_stale_edge_names_in_feature_md():
 
 # ── COGNIREPO-106: FEATURES §15 test-file count must not rot ────────────────
 
+# How many test files FEATURES.md §15 may lag behind (or lead) the real count before the check fails.
+# COGNIREPO-106 exists because the doc said 17 test files when there were 85 — that is the drift this
+# guards against. An EXACT match made the number a shared counter: every PR that adds a test file
+# edits the same line, so PRs conflict with each other and go red the moment a sibling merges
+# (it turned `development` itself red twice in one day). A small tolerance keeps the doc honest
+# without turning each merge into a race.
+_TEST_COUNT_TOLERANCE = 5
+
+
+def _test_count_drift_ok(doc_count: int, real_count: int, tolerance: int = _TEST_COUNT_TOLERANCE) -> bool:
+    """True if the documented test-file count is within ``tolerance`` of the real one."""
+    return abs(doc_count - real_count) <= tolerance
+
+
 def test_features_test_count_matches_tests_dir():
     """
     docs/FEATURES.md §15 states the number of tests/test_*.py files as plain
-    prose (e.g. "89 test files"). Pin that number to the real glob count so it
-    can't silently drift again — see COGNIREPO-106.
+    prose (e.g. "89 test files"). Keep that number close to the real glob count
+    (within _TEST_COUNT_TOLERANCE) so it can't silently drift again — see
+    COGNIREPO-106.
 
     (tests/test_documentation.py, which the original ticket named for this
     assertion, was deliberately deleted in f17d467 for having zero behavioral
@@ -132,10 +147,18 @@ def test_features_test_count_matches_tests_dir():
     doc_count = int(m.group(1))
 
     real_count = len(list((ROOT / "tests").glob("test_*.py")))
-    assert doc_count == real_count, (
-        f"FEATURES.md §15 claims {doc_count} test files, tests/ actually has {real_count}. "
-        "Update the count in docs/FEATURES.md."
+    assert _test_count_drift_ok(doc_count, real_count), (
+        f"FEATURES.md §15 claims {doc_count} test files, tests/ actually has {real_count} "
+        f"(allowed drift: {_TEST_COUNT_TOLERANCE}). Update the count in docs/FEATURES.md."
     )
+
+
+def test_test_count_tolerance_catches_real_drift_but_not_off_by_a_few():
+    """The helper behind the check: the original 17-vs-85 drift fails; one merge's worth of lag doesn't."""
+    assert _test_count_drift_ok(112, 113) and _test_count_drift_ok(113, 112)       # one PR landed
+    assert _test_count_drift_ok(110, 115) and not _test_count_drift_ok(110, 116)   # boundary
+    assert not _test_count_drift_ok(17, 85)                                        # COGNIREPO-106
+    assert _test_count_drift_ok(50, 50) and _test_count_drift_ok(0, 0)
 
 
 def test_dead_test_files_not_listed_in_feature_md():
