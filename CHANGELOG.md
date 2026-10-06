@@ -19,6 +19,25 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
+- **#142 — Chroma (the default vector backend) lost writes across processes and could quarantine a healthy
+  store.** Measured with real processes before the fix: 6 workers x 15 adds kept **20 of 90** vectors and one
+  worker died creating the store. Causes and fixes: (1) ids were minted from `count()` read once at open, so
+  concurrent processes — and any `add` after a `remove()` — re-used live ids and chroma **silently ignored**
+  the add; ids now come from a counter file advanced under a cross-process lock before the add (never below the
+  live count; numeric strings are kept because callers use them as row ids; `_next_id - 1` still names the id
+  just stored). (2) Concurrent first-time creation raced inside chroma's schema setup (`table collections
+  already exists`); creation is now serialized behind the lock. (3) The open-sentinel was one shared `.opening`
+  file: one opener's cleanup erased another's evidence, and a sentinel left by an opener that was merely
+  **killed** (OOM, hook timeout) made the next process rename the whole store — even while a peer had it open.
+  Sentinels are now per process (`.opening.<pid>`, pid + start time so pid reuse can't fool it), live openers
+  write `.open.<pid>` markers, and a store is quarantined only if no live peer holds it **and a throw-away
+  subprocess still fails to open it** — a store that opens fine is never renamed. After a quarantine chroma's
+  per-process client cache is cleared. (4) The store path is resolved through `get_cognirepo_dir()` like every
+  other store (it used to walk up from the cwd and fall back to `~/.cognirepo`, which is also why
+  `test_default_returns_local_vector_db` kept opening — and quarantining — the developer's REAL home store).
+  Docs now state the real default backend (`chroma`). Chroma's own concurrent adds were measured to be safe
+  once ids are unique; a long-lived reader's HNSW view of a peer's very recent writes was seen to lag (not
+  addressed).
 - **#125 — the generated systemd unit could never start.** It emitted `watch --daemon-foreground`, a flag
   that did not exist, so systemd crash-looped. New `cognirepo watch --foreground` (alias
   `--daemon-foreground`, so units already written start working) runs the watcher in the foreground under
