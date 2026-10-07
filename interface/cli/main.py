@@ -2601,7 +2601,7 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False, register_self: 
     session_id = f"watch_{ts}"
 
     if daemon:
-        from interface.cli.daemon import daemonize, flock_register_watcher  # pylint: disable=import-outside-toplevel
+        from interface.cli.daemon import daemonize, is_watcher_running_for_path as _running, _is_alive as _pid_alive  # pylint: disable=import-outside-toplevel
         from pathlib import Path  # pylint: disable=import-outside-toplevel
 
         cognirepo_dir = Path(get_path(""))
@@ -2612,21 +2612,35 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False, register_self: 
         name = f"watcher-{Path(abs_path).name}-{ts}"
         child_pid = daemonize(log_path)
         if child_pid > 0:
-            # We are the parent — register PID file atomically and return
-            flock_register_watcher(child_pid, name, abs_path, log_path)
-            print(f"[cognirepo] Watcher started in background (PID {child_pid})")
-            print(f"[cognirepo] Name : {name}")
-            print(f"[cognirepo] Log  : {log_path}")
-            print(f"[cognirepo] View : cognirepo list -n {child_pid} --view")
+            # We are the parent. The daemon registers ITSELF once it holds the per-repo lease
+            # (COGNIREPO-138) — registering here, after the fork, was a check-then-act race. So
+            # report what actually happened: wait briefly for the daemon to appear in the registry.
+            deadline = time.monotonic() + 8.0
+            holder = None
+            while time.monotonic() < deadline:
+                holder = _running(abs_path)
+                if holder is not None or not _pid_alive(child_pid):
+                    break
+                time.sleep(0.1)
+            if holder is not None and holder.get("pid") == child_pid:
+                print(f"[cognirepo] Watcher started in background (PID {child_pid})")
+                print(f"[cognirepo] Name : {name}")
+                print(f"[cognirepo] Log  : {log_path}")
+                print(f"[cognirepo] View : cognirepo list -n {child_pid} --view")
+            elif holder is not None:
+                print(f"[cognirepo] A watcher is already running for this path (PID {holder['pid']}); "
+                      "the new one exited without starting.")
+            else:
+                print(f"[cognirepo] Watcher process {child_pid} did not register within 8s — "
+                      f"check the log: {log_path}", file=sys.stderr)
             return
         # child (grandchild) continues below
 
-    if register_self and not daemon:
-        from interface.cli.daemon import flock_register_watcher  # pylint: disable=import-outside-toplevel
-        from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
-        flock_register_watcher(
-            os.getpid(), f"watcher-{_Path(abs_path).name}-{ts}", abs_path, "stderr (foreground)",
-        )
+    from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
+    registration = {
+        "name": name if daemon else f"watcher-{_Path(abs_path).name}-{ts}",
+        "log": log_path if daemon else "stderr (foreground)",
+    }
 
     behaviour = BehaviourTracker(graph=kg, store_fn=store_memory)
 
@@ -2647,32 +2661,34 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False, register_self: 
 
     signal.signal(signal.SIGTERM, _stop)
 
-    run_watcher_with_crash_guard(
+    ran = run_watcher_with_crash_guard(
         create_fn=_make_observer,
         stop_fn=_stop_observer,
         watcher_path=abs_path,
         session_id=session_id,
+        registration=registration,
     )
     if not daemon:
-        print("[watcher] stopped.")
+        print("[watcher] stopped." if ran else "[watcher] not started: another watcher holds this repo.")
 
 
 def _start_watcher_bg(path: str) -> None:
     """
     Start the file watcher as a daemon thread — no kg/indexer required upfront.
     Loads them lazily inside the thread. Safe to call from REPL/MCP server startup.
-    Silently skips if a watcher is already running for this path.
+
+    COGNIREPO-138: one watcher per repo, however many `serve` sessions run. Every session starts
+    this thread, but only the one that holds the repo's watcher lease loads the graph/index and
+    observes; the rest stand by cheaply (nothing loaded) and take over if the holder dies.
     """
     abs_path = os.path.abspath(path)
-    try:
-        from interface.cli.daemon import is_watcher_running_for_path  # pylint: disable=import-outside-toplevel
-        if is_watcher_running_for_path(abs_path):
-            return  # already watching — skip silently
-    except Exception:  # pylint: disable=broad-except
-        pass
 
     def _run():
         try:
+            from interface.cli.daemon import wait_for_watcher_lease  # pylint: disable=import-outside-toplevel
+            lease = wait_for_watcher_lease(abs_path)   # blocks (standby) until we may watch
+            if lease is None:
+                return
             from data.graph.knowledge_graph import KnowledgeGraph as _KG    # pylint: disable=import-outside-toplevel
             from intelligence.indexer.ast_indexer import ASTIndexer as _AI          # pylint: disable=import-outside-toplevel
             from data.graph.behaviour_tracker import BehaviourTracker as _BT # pylint: disable=import-outside-toplevel
@@ -2696,6 +2712,12 @@ def _start_watcher_bg(path: str) -> None:
                 stop_fn=_stop,
                 watcher_path=abs_path,
                 session_id=_session_id,
+                lease=lease,
+                registration={
+                    "name": f"serve-watcher-{os.path.basename(abs_path)}-{os.getpid()}",
+                    "log": f"in-process (serve pid {os.getpid()})",
+                    "kind": "embedded",
+                },
             )
         except Exception:  # pylint: disable=broad-except
             pass  # watcher is best-effort
@@ -4769,6 +4791,11 @@ def _main():
                           f"{CLI_STOP_WAIT_SECS:.0f}s and was killed (SIGKILL). Unflushed edits may be "
                           "missing from the index — run: cognirepo index-repo --changed-only",
                           file=sys.stderr)
+                elif outcome == "embedded":
+                    print(f"[cognirepo] '{args.name}' is the watcher thread inside a running "
+                          "`cognirepo serve` (an agent session); stopping it would stop that server, "
+                          "so nothing was signalled. It ends with that session.", file=sys.stderr)
+                    sys.exit(1)
                 elif outcome == "failed":
                     print(f"[cognirepo] Could not stop watcher '{args.name}': it is still running. "
                           "Its registration was left in place so no second watcher is started.",

@@ -78,6 +78,62 @@ def _pid_file(pid: int, repo_path: str | None = None) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Per-repo watcher lease (COGNIREPO-138)
+# ---------------------------------------------------------------------------
+# One observer per repo. The right to run it is an OS advisory lock held by the process that
+# actually runs the observer — `watch --daemon`, `watch --foreground`, or the thread `serve`
+# starts. It is taken in run_watcher_with_crash_guard(), the one place every kind of watcher
+# passes through, so there is no check-then-act window: of N processes that start at once,
+# exactly one gets it. The kernel drops the lock when the holder exits or is killed, so a crashed
+# watcher never leaves a stale lease and another process can take over.
+#
+# Only the holder writes the registry record (<pid>.json) and the heartbeat, so both identify
+# the one live watcher instead of whichever process wrote last. Reuses the graph's WriterLease
+# (data/graph/journal.py): lock file `watchers/watcher.writer`, owner pid in `.writer.pid`.
+
+#: how often a `serve` session that lost the lease re-checks whether it can take over
+_STANDBY_POLL_SECS = 15.0
+
+
+class WatcherBusy(RuntimeError):
+    """Another process holds this repo's watcher lease."""
+
+    def __init__(self, owner: int | None) -> None:
+        self.owner = owner
+        super().__init__(f"a watcher already holds the lease{f' (pid {owner})' if owner else ''}")
+
+
+def acquire_watcher_lease(repo_path: str | None = None, wait: float = 0.0):
+    """Take this repo's watcher lease or raise WatcherBusy. Returns the lease; ``release()`` it."""
+    from data.graph.journal import JournalBusy, WriterLease  # pylint: disable=import-outside-toplevel
+    lease = WriterLease(str(_watchers_dir(repo_path) / "watcher"))
+    try:
+        lease.acquire(wait=wait)
+    except JournalBusy as exc:
+        raise WatcherBusy(exc.pid) from exc
+    return lease
+
+
+def wait_for_watcher_lease(repo_path: str | None = None, poll: float | None = None,
+                           stop: "threading.Event | None" = None):
+    """Stand by until this process can hold the lease (takeover after the holder died).
+
+    Returns the lease, or None if ``stop`` was set first. Cheap while waiting: nothing is loaded.
+    """
+    poll = _STANDBY_POLL_SECS if poll is None else poll
+    while True:
+        try:
+            return acquire_watcher_lease(repo_path)
+        except WatcherBusy:
+            pass
+        if stop is not None:
+            if stop.wait(poll):
+                return None
+        else:
+            time.sleep(poll)
+
+
+# ---------------------------------------------------------------------------
 # Heartbeat
 # ---------------------------------------------------------------------------
 
@@ -244,29 +300,12 @@ def is_watcher_running_for_path(repo_path: str) -> dict | None:
 
 
 def flock_register_watcher(pid: int, name: str, path: str, log_path: str) -> None:
+    """Write the registry record for a watcher (kept for callers/tests; same as register_watcher).
+
+    This used to flock a *per-pid* file, which excluded nothing — the mutual exclusion is the
+    per-repo lease (see above), taken by the process that runs the observer.
     """
-    Atomically write a JSON PID file for a running watcher using flock(LOCK_EX).
-    This prevents two concurrent `cognirepo watch` invocations from both
-    thinking they won the race to start.
-    """
-    record = {
-        "pid": pid,
-        "name": name,
-        "path": os.path.abspath(path),
-        "started": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-        "log": log_path,
-    }
-    pid_path = _pid_file(pid, path)
-    # Open with O_CREAT|O_WRONLY; flock blocks until we hold exclusive lock
-    fd = os.open(str(pid_path), os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
-    try:
-        import fcntl as _fcntl  # pylint: disable=import-outside-toplevel
-        _fcntl.flock(fd, _fcntl.LOCK_EX)
-        os.write(fd, json.dumps(record, indent=2).encode())
-    finally:
-        import fcntl as _fcntl  # pylint: disable=import-outside-toplevel
-        _fcntl.flock(fd, _fcntl.LOCK_UN)
-        os.close(fd)
+    register_watcher(pid, name, path, log_path)
 
 
 # ---------------------------------------------------------------------------
@@ -279,9 +318,15 @@ def run_watcher_with_crash_guard(
     watcher_path: str,
     session_id: str,
     restart_delay: float = 5.0,
-) -> None:
+    lease=None,          # an already-held watcher lease (see wait_for_watcher_lease); else taken here
+    registration: dict | None = None,   # {"name", "log", "kind"?} — recorded once the lease is held
+) -> bool:
     """
-    Run *create_fn()* in a while-True crash-recovery loop.
+    Run *create_fn()* in a while-True crash-recovery loop — as THE watcher for *watcher_path*.
+
+    COGNIREPO-138: takes the repo's watcher lease first. If another process holds it, nothing is
+    started and False is returned; otherwise the registry record (if ``registration`` is given) and
+    the heartbeat are written by this process only, and the lease is released on the way out.
 
     If the observer raises an unhandled exception it is logged and the watcher
     is restarted after *restart_delay* seconds.  This prevents silent death
@@ -296,6 +341,27 @@ def run_watcher_with_crash_guard(
     restart_delay   : seconds to wait before restarting after a crash
     """
     pid = os.getpid()
+    if lease is None:
+        try:
+            lease = acquire_watcher_lease(watcher_path)
+        except WatcherBusy as busy:
+            print(f"[watcher:{session_id}] another watcher already holds the lease for {watcher_path}"
+                  f"{f' (pid {busy.owner})' if busy.owner else ''} — not starting a second one.",
+                  file=sys.stderr, flush=True)
+            return False
+    try:
+        if registration:
+            register_watcher(pid, registration["name"], watcher_path,
+                             registration.get("log", ""), registration.get("kind"))
+        _guarded_run(create_fn, stop_fn, watcher_path, session_id, restart_delay, lease)
+    finally:
+        lease.release()
+    return True
+
+
+def _guarded_run(create_fn, stop_fn, watcher_path, session_id, restart_delay, lease) -> None:
+    """Body of run_watcher_with_crash_guard() once the lease is held."""
+    pid = os.getpid()
     heartbeat = start_heartbeat_thread(pid, watcher_path)
     _STOP_REQUESTED.clear()
     watchdog: list[threading.Timer] = []
@@ -309,6 +375,7 @@ def run_watcher_with_crash_guard(
         except OSError:
             pass
         clear_heartbeat_if_owned(pid, watcher_path)
+        lease.release()   # idempotent; also covers the forced-exit path
 
     def _force_exit(reason: str) -> None:
         print(f"[watcher:{session_id}] {reason} — forcing exit.", file=sys.stderr, flush=True)
@@ -534,8 +601,12 @@ def daemonize(log_path: str) -> int:
 # PID registry
 # ---------------------------------------------------------------------------
 
-def register_watcher(pid: int, name: str, path: str, log_path: str) -> None:
-    """Write a JSON PID file for a running watcher daemon."""
+def register_watcher(pid: int, name: str, path: str, log_path: str, kind: str | None = None) -> None:
+    """Write a JSON PID file for a running watcher daemon.
+
+    ``kind="embedded"`` marks a watcher that is a thread inside another process (the MCP server):
+    ``list --stop`` must not signal that pid — it would kill the agent's server, not the watcher.
+    """
     record = {
         "pid": pid,
         "name": name,
@@ -543,6 +614,8 @@ def register_watcher(pid: int, name: str, path: str, log_path: str) -> None:
         "started": datetime.now().isoformat(timespec="seconds"),
         "log": log_path,
     }
+    if kind:
+        record["kind"] = kind
     atomic_write(str(_pid_file(pid, path)), json.dumps(record, indent=2), fsync=False)  # status file
 
 
@@ -623,8 +696,9 @@ def stop_watcher_and_wait(
 ) -> str:
     """Stop a watcher and report what actually happened (COGNIREPO-126).
 
-    Returns ``"not_found"``, ``"stopped"`` (exited after SIGTERM), ``"killed"`` (needed SIGKILL)
-    or ``"failed"`` (still alive — the registration is deliberately left in place).
+    Returns ``"not_found"``, ``"stopped"`` (exited after SIGTERM), ``"killed"`` (needed SIGKILL),
+    ``"embedded"`` (it is a thread in an MCP server — nothing was signalled) or ``"failed"``
+    (still alive — the registration is deliberately left in place).
 
     Previously this sent SIGTERM, deleted the PID file straight away and reported success while
     the process was still flushing (or ignoring the signal). The registry then said "not
@@ -634,6 +708,8 @@ def stop_watcher_and_wait(
     w = find_watcher(name_or_pid)
     if w is None:
         return "not_found"
+    if w.get("kind") == "embedded":
+        return "embedded"   # a thread inside `cognirepo serve`: signalling the pid would kill the server
     pid, path = int(w["pid"]), w.get("path")
     try:
         os.kill(pid, signal.SIGTERM)
@@ -729,5 +805,5 @@ def print_watcher_list() -> None:
         name = w["name"][:35]
         path = w["path"][:39]
         started = w["started"][:19]
-        status = w["status"]
+        status = w["status"] + (" (in serve)" if w.get("kind") == "embedded" else "")
         print(f"{pid:<8} {name:<36} {path:<40} {started:<20} {status}")

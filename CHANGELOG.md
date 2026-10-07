@@ -19,6 +19,16 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
+- **#138 — there is now exactly one watcher per repo.** Every `cognirepo serve` (one per agent session)
+  started its own unregistered watcher thread, the "singleton" flock was taken on a per-pid file so it
+  excluded nothing, `watch --daemon` registered itself after the fork (check-then-act), and the shared
+  heartbeat could not tell one live watcher from three: N sessions meant N watchers, each with its own
+  graph and index, all saving. The process that runs the observer now takes a per-repo lease (OS file
+  lock, released by the kernel on death) inside `run_watcher_with_crash_guard()`, the single place every
+  watcher goes through. Only the holder loads the graph/index, registers and heartbeats; other `serve`
+  sessions stand by and take over if it dies; `watch --daemon` reports whether it started or someone else
+  already holds the lease. A watcher embedded in a `serve` session is marked and `list --stop` no longer
+  offers to kill the agent's server. `run_watcher_with_crash_guard()` now returns whether it ran.
 - **#139 — a stale writer no longer overwrites the AST index / FAISS store.** The graph already rebased on
   save; `ast_index.json`, `ast.index` and `ast_metadata.json` still saved last-writer-wins, so a long-lived
   watcher's next save silently dropped every file an `index-repo` had indexed since it loaded — leaving the
