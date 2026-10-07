@@ -19,6 +19,14 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
+- **#139 — a stale writer no longer overwrites the AST index / FAISS store.** The graph already rebased on
+  save; `ast_index.json`, `ast.index` and `ast_metadata.json` still saved last-writer-wins, so a long-lived
+  watcher's next save silently dropped every file an `index-repo` had indexed since it loaded — leaving the
+  graph (`who_calls`) and the symbol index (`lookup_symbol`, `context_pack`) disagreeing. `ASTIndexer` now
+  tracks the files it changed and, if disk moved on, re-applies just those onto the newer state under the
+  lock (vectors are transplanted with `reconstruct`, no re-embedding; ids renumbered). `reload_if_changed()`
+  keeps unsaved local edits. Also: a replaced file's stale file-summary vectors are removed on rebase.
+  Design and limits: `docs/architecture/GRAPH_CONCURRENCY.md`.
 - **#123 — the post-commit hook no longer discards its errors.** It ran `index-repo --files … 2>/dev/null &`,
   so when the pipx venv lost `keyring` every hook run failed to save the encrypted graph and nobody saw it.
   The hook now appends all output to `<store>/hook.log` (rotated at 256 KiB, one `.1` kept) and writes the

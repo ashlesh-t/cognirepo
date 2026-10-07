@@ -26,6 +26,7 @@ Persistence:
 from __future__ import annotations
 
 import ast
+import copy
 import functools
 import hashlib
 import json
@@ -1380,6 +1381,10 @@ class ASTIndexer:
         # `_repo_ctx(other_repo)` block resolves to a different repo's index —
         # recording it lets reload_if_changed() refuse a cross-repo reload.
         self._disk_path: str | None = None
+        # Files whose record THIS instance changed since it last synced with disk
+        # ("set" = indexed/updated, "del" = removed). save() uses it to rebase onto a
+        # newer on-disk index instead of overwriting it (COGNIREPO-139).
+        self._dirty_files: dict[str, str] = {}
 
     # ── disk freshness ────────────────────────────────────────────────────────
 
@@ -1426,7 +1431,13 @@ class ASTIndexer:
             "ast_index.json changed on disk (%s -> %s) — reloading",
             self._disk_stamp, current,
         )
-        self.load()
+        if self._dirty():
+            # Unsaved local edits: a plain load() would discard them. Rebase them onto the new
+            # on-disk state instead (they are written out by the next save()).
+            with _store_lock_or_null():
+                self._rebase_onto_disk_locked()
+        else:
+            self.load()
         # lru_cache lives on the class, so this clears entries for every
         # instance — required, since the cached lists are pre-reload paths.
         type(self).lookup_symbol.cache_clear()
@@ -2140,6 +2151,7 @@ class ASTIndexer:
             "symbols": raw_symbols,
         }
         self.index_data["files"][rel_path] = file_record
+        self._dirty()[rel_path] = "set"
 
         # incrementally update reverse_index for this file only
         rev = self.index_data.setdefault("reverse_index", {})
@@ -2756,6 +2768,14 @@ class ASTIndexer:
         )
         return {"before": before, "after": after, "compacted": True, "dropped": dropped}
 
+    def _dirty(self) -> dict:
+        """The dirty-file map (created lazily: some callers build an indexer via ``__new__``)."""
+        return self.__dict__.setdefault("_dirty_files", {})
+
+    def note_file_removed(self, rel_path: str) -> None:
+        """Record that ``rel_path`` was removed from this instance's index (for rebase-on-save)."""
+        self._dirty()[rel_path] = "del"
+
     def get_symbol_table(self, file_path: str) -> SymbolTable:
         """Return a SymbolTable for bisect-based line-range queries."""
         return build_symbol_table_from_index(file_path, self.index_data)
@@ -2925,6 +2945,11 @@ class ASTIndexer:
         with _store_lock_or_null():
             self._resolve_load_errors()
             os.makedirs(os.path.dirname(_ast_index_file()), exist_ok=True)
+            # COGNIREPO-139: another process (index-repo, a second watcher) may have saved since
+            # we last synced. Writing our private copy would silently drop its files, so rebase
+            # our own changes onto what is on disk first (the graph does the same in its save()).
+            if self._is_stale_vs_disk():
+                self._rebase_onto_disk_locked()
             # Stamp every persist, not just full index_repo() runs. Without
             # this the watcher's incremental path leaves `indexed_at` frozen
             # at the last full index while the file mtime advances, so
@@ -2947,6 +2972,114 @@ class ASTIndexer:
             # doesn't bounce the writer's in-memory state back off disk.
             self._disk_stamp = self._stat_stamp(_ast_index_file())
             self._disk_path = _ast_index_file()
+            self._dirty().clear()
+
+    def _is_stale_vs_disk(self) -> bool:
+        """True if ast_index.json was rewritten by someone else since this instance last synced."""
+        if not getattr(self, "_loaded", False) and getattr(self, "_disk_stamp", None) is None:
+            return False                 # never synced: a fresh build, not a stale copy
+        disk_path = getattr(self, "_disk_path", None)
+        if disk_path is not None and disk_path != _ast_index_file():
+            return False                 # repointed at another repo by _repo_ctx()
+        current = self._stat_stamp(_ast_index_file())
+        return current is not None and current != getattr(self, "_disk_stamp", None)
+
+    def _rebase_onto_disk_locked(self) -> None:
+        """Re-apply this instance's per-file changes onto the newer on-disk index. Caller holds the lock.
+
+        Compare-and-swap, then redo (the same idea as ``KnowledgeGraph.save()``): load the current
+        disk state, then for every file THIS instance changed (``_dirty_files``) replace that
+        file's record — and its vectors — in the disk state. Files only the other writer touched
+        are kept untouched, so both writers' work survives.
+
+        FAISS ids are positional (``faiss_id`` is the ``faiss_meta`` index) but the store is an
+        ``IndexIDMap2`` that never reuses an id, so a transplanted vector simply gets the next id
+        (``len(meta)``) in the disk state and its symbol records are renumbered to match. Vectors
+        are read back out of this instance's index with ``reconstruct`` — no re-embedding.
+        Limits: a ``compact_faiss()`` done on the stale copy is discarded (the next one redoes it),
+        and if either side has an unusable FAISS binary the vectors of dirty files are dropped
+        (``faiss_id = -1``) rather than mixed.
+        """
+        fresh = ASTIndexer(graph=self.graph)
+        fresh.load()
+        fresh._resolve_load_errors()  # pylint: disable=protected-access  # quarantine/raise exactly as save() does
+
+        dirty = dict(self._dirty())
+        files = fresh.index_data.setdefault("files", {})
+        fresh._ensure_faiss()  # pylint: disable=protected-access
+        new_index, new_meta = fresh.faiss_index, list(fresh.faiss_meta)
+        vectors_ok = (
+            new_index is not None and self.faiss_index is not None
+            and not getattr(self, "_faiss_platform_mismatch", False)
+            and not getattr(fresh, "_faiss_platform_mismatch", False)
+        )
+
+        def _summary_ids(meta: list, rels: set) -> dict:
+            """file -> every file-summary vector id recorded for it (oldest first)."""
+            out: dict = {}
+            for fid, m in enumerate(meta):
+                if m.get("source") == "file_summary" and m.get("file") in rels:
+                    out.setdefault(m["file"], []).append(fid)
+            return out
+
+        rels = set(dirty)
+        mine_summary = _summary_ids(self.faiss_meta, rels) if vectors_ok else {}
+        theirs_summary = _summary_ids(new_meta, rels) if vectors_ok else {}
+
+        def _vector(fid: int):
+            try:
+                return self.faiss_index.reconstruct(int(fid)).reshape(1, -1)
+            except Exception:  # pylint: disable=broad-except   # removed / out of range
+                return None
+
+        def _transplant(meta_rec: dict, fid: int) -> int:
+            vec = _vector(fid) if vectors_ok and 0 <= fid < len(self.faiss_meta) else None
+            if vec is None:
+                return -1
+            new_id = len(new_meta)
+            new_index.add_with_ids(vec.astype("float32"), np.array([new_id], dtype=np.int64))
+            new_meta.append(meta_rec)
+            return new_id
+
+        for rel, op in dirty.items():
+            old = files.get(rel) or {}
+            stale_ids = [s["faiss_id"] for s in old.get("symbols", []) if s.get("faiss_id", -1) >= 0]
+            # index_file() never removed a file's previous summary vector, so there can be several;
+            # the replaced file must not keep any of them live.
+            stale_ids.extend(theirs_summary.get(rel, []))
+            if stale_ids and vectors_ok:
+                try:
+                    new_index.remove_ids(np.array(stale_ids, dtype=np.int64))
+                except Exception:  # pylint: disable=broad-except
+                    pass
+            mine = self.index_data.get("files", {}).get(rel)
+            if op == "del" or mine is None:
+                files.pop(rel, None)
+                continue
+            rec = copy.deepcopy(mine)
+            for sym in rec.get("symbols", []):
+                fid = sym.get("faiss_id", -1)
+                sym["faiss_id"] = (
+                    _transplant(self.faiss_meta[fid], fid)
+                    if fid >= 0 and fid < len(self.faiss_meta) else -1
+                )
+            if rel in mine_summary:                         # newest summary only
+                _transplant(self.faiss_meta[mine_summary[rel][-1]], mine_summary[rel][-1])
+            files[rel] = rec
+
+        merged = fresh.index_data
+        merged["indexed_at"] = self.index_data.get("indexed_at", merged.get("indexed_at"))
+        for key in ("repo_root", "full_indexed_at"):
+            if not merged.get(key) and self.index_data.get(key):
+                merged[key] = self.index_data[key]
+        log.info("ast index rebased onto newer on-disk state (%d locally changed file(s) re-applied)", len(dirty))
+        self.index_data = merged
+        self.faiss_index, self.faiss_meta = new_index, new_meta
+        self._build_reverse_index()
+        self.index_data["total_symbols"] = sum(
+            len(f.get("symbols", [])) for f in self.index_data["files"].values()
+        )
+        self._disk_stamp = fresh._disk_stamp  # pylint: disable=protected-access
 
     def load(self) -> None:
         """Load existing index from disk. Silently does nothing if not present.
@@ -3022,4 +3155,5 @@ class ASTIndexer:
                 self._load_errors[_ast_meta_file()] = err
             self.faiss_meta = meta
         self._loaded = True
+        self._dirty().clear()
         self._disk_stamp = stamp

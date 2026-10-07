@@ -407,6 +407,7 @@ class RepoFileHandler(FileSystemEventHandler):
 
         self.graph.remove_file_nodes(rel_path)
         self.indexer.index_data["files"].pop(rel_path, None)
+        self.indexer.note_file_removed(rel_path)  # rebase-on-save must delete it from a newer disk copy too
         return rel_path, old_names
 
     # ── synchronous single-event helpers (debounce_ms=0, or direct calls) ────

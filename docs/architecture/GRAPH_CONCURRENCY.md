@@ -44,5 +44,25 @@ them and why.
   re-apply them. All production code now uses the primitives.
 - If more than `_UNSYNCED_OPS_CAP` (200k) ops are pending with no journal, a stale `save()` degrades to
   last-writer-wins with a warning.
-- Not covered: `ast_index.json` / FAISS still save last-writer-wins (remainder of #139).
+- The AST index has its own, per-file rebase — see below.
 - Phantom reads across a reload mid-query would need per-request snapshots — a #115 (SQLite WAL) concern.
+
+## AST index and FAISS (`ast_index.json`, `ast.index`, `ast_metadata.json`) — rebase per file
+
+The graph is op-based; the AST index is keyed by file, so it rebases per file instead.
+
+- `ASTIndexer` tracks `_dirty_files` (`"set"` from `index_file()`, `"del"` from `note_file_removed()`).
+- `save()` (under `store_lock`) checks whether `ast_index.json` was rewritten since this instance last
+  loaded/saved. If so it loads the newer disk state and re-applies only the dirty files onto it, then
+  writes. Files only the other writer touched are kept; a file both changed takes the local version.
+- `reload_if_changed()` with unsaved local edits rebases them instead of discarding them via `load()`.
+- **FAISS ids are positional** (`faiss_id` is the `faiss_meta` index) but the store is an `IndexIDMap2`
+  that never reuses an id. A dirty file's vectors are read out of the local index with `reconstruct()`
+  (no re-embedding) and appended to the disk index with the next free ids (`len(meta)`); the file's
+  symbol records are renumbered. The replaced file's old symbol and file-summary vectors are removed.
+- The reverse indexes and `total_symbols` are rebuilt from the merged files.
+
+Limits: a never-synced instance (a from-scratch build that never called `load()`) is not "stale" and
+still overwrites, as before; a `compact_faiss()` run on a stale copy is discarded by the rebase (the next
+run redoes it); if either FAISS binary is unusable the dirty files' vectors are dropped (`faiss_id = -1`)
+rather than mixed; `kg.save()` and `indexer.save()` are still two separate saves.
