@@ -19,6 +19,18 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
+- **#127 — the watcher started by `index-repo --daemon` no longer carries the indexing run's heap
+  (3.5 GB → 113 MB).** The background watcher was a double-fork of the calling process, so it inherited
+  everything that process held — after `index-repo` the embedding model, the FAISS index and every parsed
+  AST — while a fresh `watch --ensure-running` watcher on the same index uses ~100 MB. Forking a process
+  that already runs threads and native libraries is also unsafe: the forked daemon ignored SIGTERM for 30 s
+  and had to be SIGKILLed. `daemonize()` is replaced by `spawn_detached_watcher()`: a new interpreter
+  (`python -P -m interface.cli.main watch --foreground`, own session, log appended, stdin `/dev/null`)
+  that loads only what a watcher needs and registers itself under the per-repo lease. `-P` keeps the repo's
+  own `interface/` package, if it has one, from shadowing cognirepo's. `watch --ensure-running` no longer
+  builds a graph and index it threw away. The daemon's command line is now `watch --foreground` instead of
+  its parent's (`init`, `index-repo`), so it is recognisable in `ps`. Measured on this repo: RSS 3,558 MB →
+  113 MB, `list --stop` 30 s + SIGKILL → 0.2 s clean stop.
 - **#138 — there is now exactly one watcher per repo.** Every `cognirepo serve` (one per agent session)
   started its own unregistered watcher thread, the "singleton" flock was taken on a per-pid file so it
   excluded nothing, `watch --daemon` registered itself after the fork (check-then-act), and the shared

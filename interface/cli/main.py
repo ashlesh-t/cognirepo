@@ -2573,16 +2573,15 @@ def _write_last_indexed_sha(repo_path: str) -> None:
 
 
 def _start_watcher(path: str, kg, indexer, daemon: bool = False, register_self: bool = False) -> None:
-    """Start the file watcher, optionally forking into the background.
+    """Start the file watcher, in this process or as a separate detached process (``daemon=True``).
 
-    ``register_self`` (foreground mode, ``watch --foreground`` / the systemd unit): write this
-    process's own PID file so ``list`` / ``watch --status`` / the singleton check / ``--stop`` see
-    it, exactly as for a forked daemon. The crash guard removes it on exit (COGNIREPO-125).
+    ``daemon=True`` spawns a fresh ``watch --foreground`` process (COGNIREPO-127); ``kg`` and
+    ``indexer`` are not used for it — the new process loads its own — so callers may pass None.
+    Otherwise the watcher runs here and registers this process (the lease holder, COGNIREPO-138),
+    so ``list`` / ``watch --status`` / the singleton check / ``--stop`` see it. The crash guard
+    removes the registration on exit (COGNIREPO-125). ``register_self`` is kept for callers.
     """
     import os  # pylint: disable=import-outside-toplevel
-    from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
-    from intelligence.indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
-    from interface.tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
 
     abs_path = os.path.abspath(path)
 
@@ -2601,7 +2600,7 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False, register_self: 
     session_id = f"watch_{ts}"
 
     if daemon:
-        from interface.cli.daemon import daemonize, is_watcher_running_for_path as _running, _is_alive as _pid_alive  # pylint: disable=import-outside-toplevel
+        from interface.cli.daemon import spawn_detached_watcher, is_watcher_running_for_path as _running, _is_alive as _pid_alive  # pylint: disable=import-outside-toplevel
         from pathlib import Path  # pylint: disable=import-outside-toplevel
 
         cognirepo_dir = Path(get_path(""))
@@ -2610,36 +2609,40 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False, register_self: 
         Path(log_path).parent.mkdir(parents=True, exist_ok=True)
 
         name = f"watcher-{Path(abs_path).name}-{ts}"
-        child_pid = daemonize(log_path)
-        if child_pid > 0:
-            # We are the parent. The daemon registers ITSELF once it holds the per-repo lease
-            # (COGNIREPO-138) — registering here, after the fork, was a check-then-act race. So
-            # report what actually happened: wait briefly for the daemon to appear in the registry.
-            deadline = time.monotonic() + 8.0
-            holder = None
-            while time.monotonic() < deadline:
-                holder = _running(abs_path)
-                if holder is not None or not _pid_alive(child_pid):
-                    break
-                time.sleep(0.1)
-            if holder is not None and holder.get("pid") == child_pid:
-                print(f"[cognirepo] Watcher started in background (PID {child_pid})")
-                print(f"[cognirepo] Name : {name}")
-                print(f"[cognirepo] Log  : {log_path}")
-                print(f"[cognirepo] View : cognirepo list -n {child_pid} --view")
-            elif holder is not None:
-                print(f"[cognirepo] A watcher is already running for this path (PID {holder['pid']}); "
-                      "the new one exited without starting.")
-            else:
-                print(f"[cognirepo] Watcher process {child_pid} did not register within 8s — "
-                      f"check the log: {log_path}", file=sys.stderr)
-            return
-        # child (grandchild) continues below
+        # COGNIREPO-127: a FRESH process, not a fork of this one. Forking copied this process's heap
+        # (embedder, FAISS, ASTs: 3.3 GB) into the daemon. The new process loads its own graph/index
+        # and registers itself once it holds the per-repo lease (COGNIREPO-138), so report what
+        # actually happened by waiting briefly for it to appear in the registry.
+        child_pid = spawn_detached_watcher(abs_path, log_path)
+        deadline = time.monotonic() + 30.0       # a cold start loads the graph and index first
+        holder = None
+        while time.monotonic() < deadline:
+            holder = _running(abs_path)
+            if holder is not None or not _pid_alive(child_pid):
+                break
+            time.sleep(0.1)
+        if holder is not None and holder.get("pid") == child_pid:
+            print(f"[cognirepo] Watcher started in background (PID {child_pid})")
+            print(f"[cognirepo] Name : {holder.get('name', name)}")
+            print(f"[cognirepo] Log  : {log_path}")
+            print(f"[cognirepo] View : cognirepo list -n {child_pid} --view")
+        elif holder is not None:
+            print(f"[cognirepo] A watcher is already running for this path (PID {holder['pid']}); "
+                  "the new one exited without starting.")
+        else:
+            print(f"[cognirepo] Watcher process {child_pid} did not register within 30s — "
+                  f"check the log: {log_path}", file=sys.stderr)
+        return
 
+    # imported here, not above: the daemon branch returns before needing any of it
+    from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
+    from interface.tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
     from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
     registration = {
-        "name": name if daemon else f"watcher-{_Path(abs_path).name}-{ts}",
-        "log": log_path if daemon else "stderr (foreground)",
+        "name": f"watcher-{_Path(abs_path).name}-{ts}",
+        # a detached watcher (spawn_detached_watcher) tells us where its log is
+        "log": os.environ.get("COGNIREPO_WATCHER_LOG") or "stderr (foreground)",
     }
 
     behaviour = BehaviourTracker(graph=kg, store_fn=store_memory)
@@ -4734,12 +4737,9 @@ def _main():
                 print(f"[cognirepo] Watcher already running (PID {running['pid']}).")
                 return
             print("[cognirepo] Starting watcher (--ensure-running)...")
-            from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-            from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
-            kg = KnowledgeGraph()
-            indexer = ASTIndexer(graph=kg)
-            indexer.load()
-            _start_watcher(abs_watch_path, kg, indexer, daemon=True)
+            # the detached watcher loads its own graph/index; loading them here only to throw them
+            # away cost hundreds of MB and seconds on every call (COGNIREPO-127)
+            _start_watcher(abs_watch_path, None, None, daemon=True)
             return
 
         if getattr(args, "foreground", False):

@@ -150,7 +150,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Fork to background (`daemonize`) | ✅ | Double-fork UNIX daemon pattern |
+| Background watcher (`spawn_detached_watcher`) | ✅ | Starts a fresh detached `watch --foreground` process (own session, log file) — not a fork of the caller, so it does not inherit its heap |
 | PID file management | ✅ | `.cognirepo/watchers/<pid>.json` |
 | Singleton enforcement via `flock` | ✅ | `flock_register_watcher()` — prevents duplicate watchers |
 | Stale-PID detection | ✅ | `_is_alive(pid)` check before claiming slot (a zombie counts as dead) |
@@ -335,7 +335,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ## 15. Test Coverage
 
-121 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+122 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
 for the current test-function count). This table is representative, not exhaustive — see
 `tests/` for the full list. This count is checked by `tests/test_docs_sync.py`, which fails if it drifts
 more than 5 files from the real glob count (a small tolerance, so concurrent PRs that each add

@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
 import sys
 import threading
 import tempfile
@@ -519,82 +520,37 @@ def write_systemd_unit(repo_path: str) -> Path:
 # Daemonize
 # ---------------------------------------------------------------------------
 
-def daemonize(log_path: str) -> int:
-    """Fork the calling process into the background.
+#: environment variable a detached watcher reads to record its log file in the registry
+WATCHER_LOG_ENV = "COGNIREPO_WATCHER_LOG"
 
-    Returns:
-        In the *parent*: the child PID (> 0) — caller should print status and exit.
-        In the *child*:  0 — caller should continue running the watcher.
 
-    The grandchild (actual daemon) redirects stdout/stderr to *log_path* and
-    detaches from the controlling terminal via double-fork + setsid().
+def spawn_detached_watcher(repo_path: str, log_path: str) -> int:
+    """Start ``cognirepo watch --foreground`` as a new, detached process and return its pid.
+
+    COGNIREPO-127: this replaces the old double-fork ``daemonize()``. Forking the calling process
+    copied its whole heap into the daemon — after ``index-repo`` that is the embedding model, the
+    FAISS index and every parsed AST (3.3 GB RSS, against ~100 MB for a fresh watcher on the same
+    index) — and forking a process that already runs threads and native libraries (ONNX, FAISS) is
+    unsafe: the forked daemon was seen ignoring SIGTERM for 30 s. A fresh interpreter inherits
+    nothing, loads only what a watcher needs, and registers itself under the per-repo lease (#138).
+
+    stdin is /dev/null, stdout/stderr append to ``log_path``, and the child is a session leader
+    (``start_new_session``) so it survives the terminal that started it. Requires Python >= 3.11
+    (``-P``), which the project already does.
     """
-    # First fork
-    try:
-        pid = os.fork()
-    except OSError as exc:
-        raise RuntimeError(f"fork #1 failed: {exc}") from exc
-
-    if pid > 0:
-        # Original parent: wait briefly so the grandchild PID is stable, then return it.
-        # We cannot know the grandchild PID directly, so we use a small pipe.
-        # The intermediate child will write grandchild PID to a temp file and exit.
-        # Simple approach: use a pipe.
-        _r_fd, _w_fd = os.pipe()  # kept for potential future use
-        # Re-do: we need the pipe BEFORE forking. Use a different design:
-        # Write grandchild PID to a side-channel temp file keyed on intermediate PID.
-        _wait_file = Path(tempfile.gettempdir()) / f".cognirepo_daemon_{pid}"
-        # Wait up to 2 s for the grandchild to write its PID
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
-            if _wait_file.exists():
-                try:
-                    grandchild_pid = int(_wait_file.read_text().strip())
-                    _wait_file.unlink(missing_ok=True)
-                    os.waitpid(pid, 0)  # reap intermediate child
-                    return grandchild_pid
-                except (ValueError, OSError):
-                    pass
-            time.sleep(0.05)
-        # Timeout — return intermediate pid as best-effort
-        try:
-            os.waitpid(pid, 0)
-        except ChildProcessError:
-            pass
-        return pid
-
-    # ── Intermediate child ──────────────────────────────────────────────────
-    os.setsid()  # new session
-
-    # Second fork (detach from session leader)
-    try:
-        pid2 = os.fork()
-    except OSError as exc:
-        sys.stderr.write(f"fork #2 failed: {exc}\n")
-        os._exit(1)
-
-    if pid2 > 0:
-        # Intermediate child: write grandchild PID, then exit
-        wait_file = Path(tempfile.gettempdir()) / f".cognirepo_daemon_{os.getpid()}"
-        try:
-            wait_file.write_text(str(pid2))
-        except OSError:
-            pass
-        os._exit(0)
-
-    # ── Grandchild (actual daemon) ──────────────────────────────────────────
-    # Redirect stdin to /dev/null
-    with open(os.devnull, "r", encoding="ascii") as devnull:
-        os.dup2(devnull.fileno(), sys.stdin.fileno())
-
-    # Redirect stdout + stderr to log file
+    env = dict(os.environ)
+    env["COGNIREPO_DIR"] = str(get_cognirepo_dir())      # same store as the caller, even if cwd differs
+    env[WATCHER_LOG_ENV] = log_path
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    log_fd = open(log_path, "a", buffering=1, encoding="utf-8")  # line-buffered  # noqa: WPS515  # pylint: disable=consider-using-with
-    os.dup2(log_fd.fileno(), sys.stdout.fileno())
-    os.dup2(log_fd.fileno(), sys.stderr.fileno())
-    log_fd.close()
-
-    return 0  # signal caller to proceed with watcher
+    with open(os.devnull, "rb") as devnull, open(log_path, "ab") as log:
+        proc = subprocess.Popen(  # pylint: disable=consider-using-with
+            # -P: do not put the cwd (= the user's repo) on sys.path. Without it a repo that has its
+            # own `interface/` package would shadow cognirepo's and the watcher could not start.
+            [sys.executable, "-P", "-m", "interface.cli.main", "watch", "--foreground", "--path", repo_path],
+            stdin=devnull, stdout=log, stderr=log, cwd=repo_path, env=env,
+            start_new_session=True, close_fds=True,
+        )
+    return proc.pid
 
 
 # ---------------------------------------------------------------------------
