@@ -167,6 +167,41 @@ def _hermetic_path_install(request, monkeypatch):
     monkeypatch.setattr(install_probe, "resolve_cli_interpreter", lambda *_a, **_k: None)
 
 
+@pytest.fixture
+def real_watcher_spawn():
+    """Opt out of ``_no_real_watcher_spawn``: the test really starts a background watcher."""
+
+
+@pytest.fixture(autouse=True)
+def _no_real_watcher_spawn(request, monkeypatch):
+    """``cognirepo init`` / ``index-repo --daemon`` start a background watcher process.
+
+    Run from a test — in-process OR as a ``subprocess`` the test launches — they leave a real daemon
+    behind, watching a temp dir that pytest deletes: the suite itself was the source of the "leaked
+    `init` processes" (80 of them, ~40 MB each, days old) in COGNIREPO-119. ``COGNIREPO_NO_WATCHER``
+    is inherited by child processes, which patching ``_start_watcher`` could not reach. Tests of the
+    daemon path request ``real_watcher_spawn`` and must stop what they start.
+    """
+    if "real_watcher_spawn" in request.fixturenames:
+        return
+    monkeypatch.setenv("COGNIREPO_NO_WATCHER", "1")
+
+
+@pytest.fixture
+def real_process_scan():
+    """Opt out of ``_hermetic_process_scan``: the test scans the real /proc."""
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_process_scan(request, monkeypatch):
+    """`cognirepo doctor` reports stale cognirepo processes on the host (COGNIREPO-119). A dev box
+    that has some would turn every doctor test into a warning (exit 1), so scan nothing by default."""
+    if "real_process_scan" in request.fixturenames:
+        return
+    from interface.cli import proc_scan
+    monkeypatch.setattr(proc_scan, "scan", lambda *_a, **_k: [])
+
+
 @pytest.fixture(autouse=True)
 def isolated_cognirepo(tmp_path, monkeypatch):
     """

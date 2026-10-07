@@ -75,6 +75,7 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `COGNIREPO_REDIS_URL` | Redis connection URL | `redis://localhost:6379` |
+| `COGNIREPO_NO_WATCHER` | If set (any value), `init` / `index-repo --daemon` do not start a background watcher and `serve` does not start its in-process one. For CI, containers and the test suite | `1` |
 | `COGNIREPO_ENCRYPT_KEY` | Encryption key (overrides keychain) | `<hex-encoded AES key>` |
 | `COGNIREPO_JWT_SECRET` | JWT signing secret for REST API | `<random hex 32 bytes>` |
 | `COGNIREPO_PASSWORD_HASH` | Bcrypt hash of the API password | `$2b$12$...` |
