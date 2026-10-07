@@ -1119,6 +1119,18 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     except Exception as _exc:  # pylint: disable=broad-except
         logger.debug("doctor: encryption deps check failed: %s", _exc)
 
+    # ── Check 22a: stale cognirepo processes (COGNIREPO-119) ─────────────────
+    # Watchers/indexers whose directory was deleted, or one-shot commands running for hours, hold
+    # memory for days without anyone noticing (80 `init` processes, ~3 GB, were found this way).
+    try:
+        from interface.cli import proc_scan as _ps  # pylint: disable=import-outside-toplevel
+        _stale = _ps.find_stale(_ps.scan())
+        if _stale:
+            _msg, _hint = _ps.describe(_stale)
+            _warn(_msg, _hint)
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: stale process scan failed: %s", _exc)
+
     # ── Check 22b: the `cognirepo` on PATH (COGNIREPO-124) ───────────────────
     # Check 22 above inspects the interpreter RUNNING doctor. Hooks, MCP clients and cron run
     # the `cognirepo` found on PATH — often a pipx venv — which can lack keyring/cryptography,
@@ -2586,6 +2598,10 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False, register_self: 
 
     abs_path = os.path.abspath(path)
 
+    if daemon and os.environ.get("COGNIREPO_NO_WATCHER"):
+        print("[cognirepo] COGNIREPO_NO_WATCHER is set — not starting a background watcher.")
+        return
+
     # ── TASK-009: Singleton enforcement ──────────────────────────────────────
     from interface.cli.daemon import is_watcher_running_for_path  # pylint: disable=import-outside-toplevel
     existing = is_watcher_running_for_path(abs_path)
@@ -2682,6 +2698,8 @@ def _start_watcher_bg(path: str) -> None:
     observes; the rest stand by cheaply (nothing loaded) and take over if the holder dies.
     """
     abs_path = os.path.abspath(path)
+    if os.environ.get("COGNIREPO_NO_WATCHER"):
+        return
 
     def _run():
         try:
