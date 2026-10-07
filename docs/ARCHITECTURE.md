@@ -216,7 +216,7 @@ Entry point: `cognirepo` → `interface/cli/main.py::main()`
 Key modules:
 - `interface/cli/init_project.py` — `cognirepo init` scaffolding, idempotent
 - `interface/cli/wizard.py` — interactive terminal wizard
-- `interface/cli/daemon.py` — heartbeat, singleton lock, systemd unit generation
+- `interface/cli/daemon.py` — per-repo watcher lease (one watcher per repo), heartbeat, systemd unit generation
 - `interface/cli/seed.py` — seed behaviour graph from git history
 
 ---

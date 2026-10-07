@@ -304,6 +304,16 @@ Manage the background file-watcher daemon.
 cognirepo watch start|stop|status
 ```
 
+**One watcher per repo (COGNIREPO-138).** However many processes try to start a watcher — `watch --daemon`,
+`watch --foreground`, `watch --ensure-running`, or the watcher thread every `cognirepo serve` session
+starts — exactly one runs. The process that actually runs the observer holds a per-repo lease (an OS file
+lock on `.cognirepo/watchers/watcher.writer`, owner pid in `watcher.writer.pid`); the kernel drops it when
+that process exits or is killed. Only the holder loads the graph/index, registers itself in
+`.cognirepo/watchers/<pid>.json` and writes the heartbeat. Other `serve` sessions stand by (nothing loaded,
+re-check every 15 s) and take over if the holder dies; other CLI starters print who holds it and exit.
+A watcher that is the thread inside a `serve` session shows as `running (in serve)` in `cognirepo list`
+and `list --stop` refuses to signal it (that would stop the agent's server) — it ends with that session.
+
 ---
 
 ## cognirepo user-prefs
@@ -490,7 +500,7 @@ cognirepo list [OPTIONS]
 | `-p`, `--processes` | `False` | List all running watcher daemon processes |
 | `-n`, `--name PID_OR_NAME` | `None` | Select a daemon by PID or name (use with `--view` or `--stop`) |
 | `--view` | `False` | Interactively tail the log of the daemon selected with `-n` |
-| `--stop` | `False` | Stop the daemon selected with `-n`: sends SIGTERM and **waits** for the process to exit (up to 30 s), then SIGKILLs it; the registration is cleared only once the process is really gone. Exit 1 if it could not be stopped |
+| `--stop` | `False` | Stop the daemon selected with `-n`: sends SIGTERM and **waits** for the process to exit (up to 30 s), then SIGKILLs it; the registration is cleared only once the process is really gone. Exit 1 if it could not be stopped, or if the target is a watcher thread embedded in a `serve` session (nothing is signalled) |
 | `--org` | `False` | Show all organizations, repos, and projects from `orgs.json` |
 | `--mcp` | `False` | List registered MCP servers from `.mcp.json` and global configs |
 
