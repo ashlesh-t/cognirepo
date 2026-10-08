@@ -104,6 +104,7 @@ cognirepo doctor [OPTIONS]
 |------|---------|-------------|
 | `--verbose`, `-v` | `False` | Show optional component checks |
 | `--fix` | `False` | Auto-fix FAISS corruption or dimension mismatch |
+| `--resources` | `False` | Instead of the health checks, print where memory and disk go: every cognirepo process (resident memory, age, repo, stale flag), the size of each `.cognirepo/` subdirectory with its largest files, and set-aside/left-over files (quarantines, `.stale`, scratch). Read-only; add `--json` for scripts. See [RESOURCES.md](RESOURCES.md) |
 
 `doctor` warns about **stale cognirepo processes** (Linux): a watcher/indexer whose working directory was deleted, or a one-shot command (`init`, `index-repo`, …) still running after 6 h, with their combined memory and the `kill` command. Agent `serve` sessions are never reported.
 

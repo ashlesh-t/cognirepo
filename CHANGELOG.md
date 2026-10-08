@@ -207,6 +207,15 @@ Versioning: [Semantic Versioning](https://semver.org/)
   completeness.
 
 ### Added
+- **`cognirepo doctor --resources` and `docs/RESOURCES.md` (#121).** One read-only report of where memory and
+  disk go: every cognirepo process (resident memory, age, repo, flagged stale — directory deleted or a
+  one-shot command running for hours), the size of each `.cognirepo/` subdirectory with its largest files,
+  and set-aside/left-over files (quarantines, `.stale` indexes, `.replaced-*`, scratch). `--json` for
+  scripts. The new guide documents the expected footprint (measured: watcher ~100–130 MB, idle `serve`
+  ~220 MB, `index-repo --no-embed` ~125 MB peak, ~7 MB of store for this repo), what each directory holds,
+  every tuning knob that affects memory or disk, and what to do for each thing the report can show. Run
+  against the maintainer's real store it listed 1.1 GB of resident cognirepo processes (half of them
+  stale) and 67 MB of set-aside files, which is what the issue asked to make visible.
 - **#74 — C# language support.** `.cs` files are indexed via `tree-sitter-c-sharp` (now part of
   the `languages` extra): classes, interfaces, structs, records, enums, methods and local functions,
   plus call edges for `Foo()`, `obj.Foo()`, generic `Foo<T>()` and null-conditional `a?.Foo()`

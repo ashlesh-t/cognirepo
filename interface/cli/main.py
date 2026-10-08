@@ -2077,6 +2077,15 @@ def _cmd_prime(as_json: bool = False) -> None:
     print()
 
 
+def _cmd_doctor_resources(as_json: bool = False) -> int:
+    """`cognirepo doctor --resources`: processes, store sizes and set-aside files (COGNIREPO-121)."""
+    # pylint: disable=import-outside-toplevel
+    from interface.cli import resources
+    report = resources.collect(os.path.abspath(get_path("")))
+    print(json.dumps(report, indent=2) if as_json else resources.render(report))
+    return 0
+
+
 def _cmd_doctor_fix() -> int:
     """
     P2-B: Auto-fix top 2 failure modes:
@@ -3956,6 +3965,14 @@ def _main():
         default=False,
         help="Output diagnostics as JSON (machine-readable).",
     )
+    p_doctor.add_argument(
+        "--resources",
+        action="store_true",
+        default=False,
+        help="Show where memory and disk go instead of the health checks: cognirepo processes (RSS, "
+             "age, stale), size of each .cognirepo subdirectory, and set-aside/left-over files. "
+             "Read-only. Combine with --json.",
+    )
 
     # prime — session bootstrap command (I2)
     p_prime = sub.add_parser("prime", help="Generate a session brief for agent bootstrap")
@@ -4579,6 +4596,8 @@ def _main():
         sys.exit(_cmd_coverage())
 
     if args.command == "doctor":
+        if getattr(args, "resources", False):
+            sys.exit(_cmd_doctor_resources(as_json=getattr(args, "json", False)))
         fix_mode = getattr(args, "fix", False)
         if fix_mode:
             sys.exit(_cmd_doctor_fix())
