@@ -18,7 +18,6 @@ import signal
 import subprocess
 import sys
 import threading
-import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -535,8 +534,37 @@ def write_systemd_unit(repo_path: str) -> Path:
 WATCHER_LOG_ENV = "COGNIREPO_WATCHER_LOG"
 
 
-def spawn_detached_watcher(repo_path: str, log_path: str) -> int:
-    """Start ``cognirepo watch --foreground`` as a new, detached process and return its pid.
+class WatcherSpawnError(OSError):
+    """The background watcher process could not even be started (bad interpreter, missing cwd, …)."""
+
+
+#: the directory that contains the ``interface`` package this process imported from
+_PACKAGE_ROOT = str(Path(__file__).resolve().parents[2])
+
+
+def _watcher_env(log_path: str) -> dict:
+    """Environment for a detached watcher.
+
+    * ``COGNIREPO_DIR``: the caller's store, even if the child's cwd resolves differently;
+    * ``COGNIREPO_WATCHER_LOG``: where its log is, for the registry;
+    * ``PYTHONPATH`` gets the package root APPENDED (after any existing entries): the child runs with
+      ``-P`` so it needs another way to find cognirepo when it is not installed — an uninstalled source
+      checkout, or a venv whose editable install points at a different checkout. Appending (not
+      prepending) keeps it behind anything the user set, and it is the cognirepo tree itself, never the
+      user's repo, so it cannot bring back the shadowing ``-P`` prevents.
+    """
+    env = dict(os.environ)
+    env["COGNIREPO_DIR"] = str(get_cognirepo_dir())
+    env[WATCHER_LOG_ENV] = log_path
+    parts = [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p]
+    if _PACKAGE_ROOT not in parts:
+        parts.append(_PACKAGE_ROOT)
+    env["PYTHONPATH"] = os.pathsep.join(parts)
+    return env
+
+
+def spawn_detached_watcher(repo_path: str, log_path: str) -> "subprocess.Popen":
+    """Start ``cognirepo watch --foreground`` as a new, detached process and return its ``Popen``.
 
     COGNIREPO-127: this replaces the old double-fork ``daemonize()``. Forking the calling process
     copied its whole heap into the daemon — after ``index-repo`` that is the embedding model, the
@@ -548,20 +576,25 @@ def spawn_detached_watcher(repo_path: str, log_path: str) -> int:
     stdin is /dev/null, stdout/stderr append to ``log_path``, and the child is a session leader
     (``start_new_session``) so it survives the terminal that started it. Requires Python >= 3.11
     (``-P``), which the project already does.
+
+    The ``Popen`` is returned (not just its pid) so the caller can tell a child that crashed on
+    startup — and with which exit code — from one that is merely slow. Raises ``WatcherSpawnError``
+    if the process cannot be started at all.
     """
-    env = dict(os.environ)
-    env["COGNIREPO_DIR"] = str(get_cognirepo_dir())      # same store as the caller, even if cwd differs
-    env[WATCHER_LOG_ENV] = log_path
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    with open(os.devnull, "rb") as devnull, open(log_path, "ab") as log:
-        proc = subprocess.Popen(  # pylint: disable=consider-using-with
-            # -P: do not put the cwd (= the user's repo) on sys.path. Without it a repo that has its
-            # own `interface/` package would shadow cognirepo's and the watcher could not start.
-            [sys.executable, "-P", "-m", "interface.cli.main", "watch", "--foreground", "--path", repo_path],
-            stdin=devnull, stdout=log, stderr=log, cwd=repo_path, env=env,
-            start_new_session=True, close_fds=True,
-        )
-    return proc.pid
+    env = _watcher_env(log_path)
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(os.devnull, "rb") as devnull, open(log_path, "ab") as log:
+            return subprocess.Popen(  # pylint: disable=consider-using-with
+                # -P: do not put the cwd (= the user's repo) on sys.path. Without it a repo that has
+                # its own `interface/` package would shadow cognirepo's and the watcher could not start.
+                [sys.executable, "-P", "-m", "interface.cli.main", "watch", "--foreground",
+                 "--path", repo_path],
+                stdin=devnull, stdout=log, stderr=log, cwd=repo_path, env=env,
+                start_new_session=True, close_fds=True,
+            )
+    except OSError as exc:
+        raise WatcherSpawnError(f"could not start the watcher process ({sys.executable}): {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

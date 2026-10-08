@@ -2584,14 +2584,15 @@ def _write_last_indexed_sha(repo_path: str) -> None:
         pass  # non-git repos silently skip
 
 
-def _start_watcher(path: str, kg, indexer, daemon: bool = False, register_self: bool = False) -> None:
+def _start_watcher(path: str, kg=None, indexer=None, daemon: bool = False) -> None:
     """Start the file watcher, in this process or as a separate detached process (``daemon=True``).
 
-    ``daemon=True`` spawns a fresh ``watch --foreground`` process (COGNIREPO-127); ``kg`` and
-    ``indexer`` are not used for it — the new process loads its own — so callers may pass None.
-    Otherwise the watcher runs here and registers this process (the lease holder, COGNIREPO-138),
-    so ``list`` / ``watch --status`` / the singleton check / ``--stop`` see it. The crash guard
-    removes the registration on exit (COGNIREPO-125). ``register_self`` is kept for callers.
+    ``daemon=True`` spawns a fresh ``watch --foreground`` process (COGNIREPO-127). That process loads
+    the graph and index from DISK, so ``kg`` / ``indexer`` are not used by it and may be omitted; what
+    matters is that the caller has persisted everything before calling (see the guard below).
+    Otherwise the watcher runs here with ``kg`` / ``indexer`` and registers this process (the lease
+    holder, COGNIREPO-138), so ``list`` / ``watch --status`` / the singleton check / ``--stop`` see it.
+    The crash guard removes the registration on exit (COGNIREPO-125).
     """
     import os  # pylint: disable=import-outside-toplevel
 
@@ -2616,7 +2617,9 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False, register_self: 
     session_id = f"watch_{ts}"
 
     if daemon:
-        from interface.cli.daemon import spawn_detached_watcher, is_watcher_running_for_path as _running, _is_alive as _pid_alive  # pylint: disable=import-outside-toplevel
+        from interface.cli.daemon import (  # pylint: disable=import-outside-toplevel
+            WatcherSpawnError, spawn_detached_watcher, is_watcher_running_for_path as _running,
+        )
         from pathlib import Path  # pylint: disable=import-outside-toplevel
 
         cognirepo_dir = Path(get_path(""))
@@ -2624,30 +2627,57 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False, register_self: 
         log_path = str(cognirepo_dir / "watchers" / f"{session_id}.log")
         Path(log_path).parent.mkdir(parents=True, exist_ok=True)
 
+        # The new process reads the graph and index from DISK, not from this process (the old fork
+        # shared our memory). Everything must therefore be persisted before it starts, or the
+        # watcher would begin on a stale or partial index with nothing to say so. index-repo / init
+        # save the AST index, FAISS and manifest inside index_repo() and the graph right after; the
+        # only gap is a graph with ops that never reached disk (a failed save), so close it here.
+        if kg is not None and getattr(kg, "_pending", None):
+            try:
+                kg.save()
+            except Exception as exc:  # pylint: disable=broad-except
+                print(f"[cognirepo] Warning: the graph has unsaved changes ({exc}); the background "
+                      "watcher will start from what is on disk.", file=sys.stderr)
+
         name = f"watcher-{Path(abs_path).name}-{ts}"
-        # COGNIREPO-127: a FRESH process, not a fork of this one. Forking copied this process's heap
-        # (embedder, FAISS, ASTs: 3.3 GB) into the daemon. The new process loads its own graph/index
-        # and registers itself once it holds the per-repo lease (COGNIREPO-138), so report what
-        # actually happened by waiting briefly for it to appear in the registry.
-        child_pid = spawn_detached_watcher(abs_path, log_path)
-        deadline = time.monotonic() + 30.0       # a cold start loads the graph and index first
-        holder = None
-        while time.monotonic() < deadline:
+        # COGNIREPO-127: a FRESH process, not a fork of this one. It loads its own graph/index and
+        # registers itself once it holds the per-repo lease (COGNIREPO-138), so report what actually
+        # happened. A cold start loads the graph and index first, so say that this may take a while.
+        print("[cognirepo] Starting the background watcher (loading the graph and index, up to 30s)...")
+        try:
+            proc = spawn_detached_watcher(abs_path, log_path)
+        except WatcherSpawnError as exc:
+            print(f"[cognirepo] Error: {exc}", file=sys.stderr)
+            return
+        deadline = time.monotonic() + 30.0
+        holder, exit_code = None, None
+        while True:
             holder = _running(abs_path)
-            if holder is not None or not _pid_alive(child_pid):
+            exit_code = proc.poll()
+            if holder is not None or exit_code is not None or time.monotonic() >= deadline:
                 break
             time.sleep(0.1)
-        if holder is not None and holder.get("pid") == child_pid:
-            print(f"[cognirepo] Watcher started in background (PID {child_pid})")
+        if holder is not None and holder.get("pid") == proc.pid:
+            print(f"[cognirepo] Watcher started in background (PID {proc.pid})")
             print(f"[cognirepo] Name : {holder.get('name', name)}")
             print(f"[cognirepo] Log  : {log_path}")
-            print(f"[cognirepo] View : cognirepo list -n {child_pid} --view")
+            print(f"[cognirepo] View : cognirepo list -n {proc.pid} --view")
         elif holder is not None:
             print(f"[cognirepo] A watcher is already running for this path (PID {holder['pid']}); "
                   "the new one exited without starting.")
+        elif exit_code is not None:
+            print(f"[cognirepo] The watcher process exited with code {exit_code} before it registered "
+                  f"- see the log: {log_path}", file=sys.stderr)
+            try:
+                with open(log_path, encoding="utf-8", errors="replace") as fh:
+                    tail = [ln.rstrip() for ln in fh.readlines()[-3:] if ln.strip()]
+                for ln in tail:
+                    print(f"[cognirepo]   | {ln}", file=sys.stderr)
+            except OSError:
+                pass
         else:
-            print(f"[cognirepo] Watcher process {child_pid} did not register within 30s — "
-                  f"check the log: {log_path}", file=sys.stderr)
+            print(f"[cognirepo] The watcher (PID {proc.pid}) is still starting after 30s and has not "
+                  f"registered yet - check the log: {log_path}", file=sys.stderr)
         return
 
     # imported here, not above: the daemon branch returns before needing any of it
@@ -4771,7 +4801,7 @@ def _main():
             kg = KnowledgeGraph()
             indexer = ASTIndexer(graph=kg)
             indexer.load()
-            _start_watcher(abs_watch_path, kg, indexer, daemon=False, register_self=True)
+            _start_watcher(abs_watch_path, kg, indexer, daemon=False)
             return
 
         print("Use --status, --ensure-running or --foreground. See: cognirepo watch --help")
