@@ -725,7 +725,7 @@ from pathlib import Path
 ROOT = str(Path(__file__).resolve().parent.parent)
 
 
-def test_serve_stdout_is_only_json_rpc(tmp_path):
+def test_serve_stdout_is_only_json_rpc(real_watcher_spawn, tmp_path):
     repo = tmp_path / "proj"
     repo.mkdir()
     (repo / "a.py").write_text("def f():\n    return 1\n")

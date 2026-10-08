@@ -105,6 +105,8 @@ cognirepo doctor [OPTIONS]
 | `--verbose`, `-v` | `False` | Show optional component checks |
 | `--fix` | `False` | Auto-fix FAISS corruption or dimension mismatch |
 
+`doctor` warns about **stale cognirepo processes** (Linux): a watcher/indexer whose working directory was deleted, or a one-shot command (`init`, `index-repo`, …) still running after 6 h, with their combined memory and the `kill` command. Agent `serve` sessions are never reported.
+
 `doctor` also probes the interpreter behind the `cognirepo` on `PATH` (read-only, in a subprocess): with
 `storage.encrypt: true` it reports missing `keyring`/`cryptography` or an unusable keyring backend there,
 and it warns when that install is a stale copy of the current working tree, printing the exact

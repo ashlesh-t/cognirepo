@@ -191,7 +191,7 @@ time.sleep(120)
 
 
 @pytest.mark.timeout(180)
-def test_serve_sessions_share_one_watcher_and_one_takes_over(isolated_cognirepo, tmp_path):
+def test_serve_sessions_share_one_watcher_and_one_takes_over(real_watcher_spawn, isolated_cognirepo, tmp_path):
     """What `cognirepo serve` does: every session calls _start_watcher_bg(). Three sessions => ONE
     real watcher (graph/index loaded, registered, 'embedded'); killing it => another takes over."""
     (tmp_path / "a.py").write_text("def f():\n    pass\n")

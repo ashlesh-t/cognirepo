@@ -31,6 +31,19 @@ Versioning: [Semantic Versioning](https://semver.org/)
   builds a graph and index it threw away. The daemon's command line is now `watch --foreground` instead of
   its parent's (`init`, `index-repo`), so it is recognisable in `ps`. Measured on this repo: RSS 3,558 MB →
   113 MB, `list --stop` 30 s + SIGKILL → 0.2 s clean stop.
+- **#119 — "leaked `cognirepo init` processes": a watcher now stops when its repo is gone, the test suite
+  no longer creates them, and `doctor` finds the ones that exist.** 12 (later 80, ~40 MB each, days old)
+  `python -m interface.cli.main init` processes turned out not to be stuck `init` runs: `init` starts a
+  background watcher by forking itself, a fork keeps its parent's command line, and these watchers watched
+  temp directories of test runs that pytest had deleted — reparented to `systemd --user`, with nothing to
+  tell them to stop. (1) The watcher's crash-guard loop now checks every 5 s that its directory still
+  exists and stops cleanly (final flush, registration removed) when it does not. (2) The test suite
+  was the source: tests that run `init` — in-process or as a subprocess — left a real daemon each. A
+  new `COGNIREPO_NO_WATCHER` environment variable (also useful in CI and containers) makes `init` /
+  `index-repo --daemon` skip the background watcher and `serve` skip its in-process one; the suite sets it
+  unless a test requests `real_watcher_spawn`. (3) `cognirepo doctor` warns about stale cognirepo processes
+  — directory deleted, or a one-shot command running for over 6 h — with their combined memory and the
+  `kill` command; `serve` sessions are never reported.
 - **#138 — there is now exactly one watcher per repo.** Every `cognirepo serve` (one per agent session)
   started its own unregistered watcher thread, the "singleton" flock was taken on a per-pid file so it
   excluded nothing, `watch --daemon` registered itself after the fork (check-then-act), and the shared

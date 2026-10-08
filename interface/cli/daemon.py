@@ -138,6 +138,9 @@ def wait_for_watcher_lease(repo_path: str | None = None, poll: float | None = No
 # Heartbeat
 # ---------------------------------------------------------------------------
 
+#: the crash-guard loop checks (every N seconds) that the watched directory still exists
+_DIR_CHECK_EVERY = 5
+
 _HEARTBEAT_INTERVAL = 30  # seconds between heartbeat writes
 _HEARTBEAT_STALE_THRESHOLD = 120  # seconds before doctor warns
 
@@ -426,8 +429,16 @@ def _run_watcher_loop(create_fn, stop_fn, watcher_path, session_id, restart_dela
         try:
             observer = create_fn()
             print(f"[watcher:{session_id}] started (pid={pid}, path={watcher_path})", file=sys.stderr, flush=True)
+            ticks = 0
             while observer.is_alive() and not _STOP_REQUESTED.is_set():
                 time.sleep(1)
+                ticks += 1
+                # COGNIREPO-119: a watcher outlived its repo for days (temp dirs of test runs, a deleted
+                # checkout) because nothing noticed. Nothing left to watch => stop, cleanly.
+                if ticks % _DIR_CHECK_EVERY == 0 and not os.path.isdir(watcher_path):
+                    print(f"[watcher:{session_id}] {watcher_path} no longer exists — stopping.",
+                          file=sys.stderr, flush=True)
+                    _STOP_REQUESTED.set()
             if _STOP_REQUESTED.is_set():
                 # the KeyboardInterrupt may have been swallowed on the way here: stop cleanly anyway
                 print(f"[watcher:{session_id}] stop requested.", file=sys.stderr, flush=True)
