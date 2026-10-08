@@ -42,7 +42,7 @@ cognirepo index-repo [PATH] [OPTIONS]
 |------|---------|-------------|
 | `PATH` | `.` | Directory to index |
 | `--no-watch` | `False` | Do not start the file watcher after indexing |
-| `--daemon`, `-d` | `False` | Run the watcher as a background daemon |
+| `--daemon`, `-d` | `False` | Run the watcher as a background daemon: a fresh detached `watch --foreground` process (~100 MB), not a fork of this one, so it does not carry the indexing run's embedder/FAISS/AST heap |
 | `--no-embed` | `False` | Skip FAISS embedding (AST/symbol index + graph only). The post-commit hook passes it so a commit never loads the embedding model; vectors for those files catch up on the next full index |
 | `--files FILE…` | — | Re-index only these files (used by the post-commit hook). Persists the graph **and** the AST index, FAISS vectors and manifest, so `lookup_symbol` sees the change from any process (COGNIREPO-154). Same complete-graph guard as `--changed-only` |
 | `--changed-only` | `False` | Auto-detect changed files via git and reindex. Like `--files` it only updates an existing **complete** graph: if the graph is missing, quarantined or a fragment it exits `2` without saving and tells you to run a full `cognirepo index-repo .` once (COGNIREPO-122). File extensions come from `language_registry` (installed grammars). If git cannot list changes (not a repo, no commits, git missing) it exits `1` and indexes nothing (COGNIREPO-155) |

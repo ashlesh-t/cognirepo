@@ -199,7 +199,7 @@ _ALLOWED: dict[tuple[str, str], str] = {
     ("intelligence/orchestrator/router.py", "_write_error_log"): "append-only log",
     ("interface/cli/main.py", "_log_error_to_file"): "append-only error log",
     ("interface/tools/benchmark.py", "_save_to_history"): "append-only jsonl history",
-    ("interface/cli/daemon.py", "daemonize"): "log append + tmpdir pid handoff between forks",
+    ("interface/cli/daemon.py", "spawn_detached_watcher"): "append-mode log handed to the child as its stdout/stderr",
     ("interface/cli/daemon.py", "write_systemd_unit"): "generated user unit file, not a store",
     ("interface/server/mcp_server.py", "_spawn_background_reindex"): "O_EXCL lock-file creation is itself atomic",
     ("interface/server/mcp_server.py", "_write_manifest"): "dev-time package manifest, not .cognirepo data",
