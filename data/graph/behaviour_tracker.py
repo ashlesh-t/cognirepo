@@ -47,6 +47,20 @@ def _behaviour_lock():
         ) from exc
 
 
+# ── growth bounds (COGNIREPO-118) ─────────────────────────────────────────────
+# behaviour.json was rewritten whole on every save and had no bound on anything but the 50-entry
+# style ring buffer: one dev checkout reached 77 MB. The sections that grow without limit, and the
+# bound each now has (applied on load and on save, AFTER the cross-process merge so a stale writer
+# cannot bring pruned entries back):
+MAX_QUERY_HISTORY = 2000        # query_history entries (newest kept); also trims each entry's size
+MAX_QUERY_TEXT = 500            # chars of query text kept per history entry
+MAX_RETRIEVED_PER_QUERY = 20    # symbols / faiss rows kept per history entry
+MAX_SESSIONS = 50               # session_registry entries (newest kept)
+MAX_FILES_PER_SESSION = 200     # files_touched per session — also bounds the co-occurrence fan-out
+MAX_COOC_PARTNERS = 30          # strongest co-edited partners kept per file (was: every pair, O(F^2))
+MAX_TERMS = 500                 # interaction_style.terminology entries (most frequent kept)
+MAX_ERROR_FILES = 20            # distinct files remembered per error type
+
 _USEFUL_WINDOW = timedelta(minutes=5)
 _MOOD_FRUSTRATED_WINDOW = timedelta(minutes=15)
 _MOOD_FRUSTRATED_ERROR_THRESHOLD = 3
@@ -208,6 +222,64 @@ class BehaviourTracker:
         disk = self._read_raw(_behaviour_file())
         if disk is not None:
             self.data = disk
+            self.prune()      # an old oversized file shrinks as soon as it is read
+
+    def prune(self) -> dict:
+        """Enforce the growth bounds above in place; returns how many entries each section lost.
+
+        Cheap when nothing is over its bound. Called from ``_load`` and ``save`` (after the merge).
+        """
+        d, dropped = self.data, {}
+
+        qh = d.get("query_history", {})
+        for entry in qh.values():
+            if isinstance(entry, dict):
+                if len(entry.get("query_text", "")) > MAX_QUERY_TEXT:
+                    entry["query_text"] = entry["query_text"][:MAX_QUERY_TEXT]
+                for key in ("retrieved_symbols", "faiss_rows"):
+                    if len(entry.get(key, ())) > MAX_RETRIEVED_PER_QUERY:
+                        entry[key] = entry[key][:MAX_RETRIEVED_PER_QUERY]
+        if len(qh) > MAX_QUERY_HISTORY:
+            newest = sorted(qh, key=lambda q: str(qh[q].get("timestamp", "")))[-MAX_QUERY_HISTORY:]
+            keep = set(newest)
+            dropped["query_history"] = len(qh) - len(keep)
+            d["query_history"] = {q: qh[q] for q in qh if q in keep}
+
+        sr = d.get("session_registry", {})
+        for sess in sr.values():
+            if isinstance(sess, dict):
+                if len(sess.get("files_touched", ())) > MAX_FILES_PER_SESSION:
+                    sess["files_touched"] = sess["files_touched"][-MAX_FILES_PER_SESSION:]
+                if len(sess.get("queries", ())) > MAX_QUERY_HISTORY // 10:
+                    sess["queries"] = sess["queries"][-(MAX_QUERY_HISTORY // 10):]
+        if len(sr) > MAX_SESSIONS:
+            newest = sorted(sr, key=lambda s: str(sr[s].get("start", "")))[-MAX_SESSIONS:]
+            keep = set(newest)
+            dropped["session_registry"] = len(sr) - len(keep)
+            d["session_registry"] = {s: sr[s] for s in sr if s in keep}
+
+        co = d.get("file_edit_cooccurrence", {})
+        n = 0
+        for partners in co.values():
+            if len(partners) > MAX_COOC_PARTNERS:
+                top = sorted(partners.items(), key=lambda kv: kv[1], reverse=True)[:MAX_COOC_PARTNERS]
+                n += len(partners) - len(top)
+                partners.clear()
+                partners.update(top)
+        if n:
+            dropped["file_edit_cooccurrence"] = n
+
+        terms = d.get("interaction_style", {}).get("terminology", {})
+        if len(terms) > MAX_TERMS:
+            top = sorted(terms.items(), key=lambda kv: kv[1], reverse=True)[:MAX_TERMS]
+            dropped["terminology"] = len(terms) - len(top)
+            terms.clear()
+            terms.update(top)
+
+        for ep in d.get("error_patterns", {}).values():
+            if isinstance(ep, dict) and len(ep.get("files", ())) > MAX_ERROR_FILES:
+                ep["files"] = ep["files"][-MAX_ERROR_FILES:]
+        return dropped
 
     def _merge_from_disk(self, disk: dict) -> None:
         """
@@ -266,8 +338,10 @@ class BehaviourTracker:
             disk = self._read_raw(path)
             if disk is not None:
                 self._merge_from_disk(disk)
+            self.prune()      # after the merge: a stale writer must not bring pruned entries back
             self.data["updated_at"] = _now()
-            raw = json.dumps(self.data, indent=2).encode()
+            # compact: indent=2 alone added ~30% to a file that is rewritten whole on every save
+            raw = json.dumps(self.data, separators=(",", ":")).encode()
             try:
                 from core.security.storage import get_storage_config  # pylint: disable=import-outside-toplevel
                 encrypt, project_id = get_storage_config()
@@ -404,6 +478,8 @@ class BehaviourTracker:
         session = sr[session_id]
 
         co = self.data["file_edit_cooccurrence"]
+        if len(session["files_touched"]) > MAX_FILES_PER_SESSION:
+            del session["files_touched"][: len(session["files_touched"]) - MAX_FILES_PER_SESSION]
         for other_file in session["files_touched"]:
             if other_file == file_path:
                 continue
