@@ -257,9 +257,20 @@ _TS_CLASS_TYPES = frozenset({
 # `class`/`module` would otherwise also match JS class expressions and TS `module` blocks.
 _TS_LANG_FUNCTION_TYPES: dict[str, frozenset[str]] = {
     "ruby": frozenset({"method", "singleton_method"}),  # def foo / def self.foo
+    # Kotlin `constructor(…)` / `init { … }` — unnamed, see _KEYWORD_NAMED_FUNCTIONS
+    "kotlin": frozenset({"secondary_constructor", "anonymous_initializer"}),
 }
 _TS_LANG_CLASS_TYPES: dict[str, frozenset[str]] = {
     "ruby": frozenset({"class", "module"}),
+    # Kotlin class/interface/enum/data class use class_declaration (shared set)
+    "kotlin": frozenset({"object_declaration", "companion_object"}),
+}
+
+# Function nodes with no `name` field, named after their keyword token instead.
+_KEYWORD_NAMED_FUNCTIONS: dict[str, str] = {
+    "deinit_declaration": "deinit",          # Swift deinit { … }
+    "secondary_constructor": "constructor",  # Kotlin constructor(x: Int) { … }
+    "anonymous_initializer": "init",         # Kotlin init { … }
 }
 
 
@@ -485,15 +496,23 @@ def _ts_docstring(node, source: bytes, ext: str) -> str:
 _RUBY_NON_SYMBOL_CALLS = frozenset({"class", "new"})
 
 
-def _swift_callee(node):
-    """Callee of a Swift call_expression, which has no field names.
+def _fieldless_callee(node):
+    """Callee of a Swift / Kotlin call_expression, which has no field names.
 
-    Only accept the node shapes tree-sitter-swift actually produces for a callee so this
-    fallback can't misfire on another grammar (or grammar version) that reaches the shared
-    `call_expression` branch without a `function`/`name` field.
+    Only accept the node shapes tree-sitter-swift / tree-sitter-kotlin actually produce for
+    a callee so this fallback can't misfire on another grammar (or grammar version) that
+    reaches the shared `call_expression` branch without a `function`/`name` field.
     """
     first = node.named_children[0] if node.named_children else None
-    if first is not None and first.type in ("simple_identifier", "navigation_expression"):
+    if first is None:
+        return None
+    if first.type in ("simple_identifier", "navigation_expression"):  # Swift, Kotlin a.b()
+        return first
+    # Kotlin `foo(x)` / `foo { … }`: a bare identifier is only a callee when followed by
+    # Kotlin's call suffix (value_arguments / trailing lambda).
+    if first.type == "identifier" and any(
+        c.type in ("value_arguments", "annotated_lambda") for c in node.children
+    ):
         return first
     return None
 
@@ -530,16 +549,20 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
         fn = (
             node.child_by_field_name("function")
             or node.child_by_field_name("name")
-            or _swift_callee(node)  # Swift: no field names
+            or _fieldless_callee(node)  # Swift / Kotlin: no field names
         )
         if fn:
             prop = (
                 fn.child_by_field_name("property")  # JS/TS: obj.prop()
                 or fn.child_by_field_name("field")  # Go selector_expression: obj.Field()
             )
-            if prop is None and fn.type == "navigation_expression":  # Swift: obj.method()
+            if prop is None and fn.type == "navigation_expression":
                 suffix = fn.child_by_field_name("suffix")
-                prop = suffix.child_by_field_name("suffix") if suffix else None
+                if suffix is not None:  # Swift: obj.method()
+                    prop = suffix.child_by_field_name("suffix")
+                else:  # Kotlin: obj.method() / obj?.method() — member is the last child
+                    last = fn.named_children[-1] if fn.named_children else None
+                    prop = last if last is not None and last.type == "identifier" else None
             name_node = prop if prop else fn
             if name_node.type in ("identifier", "property_identifier", "field_identifier",
                                   "simple_identifier"):  # simple_identifier: Swift
@@ -677,7 +700,29 @@ def _ts_bases(node, source: bytes) -> list[str]:
             parent = child.child_by_field_name("inherits_from")
             if parent:
                 bases.append(_ts_text(parent, source))
+        elif child.type == "delegation_specifiers":
+            bases.extend(_kotlin_supertypes(child, source))
     return bases
+
+
+def _kotlin_supertypes(specs, source: bytes) -> list[str]:
+    """Simple names in a Kotlin `: Base(), Iface, Other by impl` supertype list.
+
+    The type sits in a user_type directly, under constructor_invocation (`Base()`) or under
+    explicit_delegation (`Iface by impl`). Qualified names (`a.b.Base`) are reduced to their
+    last segment and type arguments dropped, so INHERITS edges resolve by simple name.
+    """
+    out: list[str] = []
+    for spec in specs.named_children:
+        node = spec.named_children[0] if spec.named_children else None
+        if node is not None and node.type in ("constructor_invocation", "explicit_delegation"):
+            node = node.named_children[0] if node.named_children else None
+        if node is None or node.type != "user_type":
+            continue
+        idents = [c for c in node.named_children if c.type == "identifier"]
+        if idents:
+            out.append(_ts_text(idents[-1], source))
+    return out
 
 
 def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] | None" = None) -> None:
@@ -694,9 +739,15 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
     lang = lang_name(ext)
     if node.type in _TS_FUNCTION_TYPES or node.type in _TS_LANG_FUNCTION_TYPES.get(lang, ()):
         name_node = node.child_by_field_name("name")
-        if name_node is None and node.type == "deinit_declaration":
-            # Swift `deinit { … }` has no name field; use the `deinit` keyword token
-            name_node = next((c for c in node.children if c.type == "deinit"), None)
+        if name_node is None and node.type in _KEYWORD_NAMED_FUNCTIONS:
+            # Swift `deinit` / Kotlin `constructor` / `init` have no name field; use the
+            # keyword token
+            keyword = _KEYWORD_NAMED_FUNCTIONS[node.type]
+            name_node = next((c for c in node.children if c.type == keyword), None)
+        if name_node is not None and name_node.is_missing:
+            # zero-width node inserted by error recovery (e.g. tree-sitter-kotlin on
+            # constructs it can't parse) — never emit a symbol with an empty name
+            name_node = None
         # arrow functions assigned to a variable: capture parent's name via caller
         if name_node is None and node.type == "arrow_function":
             for child in node.children:
@@ -723,8 +774,10 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
             })
     elif node.type in _TS_CLASS_TYPES or node.type in _TS_LANG_CLASS_TYPES.get(lang, ()):
         name_node = node.child_by_field_name("name")
-        if name_node:
-            cls_name = _ts_text(name_node, source)
+        cls_name = _ts_text(name_node, source) if name_node and not name_node.is_missing else None
+        if cls_name is None and node.type == "companion_object":
+            cls_name = "Companion"  # Kotlin's implicit name for an unnamed companion object
+        if cls_name:
             cls_decs = _parent_decs or []
             out.append({
                 "name": cls_name,

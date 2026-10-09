@@ -26,6 +26,7 @@ _LANG_EXTENSIONS: dict[str, set[str]] = {
     "javascript": {".js", ".jsx", ".mjs"},
     "typescript": {".ts", ".tsx"},
     "swift":      {".swift"},
+    "kotlin":     {".kt", ".kts"},
     "go":         {".go"},
     "rust":       {".rs"},
     "ruby":       {".rb"},

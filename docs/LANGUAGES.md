@@ -21,6 +21,7 @@ pip install cognirepo[languages]     # all supported languages
 |----------|------------|--------|-----------------|
 | Python | `.py` | Stable — built-in | tree-sitter-python (optional, stdlib fallback) |
 | Swift | `.swift` | Stable | tree-sitter-swift |
+| Kotlin | `.kt` `.kts` | Stable | tree-sitter-kotlin |
 | JavaScript | `.js` `.jsx` | Stable | tree-sitter-javascript |
 | TypeScript | `.ts` `.tsx` | Stable | tree-sitter-typescript |
 | Java | `.java` | Stable | tree-sitter-java |
@@ -39,9 +40,7 @@ grammar package from `cognirepo[languages]`.
 
 ## Planned
 
-| Language | Issue |
-|----------|-------|
-| Kotlin | #TBD |
+No further languages are planned yet — open an issue to request one.
 
 ---
 
@@ -69,6 +68,15 @@ These become nodes and edges in the NetworkX knowledge graph, and entries in the
   each of its extensions. `init` and `deinit` are FUNCTION symbols. Calls inside computed-property
   bodies (`var x: Int { calc() }`) and property observers are not attributed to any symbol.
   Vendored/build dirs (`Pods/`, `.build/`, `Carthage/`, `DerivedData/`) are skipped.
+
+- **Kotlin** — `object` declarations and companion objects are CLASS symbols; an unnamed
+  `companion object` is named `Companion` (Kotlin's own default). Secondary constructors and
+  `init { … }` blocks are FUNCTION symbols named `constructor` / `init`, so calls made in them are
+  attributed. Supertypes are recorded by simple name, including `Iface by impl` delegation.
+  Known limits: tree-sitter-kotlin 1.1 parses explicit type-argument calls (`foo<Int>(1)`) as
+  comparisons, so those calls are missed; calls inside property getters/setters and property
+  initialisers are not attributed to any symbol. `build/` and
+  `.gradle/` are skipped.
 
 ---
 
@@ -98,6 +106,6 @@ once symbols are extracted.
 
 ```bash
 cognirepo doctor --verbose
-# Shows: Language support — Python, JS, TS, Java, C#, Go, Rust, Ruby, C++, Swift, PHP
+# Shows: Language support — Python, JS, TS, Java, C#, Go, Rust, Ruby, C++, Swift, Kotlin, PHP
 # (or only "Python (built-in)" if cognirepo[languages] not installed)
 ```

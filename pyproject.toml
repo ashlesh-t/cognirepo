@@ -74,6 +74,7 @@ languages = [
     "tree-sitter-bash>=0.23",
     "tree-sitter-yaml>=0.6",
     "tree-sitter-swift>=0.7",  # alex-pinkus/tree-sitter-swift — versioned 0.x, not 0.23+
+    "tree-sitter-kotlin>=1.1",
 ]
 cpp = [
     "pybind11>=2.12",

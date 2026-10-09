@@ -233,6 +233,16 @@ Versioning: [Semantic Versioning](https://semver.org/)
   every tuning knob that affects memory or disk, and what to do for each thing the report can show. Run
   against the maintainer's real store it listed 1.1 GB of resident cognirepo processes (half of them
   stale) and 67 MB of set-aside files, which is what the issue asked to make visible.
+- **#178 — Kotlin language support.** `.kt` and `.kts` files are indexed via `tree-sitter-kotlin` (now
+  part of the `languages` extra, `>=1.1`): classes, interfaces, data/enum/sealed classes, objects and
+  companion objects (an unnamed companion is recorded as `Companion`), functions, extension functions,
+  secondary constructors (`constructor`) and `init` blocks. Call edges cover `foo()`, `a.b()`, safe-call
+  `a?.b()` and trailing-lambda calls (`list.forEach { … }`); supertypes are normalised to simple names
+  (`com.x.Base()` → `Base`, `Comparable<T>` → `Comparable`, `Iface by impl` → `Iface`).
+  `build.gradle.kts` was already a Kotlin/Gradle service marker and `build/` / `.gradle/` were already
+  skipped. `cognirepo doctor` lists Kotlin; `semantic_search_code` accepts `language="kotlin"`; the
+  post-commit hook picks up `.kt`/`.kts` via `known_extensions()`. The indexer no longer emits a symbol
+  with an empty name when a grammar's error recovery inserts a zero-width `MISSING` name node.
 - **#74 — C# language support.** `.cs` files are indexed via `tree-sitter-c-sharp` (now part of
   the `languages` extra): classes, interfaces, structs, records, enums, methods and local functions,
   plus call edges for `Foo()`, `obj.Foo()`, generic `Foo<T>()` and null-conditional `a?.Foo()`
