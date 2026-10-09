@@ -34,6 +34,19 @@ except ImportError:  # store_lock() raises a clearer ImportError itself
 
 _log = logging.getLogger(__name__)
 
+#: ``filelock.Timeout`` (or a stand-in when filelock is missing): what MCP tools and the CLI catch so a
+#: lock timeout from ANY lock — ours or a raw FileLock — is reported as "store busy", not a traceback.
+LockTimeout = _BaseTimeout
+
+
+def busy_message(exc: BaseException) -> str:
+    """User-facing text for any lock timeout (StoreBusy already has it; a raw Timeout gets the same shape)."""
+    if isinstance(exc, StoreBusy):
+        return str(exc)
+    where = getattr(exc, "lock_file", "") or "a store lock"
+    return (f"the CogniRepo store is busy: another process is holding {where}. "
+            "Nothing was changed - retry in a moment.")
+
 _LOCK_FILENAME = "cognirepo.lock"
 
 #: a lock held longer than this is logged (WARNING) when released — long holds are what make other

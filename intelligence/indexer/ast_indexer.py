@@ -46,6 +46,7 @@ import numpy as np
 import warnings
 
 from core.config.atomic import atomic_json_dump, atomic_path
+from core.config.lock import StoreBusy
 from core.config.safe_read import StoreUnreadableError, quarantine_if_stably_corrupt, read_retry
 from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
 from data.graph.journal import JournalBusy
@@ -74,6 +75,11 @@ def _ast_meta_file() -> str:
 
 def _manifest_file() -> str:
     return get_path("index/manifest.json")
+
+
+#: how long the Tier-2 queue file lock is waited for before StoreBusy (write/trim, and the initial read)
+_QUEUE_LOCK_WAIT = 10.0
+_QUEUE_READ_WAIT = 30.0
 
 
 def _store_lock_or_null():
@@ -2463,8 +2469,8 @@ class ASTIndexer:
         import json as _json  # pylint: disable=import-outside-toplevel
         from core.config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
         try:
-            import filelock as _fl  # pylint: disable=import-outside-toplevel
-            _lock = _fl.FileLock(pending_tier2_path() + ".lock", timeout=10)
+            from core.config.lock import store_lock as _sl  # pylint: disable=import-outside-toplevel
+            _lock = _sl(timeout=_QUEUE_LOCK_WAIT, lock_path=pending_tier2_path() + ".lock")
             with _lock:
                 atomic_json_dump(
                     pending_tier2_path(),
@@ -2476,6 +2482,8 @@ class ASTIndexer:
                     },
                     indent=2,
                 )
+        except StoreBusy:
+            raise   # a lost queue means the Tier-2 files are never indexed: fail loudly, don't warn and carry on
         except Exception as _exc:  # pylint: disable=broad-except
             log.warning("Could not write pending_tier2.json: %s", _exc)
 
@@ -2519,11 +2527,13 @@ class ASTIndexer:
             return {"files": 0, "symbols": 0, "languages": {}, "skipped_extensions": [], "tier2_queued": 0}
 
         try:
-            import filelock as _fl  # pylint: disable=import-outside-toplevel
-            _lock = _fl.FileLock(_queue_path + ".lock", timeout=30)
+            from core.config.lock import store_lock as _sl  # pylint: disable=import-outside-toplevel
+            _lock = _sl(timeout=_QUEUE_READ_WAIT, lock_path=_queue_path + ".lock")
             with _lock:
                 with open(_queue_path, encoding="utf-8") as _f:
                     _data = _json.load(_f)
+        except StoreBusy:
+            raise   # "0 files" would read as "nothing to do"; it means "could not read the queue"
         except Exception as _exc:  # pylint: disable=broad-except
             log.error("Tier 2: failed to read pending queue: %s", _exc)
             return {"files": 0, "symbols": 0, "languages": {}, "skipped_extensions": [], "tier2_queued": 0}
@@ -2543,11 +2553,10 @@ class ASTIndexer:
             self._batch_embed_pending()
             _data["embed_pending"] = False
             try:
-                import filelock as _fl  # pylint: disable=import-outside-toplevel
-                with _fl.FileLock(_queue_path + ".lock", timeout=10):
+                with _sl(timeout=_QUEUE_LOCK_WAIT, lock_path=_queue_path + ".lock"):
                     atomic_json_dump(_queue_path, _data, indent=2)
             except Exception:  # pylint: disable=broad-except
-                pass
+                pass   # progress bookkeeping: idempotent, redone next run
 
         print(f"  Tier 2: processing {len(_pending)} queued files in batches of {_batch_size}…")
         _pbar = tqdm(_pending, desc="Tier 2 indexing", unit="file", dynamic_ncols=True)
@@ -2605,7 +2614,7 @@ class ASTIndexer:
                 self._build_reverse_index()
                 self.save()
                 try:
-                    with _fl.FileLock(_queue_path + ".lock", timeout=10):
+                    with _sl(timeout=_QUEUE_LOCK_WAIT, lock_path=_queue_path + ".lock"):
                         atomic_json_dump(
                             _queue_path,
                             {"repo_root": repo_root, "files": _remaining, "embed_pending": False},

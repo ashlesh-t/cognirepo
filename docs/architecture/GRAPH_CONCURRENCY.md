@@ -69,8 +69,8 @@ rather than mixed; `kg.save()` and `indexer.save()` are still two separate saves
 
 ## Lock inventory, order and hold times (COGNIREPO-141)
 
-Every cross-process lock in CogniRepo, with how long a waiter gives up after. All `store_lock()` locks
-are **re-entrant for the same thread** (a depth counter), wait at most their timeout and then raise
+Every cross-process lock in CogniRepo, with how long a waiter gives up after. Every lock below except the two leases goes through `store_lock()` (a test fails if a raw
+`FileLock(` appears in store code), so all of them are **re-entrant for the same thread** (a depth counter), wait at most their timeout and then raise
 `StoreBusy` — a `filelock.Timeout` subclass that says which lock and how long, so a busy store is a
 retryable condition, never a hang or an unexplained traceback.
 
@@ -83,7 +83,7 @@ retryable condition, never a hang or an unexplained traceback.
 | `~/.cognirepo/org_graph.lock` (or `<COGNIREPO_ORG_GRAPH>.lock`) | the org graph | 15 s — **was unbounded** |
 | `~/.cognirepo/<project>/.last_context.lock` | `last_context.json` hand-off snapshot | 2 s, best-effort — **was the repo-local lock** |
 | `graph/graph.journal.writer`, `watchers/watcher.writer` | leases (one indexer / one watcher), held for the life of the holder, released by the kernel | try-lock |
-| `*.lock` beside `pending_tier2.json` / the on-demand queue | those small queue files | 5–30 s |
+| `pending_tier2.json.lock` | the Tier-2 work queue (create, read, trim; also read by on-demand expansion) | 5–30 s |
 
 **Order / nesting rule.** The graph, AST index, local vector store, episodic and project memory all share
 `cognirepo.lock`, so among them there is nothing to order — they re-enter. The rule for the *different*

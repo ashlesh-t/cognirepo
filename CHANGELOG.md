@@ -35,6 +35,12 @@ Versioning: [Semantic Versioning](https://semver.org/)
   concurrent writer's `sections`. (5) The documented rule "never nest two different store locks" is now
   enforced (`LockOrderError` under `COGNIREPO_LOCK_STRICT=1`, which every test runs with; no existing code
   path nested), and the full lock inventory with timeouts is in `docs/architecture/GRAPH_CONCURRENCY.md`.
+  (6) The remaining raw `FileLock`s were moved onto `store_lock` too, and the places that swallowed a busy
+  lock now say so: `BehaviourTracker` (a raw `Timeout` reached MCP clients), the Tier-2 queue (a busy lock
+  read as "queue empty", so `expand_on_access` reported a false "not found"; the initial queue write was
+  logged and dropped, so the Tier-2 files were never indexed; the read returned "0 files"). MCP and the CLI
+  catch the `filelock.Timeout` base class, so any future raw lock is still reported as busy. A test fails if
+  `FileLock(` reappears in store code.
 - **#118 — `behaviour.json` no longer grows without bound (77 MB → 3.6 MB), and quarantined graphs can be
   restored.** (1) Everything in `behaviour.json` except the 50-entry style buffer was unbounded and the
   whole file was rewritten, pretty-printed, on every save. Measured on the real 77.0 MB file, the bulk was

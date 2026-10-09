@@ -33,22 +33,21 @@ def _behaviour_file() -> str:
     return get_path("graph/behaviour.json")
 
 
+#: how long BehaviourTracker.save waits for another process before StoreBusy
+_BEHAVIOUR_LOCK_TIMEOUT = 15.0
+
+
 def _behaviour_lock():
     """
     Cross-process/cross-thread file lock scoped to behaviour.json only.
 
-    A dedicated lock (not core.config.lock.store_lock) avoids nesting with the
-    vector-DB write lock acquired downstream by store_fn() during
-    summarize_interaction_style() — see COGNIREPO-D09.
+    A dedicated lock (not the repo-wide ``cognirepo.lock``) avoids nesting with the vector-DB write
+    lock acquired downstream by store_fn() during summarize_interaction_style() — see COGNIREPO-D09.
+    Built on ``store_lock`` so a timeout is a ``StoreBusy`` (a clear, retryable error the MCP layer
+    reports) instead of a raw ``filelock.Timeout`` (COGNIREPO-141).
     """
-    try:
-        from filelock import FileLock  # pylint: disable=import-outside-toplevel
-        return FileLock(_behaviour_file() + ".lock", timeout=15.0)
-    except ImportError as exc:
-        raise ImportError(
-            "filelock is required for concurrent write safety. "
-            "Run: pip install filelock"
-        ) from exc
+    from core.config.lock import store_lock  # pylint: disable=import-outside-toplevel
+    return store_lock(timeout=_BEHAVIOUR_LOCK_TIMEOUT, lock_path=_behaviour_file() + ".lock")
 
 
 # ── growth bounds (COGNIREPO-118) ─────────────────────────────────────────────

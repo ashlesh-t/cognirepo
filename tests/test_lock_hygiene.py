@@ -322,3 +322,156 @@ class TestSurfaces:
         assert exc.value.code == 75
         err = capsys.readouterr().err
         assert "busy" in err and "Traceback" not in err
+
+
+# ── review of #183: the same class of bug in the locks that did not go through store_lock ────────────
+
+def _held_in_thread(lock):
+    started, release = threading.Event(), threading.Event()
+    t = threading.Thread(target=_hold, args=(lock, started, release))
+    t.start()
+    assert started.wait(10)
+    return t, release
+
+
+class TestBehaviourLock:
+    """BehaviourTracker had its own raw FileLock: a timeout was a bare filelock.Timeout traceback."""
+
+    def test_a_busy_behaviour_file_is_store_busy_not_a_raw_timeout(self, isolated_cognirepo, monkeypatch):
+        import data.graph.behaviour_tracker as bt
+        from data.graph.knowledge_graph import KnowledgeGraph
+        monkeypatch.setattr(bt, "_BEHAVIOUR_LOCK_TIMEOUT", 0.2)
+        tracker = bt.BehaviourTracker(graph=KnowledgeGraph())
+        tracker.record_query("q1", "hello there world", ["s1"], [1])
+        t, release = _held_in_thread(bt._behaviour_lock())            # pylint: disable=protected-access
+        try:
+            with pytest.raises(StoreBusy):
+                tracker.save()
+        finally:
+            release.set()
+            t.join(10)
+        tracker.save()                                                 # and it works once the holder is gone
+        assert "q1" in json.load(open(bt._behaviour_file(), encoding="utf-8"))["query_history"]   # pylint: disable=protected-access
+
+    def test_the_behaviour_lock_is_reentrant(self, isolated_cognirepo):
+        import data.graph.behaviour_tracker as bt
+        with bt._behaviour_lock():                                     # pylint: disable=protected-access
+            with bt._behaviour_lock():                                 # pylint: disable=protected-access
+                pass
+
+
+class TestTier2QueueLocks:
+    """A busy queue lock used to read as 'queue empty' / '0 files' / was logged and dropped."""
+
+    def _queue(self, tmp_path):
+        from core.config.paths import pending_tier2_path
+        q = pending_tier2_path()
+        os.makedirs(os.path.dirname(q), exist_ok=True)
+        with open(q, "w", encoding="utf-8") as f:
+            json.dump({"repo_root": str(tmp_path), "files": [{"rel_path": "a.py"}], "embed_pending": False}, f)
+        return q
+
+    def test_a_busy_read_is_not_an_empty_queue(self, isolated_cognirepo, tmp_path, monkeypatch):
+        from intelligence.indexer import on_demand
+        q = self._queue(tmp_path)
+        monkeypatch.setattr(on_demand, "_QUEUE_READ_WAIT", 0.2)
+        t, release = _held_in_thread(store_lock(timeout=5, lock_path=q + ".lock"))
+        try:
+            with pytest.raises(StoreBusy):
+                on_demand._load_queue(q)                               # pylint: disable=protected-access
+        finally:
+            release.set()
+            t.join(10)
+        assert on_demand._load_queue(q)["files"] == [{"rel_path": "a.py"}]   # pylint: disable=protected-access
+
+    def test_expand_on_access_reports_busy_instead_of_a_false_miss(self, isolated_cognirepo, tmp_path, monkeypatch):
+        from intelligence.indexer import on_demand
+        q = self._queue(tmp_path)
+        monkeypatch.setattr(on_demand, "_QUEUE_READ_WAIT", 0.2)
+        t, release = _held_in_thread(store_lock(timeout=5, lock_path=q + ".lock"))
+        try:
+            with pytest.raises(StoreBusy):
+                on_demand.expand_on_access("a.py", str(tmp_path), object())
+        finally:
+            release.set()
+            t.join(10)
+
+    def test_an_unreadable_queue_file_is_still_just_empty(self, isolated_cognirepo, tmp_path):
+        from intelligence.indexer import on_demand
+        q = self._queue(tmp_path)
+        open(q, "w", encoding="utf-8").write("{ not json")
+        assert on_demand._load_queue(q) == {}                          # pylint: disable=protected-access
+
+    def test_trimming_the_queue_is_best_effort(self, isolated_cognirepo, tmp_path, monkeypatch, caplog):
+        from intelligence.indexer import on_demand
+        q = self._queue(tmp_path)
+        monkeypatch.setattr(on_demand, "_QUEUE_WRITE_WAIT", 0.2)
+        t, release = _held_in_thread(store_lock(timeout=5, lock_path=q + ".lock"))
+        try:
+            with caplog.at_level(logging.WARNING):
+                on_demand._save_queue(q, {"files": []})                # must not raise: idempotent bookkeeping  # pylint: disable=protected-access
+        finally:
+            release.set()
+            t.join(10)
+        assert any("failed to update queue" in r.getMessage() for r in caplog.records)
+
+    def test_losing_the_tier2_queue_write_is_loud(self, isolated_cognirepo, tmp_path, monkeypatch):
+        """A lost queue means the Tier-2 files are never indexed - it used to be a logged warning."""
+        import intelligence.indexer.ast_indexer as ai
+        from core.config.paths import pending_tier2_path
+        from data.graph.knowledge_graph import KnowledgeGraph
+        monkeypatch.setattr(ai, "_QUEUE_LOCK_WAIT", 0.2)
+        qpath = pending_tier2_path()
+        os.makedirs(os.path.dirname(qpath), exist_ok=True)
+        ix = ai.ASTIndexer(graph=KnowledgeGraph())
+        t, release = _held_in_thread(store_lock(timeout=5, lock_path=qpath + ".lock"))
+        try:
+            with pytest.raises(StoreBusy):
+                ix._write_pending_tier2(str(tmp_path), [{"rel_path": "a.py"}])   # pylint: disable=protected-access
+        finally:
+            release.set()
+            t.join(10)
+        ix._write_pending_tier2(str(tmp_path), [{"rel_path": "a.py"}])           # pylint: disable=protected-access
+        assert json.load(open(qpath, encoding="utf-8"))["files"] == [{"rel_path": "a.py"}]
+
+
+class TestAnyLockTimeoutIsReportedAsBusy:
+    """Surfaces catch the filelock.Timeout base class, so a lock that is not yet on store_lock (or a
+    future raw FileLock) still gets the structured result instead of a traceback."""
+
+    def test_mcp_maps_a_raw_filelock_timeout(self, isolated_cognirepo):
+        from filelock import Timeout
+        from interface.server import mcp_server
+
+        def raw():
+            raise Timeout("/x/some.lock")
+
+        res = mcp_server._traced("lookup_symbol", raw)                 # pylint: disable=protected-access
+        assert res["busy"] is True and res["retryable"] is True
+        assert "busy" in res["error"] and "/x/some.lock" in res["error"]
+
+    def test_cli_maps_a_raw_filelock_timeout_to_exit_75(self, isolated_cognirepo, monkeypatch, capsys):
+        from filelock import Timeout
+        import interface.cli.main as cli
+        monkeypatch.setattr(cli, "_main", lambda: (_ for _ in ()).throw(Timeout("/x/some.lock")))
+        with pytest.raises(SystemExit) as exc:
+            cli.main()
+        assert exc.value.code == 75
+        err = capsys.readouterr().err
+        assert "busy" in err and "/x/some.lock" in err and "Traceback" not in err
+
+    def test_no_raw_filelock_is_left_in_the_store_code(self):
+        """Guard: every store/queue lock goes through store_lock() (re-entrant, StoreBusy, order-checked)."""
+        import pathlib
+        import re
+        root = pathlib.Path(__file__).resolve().parents[1]
+        allowed = {"core/config/lock.py", "data/graph/journal.py"}      # store_lock itself; the lease (JournalBusy)
+        offenders = []
+        for sub in ("core", "data", "intelligence", "interface"):
+            for p in (root / sub).rglob("*.py"):
+                rel = p.relative_to(root).as_posix()
+                if rel in allowed:
+                    continue
+                if re.search(r"\bFileLock\(", p.read_text(encoding="utf-8")):
+                    offenders.append(rel)
+        assert not offenders, f"raw FileLock( outside store_lock: {offenders} - use core.config.lock.store_lock"

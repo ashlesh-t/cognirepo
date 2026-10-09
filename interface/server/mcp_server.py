@@ -21,7 +21,7 @@ from mcp.server.fastmcp import FastMCP
 from core.config.logging import setup_logging, new_trace_id
 from core.config.version import __version__ as _APP_VERSION
 from data.memory.circuit_breaker import get_breaker, CircuitOpenError
-from core.config.lock import StoreBusy
+from core.config.lock import LockTimeout, busy_message
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -529,12 +529,14 @@ def _traced(tool_name: str, fn, *args, **kwargs):
         )
         _record_mcp_tool_call(tool_name, str(_query)[:200], _result_summary)
         return result
-    except StoreBusy as exc:
-        # Another process held a store lock longer than we were willing to wait. Not a crash and not
-        # data loss: nothing was written under the lock we could not take. Tell the agent plainly and
-        # that it can retry, instead of a raw filelock traceback (COGNIREPO-141).
-        logger.warning("mcp.tool.store_busy tool=%s lock=%s waited=%.0fs", tool_name, exc.lock_path, exc.timeout)
-        return {"error": str(exc), "busy": True, "retryable": True, "tool": tool_name}
+    except LockTimeout as exc:
+        # Another process held a store lock longer than we were willing to wait (StoreBusy from
+        # store_lock(), or a raw filelock.Timeout from a lock that has not been moved onto it). Not a
+        # crash and not data loss: nothing was written under the lock we could not take. Tell the
+        # agent plainly that it can retry, instead of a filelock traceback (COGNIREPO-141).
+        logger.warning("mcp.tool.store_busy tool=%s lock=%s", tool_name,
+                       getattr(exc, "lock_path", None) or getattr(exc, "lock_file", "?"))
+        return {"error": busy_message(exc), "busy": True, "retryable": True, "tool": tool_name}
     except Exception:
         logger.exception("mcp.tool.error", extra={"tool": tool_name})
         raise
