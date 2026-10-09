@@ -30,21 +30,37 @@ from typing import Literal
 
 import networkx as nx
 from core.config.atomic import atomic_write
+from core.config.lock import StoreBusy
 
 logger = logging.getLogger(__name__)
 
 
+#: how long an org-graph operation waits for another process before giving up with StoreBusy.
+#: The lock used to have NO timeout: one hung holder blocked link_repos / org searches in every repo
+#: on the machine, forever (COGNIREPO-141).
+_ORG_LOCK_TIMEOUT = 15.0
+
+
+def _org_lock_path() -> str:
+    """Lock file next to the org graph it protects.
+
+    Default graph (``~/.cognirepo/org_graph.pkl``) keeps the historical name ``org_graph.lock`` so a
+    process running an older version still excludes this one. A graph moved with
+    ``COGNIREPO_ORG_GRAPH`` gets ``<file>.lock`` beside it — before, every override still contended
+    on the one real-home lock.
+    """
+    graph = _graph_path()
+    if os.path.abspath(graph) == os.path.abspath(_ORG_GRAPH_FILE):
+        return os.path.join(os.path.dirname(_ORG_GRAPH_FILE), "org_graph.lock")
+    return graph + ".lock"
+
+
 def _org_lock():
-    """Cross-process file lock for org_graph.pkl — scoped to ~/.cognirepo/."""
-    try:
-        from filelock import FileLock  # pylint: disable=import-outside-toplevel
-        lock_path = os.path.join(os.path.expanduser("~"), ".cognirepo", "org_graph.lock")
-        return FileLock(lock_path)
-    except ImportError as exc:
-        raise ImportError(
-            "filelock is required for concurrent write safety. "
-            "Run: pip install filelock"
-        ) from exc
+    """Cross-process lock for the org graph: re-entrant for a thread, bounded wait, StoreBusy on timeout."""
+    from core.config.lock import store_lock  # pylint: disable=import-outside-toplevel
+    path = _org_lock_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)   # FileLock cannot create the directory
+    return store_lock(timeout=_ORG_LOCK_TIMEOUT, lock_path=path)
 
 EdgeKind = Literal["IMPORTS", "CALLS_API", "SHARES_SCHEMA", "CHILD_OF", "DISCOVERED"]
 _VALID_EDGE_KINDS: frozenset[str] = frozenset({"IMPORTS", "CALLS_API", "SHARES_SCHEMA", "CHILD_OF", "DISCOVERED"})
@@ -84,6 +100,10 @@ class OrgGraph:
                 from core.security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
                 raw = decrypt_bytes(raw, get_or_create_key(project_id))
             self.G = pickle.loads(raw)  # nosec B301
+        except StoreBusy:
+            # NOT "start fresh": an empty in-memory graph would answer every org query with
+            # "no repos" and no error. Let the caller see the retryable busy condition.
+            raise
         except FileNotFoundError:
             logger.debug("OrgGraph: no graph file at %s — starting fresh", path)
             self.G = nx.DiGraph()
@@ -140,6 +160,11 @@ class OrgGraph:
         try:
             from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
             encrypt, project_id = get_storage_config()
+            # keychain access can block: do it before taking the lock every repo's org ops wait on
+            org_key = None
+            if encrypt and project_id:
+                from core.security.encryption import get_or_create_key  # pylint: disable=import-outside-toplevel
+                org_key = get_or_create_key(project_id)
             with _org_lock():
                 # Re-read current on-disk state and compose with ours so concurrent
                 # link_repos() calls from different agents are additive, not last-write-wins.
@@ -147,18 +172,21 @@ class OrgGraph:
                     try:
                         with open(path, "rb") as f:
                             raw_disk = f.read()
-                        if encrypt and project_id:
-                            from core.security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
-                            raw_disk = decrypt_bytes(raw_disk, get_or_create_key(project_id))
+                        if org_key is not None:
+                            from core.security.encryption import decrypt_bytes  # pylint: disable=import-outside-toplevel
+                            raw_disk = decrypt_bytes(raw_disk, org_key)
                         disk_graph = pickle.loads(raw_disk)  # nosec B301 — local file we wrote; optionally decrypted above
                         self.G = nx.compose(disk_graph, self.G)
                     except Exception:  # pylint: disable=broad-except
                         pass  # disk state unreadable — our in-memory state wins
                 raw = pickle.dumps(self.G, protocol=pickle.HIGHEST_PROTOCOL)
-                if encrypt and project_id:
-                    from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
-                    raw = encrypt_bytes(raw, get_or_create_key(project_id))
+                if org_key is not None:
+                    from core.security.encryption import encrypt_bytes  # pylint: disable=import-outside-toplevel
+                    raw = encrypt_bytes(raw, org_key)
                 atomic_write(path, raw)
+        except StoreBusy:
+            raise   # StoreBusy is an OSError (TimeoutError): without this it was logged and swallowed,
+                    # so link_repos() looked successful while the edge was dropped
         except OSError as exc:
             logger.error("OrgGraph: failed to save: %s", exc)
 

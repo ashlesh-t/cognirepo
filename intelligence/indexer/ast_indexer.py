@@ -299,16 +299,22 @@ def _sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
-def _write_manifest(repo_root: str | None = None, symbol_count: int = 0, file_count: int = 0) -> None:
+def _write_manifest(repo_root: str | None = None, symbol_count: int = 0, file_count: int = 0,
+                    git_commit: str | None = None) -> None:
     """
     Write .cognirepo/index/manifest.json after a successful index run.
+
+    ``git_commit``: pass it when the caller already resolved it. ``ASTIndexer.save`` does this
+    BEFORE taking the store lock — ``git rev-parse`` is a subprocess that can be slow (large repo,
+    network filesystem) or hang, and it must not run while every other process waits on the lock
+    (COGNIREPO-141). When omitted it is resolved here, as before.
 
     The manifest ties the index state to a git commit SHA and records
     platform metadata so architecture mismatches can be detected on load.
     Run `cognirepo verify-index` to check integrity at any time.
     """
     manifest = {
-        "git_commit": _git_head(repo_root),
+        "git_commit": git_commit if git_commit is not None else _git_head(repo_root),
         "indexed_at": _now(),
         "cognirepo_version": _cognirepo_version(),
         "platform": {
@@ -2942,6 +2948,10 @@ class ASTIndexer:
         corruption that never actually happened. KnowledgeGraph.save() has
         always taken this lock; ASTIndexer.save() did not. See COGNIREPO-D13.
         """
+        # Resolved BEFORE the lock: a subprocess must not run while other processes wait on it.
+        # (If another writer moved HEAD in between, the manifest still records the HEAD that was
+        # current when this save began - which is what the index we are writing was built from.)
+        git_commit = _git_head(self.index_data.get("repo_root") or None)
         with _store_lock_or_null():
             self._resolve_load_errors()
             os.makedirs(os.path.dirname(_ast_index_file()), exist_ok=True)
@@ -2966,7 +2976,8 @@ class ASTIndexer:
             repo_root = self.index_data.get("repo_root") or None
             file_count = len(self.index_data.get("files", {}))
             symbol_count = self.index_data.get("total_symbols", len(self.faiss_meta))
-            _write_manifest(repo_root=repo_root, symbol_count=symbol_count, file_count=file_count)
+            _write_manifest(repo_root=repo_root, symbol_count=symbol_count, file_count=file_count,
+                            git_commit=git_commit)
 
             # Adopt our own write as the freshness baseline so reload_if_changed()
             # doesn't bounce the writer's in-memory state back off disk.

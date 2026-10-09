@@ -66,3 +66,37 @@ Limits: a never-synced instance (a from-scratch build that never called `load()`
 still overwrites, as before; a `compact_faiss()` run on a stale copy is discarded by the rebase (the next
 run redoes it); if either FAISS binary is unusable the dirty files' vectors are dropped (`faiss_id = -1`)
 rather than mixed; `kg.save()` and `indexer.save()` are still two separate saves.
+
+## Lock inventory, order and hold times (COGNIREPO-141)
+
+Every cross-process lock in CogniRepo, with how long a waiter gives up after. All `store_lock()` locks
+are **re-entrant for the same thread** (a depth counter), wait at most their timeout and then raise
+`StoreBusy` — a `filelock.Timeout` subclass that says which lock and how long, so a busy store is a
+retryable condition, never a hang or an unexplained traceback.
+
+| Lock file | Protects | Wait |
+|---|---|---|
+| `.cognirepo/cognirepo.lock` | graph.pkl + journal, AST index group, local FAISS vectors, episodic memory, project memory, cleanup queue | 15 s (`store_lock()` default) |
+| `.cognirepo/vector_db/chroma.lock` | the Chroma store (writes, open/heal) | 60 s |
+| `~/.cognirepo/**/learnings.lock` | global learnings (shared by every repo) | 15 s |
+| `.cognirepo/graph/behaviour.json.lock` | behaviour.json read-merge-write | 15 s |
+| `~/.cognirepo/org_graph.lock` (or `<COGNIREPO_ORG_GRAPH>.lock`) | the org graph | 15 s — **was unbounded** |
+| `~/.cognirepo/<project>/.last_context.lock` | `last_context.json` hand-off snapshot | 2 s, best-effort — **was the repo-local lock** |
+| `graph/graph.journal.writer`, `watchers/watcher.writer` | leases (one indexer / one watcher), held for the life of the holder, released by the kernel | try-lock |
+| `*.lock` beside `pending_tier2.json` / the on-demand queue | those small queue files | 5–30 s |
+
+**Order / nesting rule.** The graph, AST index, local vector store, episodic and project memory all share
+`cognirepo.lock`, so among them there is nothing to order — they re-enter. The rule for the *different*
+locks above is simply: **never hold one while taking another.** Do the work under one lock, release it,
+then take the next. No cycle between processes is then possible. This is enforced, not just written down:
+`store_lock()` logs a warning (once per pair) when a thread takes a second, different lock, and with
+`COGNIREPO_LOCK_STRICT=1` raises `LockOrderError`. The test suite runs every test with it set; when the
+rule was introduced no existing code path nested two locks.
+
+**Hold times.** Keep slow or unpredictable work outside the lock:
+- `git rev-parse` for the index manifest and the OS-keychain lookup for graph/org-graph encryption are done
+  *before* taking the lock (they can block on a slow filesystem or a locked keychain).
+- A lock held longer than 10 s (`COGNIREPO_LOCK_HOLD_WARN_SECS`) is logged on release with its duration, so
+  a regression in a `save()` shows up in the logs instead of as other processes timing out.
+- What still runs under `cognirepo.lock` by design: the graph pickle + fsync, `faiss.write_index`, and
+  the checksums of the three files just written (they must describe exactly those files).

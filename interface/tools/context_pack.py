@@ -147,6 +147,22 @@ def _is_doc_query(query: str) -> bool:
     return bool(_DOC_INTENT_PATTERN.search(query))
 
 
+#: last_context.json is a best-effort handoff snapshot: never wait long for it (a tool call must not
+#: stall because a sibling agent is writing the same file) - skip the snapshot instead.
+_LAST_CONTEXT_LOCK_TIMEOUT = 2.0
+
+
+def _last_context_lock(save_dir: str):
+    """Lock for ``~/.cognirepo/<repo>/last_context.json``.
+
+    The file lives under $HOME and is shared by every agent process of the same-named project, so it
+    needs its OWN lock next to it. It used to take the repo-local ``.cognirepo/cognirepo.lock``,
+    which two checkouts with the same project name do not share (no mutual exclusion at all) and
+    which made a snapshot write wait behind unrelated index/graph saves (COGNIREPO-141).
+    """
+    return store_lock(timeout=_LAST_CONTEXT_LOCK_TIMEOUT, lock_path=os.path.join(save_dir, ".last_context.lock"))
+
+
 def _autosave_context(result: dict) -> None:
     """Write context_pack result to ~/.cognirepo/<repo>/last_context.json (best-effort)."""
     try:
@@ -176,7 +192,7 @@ def _autosave_context(result: dict) -> None:
             "org_graph_summary": org_graph_summary,
             **result,
         }
-        with store_lock():
+        with _last_context_lock(save_dir):
             atomic_json_dump(os.path.join(save_dir, "last_context.json"), out, indent=2, fsync=False)  # best-effort autosave
     except Exception:  # pylint: disable=broad-except
         pass  # autosave is always best-effort
@@ -208,26 +224,29 @@ def save_query_context(query: str, tool: str = "search") -> None:
         os.makedirs(save_dir, exist_ok=True)
         ctx_path = os.path.join(save_dir, "last_context.json")
 
-        # Load existing snapshot; keep richer sections if already written by context_pack
-        existing: dict = {}
-        if os.path.exists(ctx_path):
-            try:
-                with open(ctx_path, encoding="utf-8") as f:
-                    existing = json.load(f)
-            except Exception:  # pylint: disable=broad-except
-                existing = {}
+        # Read-modify-write: the existing snapshot is read INSIDE the lock. Reading it before the
+        # lock let two agents each start from the same old file and the later write silently drop
+        # the other's fields (sections from a concurrent context_pack()).
+        with _last_context_lock(save_dir):
+            # Load existing snapshot; keep richer sections if already written by context_pack
+            existing: dict = {}
+            if os.path.exists(ctx_path):
+                try:
+                    with open(ctx_path, encoding="utf-8") as f:
+                        existing = json.load(f)
+                except Exception:  # pylint: disable=broad-except
+                    existing = {}
 
-        out = {
-            **existing,
-            "query": query,
-            "tool": tool,
-            "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "agent": existing.get("agent", "cognirepo"),
-            "repo": existing.get("repo", repo_name),
-            # Preserve sections from context_pack if present; default to empty
-            "sections": existing.get("sections", []),
-        }
-        with store_lock():
+            out = {
+                **existing,
+                "query": query,
+                "tool": tool,
+                "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                "agent": existing.get("agent", "cognirepo"),
+                "repo": existing.get("repo", repo_name),
+                # Preserve sections from context_pack if present; default to empty
+                "sections": existing.get("sections", []),
+            }
             atomic_json_dump(ctx_path, out, indent=2, fsync=False)  # best-effort autosave
     except Exception:  # pylint: disable=broad-except
         pass
