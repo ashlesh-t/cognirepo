@@ -57,10 +57,16 @@ These become nodes and edges in the NetworkX knowledge graph, and entries in the
 
 ### Language-specific notes
 
-- **C#** — calls made inside constructors, property accessors (`get`/`set`/expression-bodied
-  properties) and finalizers are not attributed to any symbol (constructors are not indexed as
-  FUNCTION symbols, same as Java). Since constructors are where DI wiring usually lives, those
-  call edges will be missing from `who_calls`. Null-conditional calls (`a?.Foo()`) are recorded.
+- **C#** — constructors (instance and static) are FUNCTION symbols named `Order.constructor` and a
+  finalizer is named as declared (`~Order`). A property whose accessors have bodies
+  (`get { … } set { … }`, `get => …`, or expression-bodied `int X => …`) is one FUNCTION symbol named
+  `Order.X` (tagged `property`), carrying the calls from all its accessors. Graph nodes are keyed
+  `file::name`, so the class prefix is what keeps a constructor — or the idiomatic
+  `public Customer Customer { get … }` — from merging into the CLASS `Customer` node, and keeps two
+  classes' constructors apart. So `who_calls("Wire")` answers `Order.constructor`. Auto-properties (`{ get; set; }`) are not
+  symbols; calls in property/field initialisers (`= Make();`), constructor initialisers
+  (`: base(x)` itself), event `add`/`remove` accessors and indexers (`this[…]`) are not attributed.
+  Java constructors are still not indexed. Null-conditional calls (`a?.Foo()`) are recorded.
   MSBuild output (`obj/`, `bin/`) and `.vs/` are skipped during indexing.
 
 - **Swift** — an `extension Foo { … }` is indexed as a CLASS symbol named `Foo` at the extension

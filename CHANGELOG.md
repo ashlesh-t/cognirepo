@@ -224,6 +224,15 @@ Versioning: [Semantic Versioning](https://semver.org/)
   completeness.
 
 ### Added
+- **#177 — C# constructors, property accessors and finalizers record their calls.** Constructors
+  (instance and static) are now FUNCTION symbols named `Order.constructor`, and a finalizer is named
+  as declared (`~Order`). A property whose accessors have bodies (`get`/`set`/`init` blocks,
+  `get => …`, expression-bodied `int X => …`) is one FUNCTION symbol named `Order.X` (tagged
+  `property`) carrying the calls from all its accessors. The class prefix keeps these off the CLASS
+  symbol's `file::name` graph node — including the idiomatic `public Customer Customer { … }` — and
+  keeps two classes' constructors apart, so `who_calls` names the class whose constructor does the
+  dependency-injection wiring. Auto-properties, initialisers, event accessors and indexers are
+  unchanged; Java constructors remain a follow-up.
 - **#176 — Swift computed properties and property observers record their calls.** A computed property
   (`var x: Int { calc() }` or a `get`/`set` pair) and a property with `willSet`/`didSet` observers is
   now a FUNCTION symbol named `Type.property` (tagged `property`, like a Python `@property`),

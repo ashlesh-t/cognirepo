@@ -259,6 +259,8 @@ _TS_LANG_FUNCTION_TYPES: dict[str, frozenset[str]] = {
     "ruby": frozenset({"method", "singleton_method"}),  # def foo / def self.foo
     # Kotlin `constructor(…)` / `init { … }` — unnamed, see _KEYWORD_NAMED_FUNCTIONS
     "kotlin": frozenset({"secondary_constructor", "anonymous_initializer"}),
+    # C# constructors / finalizers — renamed in _walk_ts so they don't share the class's node id
+    "csharp": frozenset({"constructor_declaration", "destructor_declaration"}),
 }
 _TS_LANG_CLASS_TYPES: dict[str, frozenset[str]] = {
     "ruby": frozenset({"class", "module"}),
@@ -276,7 +278,10 @@ _KEYWORD_NAMED_FUNCTIONS: dict[str, str] = {
 # Member symbols whose name is the same in every type (`constructor`, `init`, `Companion`).
 # Graph node ids are `file::name`, so two classes in one file would share one node; these are
 # prefixed with the enclosing type (`Service.constructor`) to keep them apart.
-_OWNER_QUALIFIED_FUNCTIONS = frozenset({"secondary_constructor", "anonymous_initializer"})
+_OWNER_QUALIFIED_FUNCTIONS = frozenset({
+    "secondary_constructor", "anonymous_initializer",  # Kotlin
+    "constructor_declaration",                         # C# (reached only for csharp)
+})
 
 
 # ── utility ───────────────────────────────────────────────────────────────────
@@ -805,9 +810,41 @@ def _swift_property_symbols(node, source: bytes, lang: str) -> list[dict]:
     return symbols
 
 
+def _csharp_property_symbols(node, source: bytes, lang: str) -> list[dict]:
+    """FUNCTION symbol for a C# property whose accessors have bodies.
+
+    `int X { get { return Load(); } set { Store(value); } }`, `int X { get => Get(); }` and
+    expression-bodied `int X => Calc();` become one symbol named `Owner.X`, carrying the calls
+    from every accessor — the same way a Python `@property` is a FUNCTION symbol. The owner
+    prefix matters: in the idiomatic `public Customer Customer { get … }` the bare name would
+    share the CLASS `Customer`'s `file::name` node. Auto-properties (`{ get; set; }`) have no
+    bodies and produce nothing; calls in an initialiser (`= Make();`) are not attributed, like
+    field initialisers.
+    """
+    name_node = node.child_by_field_name("name")
+    bodies = []
+    value = node.child_by_field_name("value")
+    if value is not None and value.type == "arrow_expression_clause":
+        bodies.append(value)
+    accessors = node.child_by_field_name("accessors")
+    if accessors is not None:
+        for acc in accessors.named_children:
+            body = acc.child_by_field_name("body") if acc.type == "accessor_declaration" else None
+            if body is not None:
+                bodies.append(body)
+    if name_node is None or not bodies:
+        return []
+    calls: list[str] = []
+    for body in bodies:
+        _ts_collect_calls(body, source, calls)
+    name = _owner_qualified(node, source, lang, _ts_text(name_node, source))
+    return [_function_symbol(name, node, calls, tags=["property"])]
+
+
 # lang → builder for `property_declaration` nodes that should become FUNCTION symbols
 _PROPERTY_SYMBOL_BUILDERS = {
     "swift": _swift_property_symbols,
+    "csharp": _csharp_property_symbols,
 }
 
 
@@ -846,6 +883,10 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
             calls: list[str] = []
             _ts_collect_calls(node, source, calls)
             fn_name = _ts_text(name_node, source)
+            if node.type == "constructor_declaration":
+                fn_name = "constructor"  # C#: its `name` is the class name (= the CLASS node id)
+            elif node.type == "destructor_declaration":
+                fn_name = f"~{fn_name}"  # C# finalizer, named as declared: `~Svc`
             if node.type in _OWNER_QUALIFIED_FUNCTIONS:
                 fn_name = _owner_qualified(node, source, lang, fn_name)
             fn_decs = _parent_decs or []
