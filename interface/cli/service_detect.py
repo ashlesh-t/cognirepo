@@ -13,7 +13,8 @@ go.mod, etc.) to identify microservice candidates for auto-setup.
 IMPORTANT: _SERVICE_MARKERS must stay in sync with
            indexer/language_registry.py::_GRAMMAR_MAP.
            When a new language is added to language_registry, add its build
-           file marker here too.
+           file marker here too. Enforced by tests/test_language_registry_sync.py
+           (languages with no marker go in its _NO_MARKER_LANGUAGES allow-list).
 """
 from __future__ import annotations
 

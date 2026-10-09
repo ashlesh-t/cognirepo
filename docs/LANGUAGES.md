@@ -105,11 +105,15 @@ tree-sitter has grammars for 100+ languages. Adding support to CogniRepo takes ~
    ```toml
    "tree-sitter-<language>>=0.23",
    ```
-4. Add a fixture source file and tests in `tests/test_indexer_multilang.py`
-5. Open a PR — reviewer verifies `cognirepo index-repo .` works on a real project
+4. Add the language's build/manifest file to `interface/cli/service_detect.py` `_SERVICE_MARKERS`,
+   with a `lang_hint` that names the language (e.g. `"Kotlin/Gradle"`). If it has no such file,
+   add it to `_NO_MARKER_LANGUAGES` in `tests/test_language_registry_sync.py` with the reason —
+   that test fails until one of the two is done.
+5. Add a fixture source file and tests in `tests/test_indexer_multilang.py`
+6. Open a PR — reviewer verifies `cognirepo index-repo .` works on a real project
    in that language with correct symbol extraction
 
-No other changes needed. The indexer, graph, retrieval, and all tools are language-agnostic
+No other registration is needed. The indexer, graph, retrieval, and all tools are language-agnostic
 once symbols are extracted.
 
 ---

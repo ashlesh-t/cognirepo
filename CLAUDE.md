@@ -135,6 +135,8 @@ tree-sitter · FastMCP · argparse (CLI) · tiktoken
 `interface/cli/service_detect.py::_SERVICE_MARKERS` maps project marker filenames → service type.
 This list **MUST stay in sync** with `intelligence/indexer/language_registry.py::_GRAMMAR_MAP`.
 Whenever a new language is added to `language_registry`, add its build file marker here too.
+Enforced by `tests/test_language_registry_sync.py`: a language with no marker must be added to
+its `_NO_MARKER_LANGUAGES` allow-list with a reason (as Shell, YAML and C++ are).
 
 ## Dev detail
 
