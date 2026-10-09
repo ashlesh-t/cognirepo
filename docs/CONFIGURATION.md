@@ -65,6 +65,12 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 | `indexing.graph_journal_flush_files` | int | `200` | Flush the journal roughly every this many files' worth of graph changes (~25 ops/file). |
 | `indexing.writer_wait_secs` | float | `0` | A second `index-repo` while another one holds the graph writer lease (`graph/graph.journal.writer`) refuses immediately with the owner's pid (`0`), or queues behind it for up to this many seconds (COGNIREPO-137). |
 | `indexing.graph_journal_flush_secs` | float | `30` | Also flush when this many seconds passed since the last flush. |
+| `behaviour.max_query_history` | int | `2000` | Query-history entries kept in `graph/behaviour.json` (newest kept). Only recent windows (5–20 min) are ever read; what queries taught retrieval is stored in `symbol_weights`, which is never pruned. |
+| `behaviour.max_sessions` | int | `50` | Watcher sessions kept in the session registry (newest kept). |
+| `behaviour.max_files_per_session` | int | `200` | Files remembered per session; also bounds the co-edit fan-out. |
+| `behaviour.max_cooc_partners` | int | `30` | Strongest co-edited partner files kept per file. |
+| `behaviour.max_terms` | int | `500` | Most frequent query terms kept. |
+| `behaviour.max_query_text` / `max_retrieved_per_query` / `max_error_files` | int | `500` / `20` / `20` | Per-entry size limits. All `behaviour.*` values must be integers ≥ 1; anything else falls back to the default. Going over a bound drops the oldest entries of that one section and logs it (INFO when 100+ are dropped at once). |
 | `behaviour_decay.half_life_days` | float | `30` | Half-life for the exponential recency decay applied to symbol `behaviour_score` (COGNIREPO-701) — a symbol hit this many days ago scores half of an otherwise-identical symbol hit "now". `<= 0` disables decay entirely (behaviour score behaves exactly as before). |
 | `redis.enabled` | bool | `false` | Enable Redis caching layer |
 

@@ -23,7 +23,11 @@ from core.config.atomic import atomic_write
 from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
 from data.graph.graph_utils import make_node_id
 
+import logging
+
 from core.config.paths import get_path
+
+log = logging.getLogger(__name__)
 
 def _behaviour_file() -> str:
     return get_path("graph/behaviour.json")
@@ -45,6 +49,68 @@ def _behaviour_lock():
             "filelock is required for concurrent write safety. "
             "Run: pip install filelock"
         ) from exc
+
+
+# ── growth bounds (COGNIREPO-118) ─────────────────────────────────────────────
+# behaviour.json was rewritten whole on every save and had no bound on anything but the 50-entry
+# style ring buffer: one dev checkout reached 77 MB. The sections that grow without limit, and the
+# default bound each now has (applied on load and on save, AFTER the cross-process merge so a stale
+# writer cannot bring pruned entries back).
+#
+# Where the numbers come from — they are NOT derived from a formula, they are chosen by what reads
+# each section, with a wide margin, and every one can be raised in config.json (below):
+#   * Everything that reads history looks at RECENT windows only: record_file_edit marks queries from
+#     the last 5 min useful, derive_mood looks at the last 15-20 min of queries / sessions / errors,
+#     record_feedback targets a query id just handed out. The accumulated learning lives elsewhere —
+#     symbol_weights (what retrieval scores with), error counts, question types, preferences — and is
+#     NOT pruned. So 2000 queries is ~100x what any reader can reach.
+#   * file_edit_cooccurrence has no reader at all: retrieval uses the CO_OCCURS edges written to the
+#     graph at edit time. Keeping the strongest partners per file is enough for that edge weight.
+#   * terminology: its readers take the top ~10-15 terms. 500 keeps a long tail.
+# What is lost when a bound is exceeded: the OLDEST entries of that one section (newest kept), nothing
+# else; a feedback call for a pruned query id is ignored (it already is for an unknown id). Overflow is
+# logged (see prune()). To change a bound:  config.json  {"behaviour": {"max_query_history": 5000, ...}}
+DEFAULT_LIMITS = {
+    "max_query_history": 2000,        # query_history entries (newest kept)
+    "max_query_text": 500,            # chars of query text kept per history entry
+    "max_retrieved_per_query": 20,    # symbols / faiss rows kept per history entry
+    "max_sessions": 50,               # session_registry entries (newest kept)
+    "max_files_per_session": 200,     # files_touched per session — also bounds the co-occurrence fan-out
+    "max_cooc_partners": 30,          # strongest co-edited partners kept per file (was: every pair, O(F^2))
+    "max_terms": 500,                 # interaction_style.terminology entries (most frequent kept)
+    "max_error_files": 20,            # distinct files remembered per error type
+}
+# kept as module constants: the defaults, for callers/tests that import them
+MAX_QUERY_HISTORY = DEFAULT_LIMITS["max_query_history"]
+MAX_QUERY_TEXT = DEFAULT_LIMITS["max_query_text"]
+MAX_RETRIEVED_PER_QUERY = DEFAULT_LIMITS["max_retrieved_per_query"]
+MAX_SESSIONS = DEFAULT_LIMITS["max_sessions"]
+MAX_FILES_PER_SESSION = DEFAULT_LIMITS["max_files_per_session"]
+MAX_COOC_PARTNERS = DEFAULT_LIMITS["max_cooc_partners"]
+MAX_TERMS = DEFAULT_LIMITS["max_terms"]
+MAX_ERROR_FILES = DEFAULT_LIMITS["max_error_files"]
+#: a single prune that drops at least this many entries in total is logged at INFO (an overflow or the
+#: first shrink of an old oversized file); routine one-entry trims are DEBUG
+_OVERFLOW_LOG_THRESHOLD = 100
+
+
+def behaviour_limits() -> dict:
+    """The effective bounds: defaults, overridden by ``config.json`` ``behaviour.<name>`` (ints >= 1).
+
+    A missing, unreadable or invalid value falls back to the default — a bad config can never turn the
+    bound off or make it nonsensical.
+    """
+    limits = dict(DEFAULT_LIMITS)
+    try:
+        with open(get_path("config.json"), encoding="utf-8") as fh:
+            cfg = json.load(fh).get("behaviour", {})
+        for name in DEFAULT_LIMITS:
+            val = cfg.get(name)
+            if isinstance(val, int) and not isinstance(val, bool) and val >= 1:
+                limits[name] = val
+    except (OSError, ValueError, AttributeError):
+        pass
+    return limits
 
 
 _USEFUL_WINDOW = timedelta(minutes=5)
@@ -176,6 +242,8 @@ class BehaviourTracker:
                 "framing_hints": "",
             },
         }
+        # read once per tracker, not per edit: record_file_edit runs on every file change
+        self._max_files_per_session = behaviour_limits()["max_files_per_session"]
         self._load()
         # Snapshot of interaction_style as of load time — used by save() to tell
         # apart "this instance's own new queries" from "another writer already
@@ -208,6 +276,72 @@ class BehaviourTracker:
         disk = self._read_raw(_behaviour_file())
         if disk is not None:
             self.data = disk
+            self.prune()      # an old oversized file shrinks as soon as it is read
+
+    def prune(self) -> dict:
+        """Enforce the growth bounds above in place; returns how many entries each section lost.
+
+        Cheap when nothing is over its bound. Called from ``_load`` and ``save`` (after the merge).
+        """
+        d, dropped = self.data, {}
+        lim = behaviour_limits()
+
+        qh = d.get("query_history", {})
+        for entry in qh.values():
+            if isinstance(entry, dict):
+                if len(entry.get("query_text", "")) > lim["max_query_text"]:
+                    entry["query_text"] = entry["query_text"][:lim["max_query_text"]]
+                for key in ("retrieved_symbols", "faiss_rows"):
+                    if len(entry.get(key, ())) > lim["max_retrieved_per_query"]:
+                        entry[key] = entry[key][:lim["max_retrieved_per_query"]]
+        if len(qh) > lim["max_query_history"]:
+            newest = sorted(qh, key=lambda q: str(qh[q].get("timestamp", "")))[-lim["max_query_history"]:]
+            keep = set(newest)
+            dropped["query_history"] = len(qh) - len(keep)
+            d["query_history"] = {q: qh[q] for q in qh if q in keep}
+
+        sr = d.get("session_registry", {})
+        for sess in sr.values():
+            if isinstance(sess, dict):
+                if len(sess.get("files_touched", ())) > lim["max_files_per_session"]:
+                    sess["files_touched"] = sess["files_touched"][-lim["max_files_per_session"]:]
+                if len(sess.get("queries", ())) > lim["max_query_history"] // 10:
+                    sess["queries"] = sess["queries"][-(lim["max_query_history"] // 10):]
+        if len(sr) > lim["max_sessions"]:
+            newest = sorted(sr, key=lambda s: str(sr[s].get("start", "")))[-lim["max_sessions"]:]
+            keep = set(newest)
+            dropped["session_registry"] = len(sr) - len(keep)
+            d["session_registry"] = {s: sr[s] for s in sr if s in keep}
+
+        co = d.get("file_edit_cooccurrence", {})
+        n = 0
+        for partners in co.values():
+            if len(partners) > lim["max_cooc_partners"]:
+                top = sorted(partners.items(), key=lambda kv: kv[1], reverse=True)[:lim["max_cooc_partners"]]
+                n += len(partners) - len(top)
+                partners.clear()
+                partners.update(top)
+        if n:
+            dropped["file_edit_cooccurrence"] = n
+
+        terms = d.get("interaction_style", {}).get("terminology", {})
+        if len(terms) > lim["max_terms"]:
+            top = sorted(terms.items(), key=lambda kv: kv[1], reverse=True)[:lim["max_terms"]]
+            dropped["terminology"] = len(terms) - len(top)
+            terms.clear()
+            terms.update(top)
+
+        for ep in d.get("error_patterns", {}).values():
+            if isinstance(ep, dict) and len(ep.get("files", ())) > lim["max_error_files"]:
+                ep["files"] = ep["files"][-lim["max_error_files"]:]
+        total = sum(dropped.values())
+        if total >= _OVERFLOW_LOG_THRESHOLD:
+            log.info("behaviour.json: dropped %d old entries to stay within bounds %s "
+                     "(raise them under \"behaviour\" in config.json if you want to keep more)",
+                     total, dropped)
+        elif total:
+            log.debug("behaviour.json: dropped %s", dropped)
+        return dropped
 
     def _merge_from_disk(self, disk: dict) -> None:
         """
@@ -266,8 +400,10 @@ class BehaviourTracker:
             disk = self._read_raw(path)
             if disk is not None:
                 self._merge_from_disk(disk)
+            self.prune()      # after the merge: a stale writer must not bring pruned entries back
             self.data["updated_at"] = _now()
-            raw = json.dumps(self.data, indent=2).encode()
+            # compact: indent=2 alone added ~30% to a file that is rewritten whole on every save
+            raw = json.dumps(self.data, separators=(",", ":")).encode()
             try:
                 from core.security.storage import get_storage_config  # pylint: disable=import-outside-toplevel
                 encrypt, project_id = get_storage_config()
@@ -404,6 +540,7 @@ class BehaviourTracker:
         session = sr[session_id]
 
         co = self.data["file_edit_cooccurrence"]
+        cap = self.__dict__.get("_max_files_per_session", MAX_FILES_PER_SESSION)
         for other_file in session["files_touched"]:
             if other_file == file_path:
                 continue
@@ -419,6 +556,8 @@ class BehaviourTracker:
 
         if file_path not in session["files_touched"]:
             session["files_touched"].append(file_path)
+        if len(session["files_touched"]) > cap:        # after the append, so the bound holds exactly
+            del session["files_touched"][: len(session["files_touched"]) - cap]
 
         # auto-mark recent queries as useful
         cutoff = datetime.now(tz=timezone.utc) - _USEFUL_WINDOW

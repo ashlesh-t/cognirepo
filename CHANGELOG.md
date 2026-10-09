@@ -19,6 +19,23 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
+- **#118 — `behaviour.json` no longer grows without bound (77 MB → 3.6 MB), and quarantined graphs can be
+  restored.** (1) Everything in `behaviour.json` except the 50-entry style buffer was unbounded and the
+  whole file was rewritten, pretty-printed, on every save. Measured on the real 77.0 MB file, the bulk was
+  `file_edit_cooccurrence` (a pair for every two files touched in a session, i.e. quadratic). Now bounded
+  on load and on save, after the cross-process merge so a stale writer cannot bring entries back:
+  2000 queries (text ≤ 500 chars, ≤ 20 symbols each), 50 sessions × 200 files, the 30 strongest co-edit
+  partners per file, 500 terms, 20 files per error type (each can be changed under `behaviour` in
+  `config.json`, see `docs/CONFIGURATION.md`; a prune that drops 100+ entries is logged); JSON is written compactly. The same file now
+  loads, prunes and saves to 3.57 MB, and a long simulated run plateaus instead of growing. Not in this
+  change: an append-only behaviour store (pairs with #115). (2) The three `graph.pkl.corrupt-*` files in
+  that checkout were not corrupt — intact Fernet ciphertext (41,327 / 1,122 / 2 nodes) that pre-#97 code
+  quarantined when `keyring` was missing. New `cognirepo graph restore [--apply] [--force]` inspects each
+  quarantine with the current key (recoverable / locked / corrupt) and restores the largest recoverable one
+  by copying it; it never overwrites a readable `graph.pkl` without `--force`. (3) New
+  `cognirepo graph prune-quarantine [--days 30] [--apply]` removes only genuinely unreadable quarantines
+  older than the retention window, never recoverable or locked ones. `doctor` now classifies quarantined
+  graphs and only warns about a recoverable one when `graph.pkl` is missing or unreadable.
 - **#127 — the watcher started by `index-repo --daemon` no longer carries the indexing run's heap
   (3.5 GB → 113 MB).** The background watcher was a double-fork of the calling process, so it inherited
   everything that process held — after `index-repo` the embedding model, the FAISS index and every parsed

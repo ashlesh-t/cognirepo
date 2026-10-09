@@ -389,15 +389,23 @@ cognirepo subgraph ENTITY [OPTIONS]
 
 ## cognirepo graph
 
-Knowledge-graph integrity maintenance. Has one subcommand, `repair`.
+Knowledge-graph integrity maintenance: `repair`, `restore` and `prune-quarantine`. All three are dry-run unless `--apply` is given.
 
 ```bash
 cognirepo graph repair [--apply]
+cognirepo graph restore [--apply] [--force]
+cognirepo graph prune-quarantine [--days N] [--apply]
 ```
 
-| Flag | Default | Description |
+| Command / flag | Default | Description |
 |------|---------|-------------|
-| `--apply` | `False` | Actually prune dangling file nodes **and orphan `symbol::<name>` stubs** — degree-0 leftovers of deleted symbols (default: dry-run report only) |
+| `repair --apply` | `False` | Actually prune dangling file nodes **and orphan `symbol::<name>` stubs** — degree-0 leftovers of deleted symbols (default: dry-run report only) |
+| `restore` | — | Lists every `graph.pkl.corrupt-<ts>` file, inspecting each with the **current key**: `recoverable` (decrypts/unpickles to a graph, shows nodes/edges), `locked` (still ciphertext this interpreter cannot decrypt) or `corrupt`. Then restores the **largest** recoverable one as `graph.pkl` (not the newest: a later quarantine is usually a tiny graph that replaced a big one) |
+| `restore --apply` | `False` | Do it. The quarantined file is **copied**, never moved or deleted |
+| `restore --force` | `False` | Also replace a `graph.pkl` that is itself readable (kept as `graph.pkl.replaced-<ts>`). Without it a healthy graph is never overwritten |
+| `prune-quarantine --days N` | `30` | Retention: remove quarantines that are **genuinely unreadable** and older than N days. `recoverable` and `locked` files are never removed |
+
+Why not just purge them: quarantined files are **not necessarily corrupt**. Code before COGNIREPO-97 quarantined an intact, encrypted graph whenever `keyring` was missing from the interpreter. `cognirepo doctor` only warns about a recoverable quarantine when `graph.pkl` is missing or unreadable; with a healthy graph they are listed under `-v` and left alone.
 
 ---
 

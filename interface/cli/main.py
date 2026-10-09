@@ -277,6 +277,55 @@ def _cmd_verify_index(verbose: bool = False) -> int:
     return 1 if issues else 0
 
 
+def _cmd_graph_restore(apply: bool = False, force: bool = False) -> int:
+    """List quarantined graph files and restore the best recoverable one (COGNIREPO-118).
+
+    Dry-run unless ``--apply``. The quarantined file is copied, never moved or deleted.
+    """
+    # pylint: disable=import-outside-toplevel
+    from data.graph import quarantine as gq
+    items = gq.list_quarantined()
+    if not items:
+        print("graph restore: no quarantined graph files.")
+        return 0
+    print(f"graph restore: {len(items)} quarantined file(s):")
+    for q in items:
+        print(f"  {q.describe()}")
+    outcome, chosen, message = gq.restore(apply=apply, force=force)
+    if outcome in ("none-recoverable", "graph-present"):
+        print(f"\ngraph restore: {message}")
+        return 1
+    if outcome == "dry-run":
+        print(f"\nDry run — {message} Re-run with --apply to restore.")
+        return 0
+    from data.graph.knowledge_graph import journal_file_exists
+    print(f"\ngraph restore: {message}")
+    if journal_file_exists():
+        print("  Note: graph.journal exists and will be replayed on top of the restored graph.")
+    return 0
+
+
+def _cmd_graph_prune_quarantine(days: float, apply: bool = False) -> int:
+    """Retention for quarantined graphs: remove only the genuinely unreadable ones older than ``days``."""
+    # pylint: disable=import-outside-toplevel
+    from data.graph import quarantine as gq
+    eligible, removed = gq.prune_corrupt(days=days, apply=apply)
+    skipped = [q for q in gq.list_quarantined() if q.status != "corrupt"]
+    if skipped:
+        print(f"graph prune-quarantine: keeping {len(skipped)} file(s) that are recoverable or locked "
+              "(never removed).")
+    if not eligible:
+        print(f"graph prune-quarantine: nothing unreadable and older than {days:g} day(s).")
+        return 0
+    for q in eligible:
+        print(f"  {q.describe()}")
+    if not apply:
+        print(f"\nDry run — {len(eligible)} file(s) would be removed. Re-run with --apply.")
+        return 0
+    print(f"\nRemoved {len(removed)} of {len(eligible)} file(s).")
+    return 0 if len(removed) == len(eligible) else 1
+
+
 def _cmd_graph_repair(apply: bool = False) -> int:
     """
     Prune dangling file nodes (and their symbols) from the knowledge graph.
@@ -1073,23 +1122,53 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         logger.debug("doctor: org CALLS_API check failed: %s", _exc)
 
     # ── Check 21: quarantined knowledge-graph files ──────────────────────────
-    # A corrupt graph.pkl is quarantined as graph.pkl.corrupt-<unix_ts> by
-    # KnowledgeGraph._load() instead of being silently overwritten by the next
-    # save(). Surface any quarantine files here so they aren't missed.
+    # A graph.pkl the loader could not read is set aside as graph.pkl.corrupt-<unix_ts> instead of
+    # being overwritten. They are NOT all corrupt (COGNIREPO-118): pre-#97 code quarantined intact
+    # encrypted graphs whenever keyring was missing. Inspect each with the current key and say which
+    # can be restored, which are merely locked, and which are really corrupt.
     try:
-        _graph_dir = get_path("graph")
-        if os.path.isdir(_graph_dir):
-            _quarantined = sorted(
-                f for f in os.listdir(_graph_dir) if ".corrupt-" in f
-            )
-            if _quarantined:
+        from data.graph import quarantine as _gq  # pylint: disable=import-outside-toplevel
+        _items = _gq.list_quarantined()
+        if _items:
+            _rec = [q for q in _items if q.status == "recoverable"]
+            _locked = [q for q in _items if q.status == "locked"]
+            _bad = [q for q in _items if q.status == "corrupt"]
+            _live_path = get_path("graph/graph.pkl")
+            # a readable graph.pkl means the quarantines are history, not a loss: restoring an older
+            # (possibly much larger, different-era) graph over a current one is the user's call
+            _live = os.path.exists(_live_path) and _gq.inspect(_live_path).status == "recoverable"
+
+            def _names(qs):
+                shown = ", ".join(q.name for q in qs[:5])
+                return shown + (f" (+{len(qs) - 5} more)" if len(qs) > 5 else "")
+
+            if _rec and not _live:
+                _best = _gq.best_candidate(_items)
                 _warn(
-                    f"Knowledge graph — {len(_quarantined)} quarantined file(s): "
-                    f"{', '.join(_quarantined)}",
-                    "Run: cognirepo index-repo . (rebuilds graph.pkl from scratch)",
+                    f"Knowledge graph — graph.pkl is missing or unreadable, and {len(_rec)} quarantined "
+                    f"file(s) hold a RECOVERABLE graph (best: {_best.name}, {_best.nodes} nodes): "
+                    f"{_names(_rec)}",
+                    "Restore it: cognirepo graph restore --apply",
                 )
-            elif verbose:
-                _ok("Knowledge graph — no quarantined files")
+            elif _rec and verbose:
+                _ok(f"Knowledge graph — graph.pkl is healthy; {len(_rec)} older recoverable quarantine(s) "
+                    f"kept ({_names(_rec)}). `cognirepo graph restore` lists them.")
+            if _locked:
+                _warn(
+                    f"Knowledge graph — {len(_locked)} quarantined file(s) are encrypted and cannot be "
+                    f"read by this interpreter (not corrupt; do not delete): {_names(_locked)}",
+                    "Install the security extras here (pipx inject cognirepo keyring cryptography), "
+                    "then re-run doctor",
+                )
+            if _bad:
+                _warn(
+                    f"Knowledge graph — {len(_bad)} quarantined file(s) are genuinely unreadable: "
+                    f"{_names(_bad)}",
+                    f"Remove the old ones: cognirepo graph prune-quarantine --apply "
+                    f"(keeps the last {_gq.DEFAULT_RETENTION_DAYS} days)",
+                )
+        elif verbose:
+            _ok("Knowledge graph — no quarantined files")
     except Exception as _exc:  # pylint: disable=broad-except
         logger.debug("doctor: graph quarantine check failed: %s", _exc)
 
@@ -3707,6 +3786,22 @@ def _main():
         "--apply", action="store_true",
         help="Actually prune (default: dry-run report only)",
     )
+    p_graph_restore = graph_sub.add_parser(
+        "restore",
+        help="List quarantined graph files and restore the best recoverable one (dry-run by default)",
+    )
+    p_graph_restore.add_argument("--apply", action="store_true", help="Actually restore")
+    p_graph_restore.add_argument(
+        "--force", action="store_true",
+        help="Replace a graph.pkl that is itself readable (it is kept as graph.pkl.replaced-<ts>)",
+    )
+    p_graph_prune = graph_sub.add_parser(
+        "prune-quarantine",
+        help="Remove quarantined graph files that are genuinely unreadable and old (dry-run by default)",
+    )
+    p_graph_prune.add_argument("--days", type=float, default=30.0,
+                               help="Keep unreadable quarantines newer than this many days (default 30)")
+    p_graph_prune.add_argument("--apply", action="store_true", help="Actually remove")
 
     p_mcpset = sub.add_parser("mcp-setup", help="Re-run MCP integration (Claude / Gemini / Cursor)")
     p_mcpset.add_argument("--target", action="append", dest="targets",
@@ -4960,7 +5055,11 @@ def _main():
         elif args.command == "graph":
             if getattr(args, "graph_command", None) == "repair":
                 sys.exit(_cmd_graph_repair(apply=getattr(args, "apply", False)))
-            print("Usage: cognirepo graph repair [--apply]")
+            if getattr(args, "graph_command", None) == "restore":
+                sys.exit(_cmd_graph_restore(apply=args.apply, force=args.force))
+            if getattr(args, "graph_command", None) == "prune-quarantine":
+                sys.exit(_cmd_graph_prune_quarantine(days=args.days, apply=args.apply))
+            print("Usage: cognirepo graph repair|restore|prune-quarantine [--apply]")
             sys.exit(2)
 
         elif args.command == "mcp-setup":
