@@ -138,3 +138,103 @@ def test_size_stays_bounded_over_a_long_run(isolated_cognirepo):
         sizes.append(os.path.getsize(_file()))
     assert sizes[2] < sizes[0] * 1.35, f"file keeps growing: {sizes}"
     assert sizes[2] < 3_000_000
+
+
+# ── review of #173: where do the bounds come from, can they be changed, is overflow visible ──────────
+
+def _config(**behaviour):
+    import json as _json
+    path = os.path.join(".cognirepo", "config.json")
+    cfg = _json.load(open(path, encoding="utf-8")) if os.path.exists(path) else {}
+    cfg["behaviour"] = behaviour
+    with open(path, "w", encoding="utf-8") as fh:
+        _json.dump(cfg, fh)
+
+
+class TestConfigurableBounds:
+    def test_defaults_without_config(self, isolated_cognirepo):
+        assert bt_mod.behaviour_limits() == bt_mod.DEFAULT_LIMITS
+
+    def test_a_user_can_raise_a_bound(self, isolated_cognirepo):
+        _config(max_query_history=5000, max_sessions=200)
+        lim = bt_mod.behaviour_limits()
+        assert lim["max_query_history"] == 5000 and lim["max_sessions"] == 200
+        assert lim["max_terms"] == bt_mod.DEFAULT_LIMITS["max_terms"]          # others untouched
+        t = _tracker()
+        for i in range(bt_mod.MAX_QUERY_HISTORY + 50):
+            t.data["query_history"][f"q{i}"] = {"query_text": "x", "timestamp": f"2026-01-01T00:00:00.{i:07d}",
+                                                "retrieved_symbols": [], "faiss_rows": [], "useful": None}
+        assert t.prune() == {}                                                  # 2050 < 5000: nothing dropped
+
+    def test_a_user_can_lower_a_bound(self, isolated_cognirepo):
+        _config(max_query_history=10)
+        t = _tracker()
+        for i in range(25):
+            t.data["query_history"][f"q{i}"] = {"query_text": "x", "timestamp": f"2026-01-01T00:00:{i:02d}",
+                                                "retrieved_symbols": [], "faiss_rows": [], "useful": None}
+        assert t.prune()["query_history"] == 15
+        assert sorted(t.data["query_history"], key=lambda q: int(q[1:]))[0] == "q15"     # newest 10 kept
+
+    def test_invalid_values_fall_back_to_the_default(self, isolated_cognirepo):
+        """A bad config can never switch a bound off or make it nonsensical."""
+        for bad in (0, -5, "lots", None, 1.5, True, [3]):
+            _config(max_query_history=bad, max_terms=bad)
+            lim = bt_mod.behaviour_limits()
+            assert lim["max_query_history"] == bt_mod.DEFAULT_LIMITS["max_query_history"], bad
+            assert lim["max_terms"] == bt_mod.DEFAULT_LIMITS["max_terms"], bad
+
+    def test_unreadable_config_falls_back(self, isolated_cognirepo):
+        with open(os.path.join(".cognirepo", "config.json"), "w", encoding="utf-8") as fh:
+            fh.write("{ not json")
+        assert bt_mod.behaviour_limits() == bt_mod.DEFAULT_LIMITS
+
+    def test_files_per_session_bound_follows_the_config(self, isolated_cognirepo):
+        _config(max_files_per_session=5)
+        t = _tracker()
+        for i in range(12):
+            t.record_file_edit(f"f{i}.py", "s")
+        assert len(t.data["session_registry"]["s"]["files_touched"]) == 5
+
+
+class TestOverflowIsVisible:
+    def test_a_big_drop_is_logged_at_info_with_the_remedy(self, isolated_cognirepo, caplog):
+        import logging
+        t = _tracker()
+        for i in range(bt_mod.MAX_QUERY_HISTORY + 400):
+            t.data["query_history"][f"q{i}"] = {"query_text": "x", "timestamp": f"2026-01-01T00:00:00.{i:07d}",
+                                                "retrieved_symbols": [], "faiss_rows": [], "useful": None}
+        with caplog.at_level(logging.INFO, logger=bt_mod.__name__):
+            t.prune()
+        msg = " ".join(r.getMessage() for r in caplog.records)
+        assert "dropped 400 old entries" in msg and "config.json" in msg and "query_history" in msg
+
+    def test_a_routine_trim_is_not_info_noise(self, isolated_cognirepo, caplog):
+        import logging
+        t = _tracker()
+        for i in range(bt_mod.MAX_QUERY_HISTORY + 1):
+            t.data["query_history"][f"q{i}"] = {"query_text": "x", "timestamp": f"2026-01-01T00:00:00.{i:07d}",
+                                                "retrieved_symbols": [], "faiss_rows": [], "useful": None}
+        with caplog.at_level(logging.INFO, logger=bt_mod.__name__):
+            t.prune()
+        assert not [r for r in caplog.records if r.levelno >= logging.INFO]
+
+
+class TestWhatIsNotPruned:
+    """The accumulated learning must survive pruning: only history is bounded."""
+
+    def test_symbol_weights_preferences_and_error_counts_are_untouched(self, isolated_cognirepo):
+        t = _tracker()
+        t.record_query("q0", "how does the thing work", ["s1"], [1])
+        t.record_feedback("q0", True)
+        t.record_user_preference("tone", "terse")
+        for _ in range(7):
+            t.record_error("ValueError", "a.py", "boom")
+        for i in range(bt_mod.MAX_QUERY_HISTORY + 500):
+            t.data["query_history"][f"x{i}"] = {"query_text": "x", "timestamp": f"2030-01-01T00:00:00.{i:07d}",
+                                                "retrieved_symbols": [], "faiss_rows": [], "useful": None}
+        t.prune()
+        assert "q0" not in t.data["query_history"]                       # the old history is gone ...
+        assert t.get_behaviour_score("s1") == 1.0                       # ... what it taught retrieval is not
+        assert t.get_preferences()["tone"] == "terse"
+        assert t.data["error_patterns"]["ValueError"]["count"] == 7
+        assert t.record_feedback("q0", True) is None                    # feedback for a pruned id: ignored, no crash

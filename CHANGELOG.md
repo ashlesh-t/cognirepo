@@ -25,7 +25,8 @@ Versioning: [Semantic Versioning](https://semver.org/)
   `file_edit_cooccurrence` (a pair for every two files touched in a session, i.e. quadratic). Now bounded
   on load and on save, after the cross-process merge so a stale writer cannot bring entries back:
   2000 queries (text ≤ 500 chars, ≤ 20 symbols each), 50 sessions × 200 files, the 30 strongest co-edit
-  partners per file, 500 terms, 20 files per error type; JSON is written compactly. The same file now
+  partners per file, 500 terms, 20 files per error type (each can be changed under `behaviour` in
+  `config.json`, see `docs/CONFIGURATION.md`; a prune that drops 100+ entries is logged); JSON is written compactly. The same file now
   loads, prunes and saves to 3.57 MB, and a long simulated run plateaus instead of growing. Not in this
   change: an append-only behaviour store (pairs with #115). (2) The three `graph.pkl.corrupt-*` files in
   that checkout were not corrupt — intact Fernet ciphertext (41,327 / 1,122 / 2 nodes) that pre-#97 code
