@@ -749,6 +749,42 @@ def _owner_qualified(node, source: bytes, lang: str, name: str) -> str:
     return f"{owner}.{name}" if owner else name
 
 
+def _swift_property_symbol(node, source: bytes) -> "dict | None":
+    """FUNCTION symbol for a Swift computed property or a property with observers.
+
+    `var x: Int { calc() }`, `get { … } set { … }` and `willSet { … } didSet { … }` all
+    become one symbol named after the property, carrying the calls from every accessor —
+    the same way a Python `@property` is a FUNCTION symbol. Stored properties without
+    accessors, and local computed variables inside a function body (whose calls already
+    belong to that function), return None.
+    """
+    if node.parent is not None and node.parent.type == "statements":
+        return None
+    accessors = [node.child_by_field_name("computed_value")]
+    accessors += [c for c in node.children if c.type == "willset_didset_block"]
+    accessors = [a for a in accessors if a is not None]
+    pattern = node.child_by_field_name("name")
+    name_node = pattern.child_by_field_name("bound_identifier") if pattern is not None else None
+    if not accessors or name_node is None:
+        return None
+    calls: list[str] = []
+    for accessor in accessors:
+        _ts_collect_calls(accessor, source, calls)
+    return {
+        "name": _ts_text(name_node, source),
+        "type": "FUNCTION",
+        "start_line": node.start_point[0] + 1,
+        "end_line": node.end_point[0] + 1,
+        "docstring": "",
+        "decorators": [],
+        "tags": ["property"],
+        "calls": list(dict.fromkeys(calls)),
+        "bases": [],
+        "faiss_id": -1,
+        "dispatch": None,
+    }
+
+
 def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] | None" = None) -> None:
     """Walk a tree-sitter tree and append symbol dicts to *out*."""
     # `decorated_definition` wraps a decorator list + the actual function/class.
@@ -761,7 +797,11 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
         return
 
     lang = lang_name(ext)
-    if node.type in _TS_FUNCTION_TYPES or node.type in _TS_LANG_FUNCTION_TYPES.get(lang, ()):
+    if lang == "swift" and node.type == "property_declaration":
+        prop = _swift_property_symbol(node, source)
+        if prop is not None:
+            out.append(prop)
+    elif node.type in _TS_FUNCTION_TYPES or node.type in _TS_LANG_FUNCTION_TYPES.get(lang, ()):
         name_node = node.child_by_field_name("name")
         if name_node is None and node.type in _KEYWORD_NAMED_FUNCTIONS:
             # Swift `deinit` / Kotlin `constructor` / `init` have no name field; use the

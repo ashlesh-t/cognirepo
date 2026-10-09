@@ -65,8 +65,12 @@ These become nodes and edges in the NetworkX knowledge graph, and entries in the
 
 - **Swift** — an `extension Foo { … }` is indexed as a CLASS symbol named `Foo` at the extension
   site (its methods need a parent in the graph), so `lookup_symbol("Foo")` returns the type and
-  each of its extensions. `init` and `deinit` are FUNCTION symbols. Calls inside computed-property
-  bodies (`var x: Int { calc() }`) and property observers are not attributed to any symbol.
+  each of its extensions. `init` and `deinit` are FUNCTION symbols. A computed property
+  (`var x: Int { calc() }`, or a `get { … } set { … }` pair) and a property with `willSet`/`didSet`
+  observers is one FUNCTION symbol named after the property (tagged `property`), carrying the calls
+  from all its accessors — so `who_calls("calc")` lists `x`. Stored properties without accessors are
+  not symbols, and calls in their initialisers (`let y = make()`) are not attributed; a local computed
+  variable's calls belong to the enclosing function.
   Vendored/build dirs (`Pods/`, `.build/`, `Carthage/`, `DerivedData/`) are skipped.
 
 - **Kotlin** — `object` declarations and companion objects are CLASS symbols. Secondary
