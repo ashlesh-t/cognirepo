@@ -19,14 +19,6 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
-- **#145 — documentation described features that no longer exist.** The REST API, JWT / password login,
-  Redis cache and gRPC streaming service were removed in earlier releases, but `FEATURES.md`,
-  `ARCHITECTURE.md`, `CONFIGURATION.md`, `DEVELOPER_GUIDE.md`, `SECURITY.md` and the CLI module docstring
-  still documented them as shipped (endpoints, `COGNIREPO_JWT_SECRET`, `COGNIREPO_PASSWORD_HASH`,
-  `COGNIREPO_REDIS_URL`, `redis.enabled`, `port`, `cognirepo wait-api`, `--via-api`, `--idle-timeout`). They
-  are removed; `FEATURES.md` now has a short "Removed interfaces" section so nobody goes looking for them;
-  `docs/auth.md` (two lines about JWT, linked from nowhere) is deleted; the stale JWT/bcrypt/`api_port`
-  setup in `tests/conftest.py` is gone.
 - **`SECURITY.md` overstated what encryption at rest covers, and named the wrong algorithm.** It said
   "AES-256 GCM" and "all files in `vector_db/`, `graph/`, `index/`". The code uses Fernet (AES-128-CBC +
   HMAC-SHA256) and, with `storage.encrypt: true`, encrypts the knowledge graph and its journal,
@@ -195,6 +187,14 @@ Versioning: [Semantic Versioning](https://semver.org/)
   `test_pid_file_and_heartbeat_removed_on_clean_exit` on CI runners; a regression test reproduces the race
   deterministically with a slow write.
 
+- **#145 — documentation described features that no longer exist.** The REST API, JWT / password login,
+  Redis cache and gRPC streaming service were removed in earlier releases, but `FEATURES.md`,
+  `ARCHITECTURE.md`, `CONFIGURATION.md`, `DEVELOPER_GUIDE.md`, `SECURITY.md` and the CLI module docstring
+  still documented them as shipped (endpoints, `COGNIREPO_JWT_SECRET`, `COGNIREPO_PASSWORD_HASH`,
+  `COGNIREPO_REDIS_URL`, `redis.enabled`, `port`, `cognirepo wait-api`, `--via-api`, `--idle-timeout`). They
+  are removed; `FEATURES.md` now has a short "Removed interfaces" section so nobody goes looking for them;
+  `docs/auth.md` (two lines about JWT, linked from nowhere) is deleted; the stale JWT/bcrypt/`api_port`
+  setup in `tests/conftest.py` is gone.
 - **#128 — deleting a file left an orphan degree-0 `symbol::<name>` stub in the graph.**
   `KnowledgeGraph._redirect_edges_to_stub` decided "something references this symbol" from its raw
   neighbours, which include its own `DEFINED_IN` edge to the FILE node being removed in the same
