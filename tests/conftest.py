@@ -12,8 +12,8 @@ Shared pytest fixtures for CogniRepo tests.
 Uses a temporary directory for all .cognirepo/ storage so tests are
 fully isolated from the developer's real data.
 
-Secrets (JWT secret, password hash) are injected via environment variables
-so tests never need a real OS keychain.
+Tests never touch a real OS keychain: those that exercise encryption mock
+``keyring`` themselves (see ``tests/test_encryption.py``).
 """
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ import json
 import os
 from unittest.mock import MagicMock
 
-import bcrypt
 import psutil
 import pytest
 import numpy as np
@@ -142,8 +141,6 @@ def _reset_singletons():
 
 # Secrets generated at import time — never stored as literals in source.
 _TEST_PASSWORD = "changeme-test"
-_TEST_PASSWORD_HASH = bcrypt.hashpw(_TEST_PASSWORD.encode(), bcrypt.gensalt(rounds=4)).decode()
-_TEST_JWT_SECRET = "test-jwt-secret-32chars-for-tests"
 _TEST_PROJECT_ID = "test-project-00000000-0000-0000-0000"
 
 
@@ -239,8 +236,6 @@ def isolated_cognirepo(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     # Inject secrets via env vars (mirrors CI / Docker behaviour)
-    monkeypatch.setenv("COGNIREPO_JWT_SECRET", _TEST_JWT_SECRET)
-    monkeypatch.setenv("COGNIREPO_PASSWORD_HASH", _TEST_PASSWORD_HASH)
 
     # Create required subdirectories
     for d in [
@@ -257,7 +252,6 @@ def isolated_cognirepo(tmp_path, monkeypatch):
     # Write minimal config — no secrets in config (they live in env vars above)
     config = {
         "project_id": _TEST_PROJECT_ID,
-        "api_port": 8080,
         "api_url": "http://localhost:8080",
         "storage": {"encrypt": False},
         "retrieval_weights": {"vector": 0.5, "graph": 0.3, "behaviour": 0.2},

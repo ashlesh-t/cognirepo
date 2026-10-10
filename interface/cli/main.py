@@ -7,15 +7,9 @@
 """
 Main entry point for the cognirepo CLI.
 
-Global flags
-------------
---via-api          Route commands through the REST API instead of calling
-                   tools directly.  Useful for remote / daemon mode.
---api-url URL      Override the API base URL (default: from config or
-                   http://localhost:8000).
-
-When --via-api is NOT set (default), tools are called in-process — no
-server required.
+Every command calls the tools in-process — no server is required. (An earlier
+``--via-api`` / ``--api-url`` mode that routed commands through a REST API was
+removed along with that API.)
 """
 import argparse
 import datetime
