@@ -19,6 +19,16 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
+- **#144 — `docs/CLI_REFERENCE.md` documented a CLI that does not exist, and a test now keeps it honest.** It
+  advertised `cognirepo watch start|stop|status` (the parser has `--status`, `--ensure-running`,
+  `--foreground`, `--path`; stopping is `list -n <pid> --stop`), `ask --model/--tier` and `seed --days`
+  (no such flags), `user-prefs [KEY [VALUE]]` (the real interface is `--set KEY VALUE`), had **no section**
+  for six real commands (`coverage`, `export-spec`, `graph-stats`, `install-hooks`, `uninstall-hooks`,
+  `update-directives`) and missed ~35 flags on 14 others (`init --parent-repo/--service-type/…`,
+  `index-repo --tier/--no-graph/--remove-lock`, `doctor --release-check`, `setup --targets`, the `org`
+  subcommands …). All corrected from the real parser. New `tests/test_cli_docs_sync.py` captures the actual
+  argparse tree and fails when a command has no section, a flag is undocumented, a documented flag or a usage
+  example uses one that does not exist, or a usage line advertises subcommands the parser lacks.
 - **#141 — lock hygiene: a busy store is a clear retryable error, nothing waits forever, slow work is out of
   the lock.** (1) A lock timeout surfaced as a raw `filelock.Timeout` traceback. `store_lock()` now raises
   `StoreBusy` (still a `Timeout` subclass) naming the lock and the wait; MCP tools return

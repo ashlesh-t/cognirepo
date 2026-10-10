@@ -27,6 +27,12 @@ cognirepo init [OPTIONS]
 | `--no-index` | `False` | Skip the index-repo prompt (for scripting) |
 | `--daemon`, `-d` | `False` | Run file watcher as a background daemon |
 | `--non-interactive` | `False` | Use all defaults without prompting (for CI) |
+| `--no-graph` | `False` | Disable knowledge-graph building entirely. For repos over 10k files a lightweight graph (entry-point symbols only) is built automatically; this skips it |
+| `--parent-repo PATH` | — | Link this repo as a child of the given parent repo in the org graph (microservices; see below) |
+| `--no-link` | `False` | Skip org-graph linking (standalone repo, no parent) |
+| `--service-type TYPE` | — | Microservice type: `rest_api` \| `grpc` \| `worker` \| `frontend` \| `library` \| `other` |
+| `--port PORT` | — | Port the service listens on (stored in the org-graph metadata) |
+| `--api-base-url URL` | — | Base URL or path prefix of the service's API, e.g. `/api/v1` (stored in the org-graph metadata) |
 
 ---
 
@@ -46,34 +52,65 @@ cognirepo index-repo [PATH] [OPTIONS]
 | `--no-embed` | `False` | Skip FAISS embedding (AST/symbol index + graph only). The post-commit hook passes it so a commit never loads the embedding model; vectors for those files catch up on the next full index |
 | `--files FILE…` | — | Re-index only these files (used by the post-commit hook). Persists the graph **and** the AST index, FAISS vectors and manifest, so `lookup_symbol` sees the change from any process (COGNIREPO-154). Same complete-graph guard as `--changed-only` |
 | `--changed-only` | `False` | Auto-detect changed files via git and reindex. Like `--files` it only updates an existing **complete** graph: if the graph is missing, quarantined or a fragment it exits `2` without saving and tells you to run a full `cognirepo index-repo .` once (COGNIREPO-122). File extensions come from `language_registry` (installed grammars). If git cannot list changes (not a repo, no commits, git missing) it exits `1` and indexes nothing (COGNIREPO-155) |
+| `--no-graph` | `False` | Disable knowledge-graph building entirely (for very large repos). Repos over 10k files get a lightweight graph by default |
+| `--tier {1,2,all}` | auto | `1`: high-weight files only (fast bootstrap, the rest is queued); `2`: resume the queued background pass; `all`: full index regardless of size |
+| `--remove-lock LOCK_PATH` | — | Delete the file at `LOCK_PATH` after indexing (used by the background reindex to release its lock) |
 
-`cognirepo install-hooks` writes a post-commit hook that runs `index-repo --files <changed> --no-watch --no-embed`. Its extension filter is generated from `language_registry` (every mapped extension), The hook logs to `.cognirepo/hook.log` (rotated at 256 KiB) and records its last outcome in `.cognirepo/hook.last` (`ts`/`exit`/`files`); `doctor` and `get_session_brief` report a failed run. Re-run `install-hooks` after upgrading — it replaces an outdated cognirepo block in place and leaves your own hook lines alone.
+`cognirepo install-hooks` writes a post-commit hook that runs `index-repo --files <changed> --no-watch --no-embed`. Its extension filter is generated from `language_registry` (every mapped extension). The hook logs to `.cognirepo/hook.log` (rotated at 256 KiB) and records its last outcome in `.cognirepo/hook.last` (`ts`/`exit`/`files`); `doctor` and `get_session_brief` report a failed run. Re-run `install-hooks` after upgrading — it replaces an outdated cognirepo block in place and leaves your own hook lines alone.
 
 ---
 
 ## cognirepo summarize
 
+
 Generate hierarchical architectural summaries via LLM.
 
 ```bash
-cognirepo summarize
+cognirepo summarize [OPTIONS]
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--scope DIR` | whole repo | Restrict summarization to files under this directory prefix (e.g. `pkg/`) |
+| `--embed-only` | `False` | Skip text summarization; only embed the existing `summaries.json` into FAISS. Used automatically by the background pass for large repos |
 
 ---
 
 ## cognirepo org
 
-Manage local repository organizations (cross-repo context).
+
+Manage local repository organizations (cross-repo context) and the org dependency graph.
 
 ```bash
-cognirepo org [create|list|link|unlink] [ARGS]
+cognirepo org create NAME
+cognirepo org list
+cognirepo org link ORG [PATH]
+cognirepo org unlink ORG [PATH]
+cognirepo org link-repos REPO_A REPO_B [--type IMPORTS|CALLS_API|SHARES_SCHEMA]
+cognirepo org graph [--json]
+cognirepo org rewire
+cognirepo org project create ORG PROJECT [--description TEXT]
+cognirepo org project list ORG
+cognirepo org project link ORG PROJECT [PATH]
+cognirepo org project unlink ORG PROJECT [PATH]
 ```
+
+| Subcommand | Description |
+|------------|-------------|
+| `create NAME` | Create a new local organization |
+| `list` | List all local organizations and their member repos |
+| `link ORG [PATH]` / `unlink ORG [PATH]` | Add / remove a repo (default: the current directory) |
+| `link-repos REPO_A REPO_B` | Declare a dependency edge: `REPO_A` depends on `REPO_B`. `--type` is the edge kind (`IMPORTS` default, `CALLS_API`, `SHARES_SCHEMA`) |
+| `graph` | Print the org dependency graph; `--json` for machine-readable output |
+| `rewire` | Re-run cross-service `CALLS_API` detection for every indexed repo (run it after indexing all services) |
+| `project …` | Manage projects within an organization: `create` (with `--description`), `list`, `link`, `unlink` |
 
 **Examples:**
 ```bash
 cognirepo org create my-team
 cognirepo org link my-team .
 cognirepo org list
+cognirepo org link-repos ./api ./auth --type CALLS_API
 ```
 
 ---
@@ -104,6 +141,8 @@ cognirepo doctor [OPTIONS]
 |------|---------|-------------|
 | `--verbose`, `-v` | `False` | Show optional component checks |
 | `--fix` | `False` | Auto-fix FAISS corruption or dimension mismatch |
+| `--release-check` | `False` | Also run release-readiness checks (v0.x references, old tier names in docs) |
+| `--json` | `False` | Output the diagnostics as JSON (machine-readable); combine with `--resources` for the resource report |
 | `--resources` | `False` | Instead of the health checks, print where memory and disk go: every cognirepo process (resident memory, age, repo, stale flag), the size of each `.cognirepo/` subdirectory with its largest files, and set-aside/left-over files (quarantines, `.stale`, scratch). Read-only; add `--json` for scripts. See [RESOURCES.md](RESOURCES.md) |
 
 `doctor` warns about **stale cognirepo processes** (Linux): a watcher/indexer whose working directory was deleted, or a one-shot command (`init`, `index-repo`, …) still running after 6 h, with their combined memory and the `kill` command. Agent `serve` sessions are never reported.
@@ -194,16 +233,24 @@ cognirepo prune [OPTIONS]
 | `--dry-run` | `False` | Show what would be pruned without removing |
 | `--archive` | `False` | Archive pruned entries instead of deleting |
 | `--aggressive` | `False` | Use a lower threshold (0.05) |
+| `--threshold FLOAT` | `0.15` | Prune memories whose score (importance × recency decay) is below this value. `--aggressive` is the same as `--threshold 0.05` |
+| `--verbose` | `False` | List every memory considered (implied by `--dry-run`) |
 
 ---
 
 ## cognirepo setup
 
+
 One-command onboarding: `init` + `index-repo` + MCP config generation. Installs optional extras (languages, security, providers) interactively.
 
 ```bash
-cognirepo setup
+cognirepo setup [--no-index] [--targets claude cursor vscode]
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--no-index` | `False` | Skip indexing (scaffold `.cognirepo/` only) |
+| `--targets …` | auto-detected | MCP targets to configure: `claude`, `cursor`, `vscode` |
 
 Detects `.cursor/`, `.vscode/`, and `.claude/` and writes the appropriate MCP connector config for each.
 
@@ -222,6 +269,7 @@ cognirepo migrate-config --dry-run # preview changes without writing
 
 ## cognirepo ask
 
+
 Send a single query through the full orchestrator pipeline (classifier → context builder → model router) without entering the REPL.
 
 ```bash
@@ -230,12 +278,14 @@ cognirepo ask "QUERY" [OPTIONS]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--model MODEL` | tier default | Override model for this query |
-| `--tier TIER` | auto-classified | Force a specific tier (QUICK/STANDARD/COMPLEX/EXPERT) |
+| `QUERY` | — | Natural-language query (optional; omitted, it reads from the prompt) |
+| `--verbose`, `-v` | `False` | Show the classifier tier and the matched source |
+| `--top-k N` | `5` | Number of symbols to retrieve for context |
 
 ---
 
 ## cognirepo benchmark
+
 
 Run quantitative value benchmarks and report token-reduction metrics.
 
@@ -245,7 +295,8 @@ cognirepo benchmark [OPTIONS]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--json` | `False` | Output results as JSON |
+| `--json` | `False` | Output raw JSON instead of the report |
+| `--compare` | `False` | Compare with the previous run |
 
 ---
 
@@ -261,15 +312,22 @@ cognirepo search-docs QUERY
 
 ## cognirepo log-episode
 
+
 Append an episodic event to the journal.
 
 ```bash
-cognirepo log-episode TEXT
+cognirepo log-episode EVENT [--meta JSON]
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `EVENT` | — | The event text |
+| `--meta JSON` | `{}` | JSON metadata object stored with the event |
 
 ---
 
 ## cognirepo history
+
 
 Print recent episodic events.
 
@@ -277,35 +335,60 @@ Print recent episodic events.
 cognirepo history [--limit N]
 ```
 
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--limit N` | `20` | Number of events to show |
+
 ---
 
 ## cognirepo seed
 
-Seed the behaviour tracker and learning store from git log.
+
+Seed the behaviour tracker and learning store from git history.
 
 ```bash
-cognirepo seed [--days N]
+cognirepo seed [--path DIR] [--dry-run] [--from-git] [--comments]
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--path DIR` | `.` | Repo root to read git history from |
+| `--dry-run` | `False` | Show which files/symbols would be seeded without writing anything |
+| `--from-git` | `False` | Also parse commit messages (`fix:` / `decision:` / `breaking:`) and ADR files into the learning store |
+| `--comments` | `False` | Also scan source files for `FIXME` / `HACK` / `NOTE` comments (slow on large repos) |
 
 ---
 
 ## cognirepo sessions
 
+
 List recent conversation sessions.
 
 ```bash
-cognirepo sessions
+cognirepo sessions [--limit N]
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--limit N` | `20` | Maximum number of sessions to show |
 
 ---
 
 ## cognirepo watch
 
-Manage the background file-watcher daemon.
+
+Manage the background file-watcher. There are no `start` / `stop` / `status` subcommands: starting is `--ensure-running` (or `--foreground` under a supervisor), status is `--status`, and stopping is `cognirepo list -n <PID_OR_NAME> --stop` (see [`list`](#cognirepo-list)).
 
 ```bash
-cognirepo watch start|stop|status
+cognirepo watch [--status | --ensure-running | --foreground] [--path DIR]
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--status` | `False` | Print daemon status: PID, heartbeat age, last reindex |
+| `--ensure-running` | `False` | Start the watcher (a fresh background process) if it is not running or its heartbeat is stale (> 60 s) |
+| `--foreground`, `--daemon-foreground` | `False` | Run the watcher in the foreground under the crash guard — what the generated systemd/launchd unit runs. Registers itself, logs to stderr, stops cleanly on SIGTERM. `--daemon-foreground` is the name older generated units use |
+| `--path DIR` | `.` | Repo root to watch |
 
 **One watcher per repo (COGNIREPO-138).** However many processes try to start a watcher — `watch --daemon`,
 `watch --foreground`, `watch --ensure-running`, or the watcher thread every `cognirepo serve` session
@@ -321,11 +404,19 @@ and `list --stop` refuses to signal it (that would stop the agent's server) — 
 
 ## cognirepo user-prefs
 
+
 View or set global user preferences stored in `~/.cognirepo/`.
 
 ```bash
-cognirepo user-prefs [KEY [VALUE]]
+cognirepo user-prefs                    # show preferences
+cognirepo user-prefs --set KEY VALUE    # set one
+cognirepo user-prefs --behaviour        # show auto-tracked behaviour pattern counts
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--set KEY VALUE` | — | Set a preference |
+| `--behaviour` | `False` | Show auto-tracked behaviour pattern counts |
 
 ---
 
@@ -410,6 +501,28 @@ Why not just purge them: quarantined files are **not necessarily corrupt**. Code
 
 ---
 
+## cognirepo export-spec
+
+Export OpenAI / Cursor tool specs to `adapters/` and print the OpenAI tools JSON on stdout, so `cognirepo export-spec > spec.json` works.
+
+```bash
+cognirepo export-spec
+```
+
+---
+
+## cognirepo update-directives
+
+Regenerate the agent directive files from the current templates.
+
+```bash
+cognirepo update-directives
+```
+
+Detects which agents are present in the project and rewrites `CLAUDE.md`, `GEMINI.md`, `.cursor/rules/cognirepo.mdc` and `.github/copilot-instructions.md` with the latest template content (overwriting them).
+
+---
+
 ## cognirepo mcp-setup
 
 Re-run MCP integration for Claude Code / Gemini CLI / Cursor / VS Code without repeating the full `cognirepo init` wizard.
@@ -422,6 +535,52 @@ cognirepo mcp-setup [OPTIONS]
 |------|---------|-------------|
 | `--target {claude,gemini,cursor,vscode}` | `claude` | Repeatable — pass multiple times to configure more than one target |
 | `--global` | `False` | Also register the server user-wide, not just this project |
+
+---
+
+## cognirepo coverage
+
+Show per-directory symbol counts from the AST index. Useful for spotting directories that were silently skipped during indexing (e.g. `backend/`, `routes/`).
+
+```bash
+cognirepo coverage
+```
+
+Language-agnostic: a source directory is any directory containing a file of an indexed language. Exit code `0` when every top-level source directory has at least one symbol, `1` when one or more have none (likely missed).
+
+---
+
+## cognirepo graph-stats
+
+Node and edge counts and health of the knowledge graph (the same data as the MCP `graph_stats` tool).
+
+```bash
+cognirepo graph-stats
+```
+
+---
+
+## cognirepo install-hooks
+
+Write the git post-commit hook that keeps the index fresh: it runs `cognirepo index-repo --files <changed> --no-watch --no-embed` in the background after each commit.
+
+```bash
+cognirepo install-hooks
+```
+
+Idempotent. An outdated cognirepo block is replaced in place and any lines of your own in the hook are left alone. The extension filter is generated from the language registry, so re-run it after upgrading to pick up new languages. Output and the outcome of each run go to `.cognirepo/hook.log` and `.cognirepo/hook.last`; `cognirepo doctor` warns about a failed run or an outdated block. Exits `1` outside a git repository.
+
+---
+
+## cognirepo uninstall-hooks
+
+Remove the cognirepo block from `.git/hooks/post-commit`.
+
+```bash
+cognirepo uninstall-hooks
+```
+
+Other lines in the hook are kept; if nothing else is left the hook file is removed. Does nothing (exit `0`) if no cognirepo block is present; exits `1` outside a git repository.
 
 ---
 
