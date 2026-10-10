@@ -13,7 +13,14 @@ go.mod, etc.) to identify microservice candidates for auto-setup.
 IMPORTANT: _SERVICE_MARKERS must stay in sync with
            indexer/language_registry.py::_GRAMMAR_MAP.
            When a new language is added to language_registry, add its build
-           file marker here too.
+           file marker here too. Enforced by tests/test_language_registry_sync.py
+           (languages with no marker go in its _NO_MARKER_LANGUAGES allow-list,
+           markers with no grammar in its _MARKERS_WITHOUT_GRAMMAR allow-list).
+
+lang_hint convention: "<Language>/<Tool>" (e.g. "Java/Maven", "C#/.NET"), or
+just "<Language>". The first segment must be the language's label in
+language_registry._LANG_LABELS — the sync test matches on it. JavaScript and
+TypeScript share "Node.js" (package.json).
 """
 from __future__ import annotations
 
