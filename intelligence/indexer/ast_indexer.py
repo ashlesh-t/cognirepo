@@ -749,40 +749,66 @@ def _owner_qualified(node, source: bytes, lang: str, name: str) -> str:
     return f"{owner}.{name}" if owner else name
 
 
-def _swift_property_symbol(node, source: bytes) -> "dict | None":
-    """FUNCTION symbol for a Swift computed property or a property with observers.
-
-    `var x: Int { calc() }`, `get { … } set { … }` and `willSet { … } didSet { … }` all
-    become one symbol named after the property, carrying the calls from every accessor —
-    the same way a Python `@property` is a FUNCTION symbol. Stored properties without
-    accessors, and local computed variables inside a function body (whose calls already
-    belong to that function), return None.
-    """
-    if node.parent is not None and node.parent.type == "statements":
-        return None
-    accessors = [node.child_by_field_name("computed_value")]
-    accessors += [c for c in node.children if c.type == "willset_didset_block"]
-    accessors = [a for a in accessors if a is not None]
-    pattern = node.child_by_field_name("name")
-    name_node = pattern.child_by_field_name("bound_identifier") if pattern is not None else None
-    if not accessors or name_node is None:
-        return None
-    calls: list[str] = []
-    for accessor in accessors:
-        _ts_collect_calls(accessor, source, calls)
+def _function_symbol(name: str, node, calls: list[str], *, docstring: str = "",
+                     decorators: "list[str] | None" = None, tags: "list[str] | None" = None,
+                     dispatch: "str | None" = None, span: "tuple | None" = None) -> dict:
+    """The FUNCTION symbol record every tree-sitter path emits. *span* is an optional
+    (start_node, end_node) pair when the symbol covers only part of *node*."""
+    first, last = span if span is not None else (node, node)
     return {
-        "name": _ts_text(name_node, source),
+        "name": name,
         "type": "FUNCTION",
-        "start_line": node.start_point[0] + 1,
-        "end_line": node.end_point[0] + 1,
-        "docstring": "",
-        "decorators": [],
-        "tags": ["property"],
+        "start_line": first.start_point[0] + 1,
+        "end_line": last.end_point[0] + 1,
+        "docstring": docstring,
+        "decorators": decorators or [],
+        "tags": tags or [],
         "calls": list(dict.fromkeys(calls)),
         "bases": [],
         "faiss_id": -1,
-        "dispatch": None,
+        "dispatch": dispatch,
     }
+
+
+def _swift_property_symbols(node, source: bytes, lang: str) -> list[dict]:
+    """FUNCTION symbols for Swift computed properties and properties with observers.
+
+    `var x: Int { calc() }`, `get { … } set { … }` and `willSet { … } didSet { … }` become one
+    symbol per property, named `Owner.x` (bare `x` at top level) and carrying the calls from
+    every accessor — the same way a Python `@property` is a FUNCTION symbol. The owner prefix
+    keeps ubiquitous names (SwiftUI's `body`, `description`) of different types in one file on
+    separate `file::name` graph nodes. A multi-binding declaration (`var a: Int { … }, b: Int
+    { … }`) lists its bindings as flat siblings, each `name` followed by its own accessors.
+    Stored properties without accessors, and local computed variables inside a function body
+    (whose calls already belong to that function), produce nothing.
+    """
+    if node.parent is not None and node.parent.type == "statements":
+        return []
+    bindings: list[tuple] = []  # (pattern node, [accessor nodes])
+    for i, child in enumerate(node.children):
+        field = node.field_name_for_child(i)
+        if field == "name":
+            bindings.append((child, []))
+        elif bindings and (field == "computed_value" or child.type == "willset_didset_block"):
+            bindings[-1][1].append(child)
+    symbols: list[dict] = []
+    for pattern, accessors in bindings:
+        name_node = pattern.child_by_field_name("bound_identifier")
+        if name_node is None or not accessors:
+            continue
+        calls: list[str] = []
+        for accessor in accessors:
+            _ts_collect_calls(accessor, source, calls)
+        name = _owner_qualified(node, source, lang, _ts_text(name_node, source))
+        symbols.append(_function_symbol(name, node, calls, tags=["property"],
+                                        span=(pattern, accessors[-1])))
+    return symbols
+
+
+# lang → builder for `property_declaration` nodes that should become FUNCTION symbols
+_PROPERTY_SYMBOL_BUILDERS = {
+    "swift": _swift_property_symbols,
+}
 
 
 def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] | None" = None) -> None:
@@ -797,10 +823,9 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
         return
 
     lang = lang_name(ext)
-    if lang == "swift" and node.type == "property_declaration":
-        prop = _swift_property_symbol(node, source)
-        if prop is not None:
-            out.append(prop)
+    prop_builder = _PROPERTY_SYMBOL_BUILDERS.get(lang) if node.type == "property_declaration" else None
+    if prop_builder is not None:
+        out.extend(prop_builder(node, source, lang))
     elif node.type in _TS_FUNCTION_TYPES or node.type in _TS_LANG_FUNCTION_TYPES.get(lang, ()):
         name_node = node.child_by_field_name("name")
         if name_node is None and node.type in _KEYWORD_NAMED_FUNCTIONS:
@@ -825,19 +850,12 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
                 fn_name = _owner_qualified(node, source, lang, fn_name)
             fn_decs = _parent_decs or []
             fn_calls = list(dict.fromkeys(calls))
-            out.append({
-                "name": fn_name,
-                "type": "FUNCTION",
-                "start_line": node.start_point[0] + 1,
-                "end_line": node.end_point[0] + 1,
-                "docstring": _ts_docstring(node, source, ext),
-                "decorators": fn_decs,
-                "tags": [],
-                "calls": fn_calls,
-                "bases": [],
-                "faiss_id": -1,
-                "dispatch": "dynamic" if _detect_dynamic_dispatch(fn_name, fn_decs, fn_calls) else None,
-            })
+            out.append(_function_symbol(
+                fn_name, node, fn_calls,
+                docstring=_ts_docstring(node, source, ext),
+                decorators=fn_decs,
+                dispatch="dynamic" if _detect_dynamic_dispatch(fn_name, fn_decs, fn_calls) else None,
+            ))
     elif node.type in _TS_CLASS_TYPES or node.type in _TS_LANG_CLASS_TYPES.get(lang, ()):
         name_node = node.child_by_field_name("name")
         cls_name = _ts_text(name_node, source) if name_node and not name_node.is_missing else None

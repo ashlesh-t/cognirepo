@@ -226,11 +226,15 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ### Added
 - **#176 — Swift computed properties and property observers record their calls.** A computed property
   (`var x: Int { calc() }` or a `get`/`set` pair) and a property with `willSet`/`didSet` observers is
-  now a FUNCTION symbol named after the property (tagged `property`, like a Python `@property`),
+  now a FUNCTION symbol named `Type.property` (tagged `property`, like a Python `@property`),
   carrying the calls from all its accessors, so `who_calls` and the call graph see them. Getter, setter
-  and observers share one symbol rather than one each, matching how the property is referenced.
-  Stored properties without accessors and local computed variables inside functions (whose calls the
-  function already owns) are not symbols.
+  and observers share one symbol rather than one each, matching how the property is referenced; the
+  type prefix keeps same-named properties (SwiftUI's `body`) of different types in one file on separate
+  graph nodes, and every binding of a multi-binding declaration is indexed. Stored properties without
+  accessors and local computed variables inside functions (whose calls the function already owns) are
+  not symbols; `lazy` closure initialisers and `subscript` bodies are not covered. Tree-sitter
+  FUNCTION records are now built by one `_function_symbol()` helper, and per-language property
+  handling is a `_PROPERTY_SYMBOL_BUILDERS` entry.
 - **`cognirepo doctor --resources` and `docs/RESOURCES.md` (#121).** One read-only report of where memory and
   disk go: every cognirepo process (resident memory, age, repo, flagged stale — directory deleted or a
   one-shot command running for hours), the size of each `.cognirepo/` subdirectory with its largest files,
