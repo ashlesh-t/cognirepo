@@ -273,6 +273,11 @@ _KEYWORD_NAMED_FUNCTIONS: dict[str, str] = {
     "anonymous_initializer": "init",         # Kotlin init { … }
 }
 
+# Member symbols whose name is the same in every type (`constructor`, `init`, `Companion`).
+# Graph node ids are `file::name`, so two classes in one file would share one node; these are
+# prefixed with the enclosing type (`Service.constructor`) to keep them apart.
+_OWNER_QUALIFIED_FUNCTIONS = frozenset({"secondary_constructor", "anonymous_initializer"})
+
 
 # ── utility ───────────────────────────────────────────────────────────────────
 
@@ -725,6 +730,25 @@ def _kotlin_supertypes(specs, source: bytes) -> list[str]:
     return out
 
 
+def _enclosing_type_name(node, source: bytes, lang: str) -> "str | None":
+    """Name of the nearest enclosing class-like declaration, or None at top level."""
+    lang_types = _TS_LANG_CLASS_TYPES.get(lang, frozenset())
+    parent = node.parent
+    while parent is not None:
+        if parent.type in _TS_CLASS_TYPES or parent.type in lang_types:
+            name = parent.child_by_field_name("name")
+            if name is not None and not name.is_missing:
+                return _ts_text(name, source)
+        parent = parent.parent
+    return None
+
+
+def _owner_qualified(node, source: bytes, lang: str, name: str) -> str:
+    """`Owner.name` for a member of a named type, else `name` unchanged."""
+    owner = _enclosing_type_name(node, source, lang)
+    return f"{owner}.{name}" if owner else name
+
+
 def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] | None" = None) -> None:
     """Walk a tree-sitter tree and append symbol dicts to *out*."""
     # `decorated_definition` wraps a decorator list + the actual function/class.
@@ -757,6 +781,8 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
             calls: list[str] = []
             _ts_collect_calls(node, source, calls)
             fn_name = _ts_text(name_node, source)
+            if node.type in _OWNER_QUALIFIED_FUNCTIONS:
+                fn_name = _owner_qualified(node, source, lang, fn_name)
             fn_decs = _parent_decs or []
             fn_calls = list(dict.fromkeys(calls))
             out.append({
@@ -776,7 +802,8 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
         name_node = node.child_by_field_name("name")
         cls_name = _ts_text(name_node, source) if name_node and not name_node.is_missing else None
         if cls_name is None and node.type == "companion_object":
-            cls_name = "Companion"  # Kotlin's implicit name for an unnamed companion object
+            # Kotlin's implicit name for an unnamed companion object, qualified by its class
+            cls_name = _owner_qualified(node, source, lang, "Companion")
         if cls_name:
             cls_decs = _parent_decs or []
             out.append({
@@ -1535,6 +1562,11 @@ class ASTIndexer:
                 from tree_sitter import Parser  # pylint: disable=import-outside-toplevel
                 parser = Parser(lang)
                 tree = parser.parse(source)
+                if tree.root_node.has_error:
+                    # error recovery can silently drop declarations (e.g. tree-sitter-kotlin on
+                    # enum entries with bodies), so a half-parsed file is otherwise invisible
+                    log.debug("[parse-errors] %s: grammar reported errors; symbols may be missing",
+                              abs_path)
                 ts_symbols = _extract_symbols_ts(tree, source, ext)
                 if ext != ".py":
                     return ts_symbols

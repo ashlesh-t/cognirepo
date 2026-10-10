@@ -235,14 +235,19 @@ Versioning: [Semantic Versioning](https://semver.org/)
   stale) and 67 MB of set-aside files, which is what the issue asked to make visible.
 - **#178 — Kotlin language support.** `.kt` and `.kts` files are indexed via `tree-sitter-kotlin` (now
   part of the `languages` extra, `>=1.1`): classes, interfaces, data/enum/sealed classes, objects and
-  companion objects (an unnamed companion is recorded as `Companion`), functions, extension functions,
-  secondary constructors (`constructor`) and `init` blocks. Call edges cover `foo()`, `a.b()`, safe-call
+  companion objects, functions, extension functions, secondary constructors and `init` blocks.
+  Members that share a name in every class are qualified with their class so they get distinct graph
+  nodes: `Service.constructor`, `Service.init`, `Service.Companion` (unnamed companion). Call edges
+  cover `foo()`, `a.b()`, safe-call
   `a?.b()` and trailing-lambda calls (`list.forEach { … }`); supertypes are normalised to simple names
   (`com.x.Base()` → `Base`, `Comparable<T>` → `Comparable`, `Iface by impl` → `Iface`).
   `build.gradle.kts` was already a Kotlin/Gradle service marker and `build/` / `.gradle/` were already
   skipped. `cognirepo doctor` lists Kotlin; `semantic_search_code` accepts `language="kotlin"`; the
   post-commit hook picks up `.kt`/`.kts` via `known_extensions()`. The indexer no longer emits a symbol
-  with an empty name when a grammar's error recovery inserts a zero-width `MISSING` name node.
+  with an empty name when a grammar's error recovery inserts a zero-width `MISSING` name node, and logs
+  `[parse-errors] <path>` at debug level for any file the grammar could not fully parse. Known
+  tree-sitter-kotlin 1.1.0 limit: an enum whose entries have bodies loses that enum and every later
+  declaration in the file (documented in `docs/LANGUAGES.md`, pinned by a test).
 - **#74 — C# language support.** `.cs` files are indexed via `tree-sitter-c-sharp` (now part of
   the `languages` extra): classes, interfaces, structs, records, enums, methods and local functions,
   plus call edges for `Foo()`, `obj.Foo()`, generic `Foo<T>()` and null-conditional `a?.Foo()`

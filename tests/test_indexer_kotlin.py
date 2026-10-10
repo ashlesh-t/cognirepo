@@ -9,7 +9,8 @@ tests/test_indexer_kotlin.py — Kotlin (.kt / .kts) indexing via tree-sitter-ko
 
 Covers:
   - classes, interfaces, data/enum classes, objects and companion objects
-  - functions, extension functions, secondary constructors and init blocks
+  - functions, extension functions, secondary constructors and init blocks (owner-qualified)
+  - the known tree-sitter-kotlin 1.1 enum-entry-body limit, pinned
   - call extraction for foo(), a.b(), a?.b() and trailing-lambda calls
   - supertype extraction (qualified names, constructor calls, `by` delegation)
   - registry / build.gradle.kts service-marker wiring
@@ -107,9 +108,9 @@ class TestKotlinIndexing:
         classes = {s["name"] for s in syms if s["type"] == "CLASS"}
         assert {"Verifier", "Token", "Status", "TokenService", "Registry"} <= classes
 
-    def test_unnamed_companion_object_is_companion(self, fresh_indexer, tmp_path, monkeypatch):
+    def test_unnamed_companion_object_is_owner_qualified(self, fresh_indexer, tmp_path, monkeypatch):
         syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
-        assert _by_name(syms, "Companion", 30)["type"] == "CLASS"
+        assert _by_name(syms, "TokenService.Companion", 30)["type"] == "CLASS"
 
     def test_named_companion_object_keeps_its_name(self, fresh_indexer, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -127,14 +128,38 @@ class TestKotlinIndexing:
         syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
         functions = {(s["name"], s["start_line"]) for s in syms if s["type"] == "FUNCTION"}
         assert {
-            ("verify", 4), ("constructor", 14), ("init", 18), ("verify", 22),
+            ("verify", 4), ("TokenService.constructor", 14), ("TokenService.init", 18), ("verify", 22),
             ("create", 31), ("register", 36), ("toToken", 41),
         } <= functions
 
     def test_constructor_and_init_calls_attributed(self, fresh_indexer, tmp_path, monkeypatch):
         syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
-        assert "setup" in _by_name(syms, "constructor", 14)["calls"]
-        assert "warmUp" in _by_name(syms, "init", 18)["calls"]
+        assert "setup" in _by_name(syms, "TokenService.constructor", 14)["calls"]
+        assert "warmUp" in _by_name(syms, "TokenService.init", 18)["calls"]
+
+    def test_members_of_two_classes_get_distinct_graph_nodes(self, fresh_indexer, tmp_path, monkeypatch):
+        """Graph node ids are `file::name`; owner-qualified names keep two classes' companion
+        objects / constructors / init blocks in one file apart."""
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path, "Pair.kt", """\
+            class A {
+                init { setupA() }
+                companion object {
+                    fun make(): A = A()
+                }
+            }
+
+            class B {
+                init { setupB() }
+                companion object {
+                    fun make(): B = B()
+                }
+            }
+        """)
+        fresh_indexer.index_repo(str(tmp_path))
+        nodes = set(fresh_indexer.graph.G.nodes())
+        assert {"Pair.kt::A.Companion", "Pair.kt::B.Companion", "Pair.kt::A.init", "Pair.kt::B.init"} <= nodes
+        assert "Pair.kt::Companion" not in nodes
 
     def test_calls_extracted(self, fresh_indexer, tmp_path, monkeypatch):
         syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
@@ -178,6 +203,49 @@ class TestKotlinIndexing:
         record = fresh_indexer.index_file("Repo.kt", str(src))
         repo = next(s for s in record["symbols"] if s["name"] == "Repo")
         assert repo["bases"] == ["Store", "Comparable", "Closeable"]
+
+    def test_declarations_after_an_enum_with_members_are_found(self, fresh_indexer, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "Color.kt", """\
+            enum class Color(val rgb: Int) {
+                RED(0xFF0000),
+                GREEN(0x00FF00);
+
+                fun hex(): String = format(rgb)
+            }
+
+            class After {
+                fun later() { go() }
+            }
+
+            fun topLevel() { run() }
+        """)
+        names = {s["name"] for s in fresh_indexer.index_file("Color.kt", str(src))["symbols"]}
+        assert {"Color", "hex", "After", "later", "topLevel"} <= names
+
+    def test_enum_entries_with_bodies_drop_the_rest_of_the_file(self, fresh_indexer, tmp_path, monkeypatch):
+        """Known tree-sitter-kotlin 1.1.0 limit, documented in docs/LANGUAGES.md. When a grammar
+        upgrade fixes it this test starts failing: flip the last assert and drop the docs note."""
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "Op.kt", """\
+            enum class Op {
+                ADD { override fun f(a: Int) = a },
+                SUB { override fun f(a: Int) = -a };
+                abstract fun f(a: Int): Int
+            }
+            class After { fun later() { go() } }
+            fun topLevel() { run() }
+        """)
+        names = {s["name"] for s in fresh_indexer.index_file("Op.kt", str(src))["symbols"]}
+        assert "f" in names        # what error recovery salvages today
+        assert "After" not in names  # known limit: the enum and everything after it is lost
+
+    def test_parse_errors_are_logged(self, fresh_indexer, tmp_path, monkeypatch, caplog):
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "Op.kt", "enum class Op {\n    ADD { fun f() = 1 };\n}\nclass After\n")
+        with caplog.at_level("DEBUG", logger="intelligence.indexer.ast_indexer"):
+            fresh_indexer.index_file("Op.kt", str(src))
+        assert any("[parse-errors]" in r.getMessage() and "Op.kt" in r.getMessage() for r in caplog.records)
 
     def test_build_output_dirs_skipped(self, fresh_indexer, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
