@@ -765,6 +765,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             ("Python",     ".py"),
             ("TypeScript", ".ts"),
             ("Swift",      ".swift"),
+            ("Kotlin",     ".kt"),
             ("JavaScript", ".js"),
             ("Go",         ".go"),
             ("Rust",       ".rs"),
@@ -779,6 +780,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         _pkg_hints = {
             ".ts":   "tree-sitter-typescript",
             ".swift": "tree-sitter-swift",
+            ".kt":   "tree-sitter-kotlin",
             ".js":   "tree-sitter-javascript",
             ".go":   "tree-sitter-go",
             ".rs":   "tree-sitter-rust",

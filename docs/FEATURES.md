@@ -102,6 +102,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 |----------|-----------|---------|--------|
 | Python | `.py` | stdlib `ast` (always available) | ✅ |
 | Swift | `.swift` | tree-sitter-swift | ✅ (if installed) |
+| Kotlin | `.kt`, `.kts` | tree-sitter-kotlin | ✅ (if installed) |
 | TypeScript | `.ts`, `.tsx` | tree-sitter-typescript | ✅ (if installed) |
 | JavaScript | `.js`, `.jsx` | tree-sitter-javascript | ✅ (if installed) |
 | Go | `.go` | tree-sitter-go | ✅ (if installed) |

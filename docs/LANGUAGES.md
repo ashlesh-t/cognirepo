@@ -21,6 +21,7 @@ pip install cognirepo[languages]     # all supported languages
 |----------|------------|--------|-----------------|
 | Python | `.py` | Stable — built-in | tree-sitter-python (optional, stdlib fallback) |
 | Swift | `.swift` | Stable | tree-sitter-swift |
+| Kotlin | `.kt` `.kts` | Stable | tree-sitter-kotlin |
 | JavaScript | `.js` `.jsx` | Stable | tree-sitter-javascript |
 | TypeScript | `.ts` `.tsx` | Stable | tree-sitter-typescript |
 | Java | `.java` | Stable | tree-sitter-java |
@@ -39,9 +40,7 @@ grammar package from `cognirepo[languages]`.
 
 ## Planned
 
-| Language | Issue |
-|----------|-------|
-| Kotlin | #TBD |
+No further languages are planned yet — open an issue to request one.
 
 ---
 
@@ -69,6 +68,27 @@ These become nodes and edges in the NetworkX knowledge graph, and entries in the
   each of its extensions. `init` and `deinit` are FUNCTION symbols. Calls inside computed-property
   bodies (`var x: Int { calc() }`) and property observers are not attributed to any symbol.
   Vendored/build dirs (`Pods/`, `.build/`, `Carthage/`, `DerivedData/`) are skipped.
+
+- **Kotlin** — `object` declarations and companion objects are CLASS symbols. Secondary
+  constructors and `init { … }` blocks are FUNCTION symbols, so calls made in them are attributed.
+  These members have the same name in every class, and graph nodes are keyed `file::name`, so
+  they are qualified with their class: `Service.constructor`, `Service.init`, and
+  `Service.Companion` for an unnamed companion object (a named one keeps its own name).
+  Supertypes are recorded by simple name, including `Iface by impl` delegation. `build/` and
+  `.gradle/` are skipped; `.kts` scripts, including `build.gradle.kts` / `settings.gradle.kts`,
+  are indexed deliberately — they are Kotlin code and their helper functions are real symbols,
+  though they count towards the Kotlin file total.
+  Known limits (tree-sitter-kotlin 1.1.0):
+  - **Enum classes whose entries have bodies** (`ADD { override fun f() … }`) make the grammar
+    fail to parse that region: the enum **and every declaration after it in the same file** are
+    not indexed. Plain enums, enums with constructor arguments, and enums with members after `;`
+    are fine. (A one-line `enum class E { A, B; fun d() = x() }` directly followed by another
+    declaration does the same, but that form is rare.) Files with parse errors are reported at
+    debug level as `[parse-errors] <path>`.
+  - Explicit type-argument calls (`foo<Int>(1)`) are parsed as comparisons, so those calls are
+    missed.
+  - Calls inside property getters/setters and property initialisers are not attributed to any
+    symbol.
 
 ---
 
@@ -98,6 +118,6 @@ once symbols are extracted.
 
 ```bash
 cognirepo doctor --verbose
-# Shows: Language support — Python, JS, TS, Java, C#, Go, Rust, Ruby, C++, Swift, PHP
+# Shows: Language support — Python, JS, TS, Java, C#, Go, Rust, Ruby, C++, Swift, Kotlin, PHP
 # (or only "Python (built-in)" if cognirepo[languages] not installed)
 ```

@@ -555,6 +555,7 @@ All errors are logged to `.cognirepo/errors/<date>.log` — no raw tracebacks sh
 |----------|------------|---------|
 | Python | `.py` | built-in |
 | Swift | `.swift` | `cognirepo[languages]` |
+| Kotlin | `.kt` `.kts` | `cognirepo[languages]` |
 | JavaScript / TypeScript | `.js` `.ts` `.jsx` `.tsx` | `cognirepo[languages]` |
 | Java | `.java` | `cognirepo[languages]` |
 | C# | `.cs` | `cognirepo[languages]` |
