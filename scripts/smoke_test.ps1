@@ -35,7 +35,7 @@ try {
 
     # 2. Init
     Write-Host "[2/5] cognirepo init --no-index --non-interactive..."
-    cognirepo init --password smoketest --no-index --non-interactive
+    cognirepo init --no-index --non-interactive
     if (-not (Test-Path ".cognirepo\config.json")) {
         throw "FAIL: config.json not created"
     }

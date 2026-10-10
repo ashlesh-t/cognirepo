@@ -19,6 +19,15 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
+- **Release smoke test could not pass.** `scripts/smoke_test.sh` and `.ps1` ran `cognirepo init --password
+  smoketest …`, but `--password` went away with the REST/JWT API (`unrecognized arguments`), so step 2 failed
+  before anything was tested. Removed the flag; the five steps (init, index, lookup, store/retrieve memory,
+  MCP server start) pass.
+- **The test suite wrote to the developer's real `~/.cognirepo/org_graph.pkl`.** Every run added its fixture
+  repos to it (205 were found in one checkout, all under `/tmp`/`pytest`), flooding `cognirepo doctor` with
+  "Org member … index not found" and making parallel test workers contend on the one real-home org lock.
+  `conftest` now points `COGNIREPO_ORG_GRAPH` at a per-test temp file; a full run leaves the real file
+  untouched.
 - **#141 — lock hygiene: a busy store is a clear retryable error, nothing waits forever, slow work is out of
   the lock.** (1) A lock timeout surfaced as a raw `filelock.Timeout` traceback. `store_lock()` now raises
   `StoreBusy` (still a `Timeout` subclass) naming the lock and the wait; MCP tools return

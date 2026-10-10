@@ -203,6 +203,19 @@ def _hermetic_process_scan(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_org_graph(tmp_path, monkeypatch):
+    """Point the org graph (and its lock) at a per-test temp file.
+
+    The suite used to write to the developer's REAL ``~/.cognirepo/org_graph.pkl``: every run added
+    its fixture repos (``a0``, ``myrepo``, ``/tmp/pytest-…``) to it — 205 of them were found in one
+    checkout — flooding ``cognirepo doctor`` with "Org member … index not found" and making parallel
+    workers contend on the one real-home lock. Tests that need a specific path set the variable
+    themselves (a later ``monkeypatch.setenv`` wins).
+    """
+    monkeypatch.setenv("COGNIREPO_ORG_GRAPH", str(tmp_path / "org" / "org_graph.pkl"))
+
+
+@pytest.fixture(autouse=True)
 def _strict_lock_order(monkeypatch):
     """Every test runs with COGNIREPO_LOCK_STRICT=1: taking a second, different store lock while
     holding one raises LockOrderError (COGNIREPO-141). Run over the whole suite when it was
