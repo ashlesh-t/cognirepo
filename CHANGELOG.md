@@ -358,6 +358,16 @@ Versioning: [Semantic Versioning](https://semver.org/)
   Mid-file journal damage is refused (never truncated away); readers replay only new segments when
   `graph.pkl` is unchanged. Knobs: `indexing.graph_journal`, `graph_journal_flush_files`, `graph_journal_flush_secs`.
 ### Changed
+- **Guides brought up to date with this release.** `README.md`: the *Storage layout* was wrong in several
+  places (`ast.index` / `ast_metadata.json` shown under `vector_db/` — they live in `index/`; no `watchers/`,
+  journal, lock, hook files or Chroma store) and is rewritten from real stores; the quick start, CLI summary
+  and documentation table gain `install-hooks`, `doctor --resources`, `graph restore`, one-watcher-per-repo
+  and links to `CLI_REFERENCE`, `CONFIGURATION`, `RESOURCES`, `TROUBLESHOOTING`; a roadmap line for the
+  planned 3.0 platform work. `docs/USAGE.md`: new *Keeping the index fresh* (watcher, git hook, on-demand)
+  and *Diagnostics and recovery* (doctor, quarantined-graph recovery, busy store). `docs/TROUBLESHOOTING.md`:
+  new *Processes, Locks & Hooks* — busy store (exit 75), stray processes / memory, "a watcher is already
+  running", a hook that is not indexing, deleted files lingering (#169), quarantined graphs, and the
+  smaller `behaviour.json`.
 - **#95 — episode dict schema keys extracted to `data/memory/episodic_schema.py`.**
   `episodic_memory.py` and `timeline.py` both accessed the episode dict via duplicated hardcoded
   string literals (`"event"`, `"metadata"`, `"time"`, and `"type"` within metadata). Pure
