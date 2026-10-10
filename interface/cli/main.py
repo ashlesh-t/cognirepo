@@ -3601,6 +3601,9 @@ def _cmd_delete(args) -> None:
         print(f"  Unlinked {abs_cwd} from orgs.json.")
 
 
+from core.config.lock import LockTimeout, busy_message  # noqa: E402  (module-level so main() can name them)
+
+
 def main():
     """CLI entry point — parse args and route to commands."""
     # pylint: disable=too-many-locals, too-many-branches, too-many-statements
@@ -3611,6 +3614,10 @@ def main():
     except KeyboardInterrupt:
         print("\nInterrupted, closing gracefully.")
         sys.exit(0)
+    except LockTimeout as exc:
+        # another cognirepo process holds a store lock: a retryable condition, not a crash
+        print(f"cognirepo: {busy_message(exc)}", file=sys.stderr)
+        sys.exit(75)  # EX_TEMPFAIL
 
 
 def _main():

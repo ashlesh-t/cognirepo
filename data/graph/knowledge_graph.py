@@ -604,6 +604,13 @@ class KnowledgeGraph:
         os.makedirs(os.path.dirname(_graph_file()), exist_ok=True)
         from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
+        # The key comes from the OS keychain (keyring), which can block on a locked keychain / D-Bus
+        # prompt or generate-and-store a key on first use. Fetch it BEFORE the lock so a slow keychain
+        # does not stall every other process waiting on the store (COGNIREPO-141).
+        enc_key = None
+        if encrypt:
+            from core.security.encryption import get_or_create_key  # pylint: disable=import-outside-toplevel
+            enc_key = get_or_create_key(project_id)
         with store_lock():
             # Compare-and-swap: if graph.pkl / graph.journal changed since we last synced,
             # rebase onto the fresh state instead of overwriting it (COGNIREPO-139).
@@ -635,9 +642,9 @@ class KnowledgeGraph:
                     # COGNIREPO-107 PR discussion). Unavoidable extra buffer is the
                     # graph's own pickle size (single-digit MB on repos tested so
                     # far), not the dominant cost — the cached embedding model was.
-                    from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+                    from core.security.encryption import encrypt_bytes  # pylint: disable=import-outside-toplevel
                     raw = pickle.dumps(self.G, protocol=pickle.HIGHEST_PROTOCOL)
-                    raw = encrypt_bytes(raw, get_or_create_key(project_id))
+                    raw = encrypt_bytes(raw, enc_key)
                     with os.fdopen(fd, "wb") as f:
                         f.write(raw)
                         f.flush()

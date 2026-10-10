@@ -18,21 +18,35 @@ from core.config.atomic import atomic_json_dump
 
 log = logging.getLogger(__name__)
 
+#: waits for the Tier-2 queue lock before StoreBusy (read) / a logged skip (trim)
+_QUEUE_READ_WAIT = 5.0
+_QUEUE_WRITE_WAIT = 10.0
+
 
 def _load_queue(queue_path: str) -> dict:
+    """Read the Tier-2 queue. An unreadable file is "empty"; a BUSY lock is not.
+
+    A busy lock used to be swallowed into ``{}``, which made ``expand_on_access`` conclude the symbol
+    was not queued and the caller report a false "not found". StoreBusy propagates instead so the
+    MCP layer can say "busy, retry" (COGNIREPO-141).
+    """
+    from core.config.lock import StoreBusy, store_lock  # pylint: disable=import-outside-toplevel
     try:
-        import filelock  # pylint: disable=import-outside-toplevel
-        with filelock.FileLock(queue_path + ".lock", timeout=5):
+        with store_lock(timeout=_QUEUE_READ_WAIT, lock_path=queue_path + ".lock"):
             with open(queue_path, encoding="utf-8") as f:
                 return json.load(f)
+    except StoreBusy:
+        raise
     except Exception:  # pylint: disable=broad-except
         return {}
 
 
 def _save_queue(queue_path: str, data: dict) -> None:
+    """Trim the queue after an expansion. Idempotent (a file left in the queue is re-checked by sha and
+    skipped next time), so a busy lock is only worth a warning, not a failed tool call."""
+    from core.config.lock import store_lock  # pylint: disable=import-outside-toplevel
     try:
-        import filelock  # pylint: disable=import-outside-toplevel
-        with filelock.FileLock(queue_path + ".lock", timeout=10):
+        with store_lock(timeout=_QUEUE_WRITE_WAIT, lock_path=queue_path + ".lock"):
             atomic_json_dump(queue_path, data, indent=2)
     except Exception as exc:  # pylint: disable=broad-except
         log.warning("on_demand: failed to update queue: %s", exc)

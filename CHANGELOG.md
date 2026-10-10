@@ -19,6 +19,28 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
+- **#141 — lock hygiene: a busy store is a clear retryable error, nothing waits forever, slow work is out of
+  the lock.** (1) A lock timeout surfaced as a raw `filelock.Timeout` traceback. `store_lock()` now raises
+  `StoreBusy` (still a `Timeout` subclass) naming the lock and the wait; MCP tools return
+  `{"error": …, "busy": true, "retryable": true}` (and `store_memory` no longer records a busy attempt as
+  stored); the CLI prints one line and exits 75 (`EX_TEMPFAIL`). (2) The org-graph lock had **no timeout** —
+  one hung holder blocked `link_repos` and org search in every repo; it now waits 15 s, is re-entrant, and
+  follows `COGNIREPO_ORG_GRAPH` instead of always contending on the real-home lock. `OrgGraph.load/save`
+  also stopped turning a busy lock into "start with an empty graph" / "log and carry on" (a timeout is an
+  `OSError`, so `link_repos` had looked successful while dropping the edge). (3) `git rev-parse` (index
+  manifest) and the OS-keychain lookup (graph and org-graph encryption) no longer run while holding the
+  store lock. A lock held over 10 s is logged on release. (4) `last_context.json` lives in `$HOME` but was
+  guarded by the repo-local lock; it now has its own lock beside it (2 s, best-effort), and
+  `save_query_context` reads the old snapshot inside the lock instead of before it, which dropped a
+  concurrent writer's `sections`. (5) The documented rule "never nest two different store locks" is now
+  enforced (`LockOrderError` under `COGNIREPO_LOCK_STRICT=1`, which every test runs with; no existing code
+  path nested), and the full lock inventory with timeouts is in `docs/architecture/GRAPH_CONCURRENCY.md`.
+  (6) The remaining raw `FileLock`s were moved onto `store_lock` too, and the places that swallowed a busy
+  lock now say so: `BehaviourTracker` (a raw `Timeout` reached MCP clients), the Tier-2 queue (a busy lock
+  read as "queue empty", so `expand_on_access` reported a false "not found"; the initial queue write was
+  logged and dropped, so the Tier-2 files were never indexed; the read returned "0 files"). MCP and the CLI
+  catch the `filelock.Timeout` base class, so any future raw lock is still reported as busy. A test fails if
+  `FileLock(` reappears in store code.
 - **#118 — `behaviour.json` no longer grows without bound (77 MB → 3.6 MB), and quarantined graphs can be
   restored.** (1) Everything in `behaviour.json` except the 50-entry style buffer was unbounded and the
   whole file was rewritten, pretty-printed, on every save. Measured on the real 77.0 MB file, the bulk was

@@ -203,6 +203,14 @@ def _hermetic_process_scan(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _strict_lock_order(monkeypatch):
+    """Every test runs with COGNIREPO_LOCK_STRICT=1: taking a second, different store lock while
+    holding one raises LockOrderError (COGNIREPO-141). Run over the whole suite when it was
+    introduced, no code path nested two store locks; this keeps it that way."""
+    monkeypatch.setenv("COGNIREPO_LOCK_STRICT", "1")
+
+
+@pytest.fixture(autouse=True)
 def isolated_cognirepo(tmp_path, monkeypatch):
     """
     Redirect all .cognirepo/ and vector_db/ paths to a temp directory.
