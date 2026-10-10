@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import os
 
+from intelligence.orchestrator.classifier import ADAPTER_STANDALONE_DEFAULTS
 from intelligence.orchestrator.model_adapters import openai_adapter
 
 _GROK_BASE_URL = "https://api.x.ai/v1"
-_DEFAULT_MODEL = "grok-beta"
+_DEFAULT_MODEL = ADAPTER_STANDALONE_DEFAULTS["grok"]
 
 
 def call(

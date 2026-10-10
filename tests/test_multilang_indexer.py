@@ -241,6 +241,7 @@ class TestWatchdogCoverage:
         indexer.index_data = {"files": {}, "reverse_index": {}}
         graph = MagicMock()
         graph.nodes_for_file.return_value = []
+        graph.incremental_base_status.return_value = (True, "")
         behaviour = MagicMock()
         return RepoFileHandler(
             repo_root="/repo",
@@ -276,8 +277,8 @@ class TestWatchdogCoverage:
         from watchdog.events import FileModifiedEvent
         handler = self._make_handler()
 
-        fake_file = tmp_path / "file.rb"
-        fake_file.write_text("# ruby")
+        fake_file = tmp_path / "file.lua"
+        fake_file.write_text("-- lua")
 
         with patch.object(handler, "_reindex") as mock_reindex:
             event = FileModifiedEvent(str(fake_file))
@@ -292,6 +293,7 @@ class TestWatchdogCoverage:
         indexer.index_data = {"files": {}, "reverse_index": {}}
         graph = MagicMock()
         graph.nodes_for_file.return_value = []
+        graph.incremental_base_status.return_value = (True, "")
         behaviour = MagicMock()
         handler = RepoFileHandler("/repo", indexer, graph, behaviour, "test")
 
@@ -312,6 +314,7 @@ class TestWatchdogCoverage:
         indexer.index_data = {"files": {"module.py": {}}, "reverse_index": {}}
         graph = MagicMock()
         graph.nodes_for_file.return_value = []
+        graph.incremental_base_status.return_value = (True, "")
         behaviour = MagicMock()
         handler = RepoFileHandler("/repo", indexer, graph, behaviour, "test")
 

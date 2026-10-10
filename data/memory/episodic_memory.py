@@ -19,7 +19,13 @@ import threading
 from collections import Counter
 from datetime import datetime, timezone
 
+from core.config.atomic import atomic_write, atomic_write_with, atomic_json_dump
+from core.config.lock import store_lock
+from core.config.safe_read import (
+    StoreUnreadableError, looks_encrypted, quarantine_if_stably_corrupt, read_retry,
+)
 from core.config.paths import get_path
+from data.memory.episodic_schema import EVENT, METADATA, METADATA_TYPE, TIME
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +64,14 @@ def _rotate_if_needed(data: list) -> list:
         apath = _archive_path()
         existing: list = []
         if os.path.exists(apath):
-            with open(apath, "rb") as f:
-                existing = json.loads(f.read())
-        with open(apath, "wb") as f:
-            f.write(json.dumps(existing + to_archive, indent=2).encode())
-    except OSError:
-        pass  # archive write failure is non-fatal; rotation still proceeds
+            existing = read_retry(apath, lambda: json.loads(open(apath, "rb").read()))
+        atomic_write(apath, json.dumps(existing + to_archive, indent=2).encode())
+    except (OSError, StoreUnreadableError) as exc:
+        # The oldest entries are only removed from the live store once they are safely in
+        # the archive. If the archive can't be read or written, keep them (the store just
+        # grows past the cap until it can) rather than silently dropping history.
+        logger.warning("episodic rotation skipped, archive unavailable: %s", exc)
+        return data
     return trimmed
 
 
@@ -83,11 +91,8 @@ def _file_path() -> str:
     return get_path("memory/episodic.json")
 
 
-def _load() -> list:
-    path = _file_path()
-    if not os.path.exists(path):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        return []
+def _read_store(path: str) -> list:
+    """One attempt at reading + decrypting + parsing the store (re-reads the file)."""
     with open(path, "rb") as f:
         raw = f.read()
     from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
@@ -99,11 +104,53 @@ def _load() -> list:
         except Exception:  # InvalidToken — file predates encryption; migrate on next save
             pass
     try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
+        return json.loads(raw)
+    except ValueError:
+        if looks_encrypted(raw):
+            # Intact ciphertext we cannot decrypt (no keyring / wrong key) is LOCKED, not
+            # corrupt: it must never be quarantined or overwritten.
+            raise StoreUnreadableError(path, "encrypted and cannot be decrypted", locked=True)
+        raise
+
+
+def _load(*, writer: bool = False) -> list:
+    """Load the episodic store.
+
+    Never returns ``[]`` for an unreadable file — that value would be persisted by the next
+    ``_save()`` and wipe the history (#135). A reader gets ``StoreUnreadableError`` (see
+    ``_load_readonly``); the file is not touched. A *writer* (``writer=True``) may recover: if
+    the file stays unreadable and unchanged it is quarantined to ``episodic.json.corrupt-<ts>``
+    (never deleted) and the store restarts empty. Locked ciphertext is never recovered.
+    """
+    path = _file_path()
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        return []
+    try:
+        data = read_retry(path, lambda: _read_store(path))
+    except StoreUnreadableError as exc:
+        if not writer or exc.locked:
+            raise
+        def _readable() -> bool:
+            try:
+                _read_store(path)
+                return True
+            except Exception:  # pylint: disable=broad-except
+                return False
+        if quarantine_if_stably_corrupt(path, _readable) is None:
+            raise
         return []
     _warn_on_duplicate_ids(data)
     return data
+
+
+def _load_readonly() -> list:
+    """Reader view: an unreadable store yields no entries — and nothing is written."""
+    try:
+        return _load()
+    except StoreUnreadableError as exc:
+        logger.warning("%s", exc)
+        return []
 
 
 def _warn_on_duplicate_ids(data: list) -> None:
@@ -154,9 +201,7 @@ def _save(data: list) -> None:
         from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
         content = encrypt_bytes(content, get_or_create_key(project_id))
     path = _file_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "wb") as f:
-        f.write(content)
+    atomic_write(path, content)
     # Invalidate BM25 cache so the next search reflects the updated corpus
     with _BM25_LOCK:
         _BM25_CORPUS = None
@@ -169,7 +214,7 @@ def _build_bm25(data: list):
     corpus: list[list[str]] = []
     event_ids: list[str] = []
     for entry in data:
-        text = entry.get("event", "") + " " + json.dumps(entry.get("metadata", {}))
+        text = entry.get(EVENT, "") + " " + json.dumps(entry.get(METADATA, {}))
         corpus.append(_tokenize(text))
         event_ids.append(entry["id"])
 
@@ -214,26 +259,33 @@ def log_event(event: str, metadata: dict = None) -> None:
     """
     Append an event (with optional metadata) to the episodic memory store.
     Rotates oldest entries to an archive file when episodic_max_events is exceeded.
+
+    Raises ``StoreUnreadableError`` (without touching the file) if the store is unreadable
+    and cannot be safely recovered — the event is not recorded, history is not overwritten.
     """
-    data = _load()
-    data = _rotate_if_needed(data)
-    entry = {
-        "id": _next_event_id(data),
-        "event": event,
-        "metadata": metadata or {},
-        "time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-    }
-    if data:
-        entry["prev"] = data[-1]["id"]
-    data.append(entry)
-    _save(data)
+    # Read-modify-write under the cross-process lock (COGNIREPO-136): without it two processes
+    # both load N events, both mint e_N and the later save drops the other's event. The id is
+    # allocated inside the lock, from the freshly loaded store.
+    with store_lock():
+        data = _load(writer=True)
+        data = _rotate_if_needed(data)
+        entry = {
+            "id": _next_event_id(data),
+            EVENT: event,
+            METADATA: metadata or {},
+            TIME: datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        if data:
+            entry["prev"] = data[-1]["id"]
+        data.append(entry)
+        _save(data)
 
 
 def get_history(limit: int = 100) -> list:
     """
     Return the last `limit` episodic events.
     """
-    data = _load()
+    data = _load_readonly()
     return data[-limit:]
 
 
@@ -263,9 +315,9 @@ def _save_vec_cache(ids: list, vecs) -> None:
     try:
         import numpy as np  # pylint: disable=import-outside-toplevel
         vec_path, ids_path = _vec_cache_paths()
-        np.save(vec_path, vecs.astype("float32"))
-        with open(ids_path, "w", encoding="utf-8") as f:
-            json.dump(ids, f)
+        _arr = vecs.astype("float32")
+        atomic_write_with(vec_path, lambda f: np.save(f, _arr), binary=True)
+        atomic_json_dump(ids_path, ids, indent=None)
     except OSError:
         pass  # cache write failure is non-fatal — regenerable from source entries
 
@@ -293,7 +345,7 @@ def _semantic_episode_search(data: list, query: str, limit: int) -> list:
 
         scored = []
         for entry in data:
-            text = entry.get("event", "") or str(entry.get("metadata", ""))
+            text = entry.get(EVENT, "") or str(entry.get(METADATA, ""))
             if not text:
                 continue
             eid = entry.get("id")
@@ -337,7 +389,7 @@ def search_episodes(query: str, limit: int = 10, include_archived: bool = False)
     include_archived: also search events rotated out to episodic_archive.json
     (default False — live store only). Archived hits are tagged {"archived": True}.
     """
-    data = _load()
+    data = _load_readonly()
     archived_ids: set = set()
     if include_archived:
         archive = _load_archive()
@@ -376,6 +428,104 @@ def search_episodes(query: str, limit: int = 10, include_archived: bool = False)
     return results
 
 
+# Consolidation candidate defaults — COGNIREPO-702. BM25Plus scores are unbounded absolute
+# magnitudes (not [0, 1] like cosine similarity) and, on the small corpora this feature
+# realistically sees (the decision_nudge gate itself only fires at >=5 episodes total), the
+# +1 smoothing delta term dominates enough that even an unrelated episode can score higher
+# than a real near-duplicate scores on a bigger corpus — an absolute cutoff tuned on one corpus
+# size doesn't transfer to another. Verified against real seeded data (3 near-duplicate "cache
+# invalidation" episodes + 1 unrelated "fixed a typo" episode, 4-doc corpus): the unrelated
+# episode still scored 5.3-9.7 against every query — an absolute threshold in that range would
+# have wrongly grouped it in. Comparing each candidate's score *relative to the query episode's
+# own self-score* (mirrors context_pack.py's _REL_NOISE_RATIO pattern) discriminates correctly
+# regardless of corpus size: the 3 real near-duplicates scored 0.70-0.91 of each other's
+# self-score; the unrelated episode scored 0.47 of every query's self-score.
+_CONSOLIDATION_REL_THRESHOLD = 0.7
+_CONSOLIDATION_MIN_GROUP_SIZE = 3
+
+
+def find_consolidation_candidates(
+    since: str = "30d",
+    min_group_size: int = _CONSOLIDATION_MIN_GROUP_SIZE,
+    rel_threshold: float = _CONSOLIDATION_REL_THRESHOLD,
+) -> list[dict]:
+    """
+    Cluster recurring/near-duplicate episodic events within `since` that were never promoted to
+    a decision, surfacing them as candidates for a human or agent to review — COGNIREPO-702
+    (Complementary Learning Systems: hippocampal one-shot encoding consolidated into neocortex
+    via replay — the same theory behind DQN's experience replay).
+
+    Reuses this module's own BM25 similarity machinery (the same primitive search_episodes()
+    uses) rather than inventing a new metric: each episode's own text becomes a query against
+    the rest of the time-windowed pool. A candidate must score >= `rel_threshold` of the query
+    episode's own self-score (not an absolute cutoff — see _CONSOLIDATION_REL_THRESHOLD for why)
+    to count as a near-duplicate; a group forms once it reaches `min_group_size`.
+
+    NEVER calls record_decision() or log_event() — proposes only; promotion is still a human/
+    agent judgment call, matching record_decision()'s own "non-obvious decision" contract.
+    Sparse/fresh stores or no repeated topics -> empty list, nothing fabricated.
+
+    Returns: [{"group_summary": str, "episode_ids": [str, ...], "suggested_decision_draft": str}]
+    """
+    from data.memory.timeline import _parse_since, _parse_ts  # pylint: disable=import-outside-toplevel
+
+    data = _load_readonly()
+    if not data:
+        return []
+
+    cutoff = _parse_since(since)
+    pool = [
+        e for e in data
+        if _parse_ts(e.get(TIME)) >= cutoff and (e.get(METADATA) or {}).get(METADATA_TYPE) != "decision"
+    ]
+    if len(pool) < min_group_size:
+        return []
+
+    # Fresh, uncached index — the time/decision-filtered pool differs from the full live store,
+    # so it must never be written to the global _get_bm25() cache (same caveat _build_bm25's
+    # own docstring documents for the include_archived path).
+    bm25, event_ids = _build_bm25(pool)
+    if bm25 is None:
+        return []
+
+    id_to_pos = {eid: i for i, eid in enumerate(event_ids)}
+    visited: set[str] = set()
+    candidates: list[dict] = []
+
+    for entry in pool:
+        eid = entry["id"]
+        if eid in visited:
+            continue
+        tokens = _tokenize(entry.get(EVENT, ""))
+        if not tokens:
+            continue
+        scores = bm25.get_scores(tokens)
+        self_score = scores[id_to_pos[eid]]
+        if self_score <= 0:
+            continue
+        floor = self_score * rel_threshold
+        matched_ids = [
+            other_id
+            for score, other_id in sorted(zip(scores, event_ids), reverse=True)
+            if score >= floor and other_id != eid and other_id not in visited
+        ]
+        group_ids = [eid] + matched_ids
+        if len(group_ids) < min_group_size:
+            continue
+        visited.update(group_ids)
+        summary = entry.get(EVENT, "")[:200]
+        candidates.append({
+            "group_summary": summary,
+            "episode_ids": group_ids,
+            "suggested_decision_draft": (
+                f"record_decision(summary=..., rationale=...) — recurring pattern seen "
+                f"{len(group_ids)}x: {summary}"
+            ),
+        })
+
+    return candidates
+
+
 class EpisodicMemory:  # pylint: disable=missing-function-docstring
     """Class interface over the module-level episodic memory functions."""
 
@@ -402,16 +552,17 @@ def mark_stale(file_path: str) -> int:
 
     Returns the count of entries tagged.
     """
-    data = _load()
-    tagged = 0
-    for entry in data:
-        if entry.get("stale"):
-            continue
-        combined = entry.get("event", "") + json.dumps(entry.get("metadata", {}))
-        if file_path in combined:
-            entry["stale"] = True
-            entry["stale_reason"] = "file_deleted"
-            tagged += 1
-    if tagged:
-        _save(data)
+    with store_lock():  # RMW: reload inside the lock so concurrent log_event()s aren't lost
+        data = _load(writer=True)
+        tagged = 0
+        for entry in data:
+            if entry.get("stale"):
+                continue
+            combined = entry.get(EVENT, "") + json.dumps(entry.get(METADATA, {}))
+            if file_path in combined:
+                entry["stale"] = True
+                entry["stale_reason"] = "file_deleted"
+                tagged += 1
+        if tagged:
+            _save(data)
     return tagged

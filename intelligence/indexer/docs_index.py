@@ -28,6 +28,8 @@ import re
 import time
 from pathlib import Path
 from typing import Optional
+from core.config.atomic import atomic_path, atomic_write
+
 
 logger = logging.getLogger(__name__)
 
@@ -133,13 +135,11 @@ def build_docs_index(dest: Path, doc_roots: Optional[list[Path]] = None) -> int:
     dim = vectors.shape[1]
     index = faiss.IndexFlatIP(dim)   # inner product on normalised = cosine
     index.add(vectors)
-    faiss.write_index(index, str(dest / "docs.index"))
+    with atomic_path(str(dest / "docs.index")) as _tmp:
+        faiss.write_index(index, _tmp)
 
     # Metadata
-    (dest / "docs_meta.json").write_text(
-        json.dumps(all_chunks, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    atomic_write(str(dest / "docs_meta.json"), json.dumps(all_chunks, ensure_ascii=False, indent=2))
 
     # Record mtimes of source files so we can skip rebuilds
     mtimes = {}
@@ -148,7 +148,7 @@ def build_docs_index(dest: Path, doc_roots: Optional[list[Path]] = None) -> int:
             p = root / name
             if p.exists():
                 mtimes[str(p)] = p.stat().st_mtime
-    (dest / "docs_mtimes.json").write_text(json.dumps(mtimes), encoding="utf-8")
+    atomic_write(str(dest / "docs_mtimes.json"), json.dumps(mtimes))
 
     logger.info("docs_index: built %d chunks under %s", len(all_chunks), dest)
     return len(all_chunks)

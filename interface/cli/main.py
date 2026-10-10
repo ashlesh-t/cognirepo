@@ -7,15 +7,9 @@
 """
 Main entry point for the cognirepo CLI.
 
-Global flags
-------------
---via-api          Route commands through the REST API instead of calling
-                   tools directly.  Useful for remote / daemon mode.
---api-url URL      Override the API base URL (default: from config or
-                   http://localhost:8000).
-
-When --via-api is NOT set (default), tools are called in-process — no
-server required.
+Every command calls the tools in-process — no server is required. (An earlier
+``--via-api`` / ``--api-url`` mode that routed commands through a REST API was
+removed along with that API.)
 """
 import argparse
 import datetime
@@ -30,6 +24,7 @@ import traceback
 logger = logging.getLogger(__name__)
 log = logger  # legacy alias — some handlers reference `log`
 
+from core.config.atomic import atomic_json_dump, atomic_path
 from core.config.logging import setup_logging
 setup_logging()
 
@@ -276,6 +271,55 @@ def _cmd_verify_index(verbose: bool = False) -> int:
     return 1 if issues else 0
 
 
+def _cmd_graph_restore(apply: bool = False, force: bool = False) -> int:
+    """List quarantined graph files and restore the best recoverable one (COGNIREPO-118).
+
+    Dry-run unless ``--apply``. The quarantined file is copied, never moved or deleted.
+    """
+    # pylint: disable=import-outside-toplevel
+    from data.graph import quarantine as gq
+    items = gq.list_quarantined()
+    if not items:
+        print("graph restore: no quarantined graph files.")
+        return 0
+    print(f"graph restore: {len(items)} quarantined file(s):")
+    for q in items:
+        print(f"  {q.describe()}")
+    outcome, chosen, message = gq.restore(apply=apply, force=force)
+    if outcome in ("none-recoverable", "graph-present"):
+        print(f"\ngraph restore: {message}")
+        return 1
+    if outcome == "dry-run":
+        print(f"\nDry run — {message} Re-run with --apply to restore.")
+        return 0
+    from data.graph.knowledge_graph import journal_file_exists
+    print(f"\ngraph restore: {message}")
+    if journal_file_exists():
+        print("  Note: graph.journal exists and will be replayed on top of the restored graph.")
+    return 0
+
+
+def _cmd_graph_prune_quarantine(days: float, apply: bool = False) -> int:
+    """Retention for quarantined graphs: remove only the genuinely unreadable ones older than ``days``."""
+    # pylint: disable=import-outside-toplevel
+    from data.graph import quarantine as gq
+    eligible, removed = gq.prune_corrupt(days=days, apply=apply)
+    skipped = [q for q in gq.list_quarantined() if q.status != "corrupt"]
+    if skipped:
+        print(f"graph prune-quarantine: keeping {len(skipped)} file(s) that are recoverable or locked "
+              "(never removed).")
+    if not eligible:
+        print(f"graph prune-quarantine: nothing unreadable and older than {days:g} day(s).")
+        return 0
+    for q in eligible:
+        print(f"  {q.describe()}")
+    if not apply:
+        print(f"\nDry run — {len(eligible)} file(s) would be removed. Re-run with --apply.")
+        return 0
+    print(f"\nRemoved {len(removed)} of {len(eligible)} file(s).")
+    return 0 if len(removed) == len(eligible) else 1
+
+
 def _cmd_graph_repair(apply: bool = False) -> int:
     """
     Prune dangling file nodes (and their symbols) from the knowledge graph.
@@ -283,9 +327,9 @@ def _cmd_graph_repair(apply: bool = False) -> int:
     Dry-run by default — reports what integrity_report() found without
     mutating the graph. --apply removes them via remove_file_nodes(), which
     redirects any live call/inherit edges onto an unresolved CONCEPT stub
-    rather than dropping them, and leaves orphan CONCEPT stubs untouched
-    (they carry no 'file' attr, so nodes_for_file() never matches them).
-    See COGNIREPO-201.
+    rather than dropping them. It also drops degree-0 ``symbol::<name>`` stubs
+    (dead leftovers of deleted symbols — COGNIREPO-128); other edge-free
+    CONCEPT nodes are left alone. See COGNIREPO-201.
     """
     # pylint: disable=import-outside-toplevel
     from data.graph.knowledge_graph import KnowledgeGraph
@@ -294,14 +338,22 @@ def _cmd_graph_repair(apply: bool = False) -> int:
     repo_root = os.path.dirname(os.path.abspath(get_path("")))
     report = kg.integrity_report(repo_root)
     dangling = report["dangling_files"]
+    stubs = report.get("orphan_stubs", [])
 
-    if not dangling:
+    if not dangling and not stubs:
         print("graph repair: no dangling file nodes found.")
         return 0
 
-    print(f"graph repair: {len(dangling)} dangling file path(s) found:")
-    for f in dangling:
-        print(f"  {f}")
+    if dangling:
+        print(f"graph repair: {len(dangling)} dangling file path(s) found:")
+        for f in dangling:
+            print(f"  {f}")
+    if stubs:
+        print(f"graph repair: {len(stubs)} orphan symbol stub(s) (degree 0) found:")
+        for s in stubs[:10]:
+            print(f"  {s}")
+        if len(stubs) > 10:
+            print(f"  … and {len(stubs) - 10} more")
 
     if not apply:
         print("\nDry run — no changes made. Re-run with --apply to prune.")
@@ -310,8 +362,13 @@ def _cmd_graph_repair(apply: bool = False) -> int:
     removed_total = 0
     for f in dangling:
         removed_total += len(kg.remove_file_nodes(f))
+    # after the file removals: they can orphan further stubs, and old graphs carry leftovers
+    stubs_removed = len(kg.remove_orphan_stubs())
     kg.save()
-    print(f"\nRemoved {removed_total} node(s) across {len(dangling)} dangling file path(s).")
+    if dangling:
+        print(f"\nRemoved {removed_total} node(s) across {len(dangling)} dangling file path(s).")
+    if stubs_removed:
+        print(f"Removed {stubs_removed} orphan symbol stub(s).")
     return 0
 
 
@@ -472,11 +529,7 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     import importlib  # pylint: disable=import-outside-toplevel
 
     # ── version ───────────────────────────────────────────────────────────────
-    try:
-        from importlib.metadata import version as _pkg_version  # pylint: disable=import-outside-toplevel
-        _ver = _pkg_version("cognirepo")
-    except Exception:  # pylint: disable=broad-except
-        _ver = "dev"
+    from interface.cli import __version__ as _ver  # pylint: disable=import-outside-toplevel
 
     if not as_json:
         print(f"CogniRepo doctor — v{_ver}\n")
@@ -562,12 +615,14 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         _integrity = _kg.integrity_report(_repo_root)
         _n_orphans = len(_integrity["orphans"])
         _n_dangling = len(_integrity["dangling_files"])
-        if _n_orphans == 0 and _n_dangling == 0:
+        _n_stubs = len(_integrity.get("orphan_stubs", []))
+        if _n_orphans == 0 and _n_dangling == 0 and _n_stubs == 0:
             _ok("Graph integrity — 0 orphans · 0 dangling files")
         else:
             _warn(
                 f"Graph integrity — {_n_orphans} orphan node(s), "
-                f"{_n_dangling} dangling file(s)",
+                f"{_n_dangling} dangling file(s)"
+                + (f", {_n_stubs} orphan symbol stub(s)" if _n_stubs else ""),
                 "Run: cognirepo graph repair --apply",
             )
     except Exception as exc:  # pylint: disable=broad-except
@@ -703,21 +758,31 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         _lang_checks = [
             ("Python",     ".py"),
             ("TypeScript", ".ts"),
+            ("Swift",      ".swift"),
+            ("Kotlin",     ".kt"),
             ("JavaScript", ".js"),
             ("Go",         ".go"),
             ("Rust",       ".rs"),
+            ("Ruby",       ".rb"),
             ("Java",       ".java"),
+            ("C#",         ".cs"),
             ("C++",        ".cpp"),
+            ("PHP",        ".php"),
         ]
         _supported_langs: list[str] = []
         _missing_langs: list[tuple[str, str]] = []  # (lang, install_hint)
         _pkg_hints = {
             ".ts":   "tree-sitter-typescript",
+            ".swift": "tree-sitter-swift",
+            ".kt":   "tree-sitter-kotlin",
             ".js":   "tree-sitter-javascript",
             ".go":   "tree-sitter-go",
             ".rs":   "tree-sitter-rust",
+            ".rb":   "tree-sitter-ruby",
             ".java": "tree-sitter-java",
+            ".cs":   "tree-sitter-c-sharp",
             ".cpp":  "tree-sitter-cpp",
+            ".php":  "tree-sitter-php",
         }
         for _lang_name, _ext in _lang_checks:
             if _ext == ".py":
@@ -1053,25 +1118,208 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         logger.debug("doctor: org CALLS_API check failed: %s", _exc)
 
     # ── Check 21: quarantined knowledge-graph files ──────────────────────────
-    # A corrupt graph.pkl is quarantined as graph.pkl.corrupt-<unix_ts> by
-    # KnowledgeGraph._load() instead of being silently overwritten by the next
-    # save(). Surface any quarantine files here so they aren't missed.
+    # A graph.pkl the loader could not read is set aside as graph.pkl.corrupt-<unix_ts> instead of
+    # being overwritten. They are NOT all corrupt (COGNIREPO-118): pre-#97 code quarantined intact
+    # encrypted graphs whenever keyring was missing. Inspect each with the current key and say which
+    # can be restored, which are merely locked, and which are really corrupt.
     try:
-        _graph_dir = get_path("graph")
-        if os.path.isdir(_graph_dir):
-            _quarantined = sorted(
-                f for f in os.listdir(_graph_dir) if ".corrupt-" in f
-            )
-            if _quarantined:
+        from data.graph import quarantine as _gq  # pylint: disable=import-outside-toplevel
+        _items = _gq.list_quarantined()
+        if _items:
+            _rec = [q for q in _items if q.status == "recoverable"]
+            _locked = [q for q in _items if q.status == "locked"]
+            _bad = [q for q in _items if q.status == "corrupt"]
+            _live_path = get_path("graph/graph.pkl")
+            # a readable graph.pkl means the quarantines are history, not a loss: restoring an older
+            # (possibly much larger, different-era) graph over a current one is the user's call
+            _live = os.path.exists(_live_path) and _gq.inspect(_live_path).status == "recoverable"
+
+            def _names(qs):
+                shown = ", ".join(q.name for q in qs[:5])
+                return shown + (f" (+{len(qs) - 5} more)" if len(qs) > 5 else "")
+
+            if _rec and not _live:
+                _best = _gq.best_candidate(_items)
                 _warn(
-                    f"Knowledge graph — {len(_quarantined)} quarantined file(s): "
-                    f"{', '.join(_quarantined)}",
-                    "Run: cognirepo index-repo . (rebuilds graph.pkl from scratch)",
+                    f"Knowledge graph — graph.pkl is missing or unreadable, and {len(_rec)} quarantined "
+                    f"file(s) hold a RECOVERABLE graph (best: {_best.name}, {_best.nodes} nodes): "
+                    f"{_names(_rec)}",
+                    "Restore it: cognirepo graph restore --apply",
                 )
-            elif verbose:
-                _ok("Knowledge graph — no quarantined files")
+            elif _rec and verbose:
+                _ok(f"Knowledge graph — graph.pkl is healthy; {len(_rec)} older recoverable quarantine(s) "
+                    f"kept ({_names(_rec)}). `cognirepo graph restore` lists them.")
+            if _locked:
+                _warn(
+                    f"Knowledge graph — {len(_locked)} quarantined file(s) are encrypted and cannot be "
+                    f"read by this interpreter (not corrupt; do not delete): {_names(_locked)}",
+                    "Install the security extras here (pipx inject cognirepo keyring cryptography), "
+                    "then re-run doctor",
+                )
+            if _bad:
+                _warn(
+                    f"Knowledge graph — {len(_bad)} quarantined file(s) are genuinely unreadable: "
+                    f"{_names(_bad)}",
+                    f"Remove the old ones: cognirepo graph prune-quarantine --apply "
+                    f"(keeps the last {_gq.DEFAULT_RETENTION_DAYS} days)",
+                )
+        elif verbose:
+            _ok("Knowledge graph — no quarantined files")
     except Exception as _exc:  # pylint: disable=broad-except
         logger.debug("doctor: graph quarantine check failed: %s", _exc)
+
+    # ── Check 22: encryption enabled but keyring/cryptography missing ────────
+    # Hooks and MCP servers may run under a different interpreter (e.g. a pipx
+    # venv) than the one that wrote the encrypted store. Without these two
+    # packages every encrypted store is unreadable there (COGNIREPO-97).
+    try:
+        from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
+        if get_storage_config()[0]:
+            _missing_sec = []
+            for _pkg in ("cryptography", "keyring"):
+                try:
+                    importlib.import_module(_pkg)
+                except ImportError:
+                    _missing_sec.append(_pkg)
+            if _missing_sec:
+                _fail(
+                    f"Encryption is on but {', '.join(_missing_sec)} not importable "
+                    f"in {sys.executable}",
+                    "Run: pipx inject cognirepo keyring cryptography  "
+                    "(or: pip install 'cognirepo[security]')",
+                )
+                issues += 1
+            elif verbose:
+                _ok("Encryption — keyring + cryptography available")
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: encryption deps check failed: %s", _exc)
+
+    # ── Check 22a: stale cognirepo processes (COGNIREPO-119) ─────────────────
+    # Watchers/indexers whose directory was deleted, or one-shot commands running for hours, hold
+    # memory for days without anyone noticing (80 `init` processes, ~3 GB, were found this way).
+    try:
+        from interface.cli import proc_scan as _ps  # pylint: disable=import-outside-toplevel
+        _stale = _ps.find_stale(_ps.scan())
+        if _stale:
+            _msg, _hint = _ps.describe(_stale)
+            _warn(_msg, _hint)
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: stale process scan failed: %s", _exc)
+
+    # ── Check 22b: the `cognirepo` on PATH (COGNIREPO-124) ───────────────────
+    # Check 22 above inspects the interpreter RUNNING doctor. Hooks, MCP clients and cron run
+    # the `cognirepo` found on PATH — often a pipx venv — which can lack keyring/cryptography,
+    # have no usable keyring backend, or be a stale snapshot of an older working tree.
+    try:
+        from core.security import get_storage_config as _gsc  # pylint: disable=import-outside-toplevel
+        from interface.cli import install_probe as _ip  # pylint: disable=import-outside-toplevel
+        from pathlib import Path as _P  # pylint: disable=import-outside-toplevel
+        _encrypt_on = bool(_gsc()[0])
+        _ours_main = os.path.abspath(__file__)
+        _root = _P(__file__).resolve().parent.parent.parent
+        _src_root = str(_root) if (_root / "pyproject.toml").exists() else None
+        _cli_py = _ip.resolve_cli_interpreter()
+        _targets: list[tuple[str, str, bool, bool]] = []   # (label, python, check_modules, check_stale)
+        if _encrypt_on:
+            _targets.append(("this interpreter", sys.executable, False, False))
+        if _cli_py and not _ip.same_interpreter(_cli_py, sys.executable):
+            _targets.append(("`cognirepo` on PATH", _cli_py, True, True))
+        elif _cli_py is None and verbose:
+            print("  ○  PATH cognirepo — not found or not a script; interpreter unknown")
+        for _label, _py, _mods, _stale in _targets:
+            _probe = _ip.probe_interpreter(_py)
+            for _f in _ip.diagnose(
+                _probe, label=_label, python=_py, encrypt=_encrypt_on, check_modules=_mods,
+                ours_path=_ours_main, ours_sha=_ip.file_sha256(_ours_main), ours_version=_ver,
+                source_root=_src_root, check_stale=_stale,
+            ):
+                if _f.level == "fail":
+                    _fail(_f.message, _f.hint)
+                    issues += 1
+                elif _f.level == "warn":
+                    _warn(_f.message, _f.hint)
+                elif verbose:
+                    _ok(_f.message)
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: PATH install check failed: %s", _exc)
+
+    # ── Check 22c: the post-commit hook's last run (COGNIREPO-123) ───────────
+    # The hook used to discard all output, so a broken install (e.g. a pipx venv without keyring)
+    # failed every run silently for days. It now records each run; surface a failure here.
+    try:
+        from interface.cli import hook_status as _hs  # pylint: disable=import-outside-toplevel
+        from core.config.paths import get_cognirepo_dir as _gcd, get_global_dir as _ggd  # pylint: disable=import-outside-toplevel
+        _run = _hs.read_last_run(_gcd(), _ggd())
+        if _run is not None:
+            if _run.ok:
+                if verbose:
+                    _ok(f"Post-commit hook — {_run.describe()}")
+            else:
+                _warn(
+                    f"Post-commit hook — {_run.describe()}",
+                    f"Full output: {_run.log_path} — fix it, then run: cognirepo index-repo --changed-only",
+                )
+        _git_dir = _find_git_dir()
+        if _git_dir is not None:
+            _hook_path = _git_dir / "hooks" / "post-commit"
+            if _hook_path.exists() and _hs.hook_is_outdated(
+                    _hook_path.read_text(encoding="utf-8", errors="replace"),
+                    _hook_block(), _HOOK_SENTINEL_START):
+                _warn(
+                    "Post-commit hook — the installed block is outdated (older ones discarded "
+                    "errors or missed newer languages)",
+                    "Run: cognirepo install-hooks",
+                )
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: post-commit hook check failed: %s", _exc)
+
+    # ── Check 23: package importable from a neutral cwd ──────────────────────
+    # A stale editable install (e.g. left over from the pre-restructure layout)
+    # only resolves `interface`/`data`/`core` when cwd is the repo root, so
+    # `cognirepo serve` launched by an MCP client dies at import (#100).
+    try:
+        import subprocess as _sp  # pylint: disable=import-outside-toplevel
+        import tempfile as _tf  # pylint: disable=import-outside-toplevel
+        _probe_code = (
+            "import importlib.util, sys\n"
+            "try:\n"
+            "    ok = importlib.util.find_spec('interface.server.mcp_server') is not None\n"
+            "except ImportError:\n"
+            "    ok = False\n"
+            "sys.exit(0 if ok else 1)\n"
+        )
+        _env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        with _tf.TemporaryDirectory() as _neutral:
+            _r = _sp.run(
+                [sys.executable, "-c", _probe_code],
+                cwd=_neutral, env=_env, capture_output=True, timeout=30, check=False,
+            )
+        if _r.returncode != 0:
+            _fail(
+                "Install — interface.server.mcp_server is not importable outside the "
+                "repo directory (stale editable install?); `cognirepo serve` will fail "
+                "with CONNECTION_CLOSED",
+                _reinstall_hint(),
+            )
+            issues += 1
+        elif verbose:
+            _ok("Install — MCP server module importable from a neutral directory")
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: install importability check failed: %s", _exc)
+
+    # ── Check 24: installed metadata version vs source tree ──────────────────
+    try:
+        from importlib.metadata import version as _meta_version  # pylint: disable=import-outside-toplevel
+        _installed = _meta_version("cognirepo")
+        if _installed != _ver and _ver != "0.0.0+unknown":
+            _warn(
+                f"Install — installed metadata says v{_installed} but the code is v{_ver}",
+                _reinstall_hint(),
+            )
+        elif verbose:
+            _ok(f"Install — metadata version matches ({_ver})")
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: metadata version check failed: %s", _exc)
 
     # ── Check N: AI tool MCP configs (informational, not failures) ───────────
     _tool_checks = [
@@ -1567,7 +1815,12 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
                 from interface.tools.bg_progress import TaskProgress  # pylint: disable=import-outside-toplevel
                 _kg = KnowledgeGraph()
                 _idx = ASTIndexer(graph=_kg, progress_factory=TaskProgress)
-                _idx.index_repo(parent_path)
+                from data.graph.journal import JournalBusy  # pylint: disable=import-outside-toplevel
+                try:
+                    _idx.index_repo(parent_path)
+                except JournalBusy as _busy:  # COGNIREPO-137
+                    print(f"  ✗ {_busy}", file=sys.stderr)
+                    sys.exit(1)
                 print("  ✓  Re-index complete.")
 
                 # ── Tier-2 prompt for large repos ─────────────────────────────
@@ -1899,6 +2152,15 @@ def _cmd_prime(as_json: bool = False) -> None:
     print()
 
 
+def _cmd_doctor_resources(as_json: bool = False) -> int:
+    """`cognirepo doctor --resources`: processes, store sizes and set-aside files (COGNIREPO-121)."""
+    # pylint: disable=import-outside-toplevel
+    from interface.cli import resources
+    report = resources.collect(os.path.abspath(get_path("")))
+    print(json.dumps(report, indent=2) if as_json else resources.render(report))
+    return 0
+
+
 def _cmd_doctor_fix() -> int:
     """
     P2-B: Auto-fix top 2 failure modes:
@@ -1924,7 +2186,8 @@ def _cmd_doctor_fix() -> int:
                 os.rename(faiss_path, stale)
                 import faiss  # pylint: disable=import-outside-toplevel,reimported
                 _new = faiss.IndexFlatL2(384)
-                faiss.write_index(_new, faiss_path)
+                with atomic_path(faiss_path) as _tmp:
+                    faiss.write_index(_new, _tmp)
                 print(f"     Fixed — empty index created at {faiss_path}")
                 print(f"     Run `cognirepo index-repo .` to rebuild embeddings")
                 fixes_applied += 1
@@ -2029,6 +2292,85 @@ def _direct_history(limit):
     return get_history(limit)
 
 
+def _require_complete_base_graph(kg, indexer, mode: str) -> None:
+    """Exit(2) unless ``kg`` is a safe base for an incremental save (COGNIREPO-122).
+
+    ``--files`` / ``--changed-only`` rewrite graph.pkl from whatever graph they loaded. If
+    that graph is missing/quarantined/a fragment they would publish a tiny graph as the
+    whole graph (observed: 41,327 nodes -> 1,122 -> 2). Refuse instead, and say how to fix it.
+    """
+    try:
+        indexer.load()  # AST index → file count for the fragment check (no-op if absent)
+    except Exception as exc:  # pylint: disable=broad-except
+        log.debug("index-repo %s: AST index not loadable: %s", mode, exc)
+    ok, reason = kg.incremental_base_status(indexer.indexed_file_count())
+    if ok:
+        return
+    print(
+        f"  ✗ index-repo {mode}: not updating the graph — {reason}.\n"
+        "    An incremental run must not replace a full graph with a fragment.\n"
+        "    Run `cognirepo index-repo .` (full) once to build a base graph; later "
+        "incremental runs and the watcher then work as usual.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
+def _remove_lock_file(path: "str | None") -> None:
+    """Best-effort removal of the ``--remove-lock`` sentinel file."""
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
+    """Re-index *files* and persist everything that changed (COGNIREPO-154).
+
+    Shared by ``index-repo --files`` (the post-commit hook) and ``--changed-only``.
+    Previously both only saved the graph, so the AST index / FAISS / manifest never
+    learned about hook-indexed files: ``who_calls`` saw new code while
+    ``lookup_symbol`` / ``context_pack`` did not.
+
+    Order matters:
+      1. the COGNIREPO-122 guard runs first (it also loads the existing AST index, so
+         ``indexer.save()`` below writes the full index, not just these files);
+      2. ``indexer.save()`` — AST index + FAISS + manifest under ``store_lock``;
+      3. ``kg.save()``.
+    Returns the number of files indexed.
+    """
+    from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
+    kg = KnowledgeGraph()
+    indexer = ASTIndexer(graph=kg)
+    _require_complete_base_graph(kg, indexer, mode)
+    # Without this index_file() embeds inline and loads the model on every run.
+    indexer._embed_enabled = embed  # pylint: disable=protected-access
+    indexed = 0
+    touched: set[str] = set()
+    for rel in files:
+        old = indexer.index_data.get("files", {}).get(rel, {}).get("symbols", [])
+        touched |= {s["name"] for s in old}
+        try:
+            record = indexer.index_file(rel, os.path.abspath(rel))
+        except Exception as exc:  # pylint: disable=broad-except
+            log.debug("index-repo %s: skip %s: %s", mode, rel, exc)
+            continue
+        touched |= {s["name"] for s in (record or {}).get("symbols", [])}
+        indexed += 1
+    # Same post-batch bookkeeping as the watcher's flush (file_watcher.py).
+    indexer._build_reverse_index()  # pylint: disable=protected-access
+    if touched:
+        indexer._resolve_call_stubs(names=touched)  # pylint: disable=protected-access
+    indexer.index_data["total_symbols"] = sum(
+        len(f.get("symbols", [])) for f in indexer.index_data["files"].values()
+    )
+    indexer.save()
+    kg.save()
+    return indexed
+
+
 def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier: "int | str | None" = None):
     """Index a repository directly. Exits with code 1 if *path* does not exist."""
     import resource  # pylint: disable=import-outside-toplevel
@@ -2050,27 +2392,63 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
 
     rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     t0 = time.time()
-    summary = indexer.index_repo(abs_path, embed=embed, skip_graph=skip_graph, tier=tier)
+    from data.graph.journal import JournalBusy  # pylint: disable=import-outside-toplevel
+    try:
+        summary = indexer.index_repo(abs_path, embed=embed, skip_graph=skip_graph, tier=tier)
+    except JournalBusy as busy:
+        # Another index-repo owns the graph writer lease (COGNIREPO-137). Racing it would
+        # interleave two indexers over the same stores — refuse instead.
+        print(f"  ✗ {busy}", file=sys.stderr)
+        sys.exit(1)
     elapsed = time.time() - t0
     rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
     # Free large in-memory objects (FAISS index, AST dicts, pending embeds) before
     # serializing the graph — reduces RSS by ~400–700 MB on large repos.
     indexer.free_large_objects()
+    # The cached embedding model (~2 GB resident: ONNX session + tokenizer) is not
+    # needed again until stage 2 (summarizer) below, which tolerates the ~2-5s
+    # reload. Evicting it here was the gap that let kg.save() trip the circuit
+    # breaker on medium/large repos even after the 4000 MB self-raise above
+    # (COGNIREPO-107 — confirmed live: celery, 10,668 embedded symbols, peaked
+    # at 5276 MB at save time with the model still resident).
+    if embed:
+        from data.memory.embeddings import evict_model  # pylint: disable=import-outside-toplevel
+        evict_model()
 
-    try:
-        kg.save()
-    except Exception as _kg_exc:  # pylint: disable=broad-except
-        _exc_name = type(_kg_exc).__name__
-        if "CircuitOpen" in _exc_name or "CircuitBreaker" in _exc_name:
-            print(
-                f"  ⚠  Knowledge graph not saved (memory limit hit). "
-                "AST index and embeddings are intact. "
-                "Re-run with --no-graph to disable graph, or set "
-                "COGNIREPO_CB_RSS_LIMIT_MB=4000 to raise the memory limit."
-            )
-        else:
-            raise
+    def _save_graph() -> bool:
+        """Try kg.save(); on a circuit-breaker trip, wait out its cooldown and
+        retry once (the breaker's own HALF_OPEN semantics — nothing previously
+        acted on the "will retry in 30s" it logs). Returns whether it saved."""
+        from data.memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+        for _attempt in range(2):
+            try:
+                kg.save()
+                return True
+            except Exception as _kg_exc:  # pylint: disable=broad-except
+                _exc_name = type(_kg_exc).__name__
+                if "CircuitOpen" not in _exc_name and "CircuitBreaker" not in _exc_name:
+                    raise
+                if _attempt == 0:
+                    time.sleep(get_breaker().cooldown + 1)
+        return False
+
+    if not _save_graph():
+        from data.graph.knowledge_graph import journal_file_exists  # pylint: disable=import-outside-toplevel
+        _journal_note = (
+            "Graph data up to the last journal flush is preserved in "
+            ".cognirepo/graph/graph.journal and is replayed automatically on the next "
+            "load (anything after the last flush, or after a journal error, is not); "
+            if journal_file_exists()
+            else "No graph journal exists, so graph data from this run was not preserved; "
+        )
+        print(
+            "  ⚠  Knowledge graph not saved to graph.pkl (memory limit hit, retried once). "
+            + _journal_note
+            + "AST index and embeddings are intact. "
+            "Re-run with --no-graph to disable graph, or set "
+            "COGNIREPO_CB_RSS_LIMIT_MB=6000 to raise the memory limit."
+        )
 
     # ── Stage 2: file-summary vectors (summarizer → FAISS) ───────────────────
     if embed:
@@ -2282,21 +2660,31 @@ def _write_last_indexed_sha(repo_path: str) -> None:
             ["git", "rev-parse", "HEAD"], cwd=repo_path, text=True, stderr=_sp.DEVNULL
         ).strip()
         path = get_path("index/last_indexed.json")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as _f:
-            json.dump({"commit_sha": sha, "indexed_at": datetime.now(timezone.utc).isoformat()}, _f)
+        atomic_json_dump(
+            path, {"commit_sha": sha, "indexed_at": datetime.now(timezone.utc).isoformat()},
+            indent=None, fsync=False,  # hint file: atomic, no fsync
+        )
     except Exception:  # pylint: disable=broad-except
         pass  # non-git repos silently skip
 
 
-def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
-    """Start the file watcher, optionally forking into the background."""
+def _start_watcher(path: str, kg=None, indexer=None, daemon: bool = False) -> None:
+    """Start the file watcher, in this process or as a separate detached process (``daemon=True``).
+
+    ``daemon=True`` spawns a fresh ``watch --foreground`` process (COGNIREPO-127). That process loads
+    the graph and index from DISK, so ``kg`` / ``indexer`` are not used by it and may be omitted; what
+    matters is that the caller has persisted everything before calling (see the guard below).
+    Otherwise the watcher runs here with ``kg`` / ``indexer`` and registers this process (the lease
+    holder, COGNIREPO-138), so ``list`` / ``watch --status`` / the singleton check / ``--stop`` see it.
+    The crash guard removes the registration on exit (COGNIREPO-125).
+    """
     import os  # pylint: disable=import-outside-toplevel
-    from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
-    from intelligence.indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
-    from interface.tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
 
     abs_path = os.path.abspath(path)
+
+    if daemon and os.environ.get("COGNIREPO_NO_WATCHER"):
+        print("[cognirepo] COGNIREPO_NO_WATCHER is set — not starting a background watcher.")
+        return
 
     # ── TASK-009: Singleton enforcement ──────────────────────────────────────
     from interface.cli.daemon import is_watcher_running_for_path  # pylint: disable=import-outside-toplevel
@@ -2313,7 +2701,9 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
     session_id = f"watch_{ts}"
 
     if daemon:
-        from interface.cli.daemon import daemonize, flock_register_watcher  # pylint: disable=import-outside-toplevel
+        from interface.cli.daemon import (  # pylint: disable=import-outside-toplevel
+            WatcherSpawnError, spawn_detached_watcher, is_watcher_running_for_path as _running,
+        )
         from pathlib import Path  # pylint: disable=import-outside-toplevel
 
         cognirepo_dir = Path(get_path(""))
@@ -2321,17 +2711,69 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
         log_path = str(cognirepo_dir / "watchers" / f"{session_id}.log")
         Path(log_path).parent.mkdir(parents=True, exist_ok=True)
 
+        # The new process reads the graph and index from DISK, not from this process (the old fork
+        # shared our memory). Everything must therefore be persisted before it starts, or the
+        # watcher would begin on a stale or partial index with nothing to say so. index-repo / init
+        # save the AST index, FAISS and manifest inside index_repo() and the graph right after; the
+        # only gap is a graph with ops that never reached disk (a failed save), so close it here.
+        if kg is not None and getattr(kg, "_pending", None):
+            try:
+                kg.save()
+            except Exception as exc:  # pylint: disable=broad-except
+                print(f"[cognirepo] Warning: the graph has unsaved changes ({exc}); the background "
+                      "watcher will start from what is on disk.", file=sys.stderr)
+
         name = f"watcher-{Path(abs_path).name}-{ts}"
-        child_pid = daemonize(log_path)
-        if child_pid > 0:
-            # We are the parent — register PID file atomically and return
-            flock_register_watcher(child_pid, name, abs_path, log_path)
-            print(f"[cognirepo] Watcher started in background (PID {child_pid})")
-            print(f"[cognirepo] Name : {name}")
-            print(f"[cognirepo] Log  : {log_path}")
-            print(f"[cognirepo] View : cognirepo list -n {child_pid} --view")
+        # COGNIREPO-127: a FRESH process, not a fork of this one. It loads its own graph/index and
+        # registers itself once it holds the per-repo lease (COGNIREPO-138), so report what actually
+        # happened. A cold start loads the graph and index first, so say that this may take a while.
+        print("[cognirepo] Starting the background watcher (loading the graph and index, up to 30s)...")
+        try:
+            proc = spawn_detached_watcher(abs_path, log_path)
+        except WatcherSpawnError as exc:
+            print(f"[cognirepo] Error: {exc}", file=sys.stderr)
             return
-        # child (grandchild) continues below
+        deadline = time.monotonic() + 30.0
+        holder, exit_code = None, None
+        while True:
+            holder = _running(abs_path)
+            exit_code = proc.poll()
+            if holder is not None or exit_code is not None or time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+        if holder is not None and holder.get("pid") == proc.pid:
+            print(f"[cognirepo] Watcher started in background (PID {proc.pid})")
+            print(f"[cognirepo] Name : {holder.get('name', name)}")
+            print(f"[cognirepo] Log  : {log_path}")
+            print(f"[cognirepo] View : cognirepo list -n {proc.pid} --view")
+        elif holder is not None:
+            print(f"[cognirepo] A watcher is already running for this path (PID {holder['pid']}); "
+                  "the new one exited without starting.")
+        elif exit_code is not None:
+            print(f"[cognirepo] The watcher process exited with code {exit_code} before it registered "
+                  f"- see the log: {log_path}", file=sys.stderr)
+            try:
+                with open(log_path, encoding="utf-8", errors="replace") as fh:
+                    tail = [ln.rstrip() for ln in fh.readlines()[-3:] if ln.strip()]
+                for ln in tail:
+                    print(f"[cognirepo]   | {ln}", file=sys.stderr)
+            except OSError:
+                pass
+        else:
+            print(f"[cognirepo] The watcher (PID {proc.pid}) is still starting after 30s and has not "
+                  f"registered yet - check the log: {log_path}", file=sys.stderr)
+        return
+
+    # imported here, not above: the daemon branch returns before needing any of it
+    from data.graph.behaviour_tracker import BehaviourTracker  # pylint: disable=import-outside-toplevel
+    from intelligence.indexer.file_watcher import create_watcher  # pylint: disable=import-outside-toplevel
+    from interface.tools.store_memory import store_memory  # pylint: disable=import-outside-toplevel
+    from pathlib import Path as _Path  # pylint: disable=import-outside-toplevel
+    registration = {
+        "name": f"watcher-{_Path(abs_path).name}-{ts}",
+        # a detached watcher (spawn_detached_watcher) tells us where its log is
+        "log": os.environ.get("COGNIREPO_WATCHER_LOG") or "stderr (foreground)",
+    }
 
     behaviour = BehaviourTracker(graph=kg, store_fn=store_memory)
 
@@ -2352,32 +2794,36 @@ def _start_watcher(path: str, kg, indexer, daemon: bool = False) -> None:
 
     signal.signal(signal.SIGTERM, _stop)
 
-    run_watcher_with_crash_guard(
+    ran = run_watcher_with_crash_guard(
         create_fn=_make_observer,
         stop_fn=_stop_observer,
         watcher_path=abs_path,
         session_id=session_id,
+        registration=registration,
     )
     if not daemon:
-        print("[watcher] stopped.")
+        print("[watcher] stopped." if ran else "[watcher] not started: another watcher holds this repo.")
 
 
 def _start_watcher_bg(path: str) -> None:
     """
     Start the file watcher as a daemon thread — no kg/indexer required upfront.
     Loads them lazily inside the thread. Safe to call from REPL/MCP server startup.
-    Silently skips if a watcher is already running for this path.
+
+    COGNIREPO-138: one watcher per repo, however many `serve` sessions run. Every session starts
+    this thread, but only the one that holds the repo's watcher lease loads the graph/index and
+    observes; the rest stand by cheaply (nothing loaded) and take over if the holder dies.
     """
     abs_path = os.path.abspath(path)
-    try:
-        from interface.cli.daemon import is_watcher_running_for_path  # pylint: disable=import-outside-toplevel
-        if is_watcher_running_for_path(abs_path):
-            return  # already watching — skip silently
-    except Exception:  # pylint: disable=broad-except
-        pass
+    if os.environ.get("COGNIREPO_NO_WATCHER"):
+        return
 
     def _run():
         try:
+            from interface.cli.daemon import wait_for_watcher_lease  # pylint: disable=import-outside-toplevel
+            lease = wait_for_watcher_lease(abs_path)   # blocks (standby) until we may watch
+            if lease is None:
+                return
             from data.graph.knowledge_graph import KnowledgeGraph as _KG    # pylint: disable=import-outside-toplevel
             from intelligence.indexer.ast_indexer import ASTIndexer as _AI          # pylint: disable=import-outside-toplevel
             from data.graph.behaviour_tracker import BehaviourTracker as _BT # pylint: disable=import-outside-toplevel
@@ -2401,6 +2847,12 @@ def _start_watcher_bg(path: str) -> None:
                 stop_fn=_stop,
                 watcher_path=abs_path,
                 session_id=_session_id,
+                lease=lease,
+                registration={
+                    "name": f"serve-watcher-{os.path.basename(abs_path)}-{os.getpid()}",
+                    "log": f"in-process (serve pid {os.getpid()})",
+                    "kind": "embedded",
+                },
             )
         except Exception:  # pylint: disable=broad-except
             pass  # watcher is best-effort
@@ -2585,15 +3037,20 @@ def _cmd_sessions(limit: int = 20) -> None:
         print(f"{short_id}  {created}  {exchanges:>2}x  \"{first_q}\"{marker}")
 
 
+def _reinstall_hint() -> str:
+    """Command that repairs a broken/stale cognirepo install for this checkout."""
+    from pathlib import Path  # pylint: disable=import-outside-toplevel
+    root = Path(__file__).resolve().parent.parent.parent
+    if (root / "pyproject.toml").exists():
+        return f"Run: {sys.executable} -m pip install -e {root}"
+    return "Run: pipx reinstall cognirepo   (or: pip install --force-reinstall cognirepo)"
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def _print_help() -> None:
     """Print a rich, formatted help screen for cognirepo."""
-    try:
-        from importlib.metadata import version as _pkg_ver  # pylint: disable=import-outside-toplevel
-        _ver = _pkg_ver("cognirepo")
-    except Exception:  # pylint: disable=broad-except
-        _ver = "dev"
+    from interface.cli import __version__ as _ver  # pylint: disable=import-outside-toplevel
 
     _C  = "\033[36m"    # cyan
     _G  = "\033[32m"    # green
@@ -2730,20 +3187,63 @@ def _find_git_dir() -> "Path | None":
 
 _HOOK_SENTINEL_START = "# >>> cognirepo-hook-start <<<"
 _HOOK_SENTINEL_END   = "# >>> cognirepo-hook-end <<<"
-_HOOK_BLOCK = (
-    _HOOK_SENTINEL_START + "\n"
-    "changed=$(git diff-tree --no-commit-id -r --name-only HEAD \\\n"
-    "  | grep -E '\\.(py|js|ts|java|go|rs|cpp|c|h)$')\n"
-    "if [ -n \"$changed\" ]; then\n"
-    "  cognirepo index-repo --files $changed --no-watch 2>/dev/null &\n"
-    "fi\n"
-    + _HOOK_SENTINEL_END + "\n"
-)
+
+
+def _hook_ext_regex() -> str:
+    """ERE matching every extension the language registry knows (COGNIREPO-154).
+
+    Derived from ``language_registry.known_extensions()`` — not the installed subset —
+    so a hook written today still fires after a grammar is installed later, and adding
+    a language to the registry can't silently leave the hook behind again.
+    """
+    from intelligence.indexer.language_registry import known_extensions  # pylint: disable=import-outside-toplevel
+    exts = sorted(e.lstrip(".") for e in known_extensions())
+    return "\\.(" + "|".join(exts) + ")$"
+
+
+def _hook_block() -> str:
+    """The post-commit hook body between the cognirepo sentinels.
+
+    ``--no-embed``: the hook runs on every commit, and embedding would load the ~2 GB
+    model each time. The AST index + graph are what lookup_symbol/who_calls need; vectors
+    catch up on the next full ``index-repo``.
+
+    COGNIREPO-123: output is no longer discarded (``2>/dev/null``). Everything is appended to
+    ``<store>/hook.log`` (rotated at 256 KiB, one ``.1`` kept) and the outcome of the run is
+    written to ``<store>/hook.last`` (ts / exit / files) for ``doctor`` and ``get_session_brief``.
+    All of it is plain shell on purpose: the failure being reported may be that ``cognirepo``
+    itself does not start (command not found, an import error), so a ``cognirepo`` subcommand
+    could not be trusted to record it. ``--root`` makes a repo's very first commit visible to
+    ``diff-tree`` (it lists nothing for a root commit without it). The store is ``.cognirepo`` in the repo root, else
+    ``$COGNIREPO_DIR``, else ``~/.cognirepo``. Still backgrounded: the commit is never delayed.
+    """
+    return (
+        _HOOK_SENTINEL_START + "\n"
+        "changed=$(git diff-tree --root --no-commit-id -r --name-only HEAD \\\n"
+        f"  | grep -E '{_hook_ext_regex()}')\n"
+        "if [ -n \"$changed\" ]; then\n"
+        "  (\n"
+        "    d=.cognirepo; [ -d \"$d\" ] || d=\"${COGNIREPO_DIR:-$HOME/.cognirepo}\"\n"
+        "    mkdir -p \"$d\" 2>/dev/null\n"
+        "    log=\"$d/hook.log\"\n"
+        "    if [ -f \"$log\" ] && [ \"$(wc -c < \"$log\" | tr -d ' ')\" -gt 262144 ]; then mv -f \"$log\" \"$log.1\"; fi\n"
+        "    {\n"
+        "      echo \"--- $(date -u +%Y-%m-%dT%H:%M:%SZ) post-commit $(git rev-parse --short HEAD 2>/dev/null)\"\n"
+        "      cognirepo index-repo --files $changed --no-watch --no-embed 2>&1\n"
+        "      rc=$?\n"
+        "      echo \"exit=$rc\"\n"
+        "    } >> \"$log\" 2>&1\n"
+        "    printf 'ts=%s\\nexit=%s\\nfiles=%s\\n' \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \"$rc\" "
+        "\"$(echo \"$changed\" | wc -w | tr -d ' ')\" > \"$d/hook.last\"\n"
+        "  ) &\n"
+        "fi\n"
+        + _HOOK_SENTINEL_END + "\n"
+    )
 
 
 def _cmd_install_hooks() -> int:
     """Write a post-commit git hook that incrementally reindexes changed files."""
-    from pathlib import Path  # pylint: disable=import-outside-toplevel
+    import re  # pylint: disable=import-outside-toplevel
     git_dir = _find_git_dir()
     if git_dir is None:
         print("install-hooks: not a git repository (no .git/ found).")
@@ -2751,14 +3251,27 @@ def _cmd_install_hooks() -> int:
     hooks_dir = git_dir / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_file = hooks_dir / "post-commit"
+    block = _hook_block()
     if hook_file.exists():
         content = hook_file.read_text(encoding="utf-8")
         if _HOOK_SENTINEL_START in content:
-            print("install-hooks: cognirepo block already present.")
+            if block in content:
+                print("install-hooks: cognirepo block already present.")
+                return 0
+            # An older block (e.g. a stale extension list) — replace it in place so
+            # re-running install-hooks picks up new languages (COGNIREPO-154).
+            content = re.sub(
+                re.escape(_HOOK_SENTINEL_START) + r".*?" + re.escape(_HOOK_SENTINEL_END) + r"\n?",
+                lambda _m: block,
+                content,
+                flags=re.DOTALL,
+            )
+            hook_file.write_text(content, encoding="utf-8")
+            print(f"install-hooks: updated cognirepo block in {hook_file}")
             return 0
-        hook_file.write_text(content.rstrip("\n") + "\n\n" + _HOOK_BLOCK, encoding="utf-8")
+        hook_file.write_text(content.rstrip("\n") + "\n\n" + block, encoding="utf-8")
     else:
-        hook_file.write_text("#!/bin/sh\n" + _HOOK_BLOCK, encoding="utf-8")
+        hook_file.write_text("#!/bin/sh\n" + block, encoding="utf-8")
     hook_file.chmod(0o755)
     print(f"install-hooks: wrote post-commit hook → {hook_file}")
     return 0
@@ -3084,6 +3597,9 @@ def _cmd_delete(args) -> None:
         print(f"  Unlinked {abs_cwd} from orgs.json.")
 
 
+from core.config.lock import LockTimeout, busy_message  # noqa: E402  (module-level so main() can name them)
+
+
 def main():
     """CLI entry point — parse args and route to commands."""
     # pylint: disable=too-many-locals, too-many-branches, too-many-statements
@@ -3094,6 +3610,10 @@ def main():
     except KeyboardInterrupt:
         print("\nInterrupted, closing gracefully.")
         sys.exit(0)
+    except LockTimeout as exc:
+        # another cognirepo process holds a store lock: a retryable condition, not a crash
+        print(f"cognirepo: {busy_message(exc)}", file=sys.stderr)
+        sys.exit(75)  # EX_TEMPFAIL
 
 
 def _main():
@@ -3278,6 +3798,22 @@ def _main():
         "--apply", action="store_true",
         help="Actually prune (default: dry-run report only)",
     )
+    p_graph_restore = graph_sub.add_parser(
+        "restore",
+        help="List quarantined graph files and restore the best recoverable one (dry-run by default)",
+    )
+    p_graph_restore.add_argument("--apply", action="store_true", help="Actually restore")
+    p_graph_restore.add_argument(
+        "--force", action="store_true",
+        help="Replace a graph.pkl that is itself readable (it is kept as graph.pkl.replaced-<ts>)",
+    )
+    p_graph_prune = graph_sub.add_parser(
+        "prune-quarantine",
+        help="Remove quarantined graph files that are genuinely unreadable and old (dry-run by default)",
+    )
+    p_graph_prune.add_argument("--days", type=float, default=30.0,
+                               help="Keep unreadable quarantines newer than this many days (default 30)")
+    p_graph_prune.add_argument("--apply", action="store_true", help="Actually remove")
 
     p_mcpset = sub.add_parser("mcp-setup", help="Re-run MCP integration (Claude / Gemini / Cursor)")
     p_mcpset.add_argument("--target", action="append", dest="targets",
@@ -3449,6 +3985,15 @@ def _main():
         help="Start the watcher if it is not running or its heartbeat is stale (> 60s).",
     )
     p_watch_cmd.add_argument(
+        "--foreground", "--daemon-foreground",
+        dest="foreground",
+        action="store_true",
+        default=False,
+        help="Run the watcher in the foreground under the crash guard (for systemd/launchd). "
+             "Registers itself, logs to stderr, stops cleanly on SIGTERM. "
+             "(--daemon-foreground is the name older generated units use.)",
+    )
+    p_watch_cmd.add_argument(
         "--path",
         default=".",
         metavar="DIR",
@@ -3517,6 +4062,14 @@ def _main():
         action="store_true",
         default=False,
         help="Output diagnostics as JSON (machine-readable).",
+    )
+    p_doctor.add_argument(
+        "--resources",
+        action="store_true",
+        default=False,
+        help="Show where memory and disk go instead of the health checks: cognirepo processes (RSS, "
+             "age, stale), size of each .cognirepo subdirectory, and set-aside/left-over files. "
+             "Read-only. Combine with --json.",
     )
 
     # prime — session bootstrap command (I2)
@@ -3910,7 +4463,19 @@ def _main():
         sys.exit(0)
 
     if args.command == "serve":
-        from interface.server.mcp_server import run_server  # pylint: disable=import-outside-toplevel
+        try:
+            from interface.server.mcp_server import run_server  # pylint: disable=import-outside-toplevel
+        except ImportError as exc:
+            # MCP clients only report CONNECTION_CLOSED; stderr is where they (and
+            # `claude --debug`) look for the reason (#100).
+            print(
+                f"cognirepo serve: cannot import the MCP server: {exc}\n"
+                f"  interpreter: {sys.executable}\n"
+                f"  {_reinstall_hint()}\n"
+                "  Then run: cognirepo doctor",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         run_server(project_dir=getattr(args, "project_dir", None))
         return
 
@@ -3918,13 +4483,9 @@ def _main():
         # ── git-aware changed-only reindex ───────────────────────────────────
         if getattr(args, "changed_only", False):
             import subprocess as _sp  # pylint: disable=import-outside-toplevel
-            from data.graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
-            from intelligence.indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
-            _supported_exts = {
-                ".py", ".js", ".ts", ".tsx", ".jsx", ".java",
-                ".cpp", ".c", ".h", ".go", ".rs", ".rb",
-            }
-            _changed: list[str] = []
+            from intelligence.indexer.language_registry import supported_extensions  # pylint: disable=import-outside-toplevel
+            _supported_exts = set(supported_extensions())  # COGNIREPO-154: one source of truth
+            _remove_lock = getattr(args, "remove_lock", None)
             try:
                 # staged + unstaged changes relative to HEAD
                 _diff = _sp.check_output(
@@ -3938,53 +4499,34 @@ def _main():
                     stderr=_sp.DEVNULL,
                     text=True,
                 ).splitlines()
-                _changed = [
-                    f for f in _diff + _untracked
-                    if os.path.splitext(f)[1] in _supported_exts and os.path.isfile(f)
-                ]
             except (_sp.CalledProcessError, FileNotFoundError):
-                print("Warning: git not available — falling back to full reindex.", file=sys.stderr)
+                # COGNIREPO-155: fail honestly — no silent "fallback", no last-indexed sha.
+                print(
+                    "Error: index-repo --changed-only: cannot list changed files via git "
+                    "(not a git repo, no commits yet, or git missing). Nothing was indexed.\n"
+                    "  Run `cognirepo index-repo .` for a full reindex.",
+                    file=sys.stderr,
+                )
+                _remove_lock_file(_remove_lock)
+                sys.exit(1)
+            _changed = [
+                f for f in _diff + _untracked
+                if os.path.splitext(f)[1] in _supported_exts and os.path.isfile(f)
+            ]
             if _changed:
-                _kg = _KG()
-                _indexer = _AI(graph=_kg)
-                _indexed = 0
-                for _rel in _changed:
-                    _abs = os.path.abspath(_rel)
-                    try:
-                        _indexer.index_file(_rel, _abs)
-                        _indexed += 1
-                    except Exception as _exc:  # pylint: disable=broad-except
-                        log.debug("index-repo --changed-only: skip %s: %s", _rel, _exc)
-                _kg.save()
+                _indexed = _incremental_index(_changed, "--changed-only", embed=not args.no_embed)
                 print(f"Re-indexed {_indexed} changed file(s): {', '.join(_changed[:5])}"
                       + (" …" if len(_changed) > 5 else ""))
             else:
                 print("No changed files detected.")
             _write_last_indexed_sha(os.path.abspath(getattr(args, "path", ".")))
-            _remove_lock = getattr(args, "remove_lock", None)
-            if _remove_lock and os.path.exists(_remove_lock):
-                try:
-                    os.remove(_remove_lock)
-                except OSError:
-                    pass
+            _remove_lock_file(_remove_lock)
             return
 
         # ── selective reindex (--files) ──────────────────────────────────────
         if getattr(args, "files", None):
-            from data.graph.knowledge_graph import KnowledgeGraph as _KG  # pylint: disable=import-outside-toplevel
-            from intelligence.indexer.ast_indexer import ASTIndexer as _AI       # pylint: disable=import-outside-toplevel
-            _kg = _KG()
-            _indexer = _AI(graph=_kg)
-            _indexed = 0
-            for _rel in args.files:
-                _abs = os.path.abspath(_rel)
-                if os.path.isfile(_abs):
-                    try:
-                        _indexer.index_file(_rel, _abs)
-                        _indexed += 1
-                    except Exception as _exc:  # pylint: disable=broad-except
-                        log.debug("index-repo --files: skip %s: %s", _rel, _exc)
-            _kg.save()
+            _files = [f for f in args.files if os.path.isfile(os.path.abspath(f))]
+            _indexed = _incremental_index(_files, "--files", embed=not args.no_embed)
             print(f"Re-indexed {_indexed} file(s).")
             return
         # ── full repo walk ────────────────────────────────────────────────────
@@ -4152,6 +4694,8 @@ def _main():
         sys.exit(_cmd_coverage())
 
     if args.command == "doctor":
+        if getattr(args, "resources", False):
+            sys.exit(_cmd_doctor_resources(as_json=getattr(args, "json", False)))
         fix_mode = getattr(args, "fix", False)
         if fix_mode:
             sys.exit(_cmd_doctor_fix())
@@ -4358,15 +4902,26 @@ def _main():
                 print(f"[cognirepo] Watcher already running (PID {running['pid']}).")
                 return
             print("[cognirepo] Starting watcher (--ensure-running)...")
+            # the detached watcher loads its own graph/index; loading them here only to throw them
+            # away cost hundreds of MB and seconds on every call (COGNIREPO-127)
+            _start_watcher(abs_watch_path, None, None, daemon=True)
+            return
+
+        if getattr(args, "foreground", False):
+            running = is_watcher_running_for_path(abs_watch_path)
+            if running:
+                print(f"[cognirepo] Watcher already running for this path (PID {running['pid']}); "
+                      "not starting a second one.")
+                return
             from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
             from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
             kg = KnowledgeGraph()
             indexer = ASTIndexer(graph=kg)
             indexer.load()
-            _start_watcher(abs_watch_path, kg, indexer, daemon=True)
+            _start_watcher(abs_watch_path, kg, indexer, daemon=False)
             return
 
-        print("Use --status or --ensure-running. See: cognirepo watch --help")
+        print("Use --status, --ensure-running or --foreground. See: cognirepo watch --help")
         return
 
     if args.command == "install-hooks":
@@ -4379,7 +4934,10 @@ def _main():
         sys.exit(_cmd_update_directives())
 
     if args.command == "list":
-        from interface.cli.daemon import print_watcher_list, view_watcher_logs, stop_watcher  # pylint: disable=import-outside-toplevel
+        from interface.cli.daemon import (  # pylint: disable=import-outside-toplevel
+            print_watcher_list, view_watcher_logs, stop_watcher_and_wait,
+            CLI_STOP_WAIT_SECS,
+        )
         if args.view or args.stop:
             if not args.name:
                 print("--view and --stop require -n <PID_OR_NAME>.", file=sys.stderr)
@@ -4387,9 +4945,27 @@ def _main():
             if args.view:
                 view_watcher_logs(args.name)
             elif args.stop:
-                ok = stop_watcher(args.name)
-                if ok:
-                    print(f"[cognirepo] Sent SIGTERM to watcher '{args.name}'.")
+                # Waits for the process to be GONE before reporting success (COGNIREPO-126):
+                # it used to print "Sent SIGTERM" and clear the registration immediately, while
+                # the watcher was still flushing — and `--ensure-running` then started a second one.
+                outcome = stop_watcher_and_wait(args.name)
+                if outcome == "stopped":
+                    print(f"[cognirepo] Watcher '{args.name}' stopped.")
+                elif outcome == "killed":
+                    print(f"[cognirepo] Watcher '{args.name}' did not exit within "
+                          f"{CLI_STOP_WAIT_SECS:.0f}s and was killed (SIGKILL). Unflushed edits may be "
+                          "missing from the index — run: cognirepo index-repo --changed-only",
+                          file=sys.stderr)
+                elif outcome == "embedded":
+                    print(f"[cognirepo] '{args.name}' is the watcher thread inside a running "
+                          "`cognirepo serve` (an agent session); stopping it would stop that server, "
+                          "so nothing was signalled. It ends with that session.", file=sys.stderr)
+                    sys.exit(1)
+                elif outcome == "failed":
+                    print(f"[cognirepo] Could not stop watcher '{args.name}': it is still running. "
+                          "Its registration was left in place so no second watcher is started.",
+                          file=sys.stderr)
+                    sys.exit(1)
                 else:
                     print(f"[cognirepo] No running watcher found matching '{args.name}'.",
                           file=sys.stderr)
@@ -4501,7 +5077,11 @@ def _main():
         elif args.command == "graph":
             if getattr(args, "graph_command", None) == "repair":
                 sys.exit(_cmd_graph_repair(apply=getattr(args, "apply", False)))
-            print("Usage: cognirepo graph repair [--apply]")
+            if getattr(args, "graph_command", None) == "restore":
+                sys.exit(_cmd_graph_restore(apply=args.apply, force=args.force))
+            if getattr(args, "graph_command", None) == "prune-quarantine":
+                sys.exit(_cmd_graph_prune_quarantine(days=args.days, apply=args.apply))
+            print("Usage: cognirepo graph repair|restore|prune-quarantine [--apply]")
             sys.exit(2)
 
         elif args.command == "mcp-setup":

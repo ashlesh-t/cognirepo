@@ -14,6 +14,7 @@ AC3: debounce window is configurable via debounce_ms; 0 disables batching
 """
 from __future__ import annotations
 
+import os
 import time
 from unittest.mock import MagicMock
 
@@ -27,6 +28,7 @@ def _make_handler(tmp_path, debounce_ms):
 
     kg = KnowledgeGraph.__new__(KnowledgeGraph)
     kg.G = nx.DiGraph()
+    kg.G.graph["complete"] = True  # a finished full index (COGNIREPO-122)
     kg.nodes_for_file = MagicMock(return_value=[])
     kg.remove_node_edges = MagicMock()
     kg.save = MagicMock()
@@ -51,6 +53,17 @@ def _make_handler(tmp_path, debounce_ms):
     return handler, indexer, kg, behaviour
 
 
+def _wait_until(predicate, timeout: float = 5.0) -> bool:
+    """Poll until ``predicate()`` is true. The flush runs on a timer thread, and how long it
+    takes depends on the machine (CI disks fsync slowly) — a fixed sleep is a race."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
 class TestDebounceBatching:
     def test_five_modify_events_collapse_to_one_save(self, tmp_path):
         """AC1: a burst of 5 modify events for the same file → one index_file + one save."""
@@ -62,7 +75,7 @@ class TestDebounceBatching:
             handler.on_modified(FileModifiedEvent(str(f)))
 
         assert indexer.index_file.call_count == 0  # still pending, timer not yet fired
-        time.sleep(0.3)
+        assert _wait_until(lambda: behaviour.save.called)  # flush completed (last step)
 
         indexer.index_file.assert_called_once()
         indexer.save.assert_called_once()
@@ -92,7 +105,7 @@ class TestDebounceBatching:
         time.sleep(0.05)
         assert indexer.index_file.call_count == 0  # window hasn't elapsed yet
 
-        time.sleep(0.3)
+        assert _wait_until(lambda: indexer.index_file.call_count == 1)
         assert indexer.index_file.call_count == 1
 
     def test_flush_is_idempotent_when_nothing_pending(self, tmp_path):
@@ -180,9 +193,9 @@ class TestLastWatcherReindexAuditTrail:
 
         handler.on_modified(FileModifiedEvent(str(f)))
         handler.on_deleted(FileDeletedEvent(str(g)))
-        time.sleep(0.3)
 
         log_path = tmp_path / ".cognirepo" / "index" / "last_watcher_reindex.json"
+        assert _wait_until(log_path.exists)
         assert log_path.exists()
         record = json.loads(log_path.read_text(encoding="utf-8"))
         assert record["session_id"] == "test"
@@ -201,13 +214,99 @@ class TestLastWatcherReindexAuditTrail:
         f2 = tmp_path / "two.py"
         f2.write_text("def two(): pass")
 
-        handler.on_modified(FileModifiedEvent(str(f1)))
-        time.sleep(0.3)
-        handler.on_modified(FileModifiedEvent(str(f2)))
-        time.sleep(0.3)
-
         log_path = tmp_path / ".cognirepo" / "index" / "last_watcher_reindex.json"
+
+        def _reindexed():
+            try:
+                return json.loads(log_path.read_text(encoding="utf-8")).get("reindexed")
+            except (OSError, ValueError):
+                return None
+
+        handler.on_modified(FileModifiedEvent(str(f1)))
+        assert _wait_until(lambda: _reindexed() == [os.path.relpath(str(f1), str(tmp_path))])
+        handler.on_modified(FileModifiedEvent(str(f2)))
+        assert _wait_until(lambda: _reindexed() == [os.path.relpath(str(f2), str(tmp_path))])
         record = json.loads(log_path.read_text(encoding="utf-8"))
         # Only the most recent batch — not both, and not growing unbounded.
         assert any("two.py" in p for p in record["reindexed"])
         assert not any("one.py" in p for p in record["reindexed"])
+
+
+# ── COGNIREPO-98/105: watcher graph.save() recovers once from a breaker trip ──
+
+class _FakeCircuitOpenError(Exception):
+    """Stand-in for CircuitOpenError — matched by name, not type, in _save_graph."""
+
+
+class TestWatcherSaveGraphRecovery:
+    def test_save_succeeds_normally_without_touching_model(self, tmp_path, monkeypatch):
+        handler, indexer, kg, behaviour = _make_handler(tmp_path, debounce_ms=100)
+        evicted = []
+        monkeypatch.setattr("data.memory.embeddings.evict_model", lambda: evicted.append(1))
+
+        handler._save_graph()
+
+        kg.save.assert_called_once()
+        assert evicted == []  # happy path never touches the model
+
+    def test_evicts_model_and_retries_once_on_breaker_trip(self, tmp_path, monkeypatch):
+        handler, indexer, kg, behaviour = _make_handler(tmp_path, debounce_ms=100)
+        calls = []
+        kg.save = MagicMock(side_effect=[_FakeCircuitOpenError("RSS over limit"), None])
+
+        monkeypatch.setattr("data.memory.embeddings.evict_model", lambda: calls.append("evict"))
+        monkeypatch.setattr("intelligence.indexer.file_watcher.time.sleep", lambda s: calls.append(("sleep", s)))
+
+        class _FakeBreaker:
+            cooldown = 30.0
+        monkeypatch.setattr("data.memory.circuit_breaker.get_breaker", lambda: _FakeBreaker())
+
+        handler._save_graph()  # must not raise
+
+        assert kg.save.call_count == 2
+        assert calls == ["evict", ("sleep", 31.0)]
+
+    def test_second_failure_after_retry_propagates(self, tmp_path, monkeypatch):
+        handler, indexer, kg, behaviour = _make_handler(tmp_path, debounce_ms=100)
+        kg.save = MagicMock(side_effect=_FakeCircuitOpenError("still over limit"))
+        monkeypatch.setattr("data.memory.embeddings.evict_model", lambda: None)
+        monkeypatch.setattr("intelligence.indexer.file_watcher.time.sleep", lambda s: None)
+
+        class _FakeBreaker:
+            cooldown = 30.0
+        monkeypatch.setattr("data.memory.circuit_breaker.get_breaker", lambda: _FakeBreaker())
+
+        import pytest
+        with pytest.raises(_FakeCircuitOpenError):
+            handler._save_graph()
+        assert kg.save.call_count == 2
+
+    def test_unrelated_exception_propagates_without_eviction(self, tmp_path, monkeypatch):
+        handler, indexer, kg, behaviour = _make_handler(tmp_path, debounce_ms=100)
+        kg.save = MagicMock(side_effect=ValueError("unrelated"))
+        evicted = []
+        monkeypatch.setattr("data.memory.embeddings.evict_model", lambda: evicted.append(1))
+
+        import pytest
+        with pytest.raises(ValueError):
+            handler._save_graph()
+        assert evicted == []
+        assert kg.save.call_count == 1  # no retry for a non-breaker exception
+
+    def test_flush_reports_graph_save_failure_without_crashing(self, tmp_path, monkeypatch):
+        """flush()'s outer try/except around _save_graph() still works after the rename."""
+        handler, indexer, kg, behaviour = _make_handler(tmp_path, debounce_ms=100)
+        kg.save = MagicMock(side_effect=_FakeCircuitOpenError("still over limit"))
+        monkeypatch.setattr("data.memory.embeddings.evict_model", lambda: None)
+        monkeypatch.setattr("intelligence.indexer.file_watcher.time.sleep", lambda s: None)
+
+        class _FakeBreaker:
+            cooldown = 0.0
+        monkeypatch.setattr("data.memory.circuit_breaker.get_breaker", lambda: _FakeBreaker())
+
+        f = tmp_path / "a.py"
+        f.write_text("def a(): pass")
+        (tmp_path / ".cognirepo").mkdir(exist_ok=True)
+
+        handler.on_modified(FileModifiedEvent(str(f)))
+        time.sleep(0.3)  # let the debounce timer fire — must not raise out of the timer thread

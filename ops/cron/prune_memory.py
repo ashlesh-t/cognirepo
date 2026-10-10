@@ -37,6 +37,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from typing import Any
+from core.config.atomic import atomic_json_dump, atomic_path, atomic_write
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 # NOTE: resolved lazily via get_path() to respect --project-dir / COGNIREPO_DIR
@@ -125,12 +126,12 @@ def _rebuild_faiss(kept: list[dict[str, Any]], dry_run: bool) -> int:
         dim = vectors.shape[1]
         index = faiss.IndexFlatL2(dim)
         index.add(vectors)  # pylint: disable=no-value-for-parameter
-        faiss.write_index(index, _semantic_index())
+        with atomic_path(_semantic_index()) as _tmp:
+            faiss.write_index(index, _tmp)
         # rewrite metadata with contiguous row IDs
         for i, entry in enumerate(kept):
             entry["faiss_row"] = i
-        with open(_semantic_meta(), "w", encoding="utf-8") as f:
-            json.dump(kept, f, indent=2)
+        atomic_json_dump(_semantic_meta(), kept, indent=2)
         return len(kept)
     except Exception as exc:  # pylint: disable=broad-except
         print(f"[prune] FAISS rebuild failed: {exc}", file=sys.stderr)
@@ -150,7 +151,8 @@ def _prune_graph(dry_run: bool) -> dict[str, int]:
         orphans = [n for n in list(kg.G.nodes()) if kg.G.degree(n) == 0]
         stats["orphans_removed"] = len(orphans)
         if not dry_run:
-            kg.G.remove_nodes_from(orphans)
+            for _nid in orphans:
+                kg.remove_node_if_degree_at_most(_nid, 0)
         # Remove concept nodes with no edges (very cold)
         cold = [
             n for n in list(kg.G.nodes())
@@ -159,7 +161,8 @@ def _prune_graph(dry_run: bool) -> dict[str, int]:
         ]
         stats["cold_nodes_removed"] = len(cold)
         if not dry_run:
-            kg.G.remove_nodes_from(cold)
+            for _nid in cold:
+                kg.remove_node_if_degree_at_most(_nid, 1)
             kg.save()
     except Exception as exc:  # pylint: disable=broad-except
         print(f"[prune] Graph pruning failed: {exc}", file=sys.stderr)
@@ -173,8 +176,7 @@ def _archive_entries(entries: list[dict[str, Any]]) -> str:
     os.makedirs(archive_dir, exist_ok=True)
     ts = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S")
     path = os.path.join(archive_dir, f"pruned_{ts}.json")
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(entries, f, indent=2)
+    atomic_json_dump(path, entries, indent=2)
     return path
 
 
@@ -303,15 +305,16 @@ def cleanup_suppressed(
             db.metadata[row]["deprecated"] = True
 
     # Persist promoted flags immediately (without a full rebuild)
-    with open(_semantic_meta(), "wb") as f:
-        import json as _json  # pylint: disable=import-outside-toplevel,redefined-outer-name
-        from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
-        encrypt, project_id = get_storage_config()
-        content = _json.dumps(db.metadata, indent=2).encode()
-        if encrypt:
-            from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
-            content = encrypt_bytes(content, get_or_create_key(project_id))
-        f.write(content)
+    # Content (incl. encryption) is computed BEFORE the file is touched, and the swap is
+    # atomic: a failure in encrypt_bytes() used to leave the metadata truncated (COGNIREPO-134).
+    import json as _json  # pylint: disable=import-outside-toplevel,redefined-outer-name
+    from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
+    encrypt, project_id = get_storage_config()
+    content = _json.dumps(db.metadata, indent=2).encode()
+    if encrypt:
+        from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+        content = encrypt_bytes(content, get_or_create_key(project_id))
+    atomic_write(_semantic_meta(), content)
 
     # Check rebuild threshold
     total = len(db.metadata)

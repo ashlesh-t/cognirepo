@@ -19,6 +19,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from core.config.atomic import atomic_json_dump
 
 log = logging.getLogger(__name__)
 
@@ -259,8 +260,7 @@ def scan_endpoints(repo_root: str) -> dict:
 
     out_path = endpoints_path()
     try:
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, indent=2)
+        atomic_json_dump(out_path, result, indent=2)
         log.info("endpoint_scanner: wrote %d endpoints to %s", len(all_endpoints), out_path)
     except Exception as exc:  # pylint: disable=broad-except
         log.warning("endpoint_scanner: failed to write %s: %s", out_path, exc)

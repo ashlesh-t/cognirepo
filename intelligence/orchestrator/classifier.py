@@ -94,6 +94,25 @@ _TIER_STANDARD = 4.0    # formerly FAST
 _TIER_COMPLEX  = 9.0    # formerly BALANCED
 # 15+ → EXPERT (formerly DEEP)
 
+# ── confidence (COGNIREPO-703) ────────────────────────────────────────────────
+# _compute_score() is structurally a bounded evidence-accumulation model — independent signals
+# sum until a fixed boundary decides the tier — the same computational shape as classic
+# decision models where confidence/reaction-time correlates with the margin at threshold-
+# crossing (Gold & Shadlen 2007, evidence accumulation to a bound in posterior parietal
+# cortex/LIP). Only the tier label survived that computation before this; `confidence` exposes
+# the discarded margin as a diagnostic signal — purely additive, zero change to _compute_score's
+# signal weights or _score_to_tier's boundaries above, zero change to which tier a query lands
+# in. A margin of _CONFIDENCE_SCALE score-points (or more) from the nearest boundary counts as
+# maximal confidence (1.0); sitting exactly on a boundary is 0.0.
+_CONFIDENCE_SCALE = 1.0
+_TIER_BOUNDARIES = (_TIER_QUICK, _TIER_STANDARD, _TIER_COMPLEX)
+
+
+def _confidence_from_score(score: float) -> float:
+    """Normalized distance from `score` to the nearest tier boundary — [0, 1], COGNIREPO-703."""
+    margin = min(abs(score - b) for b in _TIER_BOUNDARIES)
+    return round(min(1.0, margin / _CONFIDENCE_SCALE), 4)
+
 # Old tier name → new tier name (for config migration)
 _LEGACY_TIER_MAP = {
     "FAST": "STANDARD",
@@ -115,6 +134,7 @@ class ClassifierResult:
     provider: str                      # "anthropic" | "gemini" | "grok" | "openai"
     signals: dict[str, float] = field(default_factory=dict)
     overrides: list[str] = field(default_factory=list)
+    confidence: float = 1.0            # [0, 1] — see _confidence_from_score (COGNIREPO-703)
 
 
 def _resolve_provider(provider: str) -> str:
@@ -173,11 +193,26 @@ def _load_model_registry() -> dict:
 
 
 # Single source of truth for default models per provider.
-# router.py and key_probes.py import from here — do NOT hardcode elsewhere.
+# router.py, key_probes.py, and model_adapters/*.py import from here — do NOT hardcode elsewhere.
 DEFAULT_MODELS_BY_PROVIDER: dict[str, str] = {
     "anthropic": "claude-haiku-4-5",
     "gemini": "gemini-2.0-flash",
     "openai": "gpt-4o-mini",
+}
+
+# Standalone defaults for model_adapters/*.py's own `call()` functions when invoked directly,
+# outside the tier router — e.g. interface/cli/main.py's _test_connection() ping, or router.py's
+# own fallback chain (_PROVIDER_DEFAULT_MODELS) for "grok", which classifier's tier registry
+# above doesn't route to. Deliberately NOT the same dict as DEFAULT_MODELS_BY_PROVIDER (that's
+# the QUICK-tier default): a connectivity check exercising a higher-capability model confirms
+# paid-tier access actually works, not just an unused free/cheap tier. anthropic's value matches
+# the COMPLEX tier's model in the registry above; gemini's happens to already match
+# DEFAULT_MODELS_BY_PROVIDER's.
+ADAPTER_STANDALONE_DEFAULTS: dict[str, str] = {
+    "anthropic": "claude-sonnet-4-6",
+    "gemini": "gemini-2.0-flash",
+    "openai": "gpt-4o",
+    "grok": "grok-beta",
 }
 
 
@@ -238,6 +273,7 @@ def classify(
         provider=provider,
         signals=signals,
         overrides=overrides,
+        confidence=_confidence_from_score(score),
     )
 
 

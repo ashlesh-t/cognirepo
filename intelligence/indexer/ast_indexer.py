@@ -26,6 +26,7 @@ Persistence:
 from __future__ import annotations
 
 import ast
+import copy
 import functools
 import hashlib
 import json
@@ -34,6 +35,7 @@ import os
 import platform
 import subprocess
 import tempfile
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,7 +45,11 @@ import faiss
 import numpy as np
 import warnings
 
+from core.config.atomic import atomic_json_dump, atomic_path
+from core.config.lock import StoreBusy
+from core.config.safe_read import StoreUnreadableError, quarantine_if_stably_corrupt, read_retry
 from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
+from data.graph.journal import JournalBusy
 from data.graph.graph_utils import make_node_id, node_id_from_symbol_record
 from intelligence.indexer.index_utils import SymbolTable, build_symbol_table_from_index
 from intelligence.indexer.language_registry import (
@@ -69,6 +75,11 @@ def _ast_meta_file() -> str:
 
 def _manifest_file() -> str:
     return get_path("index/manifest.json")
+
+
+#: how long the Tier-2 queue file lock is waited for before StoreBusy (write/trim, and the initial read)
+_QUEUE_LOCK_WAIT = 10.0
+_QUEUE_READ_WAIT = 30.0
 
 
 def _store_lock_or_null():
@@ -102,12 +113,16 @@ _SKIP_DIRS: frozenset[str] = frozenset({
     # Java / Kotlin / Gradle
     ".gradle", "gradle", "out", "classes", "generated", "generated-sources", "gen",
     ".idea",
+    # C# / .NET (MSBuild intermediate output is full of generated *.cs)
+    "obj", ".vs",
     # Go / Kubernetes
     # NOTE: "staging" is deliberately NOT skipped — in Kubernetes-style repos
     # staging/ holds real first-party source (k8s.io/apiserver etc.). Repos that
     # use staging/ as a build artifact dir can re-add it via config.json:
     #   {"indexing": {"skip_dirs": ["staging"]}}
     "vendor", "third_party", "_output", "_artifacts",
+    # Swift / iOS (CocoaPods, SwiftPM, Carthage, Xcode build output)
+    "Pods", ".build", "Carthage", "DerivedData",
     # Bazel
     "bazel-bin", "bazel-out", "bazel-testlogs", "bazel-genfiles",
     # General build
@@ -184,31 +199,94 @@ def _effective_max_file_bytes() -> int:
     except Exception:  # pylint: disable=broad-except
         return _MAX_FILE_BYTES
 
+def _journal_settings() -> tuple[bool, int, float, float]:
+    """(enabled, flush_ops, flush_secs, writer_wait_secs) for the KnowledgeGraph journal.
+
+    ``indexing.writer_wait_secs`` (default 0 = refuse immediately) is how long a second
+    ``index-repo`` queues behind the process holding the graph writer lease (#137).
+
+    config.json → {"indexing": {"graph_journal": true, "graph_journal_flush_files": 200,
+    "graph_journal_flush_secs": 30}}.  flush_files is converted to an op budget
+    (~25 graph ops per file) so the flush trigger tracks work done, not just file count.
+    """
+    try:
+        with open(get_path("config.json"), encoding="utf-8") as _f:
+            _idx = json.load(_f).get("indexing", {})
+    except Exception:  # pylint: disable=broad-except
+        _idx = {}
+    enabled = bool(_idx.get("graph_journal", True))
+    try:
+        files = max(1, int(_idx.get("graph_journal_flush_files", 200)))
+        secs = float(_idx.get("graph_journal_flush_secs", 30))
+        wait = max(0.0, float(_idx.get("writer_wait_secs", 0)))
+    except (TypeError, ValueError):
+        files, secs, wait = 200, 30.0, 0.0
+    return enabled, files * 25, secs, wait
+
 # tree-sitter node types that represent named functions / methods
 _TS_FUNCTION_TYPES = frozenset({
     "function_definition",        # Python, C++
     "function_declaration",       # JS, TS, Java, Go, C
     "function_item",              # Rust
+    "local_function_statement",   # C# local functions
     "method_declaration",         # Java, C#
     "method_definition",          # JS/TS class methods
     "function_expression",        # JS assigned function
     "arrow_function",             # JS/TS arrow functions
     "method_signature",           # TS interface methods
     "function_signature",         # TS ambient/overload signatures
+    "init_declaration",           # Swift init()
+    "deinit_declaration",         # Swift deinit (no `name` field — see _walk_ts)
+    "protocol_function_declaration",  # Swift protocol requirements
 })
 
 # tree-sitter node types that represent named classes / types
 _TS_CLASS_TYPES = frozenset({
     "class_definition",           # Python
+    "protocol_declaration",       # Swift (class/struct/enum/actor/extension use class_declaration)
     "class_declaration",          # Java, JS, TS
     "abstract_class_declaration", # TypeScript abstract classes
     "class_specifier",            # C++
     "struct_item",                # Rust
+    "struct_declaration",         # C#
+    "record_declaration",         # C# records (also Java 16+ records)
     "interface_declaration",      # Java, TS
     "type_alias_declaration",     # TypeScript type aliases
+    "trait_declaration",          # PHP traits
     "enum_declaration",           # TypeScript / Java enums
     "type_spec",                  # Go: type Foo struct{...} / type Bar interface{...}
                                   # (name field lives on type_spec, not type_declaration)
+})
+
+# Per-language node types, keyed by language_registry.lang_name().  Kept out of the
+# shared sets above because their names collide with other grammars' nodes — Ruby's
+# `class`/`module` would otherwise also match JS class expressions and TS `module` blocks.
+_TS_LANG_FUNCTION_TYPES: dict[str, frozenset[str]] = {
+    "ruby": frozenset({"method", "singleton_method"}),  # def foo / def self.foo
+    # Kotlin `constructor(…)` / `init { … }` — unnamed, see _KEYWORD_NAMED_FUNCTIONS
+    "kotlin": frozenset({"secondary_constructor", "anonymous_initializer"}),
+    # C# constructors / finalizers — renamed in _walk_ts so they don't share the class's node id
+    "csharp": frozenset({"constructor_declaration", "destructor_declaration"}),
+}
+_TS_LANG_CLASS_TYPES: dict[str, frozenset[str]] = {
+    "ruby": frozenset({"class", "module"}),
+    # Kotlin class/interface/enum/data class use class_declaration (shared set)
+    "kotlin": frozenset({"object_declaration", "companion_object"}),
+}
+
+# Function nodes with no `name` field, named after their keyword token instead.
+_KEYWORD_NAMED_FUNCTIONS: dict[str, str] = {
+    "deinit_declaration": "deinit",          # Swift deinit { … }
+    "secondary_constructor": "constructor",  # Kotlin constructor(x: Int) { … }
+    "anonymous_initializer": "init",         # Kotlin init { … }
+}
+
+# Member symbols whose name is the same in every type (`constructor`, `init`, `Companion`).
+# Graph node ids are `file::name`, so two classes in one file would share one node; these are
+# prefixed with the enclosing type (`Service.constructor`) to keep them apart.
+_OWNER_QUALIFIED_FUNCTIONS = frozenset({
+    "secondary_constructor", "anonymous_initializer",  # Kotlin
+    "constructor_declaration",                         # C# (reached only for csharp)
 })
 
 
@@ -248,16 +326,22 @@ def _sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
-def _write_manifest(repo_root: str | None = None, symbol_count: int = 0, file_count: int = 0) -> None:
+def _write_manifest(repo_root: str | None = None, symbol_count: int = 0, file_count: int = 0,
+                    git_commit: str | None = None) -> None:
     """
     Write .cognirepo/index/manifest.json after a successful index run.
+
+    ``git_commit``: pass it when the caller already resolved it. ``ASTIndexer.save`` does this
+    BEFORE taking the store lock — ``git rev-parse`` is a subprocess that can be slow (large repo,
+    network filesystem) or hang, and it must not run while every other process waits on the lock
+    (COGNIREPO-141). When omitted it is resolved here, as before.
 
     The manifest ties the index state to a git commit SHA and records
     platform metadata so architecture mismatches can be detected on load.
     Run `cognirepo verify-index` to check integrity at any time.
     """
     manifest = {
-        "git_commit": _git_head(repo_root),
+        "git_commit": git_commit if git_commit is not None else _git_head(repo_root),
         "indexed_at": _now(),
         "cognirepo_version": _cognirepo_version(),
         "platform": {
@@ -274,8 +358,7 @@ def _write_manifest(repo_root: str | None = None, symbol_count: int = 0, file_co
         "symbol_count": symbol_count,
     }
     try:
-        with open(_manifest_file(), "w", encoding="utf-8") as f:
-            json.dump(manifest, f, indent=2)
+        atomic_json_dump(_manifest_file(), manifest, indent=2)
     except OSError as exc:
         log.warning("Could not write index manifest: %s", exc)
 
@@ -431,6 +514,31 @@ def _ts_docstring(node, source: bytes, ext: str) -> str:
     return ""
 
 
+# Ruby callees that are language/runtime machinery rather than user symbols.
+_RUBY_NON_SYMBOL_CALLS = frozenset({"class", "new"})
+
+
+def _fieldless_callee(node):
+    """Callee of a Swift / Kotlin call_expression, which has no field names.
+
+    Only accept the node shapes tree-sitter-swift / tree-sitter-kotlin actually produce for
+    a callee so this fallback can't misfire on another grammar (or grammar version) that
+    reaches the shared `call_expression` branch without a `function`/`name` field.
+    """
+    first = node.named_children[0] if node.named_children else None
+    if first is None:
+        return None
+    if first.type in ("simple_identifier", "navigation_expression"):  # Swift, Kotlin a.b()
+        return first
+    # Kotlin `foo(x)` / `foo { … }`: a bare identifier is only a callee when followed by
+    # Kotlin's call suffix (value_arguments / trailing lambda).
+    if first.type == "identifier" and any(
+        c.type in ("value_arguments", "annotated_lambda") for c in node.children
+    ):
+        return first
+    return None
+
+
 def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
     """Recursively collect function-call names from a tree-sitter subtree.
 
@@ -442,7 +550,7 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
     """
     if depth > 60:
         return
-    if node.type == "call":          # Python
+    if node.type == "call":          # Python, Ruby
         fn = node.child_by_field_name("function")
         if fn:
             attr = fn.child_by_field_name("attribute")
@@ -450,18 +558,36 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
                 out.append(_ts_text(attr, source))
             elif fn.type == "identifier":
                 out.append(_ts_text(fn, source))
+        else:
+            # Ruby: `foo(x)` / `recv.foo(x)` / `Mod::foo` — callee is the `method` field.
+            # `self.class.x` / `Foo.new` would record `class` / `new`, which can never
+            # resolve to a user symbol, so skip them.
+            meth = node.child_by_field_name("method")
+            if meth and meth.type in ("identifier", "constant"):
+                meth_name = _ts_text(meth, source)
+                if meth_name not in _RUBY_NON_SYMBOL_CALLS:
+                    out.append(meth_name)
     elif node.type == "call_expression":  # JS / Java / Go
         fn = (
             node.child_by_field_name("function")
             or node.child_by_field_name("name")
+            or _fieldless_callee(node)  # Swift / Kotlin: no field names
         )
         if fn:
             prop = (
                 fn.child_by_field_name("property")  # JS/TS: obj.prop()
                 or fn.child_by_field_name("field")  # Go selector_expression: obj.Field()
             )
+            if prop is None and fn.type == "navigation_expression":
+                suffix = fn.child_by_field_name("suffix")
+                if suffix is not None:  # Swift: obj.method()
+                    prop = suffix.child_by_field_name("suffix")
+                else:  # Kotlin: obj.method() / obj?.method() — member is the last child
+                    last = fn.named_children[-1] if fn.named_children else None
+                    prop = last if last is not None and last.type == "identifier" else None
             name_node = prop if prop else fn
-            if name_node.type in ("identifier", "property_identifier", "field_identifier"):
+            if name_node.type in ("identifier", "property_identifier", "field_identifier",
+                                  "simple_identifier"):  # simple_identifier: Swift
                 method_name = _ts_text(name_node, source)
                 out.append(method_name)
                 # For Go selector_expression, also record "receiver::method" so
@@ -472,10 +598,29 @@ def _ts_collect_calls(node, source: bytes, out: list, depth: int = 0) -> None:
                         receiver_type = _ts_text(obj_node, source)
                         if receiver_type and receiver_type[0].isupper():
                             out.append(f"{receiver_type}::{method_name}")
-    elif node.type == "method_invocation":  # Java
-        name_node = node.child_by_field_name("name")
-        if name_node:
+    elif node.type in ("method_invocation",          # Java
+                       "member_call_expression",     # PHP: $obj->foo()
+                       "scoped_call_expression",     # PHP: Foo::bar()
+                       "function_call_expression"):  # PHP: foo()
+        name_node = node.child_by_field_name("name") or node.child_by_field_name("function")
+        if name_node is not None and name_node.type == "qualified_name":
+            # PHP: `\Foo\bar()` / `Foo\bar()` — record the trailing `name`
+            name_node = _php_last_name(name_node)
+        if name_node and name_node.type in ("identifier", "name"):
             out.append(_ts_text(name_node, source))
+    elif node.type == "invocation_expression":  # C#: Foo() / obj.Foo() / Foo<T>()
+        fn = node.child_by_field_name("function")
+        if fn is not None and fn.type == "conditional_access_expression":
+            # `a?.Foo()` / `b.Bar?.Baz()` — the callee is the trailing member_binding_expression
+            binding = fn.named_children[-1] if fn.named_children else None
+            fn = (binding.child_by_field_name("name")
+                  if binding is not None and binding.type == "member_binding_expression" else None)
+        if fn is not None and fn.type == "member_access_expression":
+            fn = fn.child_by_field_name("name")
+        if fn is not None and fn.type == "generic_name":
+            fn = next((c for c in fn.children if c.type == "identifier"), None)
+        if fn is not None and fn.type == "identifier":
+            out.append(_ts_text(fn, source))
     for child in node.children:
         _ts_collect_calls(child, source, out, depth + 1)
 
@@ -515,11 +660,45 @@ def _detect_dynamic_dispatch(name: str, decorators: list[str], calls: list[str])
     return "register" in calls
 
 
+def _php_last_name(node):
+    """Return the trailing `name` of a PHP `qualified_name` (`\\Ns\\E` → `E`)."""
+    names = [c for c in node.named_children if c.type == "name"]
+    return names[-1] if names else None
+
+
+def _php_type_names(clause, source: bytes) -> list[str]:
+    """Simple names listed in a PHP extends/implements/use clause.
+
+    Namespaced names are reduced to their last segment so INHERITS edges resolve
+    to the symbol by simple name.
+    """
+    out: list[str] = []
+    for c in clause.named_children:
+        if c.type == "qualified_name":
+            c = _php_last_name(c)
+        if c is not None and c.type == "name":
+            out.append(_ts_text(c, source))
+    return out
+
+
 def _ts_bases(node, source: bytes) -> list[str]:
     """Extract base class names from a class tree-sitter node."""
     bases: list[str] = []
+    # PHP: `class Foo extends Bar implements I, K { use T; }` — parent in base_clause,
+    # interfaces in class_interface_clause, traits in a body-level use_declaration.
+    for child in node.children:
+        if child.type in ("base_clause", "class_interface_clause"):
+            bases.extend(_php_type_names(child, source))
+        elif child.type == "declaration_list":
+            for member in child.named_children:
+                if member.type == "use_declaration":
+                    bases.extend(_php_type_names(member, source))
     # Python: argument_list child of class_definition
-    arg_list = node.child_by_field_name("superclasses") or node.child_by_field_name("bases")
+    arg_list = (
+        node.child_by_field_name("superclasses")
+        or node.child_by_field_name("bases")
+        or node.child_by_field_name("superclass")  # Ruby: class Foo < Bar
+    )
     if arg_list is None:
         # fallback: find argument_list or base_list child
         for child in node.children:
@@ -528,11 +707,157 @@ def _ts_bases(node, source: bytes) -> list[str]:
                 break
     if arg_list:
         for child in arg_list.children:
-            if child.type in ("identifier", "type_identifier", "attribute"):
+            if child.type in ("identifier", "type_identifier", "attribute",
+                              "constant", "scope_resolution"):  # Ruby: Bar / Mod::Bar
                 name = _ts_text(child, source)
+                if child.type == "scope_resolution":
+                    # Ruby `Auth::Base` → `Base`: call stubs resolve by simple name,
+                    # mirroring the Python path's dotted-base normalisation.
+                    name = name.rsplit("::", 1)[-1]
                 if name not in ("object", "ABC", "Enum", "IntEnum", ",", "(", ")"):
                     bases.append(name)
+    # Swift: `class Foo: Bar, Proto` — one inheritance_specifier child per parent
+    for child in node.children:
+        if child.type == "inheritance_specifier":
+            parent = child.child_by_field_name("inherits_from")
+            if parent:
+                bases.append(_ts_text(parent, source))
+        elif child.type == "delegation_specifiers":
+            bases.extend(_kotlin_supertypes(child, source))
     return bases
+
+
+def _kotlin_supertypes(specs, source: bytes) -> list[str]:
+    """Simple names in a Kotlin `: Base(), Iface, Other by impl` supertype list.
+
+    The type sits in a user_type directly, under constructor_invocation (`Base()`) or under
+    explicit_delegation (`Iface by impl`). Qualified names (`a.b.Base`) are reduced to their
+    last segment and type arguments dropped, so INHERITS edges resolve by simple name.
+    """
+    out: list[str] = []
+    for spec in specs.named_children:
+        node = spec.named_children[0] if spec.named_children else None
+        if node is not None and node.type in ("constructor_invocation", "explicit_delegation"):
+            node = node.named_children[0] if node.named_children else None
+        if node is None or node.type != "user_type":
+            continue
+        idents = [c for c in node.named_children if c.type == "identifier"]
+        if idents:
+            out.append(_ts_text(idents[-1], source))
+    return out
+
+
+def _enclosing_type_name(node, source: bytes, lang: str) -> "str | None":
+    """Name of the nearest enclosing class-like declaration, or None at top level."""
+    lang_types = _TS_LANG_CLASS_TYPES.get(lang, frozenset())
+    parent = node.parent
+    while parent is not None:
+        if parent.type in _TS_CLASS_TYPES or parent.type in lang_types:
+            name = parent.child_by_field_name("name")
+            if name is not None and not name.is_missing:
+                return _ts_text(name, source)
+        parent = parent.parent
+    return None
+
+
+def _owner_qualified(node, source: bytes, lang: str, name: str) -> str:
+    """`Owner.name` for a member of a named type, else `name` unchanged."""
+    owner = _enclosing_type_name(node, source, lang)
+    return f"{owner}.{name}" if owner else name
+
+
+def _function_symbol(name: str, node, calls: list[str], *, docstring: str = "",
+                     decorators: "list[str] | None" = None, tags: "list[str] | None" = None,
+                     dispatch: "str | None" = None, span: "tuple | None" = None) -> dict:
+    """The FUNCTION symbol record every tree-sitter path emits. *span* is an optional
+    (start_node, end_node) pair when the symbol covers only part of *node*."""
+    first, last = span if span is not None else (node, node)
+    return {
+        "name": name,
+        "type": "FUNCTION",
+        "start_line": first.start_point[0] + 1,
+        "end_line": last.end_point[0] + 1,
+        "docstring": docstring,
+        "decorators": decorators or [],
+        "tags": tags or [],
+        "calls": list(dict.fromkeys(calls)),
+        "bases": [],
+        "faiss_id": -1,
+        "dispatch": dispatch,
+    }
+
+
+def _swift_property_symbols(node, source: bytes, lang: str) -> list[dict]:
+    """FUNCTION symbols for Swift computed properties and properties with observers.
+
+    `var x: Int { calc() }`, `get { … } set { … }` and `willSet { … } didSet { … }` become one
+    symbol per property, named `Owner.x` (bare `x` at top level) and carrying the calls from
+    every accessor — the same way a Python `@property` is a FUNCTION symbol. The owner prefix
+    keeps ubiquitous names (SwiftUI's `body`, `description`) of different types in one file on
+    separate `file::name` graph nodes. A multi-binding declaration (`var a: Int { … }, b: Int
+    { … }`) lists its bindings as flat siblings, each `name` followed by its own accessors.
+    Stored properties without accessors, and local computed variables inside a function body
+    (whose calls already belong to that function), produce nothing.
+    """
+    if node.parent is not None and node.parent.type == "statements":
+        return []
+    bindings: list[tuple] = []  # (pattern node, [accessor nodes])
+    for i, child in enumerate(node.children):
+        field = node.field_name_for_child(i)
+        if field == "name":
+            bindings.append((child, []))
+        elif bindings and (field == "computed_value" or child.type == "willset_didset_block"):
+            bindings[-1][1].append(child)
+    symbols: list[dict] = []
+    for pattern, accessors in bindings:
+        name_node = pattern.child_by_field_name("bound_identifier")
+        if name_node is None or not accessors:
+            continue
+        calls: list[str] = []
+        for accessor in accessors:
+            _ts_collect_calls(accessor, source, calls)
+        name = _owner_qualified(node, source, lang, _ts_text(name_node, source))
+        symbols.append(_function_symbol(name, node, calls, tags=["property"],
+                                        span=(pattern, accessors[-1])))
+    return symbols
+
+
+def _csharp_property_symbols(node, source: bytes, lang: str) -> list[dict]:
+    """FUNCTION symbol for a C# property whose accessors have bodies.
+
+    `int X { get { return Load(); } set { Store(value); } }`, `int X { get => Get(); }` and
+    expression-bodied `int X => Calc();` become one symbol named `Owner.X`, carrying the calls
+    from every accessor — the same way a Python `@property` is a FUNCTION symbol. The owner
+    prefix matters: in the idiomatic `public Customer Customer { get … }` the bare name would
+    share the CLASS `Customer`'s `file::name` node. Auto-properties (`{ get; set; }`) have no
+    bodies and produce nothing; calls in an initialiser (`= Make();`) are not attributed, like
+    field initialisers.
+    """
+    name_node = node.child_by_field_name("name")
+    bodies = []
+    value = node.child_by_field_name("value")
+    if value is not None and value.type == "arrow_expression_clause":
+        bodies.append(value)
+    accessors = node.child_by_field_name("accessors")
+    if accessors is not None:
+        for acc in accessors.named_children:
+            body = acc.child_by_field_name("body") if acc.type == "accessor_declaration" else None
+            if body is not None:
+                bodies.append(body)
+    if name_node is None or not bodies:
+        return []
+    calls: list[str] = []
+    for body in bodies:
+        _ts_collect_calls(body, source, calls)
+    name = _owner_qualified(node, source, lang, _ts_text(name_node, source))
+    return [_function_symbol(name, node, calls, tags=["property"])]
+
+
+# lang → builder for `property_declaration` nodes that should become FUNCTION symbols
+_PROPERTY_SYMBOL_BUILDERS = {
+    "swift": _swift_property_symbols,
+    "csharp": _csharp_property_symbols,
+}
 
 
 def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] | None" = None) -> None:
@@ -546,8 +871,21 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
                 _walk_ts(child, source, ext, out, _parent_decs=decs)
         return
 
-    if node.type in _TS_FUNCTION_TYPES:
+    lang = lang_name(ext)
+    prop_builder = _PROPERTY_SYMBOL_BUILDERS.get(lang) if node.type == "property_declaration" else None
+    if prop_builder is not None:
+        out.extend(prop_builder(node, source, lang))
+    elif node.type in _TS_FUNCTION_TYPES or node.type in _TS_LANG_FUNCTION_TYPES.get(lang, ()):
         name_node = node.child_by_field_name("name")
+        if name_node is None and node.type in _KEYWORD_NAMED_FUNCTIONS:
+            # Swift `deinit` / Kotlin `constructor` / `init` have no name field; use the
+            # keyword token
+            keyword = _KEYWORD_NAMED_FUNCTIONS[node.type]
+            name_node = next((c for c in node.children if c.type == keyword), None)
+        if name_node is not None and name_node.is_missing:
+            # zero-width node inserted by error recovery (e.g. tree-sitter-kotlin on
+            # constructs it can't parse) — never emit a symbol with an empty name
+            name_node = None
         # arrow functions assigned to a variable: capture parent's name via caller
         if name_node is None and node.type == "arrow_function":
             for child in node.children:
@@ -557,25 +895,27 @@ def _walk_ts(node, source: bytes, ext: str, out: list, _parent_decs: "list[str] 
             calls: list[str] = []
             _ts_collect_calls(node, source, calls)
             fn_name = _ts_text(name_node, source)
+            if node.type == "constructor_declaration":
+                fn_name = "constructor"  # C#: its `name` is the class name (= the CLASS node id)
+            elif node.type == "destructor_declaration":
+                fn_name = f"~{fn_name}"  # C# finalizer, named as declared: `~Svc`
+            if node.type in _OWNER_QUALIFIED_FUNCTIONS:
+                fn_name = _owner_qualified(node, source, lang, fn_name)
             fn_decs = _parent_decs or []
             fn_calls = list(dict.fromkeys(calls))
-            out.append({
-                "name": fn_name,
-                "type": "FUNCTION",
-                "start_line": node.start_point[0] + 1,
-                "end_line": node.end_point[0] + 1,
-                "docstring": _ts_docstring(node, source, ext),
-                "decorators": fn_decs,
-                "tags": [],
-                "calls": fn_calls,
-                "bases": [],
-                "faiss_id": -1,
-                "dispatch": "dynamic" if _detect_dynamic_dispatch(fn_name, fn_decs, fn_calls) else None,
-            })
-    elif node.type in _TS_CLASS_TYPES:
+            out.append(_function_symbol(
+                fn_name, node, fn_calls,
+                docstring=_ts_docstring(node, source, ext),
+                decorators=fn_decs,
+                dispatch="dynamic" if _detect_dynamic_dispatch(fn_name, fn_decs, fn_calls) else None,
+            ))
+    elif node.type in _TS_CLASS_TYPES or node.type in _TS_LANG_CLASS_TYPES.get(lang, ()):
         name_node = node.child_by_field_name("name")
-        if name_node:
-            cls_name = _ts_text(name_node, source)
+        cls_name = _ts_text(name_node, source) if name_node and not name_node.is_missing else None
+        if cls_name is None and node.type == "companion_object":
+            # Kotlin's implicit name for an unnamed companion object, qualified by its class
+            cls_name = _owner_qualified(node, source, lang, "Companion")
+        if cls_name:
             cls_decs = _parent_decs or []
             out.append({
                 "name": cls_name,
@@ -1232,6 +1572,10 @@ class ASTIndexer:
         # `_repo_ctx(other_repo)` block resolves to a different repo's index —
         # recording it lets reload_if_changed() refuse a cross-repo reload.
         self._disk_path: str | None = None
+        # Files whose record THIS instance changed since it last synced with disk
+        # ("set" = indexed/updated, "del" = removed). save() uses it to rebase onto a
+        # newer on-disk index instead of overwriting it (COGNIREPO-139).
+        self._dirty_files: dict[str, str] = {}
 
     # ── disk freshness ────────────────────────────────────────────────────────
 
@@ -1278,7 +1622,13 @@ class ASTIndexer:
             "ast_index.json changed on disk (%s -> %s) — reloading",
             self._disk_stamp, current,
         )
-        self.load()
+        if self._dirty():
+            # Unsaved local edits: a plain load() would discard them. Rebase them onto the new
+            # on-disk state instead (they are written out by the next save()).
+            with _store_lock_or_null():
+                self._rebase_onto_disk_locked()
+        else:
+            self.load()
         # lru_cache lives on the class, so this clears entries for every
         # instance — required, since the cached lists are pre-reload paths.
         type(self).lookup_symbol.cache_clear()
@@ -1323,6 +1673,11 @@ class ASTIndexer:
                 from tree_sitter import Parser  # pylint: disable=import-outside-toplevel
                 parser = Parser(lang)
                 tree = parser.parse(source)
+                if tree.root_node.has_error:
+                    # error recovery can silently drop declarations (e.g. tree-sitter-kotlin on
+                    # enum entries with bodies), so a half-parsed file is otherwise invisible
+                    log.debug("[parse-errors] %s: grammar reported errors; symbols may be missing",
+                              abs_path)
                 ts_symbols = _extract_symbols_ts(tree, source, ext)
                 if ext != ".py":
                     return ts_symbols
@@ -1414,6 +1769,39 @@ class ASTIndexer:
         self._pending_embeds.clear()
 
     def index_repo(
+        self,
+        repo_root: str,
+        embed: bool = True,
+        skip_graph: bool | None = None,
+        tier: "int | str | None" = None,
+    ) -> dict:
+        """Index *repo_root*, journaling graph mutations to disk as they happen.
+
+        Thin wrapper over :meth:`_index_repo_impl` (see there for parameters). With
+        ``indexing.graph_journal`` on (default) graph mutations are flushed to
+        ``graph.journal`` every N files / T seconds so an interrupted run — or a failed
+        final ``kg.save()`` — loses at most the last unflushed segment (COGNIREPO-109).
+        """
+        journaling = False
+        enabled, flush_ops, flush_secs, wait = _journal_settings()
+        if enabled:
+            try:
+                self.graph.begin_journal(flush_ops, flush_secs, wait=wait)
+                journaling = True
+            except JournalBusy:
+                raise  # another indexer owns the graph: refuse, don't race it (#137)
+            except Exception as exc:  # pylint: disable=broad-except
+                log.debug("graph journal disabled for this run: %s", exc)
+        try:
+            return self._index_repo_impl(repo_root, embed, skip_graph, tier)
+        finally:
+            if journaling:
+                try:
+                    self.graph.end_journal()
+                except Exception as exc:  # pylint: disable=broad-except
+                    log.warning("graph journal final flush failed: %s", exc)
+
+    def _index_repo_impl(
         self,
         repo_root: str,
         embed: bool = True,
@@ -1649,6 +2037,9 @@ class ASTIndexer:
                 _entry_point_dispatch = self._apply_entry_points_dispatch()
             except Exception as _exc:  # pylint: disable=broad-except
                 log.warning("entry_points dispatch pass failed (graph still valid): %s", _exc)
+            # A full walk finished: this graph is a valid base for incremental runs
+            # (--files, --changed-only, the watcher). COGNIREPO-122.
+            self.graph.mark_complete()
         total_symbols = sum(
             len(f.get("symbols", [])) for f in self.index_data["files"].values()
         )
@@ -1711,6 +2102,10 @@ class ASTIndexer:
             "entry_point_dispatch": _entry_point_dispatch,
         }
 
+    def indexed_file_count(self) -> int:
+        """Number of files recorded in the (loaded) AST index — 0 if none."""
+        return len(self.index_data.get("files", {}))
+
     def index_file(self, rel_path: str, abs_path: str | None = None, weight: float = 1.0) -> dict:
         """
         Index one file. Skips if sha256 matches existing entry or file > max_file_bytes.
@@ -1726,6 +2121,7 @@ class ASTIndexer:
         if not is_supported(Path(rel_path)):
             return {}
 
+        self.graph.maybe_flush()  # no-op unless index_repo() started a journal
         self._ensure_faiss()
         if abs_path is None:
             abs_path = rel_path
@@ -1951,6 +2347,7 @@ class ASTIndexer:
             "symbols": raw_symbols,
         }
         self.index_data["files"][rel_path] = file_record
+        self._dirty()[rel_path] = "set"
 
         # incrementally update reverse_index for this file only
         rev = self.index_data.setdefault("reverse_index", {})
@@ -2031,22 +2428,21 @@ class ASTIndexer:
                                         file=file_path, line=line)
                 # Redirect outgoing edges (CALLS → callers)
                 for successor in list(self.graph.G.successors(stub)):
-                    edge_data = dict(self.graph.G[stub][successor])
                     if not self.graph.G.has_edge(real_node, successor):
-                        self.graph.G.add_edge(real_node, successor, **edge_data)
+                        self.graph.copy_edge(stub, successor, real_node, successor)
                 # Redirect incoming edges (CALLED_BY from callers)
                 for predecessor in list(self.graph.G.predecessors(stub)):
-                    edge_data = dict(self.graph.G[predecessor][stub])
                     if not self.graph.G.has_edge(predecessor, real_node):
-                        self.graph.G.add_edge(predecessor, real_node, **edge_data)
-                self.graph.G.remove_node(stub)
+                        self.graph.copy_edge(predecessor, stub, predecessor, real_node)
+                self.graph.remove_node(stub)
 
             elif len(locations) > 1:
-                self.graph.G.nodes[stub]["ambiguous"] = True
-                self.graph.G.nodes[stub]["candidates"] = [loc[0] for loc in locations]
+                self.graph.set_node_attrs(
+                    stub, ambiguous=True, candidates=[loc[0] for loc in locations],
+                )
 
             else:
-                self.graph.G.nodes[stub]["unresolved"] = True
+                self.graph.set_node_attrs(stub, unresolved=True)
 
     def _similarity_gate_enabled(self, candidate_count: int) -> bool:
         """config.json → {"indexing": {"similarity_edges": true|false}}.
@@ -2183,7 +2579,7 @@ class ASTIndexer:
                 continue
             name = node_id.rsplit("::", 1)[-1]
             if name in targets and data.get("dispatch") != "dynamic":
-                self.graph.G.nodes[node_id]["dispatch"] = "dynamic"
+                self.graph.set_node_attrs(node_id, dispatch="dynamic")
                 self.graph.add_node(dispatch_node, NodeType.CONCEPT)
                 self.graph.add_edge(node_id, dispatch_node, EdgeType.RELATES_TO)
                 tagged += 1
@@ -2257,19 +2653,21 @@ class ASTIndexer:
         import json as _json  # pylint: disable=import-outside-toplevel
         from core.config.paths import pending_tier2_path  # pylint: disable=import-outside-toplevel
         try:
-            import filelock as _fl  # pylint: disable=import-outside-toplevel
-            _lock = _fl.FileLock(pending_tier2_path() + ".lock", timeout=10)
+            from core.config.lock import store_lock as _sl  # pylint: disable=import-outside-toplevel
+            _lock = _sl(timeout=_QUEUE_LOCK_WAIT, lock_path=pending_tier2_path() + ".lock")
             with _lock:
-                with open(pending_tier2_path(), "w", encoding="utf-8") as _f:
-                    _json.dump(
-                        {
-                            "repo_root": repo_root,
-                            "files": pending,
-                            "embed_pending": embed_pending,
-                            "total_queued": len(pending),
-                        },
-                        _f, indent=2,
-                    )
+                atomic_json_dump(
+                    pending_tier2_path(),
+                    {
+                        "repo_root": repo_root,
+                        "files": pending,
+                        "embed_pending": embed_pending,
+                        "total_queued": len(pending),
+                    },
+                    indent=2,
+                )
+        except StoreBusy:
+            raise   # a lost queue means the Tier-2 files are never indexed: fail loudly, don't warn and carry on
         except Exception as _exc:  # pylint: disable=broad-except
             log.warning("Could not write pending_tier2.json: %s", _exc)
 
@@ -2313,11 +2711,13 @@ class ASTIndexer:
             return {"files": 0, "symbols": 0, "languages": {}, "skipped_extensions": [], "tier2_queued": 0}
 
         try:
-            import filelock as _fl  # pylint: disable=import-outside-toplevel
-            _lock = _fl.FileLock(_queue_path + ".lock", timeout=30)
+            from core.config.lock import store_lock as _sl  # pylint: disable=import-outside-toplevel
+            _lock = _sl(timeout=_QUEUE_READ_WAIT, lock_path=_queue_path + ".lock")
             with _lock:
                 with open(_queue_path, encoding="utf-8") as _f:
                     _data = _json.load(_f)
+        except StoreBusy:
+            raise   # "0 files" would read as "nothing to do"; it means "could not read the queue"
         except Exception as _exc:  # pylint: disable=broad-except
             log.error("Tier 2: failed to read pending queue: %s", _exc)
             return {"files": 0, "symbols": 0, "languages": {}, "skipped_extensions": [], "tier2_queued": 0}
@@ -2337,13 +2737,10 @@ class ASTIndexer:
             self._batch_embed_pending()
             _data["embed_pending"] = False
             try:
-                import filelock as _fl  # pylint: disable=import-outside-toplevel
-                with _fl.FileLock(_queue_path + ".lock", timeout=10):
-                    with open(_queue_path, "w", encoding="utf-8") as _qf:
-                        import json as _j2  # pylint: disable=import-outside-toplevel
-                        _j2.dump(_data, _qf, indent=2)
+                with _sl(timeout=_QUEUE_LOCK_WAIT, lock_path=_queue_path + ".lock"):
+                    atomic_json_dump(_queue_path, _data, indent=2)
             except Exception:  # pylint: disable=broad-except
-                pass
+                pass   # progress bookkeeping: idempotent, redone next run
 
         print(f"  Tier 2: processing {len(_pending)} queued files in batches of {_batch_size}…")
         _pbar = tqdm(_pending, desc="Tier 2 indexing", unit="file", dynamic_ncols=True)
@@ -2401,12 +2798,17 @@ class ASTIndexer:
                 self._build_reverse_index()
                 self.save()
                 try:
-                    import json as _j  # pylint: disable=import-outside-toplevel
-                    with _fl.FileLock(_queue_path + ".lock", timeout=10):
-                        with open(_queue_path, "w", encoding="utf-8") as _qf:
-                            _j.dump({"repo_root": repo_root, "files": _remaining, "embed_pending": False}, _qf, indent=2)
-                    with open(tier2_progress_path(), "w", encoding="utf-8") as _pf:
-                        _j.dump({"processed": total_files, "remaining": len(_remaining)}, _pf, indent=2)
+                    with _sl(timeout=_QUEUE_LOCK_WAIT, lock_path=_queue_path + ".lock"):
+                        atomic_json_dump(
+                            _queue_path,
+                            {"repo_root": repo_root, "files": _remaining, "embed_pending": False},
+                            indent=2,
+                        )
+                    atomic_json_dump(
+                        tier2_progress_path(),
+                        {"processed": total_files, "remaining": len(_remaining)},
+                        indent=2,
+                    )
                 except Exception:  # pylint: disable=broad-except
                     pass
 
@@ -2565,6 +2967,14 @@ class ASTIndexer:
         )
         return {"before": before, "after": after, "compacted": True, "dropped": dropped}
 
+    def _dirty(self) -> dict:
+        """The dirty-file map (created lazily: some callers build an indexer via ``__new__``)."""
+        return self.__dict__.setdefault("_dirty_files", {})
+
+    def note_file_removed(self, rel_path: str) -> None:
+        """Record that ``rel_path`` was removed from this instance's index (for rebase-on-save)."""
+        self._dirty()[rel_path] = "del"
+
     def get_symbol_table(self, file_path: str) -> SymbolTable:
         """Return a SymbolTable for bisect-based line-range queries."""
         return build_symbol_table_from_index(file_path, self.index_data)
@@ -2608,36 +3018,27 @@ class ASTIndexer:
              large-monorepo ast_index.json" this function was written to fix.
 
         mkstemp() in the destination directory gives every writer its own
-        scratch file, so the only shared operation is the atomic rename.
+        scratch file, so the only shared operation is the atomic rename. The
+        recipe now lives in core/config/atomic.py (COGNIREPO-134).
         Callers that need the *group* of index files to be mutually
         consistent must additionally hold store_lock() — see save().
         """
-        directory = os.path.dirname(path) or "."
-        fd, tmp_path = tempfile.mkstemp(
-            dir=directory, prefix=os.path.basename(path) + ".", suffix=".tmp",
-        )
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(obj, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, path)
-        except BaseException:
-            # Never leave an orphaned scratch file behind on failure.
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
+        atomic_json_dump(path, obj, indent=2)
+
+    #: scratch files younger than this may belong to a live writer (COGNIREPO-135)
+    _STALE_TMP_MIN_AGE_SECS = 600
 
     @staticmethod
-    def _sweep_stale_tmp(path: str) -> None:
+    def _sweep_stale_tmp(path: str, min_age: float = 600) -> None:
         """Delete orphaned `<path>.*.tmp` scratch files left by a crashed write.
 
         _atomic_json_dump() cleans up its own tmp on failure, but a SIGKILL
-        or power loss mid-write can still strand one. They are never valid
-        index state, so removing them on load() keeps the index dir clean.
-        Also removes the legacy fixed-name `<path>.tmp` from before D13.
+        or power loss mid-write can still strand one. Also removes the legacy
+        fixed-name `<path>.tmp` from before D13.
+
+        Only files older than ``min_age`` seconds are removed: a younger one may be a
+        live writer's scratch file, and deleting it makes that writer's os.replace()
+        raise FileNotFoundError (COGNIREPO-135). load() calls this under store_lock.
         """
         directory = os.path.dirname(path) or "."
         base = os.path.basename(path)
@@ -2645,31 +3046,87 @@ class ASTIndexer:
             entries = os.listdir(directory)
         except OSError:
             return
+        now = time.time()
         for name in entries:
             if name == base + ".tmp" or (name.startswith(base + ".") and name.endswith(".tmp")):
+                full = os.path.join(directory, name)
                 try:
-                    os.unlink(os.path.join(directory, name))
+                    if now - os.stat(full).st_mtime < min_age:
+                        continue
+                    os.unlink(full)
                     log.debug("removed orphaned index scratch file %s", name)
                 except OSError:
                     pass
 
-    @staticmethod
-    def _load_json_self_heal(path: str, default):
-        """Load JSON; on corruption rename the file to .corrupt and return default."""
+    def _sweep_stale_tmp_locked(self) -> None:
+        """Sweep old scratch files, but only if store_lock is free right now (never block a
+        reader on a writer, never delete anything unlocked)."""
         try:
+            from core.config.lock import store_lock  # pylint: disable=import-outside-toplevel
+            from filelock import Timeout  # pylint: disable=import-outside-toplevel
+            with store_lock(timeout=0):
+                self._sweep_stale_tmp(_ast_index_file(), self._STALE_TMP_MIN_AGE_SECS)
+                self._sweep_stale_tmp(_ast_meta_file(), self._STALE_TMP_MIN_AGE_SECS)
+        except (ImportError, Timeout, OSError):
+            pass  # lock busy or unavailable: skip — the sweep is housekeeping, not correctness
+
+    @staticmethod
+    def _read_json_or_default(path: str, default):
+        """Read JSON without touching the file. Returns ``(value, error)``.
+
+        A reader must never rename or overwrite an unreadable file (COGNIREPO-135): the
+        failure may be a concurrent writer. Retries briefly; on persistent failure returns
+        ``(default, StoreUnreadableError)`` so the caller can refuse to persist the default.
+        """
+        def _read():
             with open(path, encoding="utf-8") as f:
                 return json.load(f)
-        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
-            log.warning(
-                "%s is corrupt or unreadable (%s). Renaming to .corrupt and "
-                "starting fresh — re-run `cognirepo index-repo .` to rebuild.",
-                os.path.basename(path), exc,
-            )
-            try:
-                os.replace(path, path + ".corrupt")
-            except OSError:
-                pass
-            return default
+        try:
+            return read_retry(path, _read), None
+        except StoreUnreadableError as exc:
+            log.warning("%s is unreadable (%s); using an empty value in memory and leaving "
+                        "the file untouched.", os.path.basename(path), exc.reason)
+            return default, exc
+
+    def _resolve_load_errors(self) -> None:
+        """Writer-side gate, called by save() under store_lock.
+
+        Refuses to overwrite a store that failed to load: the in-memory fallback is empty and
+        saving it would destroy a file that was merely unreadable (concurrent writer, partial
+        read). Only a file that stays unreadable AND unchanged is quarantined (bytes kept in
+        ``<file>.corrupt-<ts>``), after which the fresh state may be written. A FAISS binary
+        built for another platform is moved to ``.stale`` here — by the writer, not on load.
+        """
+        errors = getattr(self, "_load_errors", None) or {}
+        for path, exc in list(errors.items()):
+            if path.endswith(".index"):
+                def _readable(p=path) -> bool:
+                    try:
+                        faiss.read_index(p)
+                        return True
+                    except Exception:  # pylint: disable=broad-except
+                        return False
+            else:
+                def _readable(p=path) -> bool:
+                    try:
+                        with open(p, encoding="utf-8") as f:
+                            json.load(f)
+                        return True
+                    except Exception:  # pylint: disable=broad-except
+                        return False
+            if _readable():
+                raise StoreUnreadableError(
+                    path, "store failed to load but is readable now (transient) — reload and retry")
+            if quarantine_if_stably_corrupt(path, _readable) is None:
+                raise exc
+            del errors[path]
+        if getattr(self, "_faiss_platform_mismatch", False):
+            if os.path.exists(_ast_faiss_file()):
+                try:
+                    os.replace(_ast_faiss_file(), _ast_faiss_file() + ".stale")
+                except OSError:
+                    pass
+            self._faiss_platform_mismatch = False
 
     def save(self) -> None:
         """Persist AST index, FAISS index, and metadata to disk.
@@ -2684,8 +3141,18 @@ class ASTIndexer:
         corruption that never actually happened. KnowledgeGraph.save() has
         always taken this lock; ASTIndexer.save() did not. See COGNIREPO-D13.
         """
+        # Resolved BEFORE the lock: a subprocess must not run while other processes wait on it.
+        # (If another writer moved HEAD in between, the manifest still records the HEAD that was
+        # current when this save began - which is what the index we are writing was built from.)
+        git_commit = _git_head(self.index_data.get("repo_root") or None)
         with _store_lock_or_null():
+            self._resolve_load_errors()
             os.makedirs(os.path.dirname(_ast_index_file()), exist_ok=True)
+            # COGNIREPO-139: another process (index-repo, a second watcher) may have saved since
+            # we last synced. Writing our private copy would silently drop its files, so rebase
+            # our own changes onto what is on disk first (the graph does the same in its save()).
+            if self._is_stale_vs_disk():
+                self._rebase_onto_disk_locked()
             # Stamp every persist, not just full index_repo() runs. Without
             # this the watcher's incremental path leaves `indexed_at` frozen
             # at the last full index while the file mtime advances, so
@@ -2694,19 +3161,129 @@ class ASTIndexer:
             self.index_data["indexed_at"] = _now()
             self._atomic_json_dump(self.index_data, _ast_index_file())
             if self.faiss_index is not None:
-                faiss.write_index(self.faiss_index, _ast_faiss_file())
+                with atomic_path(_ast_faiss_file()) as _tmp:
+                    faiss.write_index(self.faiss_index, _tmp)
             self._atomic_json_dump(self.faiss_meta, _ast_meta_file())
 
             # Write integrity manifest after all index files are on disk
             repo_root = self.index_data.get("repo_root") or None
             file_count = len(self.index_data.get("files", {}))
             symbol_count = self.index_data.get("total_symbols", len(self.faiss_meta))
-            _write_manifest(repo_root=repo_root, symbol_count=symbol_count, file_count=file_count)
+            _write_manifest(repo_root=repo_root, symbol_count=symbol_count, file_count=file_count,
+                            git_commit=git_commit)
 
             # Adopt our own write as the freshness baseline so reload_if_changed()
             # doesn't bounce the writer's in-memory state back off disk.
             self._disk_stamp = self._stat_stamp(_ast_index_file())
             self._disk_path = _ast_index_file()
+            self._dirty().clear()
+
+    def _is_stale_vs_disk(self) -> bool:
+        """True if ast_index.json was rewritten by someone else since this instance last synced."""
+        if not getattr(self, "_loaded", False) and getattr(self, "_disk_stamp", None) is None:
+            return False                 # never synced: a fresh build, not a stale copy
+        disk_path = getattr(self, "_disk_path", None)
+        if disk_path is not None and disk_path != _ast_index_file():
+            return False                 # repointed at another repo by _repo_ctx()
+        current = self._stat_stamp(_ast_index_file())
+        return current is not None and current != getattr(self, "_disk_stamp", None)
+
+    def _rebase_onto_disk_locked(self) -> None:
+        """Re-apply this instance's per-file changes onto the newer on-disk index. Caller holds the lock.
+
+        Compare-and-swap, then redo (the same idea as ``KnowledgeGraph.save()``): load the current
+        disk state, then for every file THIS instance changed (``_dirty_files``) replace that
+        file's record — and its vectors — in the disk state. Files only the other writer touched
+        are kept untouched, so both writers' work survives.
+
+        FAISS ids are positional (``faiss_id`` is the ``faiss_meta`` index) but the store is an
+        ``IndexIDMap2`` that never reuses an id, so a transplanted vector simply gets the next id
+        (``len(meta)``) in the disk state and its symbol records are renumbered to match. Vectors
+        are read back out of this instance's index with ``reconstruct`` — no re-embedding.
+        Limits: a ``compact_faiss()`` done on the stale copy is discarded (the next one redoes it),
+        and if either side has an unusable FAISS binary the vectors of dirty files are dropped
+        (``faiss_id = -1``) rather than mixed.
+        """
+        fresh = ASTIndexer(graph=self.graph)
+        fresh.load()
+        fresh._resolve_load_errors()  # pylint: disable=protected-access  # quarantine/raise exactly as save() does
+
+        dirty = dict(self._dirty())
+        files = fresh.index_data.setdefault("files", {})
+        fresh._ensure_faiss()  # pylint: disable=protected-access
+        new_index, new_meta = fresh.faiss_index, list(fresh.faiss_meta)
+        vectors_ok = (
+            new_index is not None and self.faiss_index is not None
+            and not getattr(self, "_faiss_platform_mismatch", False)
+            and not getattr(fresh, "_faiss_platform_mismatch", False)
+        )
+
+        def _summary_ids(meta: list, rels: set) -> dict:
+            """file -> every file-summary vector id recorded for it (oldest first)."""
+            out: dict = {}
+            for fid, m in enumerate(meta):
+                if m.get("source") == "file_summary" and m.get("file") in rels:
+                    out.setdefault(m["file"], []).append(fid)
+            return out
+
+        rels = set(dirty)
+        mine_summary = _summary_ids(self.faiss_meta, rels) if vectors_ok else {}
+        theirs_summary = _summary_ids(new_meta, rels) if vectors_ok else {}
+
+        def _vector(fid: int):
+            try:
+                return self.faiss_index.reconstruct(int(fid)).reshape(1, -1)
+            except Exception:  # pylint: disable=broad-except   # removed / out of range
+                return None
+
+        def _transplant(meta_rec: dict, fid: int) -> int:
+            vec = _vector(fid) if vectors_ok and 0 <= fid < len(self.faiss_meta) else None
+            if vec is None:
+                return -1
+            new_id = len(new_meta)
+            new_index.add_with_ids(vec.astype("float32"), np.array([new_id], dtype=np.int64))
+            new_meta.append(meta_rec)
+            return new_id
+
+        for rel, op in dirty.items():
+            old = files.get(rel) or {}
+            stale_ids = [s["faiss_id"] for s in old.get("symbols", []) if s.get("faiss_id", -1) >= 0]
+            # index_file() never removed a file's previous summary vector, so there can be several;
+            # the replaced file must not keep any of them live.
+            stale_ids.extend(theirs_summary.get(rel, []))
+            if stale_ids and vectors_ok:
+                try:
+                    new_index.remove_ids(np.array(stale_ids, dtype=np.int64))
+                except Exception:  # pylint: disable=broad-except
+                    pass
+            mine = self.index_data.get("files", {}).get(rel)
+            if op == "del" or mine is None:
+                files.pop(rel, None)
+                continue
+            rec = copy.deepcopy(mine)
+            for sym in rec.get("symbols", []):
+                fid = sym.get("faiss_id", -1)
+                sym["faiss_id"] = (
+                    _transplant(self.faiss_meta[fid], fid)
+                    if fid >= 0 and fid < len(self.faiss_meta) else -1
+                )
+            if rel in mine_summary:                         # newest summary only
+                _transplant(self.faiss_meta[mine_summary[rel][-1]], mine_summary[rel][-1])
+            files[rel] = rec
+
+        merged = fresh.index_data
+        merged["indexed_at"] = self.index_data.get("indexed_at", merged.get("indexed_at"))
+        for key in ("repo_root", "full_indexed_at"):
+            if not merged.get(key) and self.index_data.get(key):
+                merged[key] = self.index_data[key]
+        log.info("ast index rebased onto newer on-disk state (%d locally changed file(s) re-applied)", len(dirty))
+        self.index_data = merged
+        self.faiss_index, self.faiss_meta = new_index, new_meta
+        self._build_reverse_index()
+        self.index_data["total_symbols"] = sum(
+            len(f.get("symbols", [])) for f in self.index_data["files"].values()
+        )
+        self._disk_stamp = fresh._disk_stamp  # pylint: disable=protected-access
 
     def load(self) -> None:
         """Load existing index from disk. Silently does nothing if not present.
@@ -2730,12 +3307,9 @@ class ASTIndexer:
                         recorded.get("arch"), recorded.get("faiss"),
                         platform.machine(), faiss.__version__,
                     )
-                    # Rename stale binary so _ensure_faiss() creates a fresh one
-                    if os.path.exists(_ast_faiss_file()):
-                        try:
-                            os.rename(_ast_faiss_file(), _ast_faiss_file() + ".stale")
-                        except OSError:
-                            pass
+                    # Do NOT rename the binary here: load() runs in readers (MCP server) too.
+                    # The next save() — a writer, under store_lock — moves it to .stale.
+                    self._faiss_platform_mismatch = True  # pylint: disable=attribute-defined-outside-init
                     self._ensure_faiss()
                     self._loaded = True
                     self._disk_stamp = self._stat_stamp(_ast_index_file())
@@ -2750,32 +3324,40 @@ class ASTIndexer:
         stamp = self._stat_stamp(_ast_index_file())
         self._disk_path = _ast_index_file()
 
-        # Clear scratch files stranded by a hard kill mid-write (COGNIREPO-D13).
-        self._sweep_stale_tmp(_ast_index_file())
-        self._sweep_stale_tmp(_ast_meta_file())
+        # Clear scratch files stranded by a hard kill mid-write (COGNIREPO-D13) — only old
+        # ones, and only while holding the lock (never delete a live writer's scratch file).
+        self._sweep_stale_tmp_locked()
 
+        # COGNIREPO-135: loading never renames or rewrites anything. Failures are recorded
+        # and save() decides (see _resolve_load_errors).
+        self._load_errors: dict[str, StoreUnreadableError] = {}  # pylint: disable=attribute-defined-outside-init
         if os.path.exists(_ast_index_file()):
-            loaded = self._load_json_self_heal(_ast_index_file(), None)
-            if loaded is not None:
+            loaded, err = self._read_json_or_default(_ast_index_file(), None)
+            if err is not None:
+                self._load_errors[_ast_index_file()] = err
+            elif loaded is not None:
                 self.index_data = loaded
         if os.path.exists(_ast_faiss_file()):
             try:
-                self.faiss_index = faiss.read_index(_ast_faiss_file())
-            except Exception as exc:  # pylint: disable=broad-except
-                log.warning(
-                    "ast.index could not be loaded (%s). "
-                    "Renaming to .stale and starting fresh. "
-                    "Re-run `cognirepo index-repo .` to rebuild.",
-                    exc,
+                self.faiss_index = read_retry(
+                    _ast_faiss_file(), lambda: faiss.read_index(_ast_faiss_file()),
+                    retry_on=(Exception,),
                 )
-                try:
-                    os.rename(_ast_faiss_file(), _ast_faiss_file() + ".stale")
-                except OSError:
-                    pass
+            except StoreUnreadableError as exc:
+                log.warning(
+                    "ast.index could not be loaded (%s). Starting with an empty in-memory "
+                    "index; the file is left untouched. Re-run `cognirepo index-repo .` "
+                    "to rebuild.", exc.reason,
+                )
+                self._load_errors[_ast_faiss_file()] = exc
                 self._ensure_faiss()
         else:
             self._ensure_faiss()
         if os.path.exists(_ast_meta_file()):
-            self.faiss_meta = self._load_json_self_heal(_ast_meta_file(), [])
+            meta, err = self._read_json_or_default(_ast_meta_file(), [])
+            if err is not None:
+                self._load_errors[_ast_meta_file()] = err
+            self.faiss_meta = meta
         self._loaded = True
+        self._dirty().clear()
         self._disk_stamp = stamp

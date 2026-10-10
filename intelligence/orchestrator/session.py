@@ -42,6 +42,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from core.config.atomic import atomic_json_dump
 
 DEFAULT_MAX_EXCHANGES = 10
 
@@ -206,12 +207,10 @@ def _save_session(session: dict) -> None:
     sd = _sessions_dir()
     os.makedirs(sd, exist_ok=True)
     path = sd / f"{session['session_id']}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(session, f, indent=2, ensure_ascii=False)
+    atomic_json_dump(str(path), session, indent=2, ensure_ascii=False)
 
 
 def _set_current(session_id: str) -> None:
     ptr = _current_ptr()
     os.makedirs(ptr.parent, exist_ok=True)
-    with open(ptr, "w", encoding="utf-8") as f:
-        json.dump({"session_id": session_id}, f)
+    atomic_json_dump(str(ptr), {"session_id": session_id}, indent=None)

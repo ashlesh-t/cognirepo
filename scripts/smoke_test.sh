@@ -46,7 +46,7 @@ echo "      OK"
 
 # ── 2. Init ───────────────────────────────────────────────────────────────────
 echo "[2/5] cognirepo init --no-index --non-interactive..."
-cognirepo init --password smoketest --no-index --non-interactive
+cognirepo init --no-index --non-interactive
 [[ -f "$COGNIREPO_DIR/config.json" ]] || { echo "FAIL: config.json not created at $COGNIREPO_DIR"; exit 1; }
 echo "      OK"
 

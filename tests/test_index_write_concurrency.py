@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import threading
 
 import pytest
@@ -147,6 +148,11 @@ class TestAtomicJsonDump:
         (tmp_path / "ast_index.json.abc123.tmp").write_text("partial")   # mkstemp orphan
         (tmp_path / "keep.json").write_text("{}")
 
+        # Only OLD scratch files are orphans (COGNIREPO-135): back-date them.
+        old = time.time() - 3600
+        for name in ("ast_index.json.tmp", "ast_index.json.abc123.tmp"):
+            os.utime(tmp_path / name, (old, old))
+
         ASTIndexer._sweep_stale_tmp(target)
 
         remaining = set(os.listdir(tmp_path))
@@ -154,6 +160,15 @@ class TestAtomicJsonDump:
         assert "ast_index.json.abc123.tmp" not in remaining
         # The real index and unrelated files must survive the sweep.
         assert {"ast_index.json", "keep.json"} <= remaining
+
+    def test_sweep_never_deletes_a_fresh_scratch_file(self, tmp_path):
+        """A young .tmp may be a live writer's scratch file: deleting it would make that
+        writer's os.replace() raise FileNotFoundError (COGNIREPO-135)."""
+        from intelligence.indexer.ast_indexer import ASTIndexer
+        target = str(tmp_path / "ast_index.json")
+        (tmp_path / "ast_index.json.live123.tmp").write_text("being written")
+        ASTIndexer._sweep_stale_tmp(target)
+        assert (tmp_path / "ast_index.json.live123.tmp").exists()
 
 
 # ── D14: indexed_at must track every save, not only full index_repo runs ─────
@@ -220,6 +235,7 @@ def _make_handler(tmp_path, debounce_ms):
 
     kg = KnowledgeGraph.__new__(KnowledgeGraph)
     kg.G = nx.DiGraph()
+    kg.G.graph["complete"] = True  # a finished full index (COGNIREPO-122)
     kg.nodes_for_file = MagicMock(return_value=[])
     kg.remove_node_edges = MagicMock()
     kg.remove_file_nodes = MagicMock()

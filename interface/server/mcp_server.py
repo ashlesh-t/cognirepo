@@ -21,6 +21,7 @@ from mcp.server.fastmcp import FastMCP
 from core.config.logging import setup_logging, new_trace_id
 from core.config.version import __version__ as _APP_VERSION
 from data.memory.circuit_breaker import get_breaker, CircuitOpenError
+from core.config.lock import LockTimeout, busy_message
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ from interface.tools.context_pack import context_pack as _context_pack
 from interface.tools.semantic_search_code import semantic_search_code as _semantic_search_code
 from interface.tools.dependency_graph import dependency_graph as _dependency_graph
 from interface.tools.explain_change import explain_change as _explain_change
+from intelligence.precedent_check import check_precedent as _check_precedent
 from intelligence.retrieval.docs_search import search_docs as _search_docs
 from data.memory.episodic_memory import log_event, search_episodes
 from data.memory.learning_store import get_learning_store
@@ -527,6 +529,14 @@ def _traced(tool_name: str, fn, *args, **kwargs):
         )
         _record_mcp_tool_call(tool_name, str(_query)[:200], _result_summary)
         return result
+    except LockTimeout as exc:
+        # Another process held a store lock longer than we were willing to wait (StoreBusy from
+        # store_lock(), or a raw filelock.Timeout from a lock that has not been moved onto it). Not a
+        # crash and not data loss: nothing was written under the lock we could not take. Tell the
+        # agent plainly that it can retry, instead of a filelock traceback (COGNIREPO-141).
+        logger.warning("mcp.tool.store_busy tool=%s lock=%s", tool_name,
+                       getattr(exc, "lock_path", None) or getattr(exc, "lock_file", "?"))
+        return {"error": busy_message(exc), "busy": True, "retryable": True, "tool": tool_name}
     except Exception:
         logger.exception("mcp.tool.error", extra={"tool": tool_name})
         raise
@@ -549,7 +559,8 @@ def store_memory(text: str, source: str = "", repo_path: str | None = None) -> d
     """
     with _repo_ctx(repo_path):
         result = _traced("store_memory", _store_memory, text, source)
-        intercept_after_store(text, source=source)
+        if not result.get("error"):          # a shed / busy result stored nothing: don't record it as stored
+            intercept_after_store(text, source=source)
         # conflicts are already detected against the vector DB in _store_memory and
         # include the ChromaDB document id needed by supersede_learning.
         # Normalise field name (conflict_type → type) for API consistency.
@@ -1733,6 +1744,26 @@ def explain_change(
 
 
 @mcp.tool()
+def check_precedent(instruction: str, repo_path: str | None = None) -> dict:
+    """
+    Before implementing a non-trivial instruction, check whether it contradicts a recorded
+    decision or a CLAUDE.md invariant (COGNIREPO-704). ALWAYS advisory — never blocks; a
+    human/agent still makes the final call. Fires only on an actual recorded contradiction
+    (a structured invariant match, or a decision match gated behind a reversal/replacement
+    cue in the instruction itself) — never a vibe or style preference, and never on an
+    ordinary request with no relevant precedent.
+
+    Returns: {"conflicts": [{"type": "invariant"|"decision", "citation": str,
+    "description": str, "suggested_alternative": str, ...}], "advisory": true}
+    `conflicts` is an explicit empty list (not omitted) when nothing was flagged.
+
+    repo_path: optional absolute path to the target repository.
+    """
+    with _repo_ctx(repo_path):
+        return _check_precedent(instruction)
+
+
+@mcp.tool()
 def architecture_overview(scope: str = "root", repo_path: str | None = None) -> str:
     """
     Retrieve pre-computed architectural summaries.
@@ -1955,11 +1986,23 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         # count at 0 even as episodes pile up — nudge once that gap is clear,
         # rather than relying on CLAUDE.md instructions alone.
         decision_nudge = ""
+        consolidation_candidates: list = []
         try:
             from data.memory.timeline import merge as _nudge_merge, rollup as _nudge_rollup  # pylint: disable=import-outside-toplevel
             _counts = _nudge_rollup(_nudge_merge(since="30d", limit=200))["counts"]
             if _counts.get("decision", 0) == 0 and _counts.get("episode", 0) >= 5:
-                decision_nudge = "no decisions recorded yet — use record_decision for architectural choices"
+                # COGNIREPO-702: extend the threshold-only nudge with actual content-aware
+                # evidence — which topics are recurring, not just "you have zero decisions".
+                # Never calls record_decision itself; only proposes.
+                from data.memory.episodic_memory import find_consolidation_candidates  # pylint: disable=import-outside-toplevel
+                consolidation_candidates = find_consolidation_candidates(since="30d")
+                if consolidation_candidates:
+                    decision_nudge = (
+                        f"{len(consolidation_candidates)} recurring topic(s) never promoted to "
+                        "a decision — see consolidation_candidates"
+                    )
+                else:
+                    decision_nudge = "no decisions recorded yet — use record_decision for architectural choices"
         except Exception:  # pylint: disable=broad-except
             pass
 
@@ -2004,6 +2047,8 @@ def get_agent_bootstrap(repo_path: str | None = None) -> dict:
         result["child_services"] = child_services
     if decision_nudge:
         result["decision_nudge"] = decision_nudge
+    if consolidation_candidates:
+        result["consolidation_candidates"] = consolidation_candidates
     return result
 
 
@@ -2351,7 +2396,7 @@ _REGISTERED_TOOLS: set[str] = {
     "cross_repo_traverse", "episodic_search", "org_wide_search", "list_org_context",
     "get_user_profile", "record_error", "get_error_patterns", "link_repos",
     "record_user_preference", "supersede_learning", "get_agent_bootstrap",
-    "find_symbol_path", "get_service_endpoints", "generate_insights",
+    "find_symbol_path", "get_service_endpoints", "generate_insights", "check_precedent",
 }
 
 
@@ -2414,6 +2459,13 @@ def run_server(project_dir: str | None = None) -> None:
         except Exception:  # pylint: disable=broad-except
             pass
     _threading.Thread(target=_prewarm, daemon=True, name="cognirepo-prewarm").start()
+
+    # Degrade (evict + shed load) instead of growing until the kernel OOM-kills us (#98).
+    try:
+        from interface.server.memory_watchdog import start_memory_watchdog  # pylint: disable=import-outside-toplevel
+        start_memory_watchdog([_idle.force_evict])
+    except Exception:  # pylint: disable=broad-except
+        logger.exception("memory watchdog failed to start")
 
     mcp.run(transport="stdio")
 

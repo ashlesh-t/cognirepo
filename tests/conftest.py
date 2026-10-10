@@ -12,8 +12,8 @@ Shared pytest fixtures for CogniRepo tests.
 Uses a temporary directory for all .cognirepo/ storage so tests are
 fully isolated from the developer's real data.
 
-Secrets (JWT secret, password hash) are injected via environment variables
-so tests never need a real OS keychain.
+Tests never touch a real OS keychain: those that exercise encryption mock
+``keyring`` themselves (see ``tests/test_encryption.py``).
 """
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ import json
 import os
 from unittest.mock import MagicMock
 
-import bcrypt
 import psutil
 import pytest
 import numpy as np
@@ -142,9 +141,83 @@ def _reset_singletons():
 
 # Secrets generated at import time — never stored as literals in source.
 _TEST_PASSWORD = "changeme-test"
-_TEST_PASSWORD_HASH = bcrypt.hashpw(_TEST_PASSWORD.encode(), bcrypt.gensalt(rounds=4)).decode()
-_TEST_JWT_SECRET = "test-jwt-secret-32chars-for-tests"
 _TEST_PROJECT_ID = "test-project-00000000-0000-0000-0000"
+
+
+@pytest.fixture
+def real_path_install():
+    """Opt out of ``_hermetic_path_install``: the test resolves/probes the PATH ``cognirepo``."""
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_path_install(request, monkeypatch):
+    """`cognirepo doctor` probes the interpreter behind the `cognirepo` on PATH (COGNIREPO-124).
+
+    Which one that is — and whether it is stale — depends on the machine running the tests, and
+    a new warning changes doctor's exit code (0 healthy / 1 warnings / 2 errors). Without this,
+    every doctor test fails on a dev box with an old pipx install. Tests that exercise the
+    PATH check request the ``real_path_install`` fixture instead.
+    """
+    if "real_path_install" in request.fixturenames:
+        return
+    from interface.cli import install_probe
+    monkeypatch.setattr(install_probe, "resolve_cli_interpreter", lambda *_a, **_k: None)
+
+
+@pytest.fixture
+def real_watcher_spawn():
+    """Opt out of ``_no_real_watcher_spawn``: the test really starts a background watcher."""
+
+
+@pytest.fixture(autouse=True)
+def _no_real_watcher_spawn(request, monkeypatch):
+    """``cognirepo init`` / ``index-repo --daemon`` start a background watcher process.
+
+    Run from a test — in-process OR as a ``subprocess`` the test launches — they leave a real daemon
+    behind, watching a temp dir that pytest deletes: the suite itself was the source of the "leaked
+    `init` processes" (80 of them, ~40 MB each, days old) in COGNIREPO-119. ``COGNIREPO_NO_WATCHER``
+    is inherited by child processes, which patching ``_start_watcher`` could not reach. Tests of the
+    daemon path request ``real_watcher_spawn`` and must stop what they start.
+    """
+    if "real_watcher_spawn" in request.fixturenames:
+        return
+    monkeypatch.setenv("COGNIREPO_NO_WATCHER", "1")
+
+
+@pytest.fixture
+def real_process_scan():
+    """Opt out of ``_hermetic_process_scan``: the test scans the real /proc."""
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_process_scan(request, monkeypatch):
+    """`cognirepo doctor` reports stale cognirepo processes on the host (COGNIREPO-119). A dev box
+    that has some would turn every doctor test into a warning (exit 1), so scan nothing by default."""
+    if "real_process_scan" in request.fixturenames:
+        return
+    from interface.cli import proc_scan
+    monkeypatch.setattr(proc_scan, "scan", lambda *_a, **_k: [])
+
+
+@pytest.fixture(autouse=True)
+def _isolated_org_graph(tmp_path, monkeypatch):
+    """Point the org graph (and its lock) at a per-test temp file.
+
+    The suite used to write to the developer's REAL ``~/.cognirepo/org_graph.pkl``: every run added
+    its fixture repos (``a0``, ``myrepo``, ``/tmp/pytest-…``) to it — 205 of them were found in one
+    checkout — flooding ``cognirepo doctor`` with "Org member … index not found" and making parallel
+    workers contend on the one real-home lock. Tests that need a specific path set the variable
+    themselves (a later ``monkeypatch.setenv`` wins).
+    """
+    monkeypatch.setenv("COGNIREPO_ORG_GRAPH", str(tmp_path / "org" / "org_graph.pkl"))
+
+
+@pytest.fixture(autouse=True)
+def _strict_lock_order(monkeypatch):
+    """Every test runs with COGNIREPO_LOCK_STRICT=1: taking a second, different store lock while
+    holding one raises LockOrderError (COGNIREPO-141). Run over the whole suite when it was
+    introduced, no code path nested two store locks; this keeps it that way."""
+    monkeypatch.setenv("COGNIREPO_LOCK_STRICT", "1")
 
 
 @pytest.fixture(autouse=True)
@@ -163,8 +236,6 @@ def isolated_cognirepo(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     # Inject secrets via env vars (mirrors CI / Docker behaviour)
-    monkeypatch.setenv("COGNIREPO_JWT_SECRET", _TEST_JWT_SECRET)
-    monkeypatch.setenv("COGNIREPO_PASSWORD_HASH", _TEST_PASSWORD_HASH)
 
     # Create required subdirectories
     for d in [
@@ -181,7 +252,6 @@ def isolated_cognirepo(tmp_path, monkeypatch):
     # Write minimal config — no secrets in config (they live in env vars above)
     config = {
         "project_id": _TEST_PROJECT_ID,
-        "api_port": 8080,
         "api_url": "http://localhost:8080",
         "storage": {"encrypt": False},
         "retrieval_weights": {"vector": 0.5, "graph": 0.3, "behaviour": 0.2},

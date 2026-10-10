@@ -75,6 +75,9 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | Node types: FILE, FUNCTION, CLASS, CONCEPT, QUERY | ✅ | `NodeType` constants |
 | Edge types: RELATES_TO, DEFINED_IN, CALLED_BY, QUERIED_WITH, CO_OCCURS | ✅ | `EdgeType` constants in `data/graph/knowledge_graph.py` |
 | Persist/load (`graph.pkl`) | ✅ | Pickle serialization |
+| Incremental journal (`graph.journal`) | ✅ | Indexing appends graph mutations to an fsynced, crc-checked, per-segment-encrypted journal every N files / T seconds; `_load()` replays it over `graph.pkl`, `save()` compacts it away (COGNIREPO-109). Interrupted indexing or a failed final save loses at most the last unflushed segment |
+| Single-writer lease + rebase-on-save | ✅ | A running `index-repo` holds an OS-level writer lease (released automatically if it crashes); a second one is refused with the owner's pid (or queues via `indexing.writer_wait_secs`). Journal sequence numbers come from the on-disk tail. `save()` compares disk state under `store_lock` and, if another process wrote since, reloads it and re-applies this process's unsaved ops instead of overwriting (COGNIREPO-137/139). Design: `docs/architecture/GRAPH_CONCURRENCY.md` |
+| `remove_node()`, `remove_edge()`, `set_node_attrs()`, `set_edge_attrs()`, `copy_edge()` | ✅ | Journaled mutation primitives — mutate through these (not `kg.G` directly) when the change must be crash-recoverable |
 | `add_node()`, `add_edge()` | ✅ | |
 | `nodes_for_file()` | ✅ | All nodes attributed to a file |
 | `remove_file_nodes()` | ✅ | Removes FILE + symbol nodes; returns removed list |
@@ -98,12 +101,17 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | Language | Extensions | Backend | Status |
 |----------|-----------|---------|--------|
 | Python | `.py` | stdlib `ast` (always available) | ✅ |
+| Swift | `.swift` | tree-sitter-swift | ✅ (if installed) |
+| Kotlin | `.kt`, `.kts` | tree-sitter-kotlin | ✅ (if installed) |
 | TypeScript | `.ts`, `.tsx` | tree-sitter-typescript | ✅ (if installed) |
 | JavaScript | `.js`, `.jsx` | tree-sitter-javascript | ✅ (if installed) |
 | Go | `.go` | tree-sitter-go | ✅ (if installed) |
 | Rust | `.rs` | tree-sitter-rust | ✅ (if installed) |
+| Ruby | `.rb` | tree-sitter-ruby | ✅ (if installed) |
 | Java | `.java` | tree-sitter-java | ✅ (if installed) |
+| C# | `.cs` | tree-sitter-c-sharp | ✅ (if installed) |
 | C++ | `.cpp`, `.cc`, `.h`, `.hpp` | tree-sitter-cpp | ✅ (if installed) |
+| PHP | `.php` | tree-sitter-php | ✅ (if installed) |
 
 ### Indexer Features
 | Feature | Status | Notes |
@@ -143,16 +151,17 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Fork to background (`daemonize`) | ✅ | Double-fork UNIX daemon pattern |
+| Background watcher (`spawn_detached_watcher`) | ✅ | Starts a fresh detached `watch --foreground` process (own session, log file) — not a fork of the caller, so it does not inherit its heap |
 | PID file management | ✅ | `.cognirepo/watchers/<pid>.json` |
 | Singleton enforcement via `flock` | ✅ | `flock_register_watcher()` — prevents duplicate watchers |
-| Stale-PID detection | ✅ | `_is_alive(pid)` check before claiming slot |
+| Stale-PID detection | ✅ | `_is_alive(pid)` check before claiming slot (a zombie counts as dead) |
 | Heartbeat file (30s interval) | ✅ | `write_heartbeat()` + background thread |
 | `heartbeat_age_seconds()` | ✅ | Used by `cognirepo doctor` |
-| Crash-recovery loop | ✅ | `run_watcher_with_crash_guard()` — restarts on crash |
+| Crash-recovery loop | ✅ | `run_watcher_with_crash_guard()` — restarts on crash; SIGTERM stops it with a bounded final flush (`GRACEFUL_STOP_SECS`), a stop flag that can't be swallowed, and a forced exit on a second SIGTERM |
+| Foreground watcher (`watch --foreground`) | ✅ | Registers itself, logs to stderr, stops on SIGTERM — what the systemd unit runs (`--daemon-foreground` is a legacy alias) |
 | Systemd unit file generation | ✅ | `generate_systemd_unit()` / `write_systemd_unit()` |
 | `cognirepo list` — list running daemons | ✅ | `list_watchers()` |
-| `cognirepo list --stop` | ✅ | SIGTERM to selected daemon |
+| `cognirepo list --stop` | ✅ | SIGTERM, **waits for the process to be gone**, escalates to SIGKILL after 30 s (only if the pid still looks like cognirepo), and clears the registration only afterwards (`stop_watcher_and_wait()`) |
 | `cognirepo list --view` | ✅ | Interactive log tail |
 
 ---
@@ -180,56 +189,31 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | `cognirepo prune --dry-run` | ✅ | Preview what would be pruned |
 | `cognirepo list` | ✅ | Daemon management |
 | `cognirepo export-spec` | ✅ | Export OpenAI-compatible tool spec |
-| `cognirepo wait-api` | ✅ | Poll until REST API is ready |
 | Interactive REPL (no args) | ✅ | `cli/repl.py` — routes to `orchestrator/router.py` |
 
 ---
 
 
 
-### Authentication
+## 8. MCP Server Options
+
 | Feature | Status | Notes |
 |---------|--------|-------|
-| JWT Bearer auth | ✅ | `api/auth.py` — `POST /auth/login` returns token |
-| Token expiry (24h) | ✅ | |
-| Protected routes | ✅ | All `/memory/`, `/graph/`, `/episodic/` routes require Bearer |
-
-### Endpoints
-| Endpoint | Method | Status | Notes |
-|----------|--------|--------|-------|
-| `/health` | GET | ✅ | Unauthenticated |
-| `/ready` | GET | ✅ | Unauthenticated |
-| `/auth/login` | POST | ✅ | Returns JWT |
-| `/memory/store` | POST | ✅ | |
-| `/memory/retrieve` | POST | ✅ | Redis-cached |
-| `/memory/search` | GET | ✅ | `?q=...` |
-| `/graph/symbol/{name}` | GET | ✅ | Redis-cached |
-| `/graph/callers/{function_name}` | GET | ✅ | |
-| `/graph/subgraph/{entity}` | GET | ✅ | `?depth=2` |
-| `/graph/stats` | GET | ✅ | |
-| `/episodic/log` | POST | ✅ | |
-| `/episodic/history` | GET | ✅ | `?limit=100` |
-| `/episodic/search` | GET | ✅ | BM25 search |
-
-### Redis Cache
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Optional Redis layer | ✅ | `api/cache.py` — graceful degradation when unavailable |
-| `cache_get / cache_set` | ✅ | JSON serialized, configurable TTL |
-| `cache_invalidate_prefix` | ✅ | Deletes `prefix:*` keys |
-| `redis_status()` | ✅ | Returns `{connected, url, error}` |
+| Idle release of heavy resources | ✅ | `idle_ttl_seconds` in `config.json` (default 600): after this long without an MCP tool call the server releases the index and model |
+| In-process watcher with takeover | ✅ | Every `serve` session stands by; the one holding the repo's watcher lease observes (see §6) |
 
 ---
 
+## 9. Removed interfaces
 
+These were documented here as shipped but no longer exist; they are listed so nobody looks for them.
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| `QueryService.Query` (unary) | ✅ | Single request → response |
-| `ContextService.StreamContext` (server-streaming) | ✅ | Streams context pack chunks |
-| `QueryService.SubQueryStream` (client-streaming) | ✅ | Receives multiple sub-queries, aggregates |
-| Proto files committed + CI freshness check | ✅ | `make proto` regenerates; CI diffs to detect stale |
-| Idle timeout | ✅ | `--idle-timeout` flag |
+| Removed | Notes |
+|---------|-------|
+| REST API (`/memory/*`, `/graph/*`, `/episodic/*`, `/health`) and `cognirepo wait-api` | Use the MCP server or the CLI |
+| JWT / password authentication (`/auth/login`, `COGNIREPO_JWT_SECRET`, `COGNIREPO_PASSWORD_HASH`) | There is no auth layer: MCP is stdio, see `SECURITY.md` |
+| Redis cache (`COGNIREPO_REDIS_URL`, `redis.enabled`) | Nothing reads these settings any more |
+| gRPC streaming service and `make proto` | Not in the codebase |
 
 ---
 
@@ -298,10 +282,8 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| AES-256 GCM encryption at rest | ✅ | `core/security/encryption.py`; key in OS keychain |
+| Fernet encryption at rest (AES-128-CBC + HMAC-SHA256) | ✅ | `core/security/encryption.py`; key in OS keychain. Covers the graph, behaviour model, org graph, episodic log and local FAISS store — **not** the AST index or the default Chroma store (see `SECURITY.md`) |
 | OS keychain key storage | ✅ | `keyring` library |
-| JWT authentication (REST) | ✅ | `api/auth.py` |
-| Bcrypt password hashing | ✅ | Used for API password verification |
 | MIT license headers | ✅ | All source files have SPDX headers |
 | CI security gates | ✅ | Bandit (HIGH), TruffleHog (--only-verified), Trivy (CRITICAL/HIGH), pip-audit |
 | Secret scanning in CI | ✅ | TruffleHog on full git history |
@@ -318,7 +300,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | `docs/CLI_REFERENCE.md` | ✅ | All commands with flags |
 | `docs/CONFIGURATION.md` | ✅ | config.json fields, env vars, storage layout |
 | `docs/CONTRIBUTING.md` | ✅ | Dev setup, add-tool and add-language walkthroughs |
-| `docs/SECURITY.md` | ✅ | Encryption, JWT, threat model |
+| `SECURITY.md` | ✅ | Encryption scope, network surface, threat model |
 | `CHANGELOG.md` | ✅ | Version history from v0.1.0 |
 | `.claude/CLAUDE.md` | ✅ | Tool-first rules for Claude |
 | `.gemini/COGNIREPO.md` | ✅ | Tool-first rules for Gemini CLI |
@@ -327,10 +309,11 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 
 ## 15. Test Coverage
 
-101 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+130 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
 for the current test-function count). This table is representative, not exhaustive — see
-`tests/` for the full list. This count is pinned against `tests/test_docs_sync.py`,
-which fails if this number drifts from the real glob count.
+`tests/` for the full list. This count is checked by `tests/test_docs_sync.py`, which fails if it drifts
+more than 5 files from the real glob count (a small tolerance, so concurrent PRs that each add
+a test file don't collide on this line).
 
 | Test File | What it Covers |
 |-----------|---------------|
@@ -341,7 +324,6 @@ which fails if this number drifts from the real glob count.
 | `test_storage_adapter.py` | VectorStorageAdapter, FAISSAdapter, ChromaDB fallback |
 | `test_cursor_vscode.py` | MCP config generation, idempotency |
 | `test_proto_freshness.py` | .proto committed, pb2 importable |
-| `test_api_cache.py` | Redis cache round-trip, graceful degradation |
 | `test_doctor.py` | Doctor health checks, working-tree dirty warning |
 | `test_ci_security.py` | CI security gate configuration |
 | `test_ftx.py` | Init flow idempotency, non-interactive, ready summary |
@@ -360,7 +342,7 @@ which fails if this number drifts from the real glob count.
 | Feature | Status | Notes |
 |---------|--------|-------|
 | ChromaDB backend (functional) | ⚠️ | Adapter exists but requires manual `pip install chromadb`; untested in CI |
-| Vertex AI adapter | 🔲 | Not in codebase; REST API is the integration path |
+| Vertex AI adapter | 🔲 | Not in codebase |
 | Web UI / dashboard | 🔲 | No web frontend; CLI + REST only |
 | Automatic API key rotation | 🔲 | Keys loaded from env vars; no rotation logic |
 | Multi-project shared memory | 🔲 | Each `.cognirepo/` is project-scoped; no cross-project retrieval |

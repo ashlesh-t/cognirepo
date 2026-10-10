@@ -13,6 +13,7 @@
   "_comment": "Drop this file at .cursor/mcp.json in your project root. Restart Cursor. CogniRepo tools will appear in the tool selector.",
   "_tools_preview": [
     "architecture_overview",
+    "check_precedent",
     "context_pack",
     "cross_repo_search",
     "cross_repo_traverse",

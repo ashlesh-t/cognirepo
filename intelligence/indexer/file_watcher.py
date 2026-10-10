@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
+import time
 from typing import TYPE_CHECKING
 
 from pathlib import Path
@@ -39,6 +41,7 @@ from watchdog.events import (
 )
 from watchdog.observers import Observer
 
+from core.config.atomic import atomic_json_dump
 from core.config.paths import get_cognirepo_dir_for_repo
 from intelligence.indexer.language_registry import is_supported
 
@@ -193,7 +196,7 @@ class RepoFileHandler(FileSystemEventHandler):
                         removed_rel_paths.append(rel_path)
                     touched_symbol_names |= names
             except Exception as exc:  # pylint: disable=broad-except
-                print(f"[watcher] error processing {action} for {abs_path}: {exc}")
+                print(f"[watcher] error processing {action} for {abs_path}: {exc}", file=sys.stderr)
 
         self.indexer._build_reverse_index()  # pylint: disable=protected-access
         # Scoped stub resolution: reconcile only the symbols this batch touched
@@ -220,13 +223,13 @@ class RepoFileHandler(FileSystemEventHandler):
             self.indexer.save()
         except Exception as exc:  # pylint: disable=broad-except
             save_error = f"indexer.save failed: {exc}"
-            print(f"[watcher] {save_error}")
+            print(f"[watcher] {save_error}", file=sys.stderr)
 
         try:
-            self.graph.save()
+            self._save_graph()
         except Exception as exc:  # pylint: disable=broad-except
             save_error = f"{save_error + '; ' if save_error else ''}graph.save failed: {exc}"
-            print(f"[watcher] graph.save failed: {exc}")
+            print(f"[watcher] graph.save failed: {exc}", file=sys.stderr)
 
         self._write_last_watcher_reindex(reindexed_rel_paths, removed_rel_paths, error=save_error)
 
@@ -234,7 +237,7 @@ class RepoFileHandler(FileSystemEventHandler):
             try:
                 self.behaviour.save()
             except Exception as exc:  # pylint: disable=broad-except
-                print(f"[watcher] behaviour.save failed: {exc}")
+                print(f"[watcher] behaviour.save failed: {exc}", file=sys.stderr)
 
         for rel_path in removed_rel_paths:
             try:
@@ -254,7 +257,52 @@ class RepoFileHandler(FileSystemEventHandler):
                 pass
 
         for rel_path in removed_rel_paths:
-            print(f"[watcher] removed {rel_path} from index")
+            print(f"[watcher] removed {rel_path} from index", file=sys.stderr)
+
+    def _save_graph(self) -> None:
+        """self.graph.save(), recovering once from a circuit-breaker trip.
+
+        COGNIREPO-98/105: the long-lived `serve` process keeps the embedding
+        model warm across edits (evicting it after every debounced save would
+        force a reload on the next keystroke-triggered reindex — unlike
+        `cognirepo index-repo`'s one-shot _direct_index(), there IS a "next
+        embed soon" here, so we don't evict proactively). But that means the
+        model (~2 GB, see COGNIREPO-107) stays resident for the whole session
+        alongside the growing graph, and a save here had no recovery at all
+        if that combination ever crossed the circuit breaker's limit — it
+        just logged and moved on, never freeing anything or retrying. This is
+        the same failure class #107 found and fixed in _direct_index(), just
+        reached through the watcher instead of a manual reindex. Reactive
+        fix: only evict + retry once, on an actual trip.
+
+        COGNIREPO-122: the watcher only ever applies per-file edits, so it must not
+        publish a graph that is not a superset of what is on disk. If the graph it
+        loaded is missing/quarantined/a fragment, skip the graph save (warn once) until a
+        full `index-repo` provides a complete base.
+        """
+        ok, reason = self.graph.incremental_base_status(
+            len(getattr(self.indexer, "index_data", {}).get("files", {}))
+        )
+        if not ok:
+            if not getattr(self, "_warned_incomplete_base", False):
+                self._warned_incomplete_base = True
+                print(
+                    f"[watcher] not saving the graph: {reason}. "
+                    "Run `cognirepo index-repo .` once to build a complete base graph.",
+                    file=sys.stderr,
+                )
+            return
+        try:
+            self.graph.save()
+        except Exception as exc:  # pylint: disable=broad-except
+            exc_name = type(exc).__name__
+            if "CircuitOpen" not in exc_name and "CircuitBreaker" not in exc_name:
+                raise
+            from data.memory.embeddings import evict_model  # pylint: disable=import-outside-toplevel
+            from data.memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+            evict_model()
+            time.sleep(get_breaker().cooldown + 1)
+            self.graph.save()  # let a second failure propagate to the caller
 
     def _maybe_compact_faiss(self) -> None:
         """Reclaim dead/dangling ast_metadata.json rows once enough have piled up.
@@ -273,7 +321,7 @@ class RepoFileHandler(FileSystemEventHandler):
             if stats["dead"] + stats["dangling"] >= _FAISS_COMPACT_DEAD_THRESHOLD:
                 self.indexer.compact_faiss()
         except Exception as exc:  # pylint: disable=broad-except
-            print(f"[watcher] compact_faiss failed: {exc}")
+            print(f"[watcher] compact_faiss failed: {exc}", file=sys.stderr)
 
     def _write_last_watcher_reindex(
         self, reindexed: list[str], removed: list[str], error: str | None = None,
@@ -300,11 +348,11 @@ class RepoFileHandler(FileSystemEventHandler):
                 "error": error,
             }
             path = os.path.join(get_cognirepo_dir_for_repo(self.repo_root), "index", "last_watcher_reindex.json")
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(record, f, indent=2)
+            # status trail: atomic replace so readers never see a torn file, but no fsync —
+            # it runs after every batch, and on a slow disk two fsyncs here delayed the flush
+            atomic_json_dump(path, record, indent=2, fsync=False)
         except Exception as exc:  # pylint: disable=broad-except
-            print(f"[watcher] failed to write last_watcher_reindex.json: {exc}")
+            print(f"[watcher] failed to write last_watcher_reindex.json: {exc}", file=sys.stderr)
 
     # ── mutate-only helpers (no save/side-effects — used by flush()'s batch) ──
 
@@ -359,6 +407,7 @@ class RepoFileHandler(FileSystemEventHandler):
 
         self.graph.remove_file_nodes(rel_path)
         self.indexer.index_data["files"].pop(rel_path, None)
+        self.indexer.note_file_removed(rel_path)  # rebase-on-save must delete it from a newer disk copy too
         return rel_path, old_names
 
     # ── synchronous single-event helpers (debounce_ms=0, or direct calls) ────
@@ -386,7 +435,7 @@ class RepoFileHandler(FileSystemEventHandler):
             )
             self._maybe_compact_faiss()
             self.indexer.save()
-            self.graph.save()
+            self._save_graph()
 
             try:
                 from data.memory.episodic_memory import mark_stale  # pylint: disable=import-outside-toplevel
@@ -402,9 +451,9 @@ class RepoFileHandler(FileSystemEventHandler):
                 import logging as _logging  # pylint: disable=import-outside-toplevel
                 _logging.getLogger(__name__).warning("cache invalidation failed: %s", _exc)
 
-            print(f"[watcher] removed {rel_path} from index")
+            print(f"[watcher] removed {rel_path} from index", file=sys.stderr)
         except Exception as exc:  # pylint: disable=broad-except
-            print(f"[watcher] error removing {abs_path}: {exc}")
+            print(f"[watcher] error removing {abs_path}: {exc}", file=sys.stderr)
 
     def _reindex(self, abs_path: str) -> None:
         """
@@ -427,7 +476,7 @@ class RepoFileHandler(FileSystemEventHandler):
             )
             self._maybe_compact_faiss()
             self.indexer.save()
-            self.graph.save()
+            self._save_graph()
             self.behaviour.save()
 
             try:
@@ -436,9 +485,9 @@ class RepoFileHandler(FileSystemEventHandler):
             except Exception:  # pylint: disable=broad-except
                 pass
 
-            print(f"[watcher] re-indexed {rel_path}")
+            print(f"[watcher] re-indexed {rel_path}", file=sys.stderr)
         except Exception as exc:  # pylint: disable=broad-except
-            print(f"[watcher] error re-indexing {abs_path}: {exc}")
+            print(f"[watcher] error re-indexing {abs_path}: {exc}", file=sys.stderr)
 
 
 def create_watcher(

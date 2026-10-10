@@ -15,7 +15,7 @@ mcp-name: io.github.ashlesh-t/cognirepo
 
 ---
 
-**`lookup_symbol` returns file:line very quickly — grep takes 2–8 seconds.** On Python repos ≥ 15K LOC, CogniRepo cuts AI coding agent token usage by **~30–78%** vs. a targeted grep+read baseline (up to 96–99% vs. reading every matching file naively) — benchmarked on Flask, FastAPI, Celery, and Ansible (5,900+ files). Works with Claude Code, Cursor, and Gemini CLI. **Fully offline. No API keys required for indexing or any of the 35 MCP tools.**
+**`lookup_symbol` returns file:line very quickly — grep takes 2–8 seconds.** On Python repos ≥ 15K LOC, CogniRepo cuts AI coding agent token usage by **~30–78%** vs. a targeted grep+read baseline (up to 96–99% vs. reading every matching file naively) — benchmarked on Flask, FastAPI, Celery, and Ansible (5,900+ files). Works with Claude Code, Cursor, and Gemini CLI. **Fully offline. No API keys required for indexing or any of the 36 MCP tools.**
 
 ---
 
@@ -53,7 +53,7 @@ across sessions, across tools, across time.
 ## When to use CogniRepo
 
 **Most effective on codebases ≥ 15K LOC.** On small repos (< 10K LOC), native file reads
-are fast enough that the MCP tool schema overhead (~3,500 tokens for 35 tools) takes more
+are fast enough that the MCP tool schema overhead (~3,700 tokens for 36 tools) takes more
 than you save. Break-even is roughly 4 tool calls on a medium-sized repo.
 
 **CogniRepo vs. claude-context / similar tools:**
@@ -194,14 +194,19 @@ cognirepo init --no-index     # scaffold .cognirepo/
 cognirepo index-repo .        # index your codebase (required before MCP tools work)
 cognirepo index-repo . --daemon  # index and run watcher in background
 
+# Keep the index fresh after every commit (indexes just the changed files, in the background):
+cognirepo install-hooks
+
 # Check everything is working:
 cognirepo status                        # shows symbol count, graph nodes, signal warmth
-cognirepo doctor                        # full health check
+cognirepo doctor                        # full health check (exit 0 healthy / 1 warnings / 2 errors)
+cognirepo doctor --resources            # where memory and disk go: processes, store sizes, leftovers
 
 # Query through multi-model orchestrator:
 cognirepo ask "why is auth slow?"
 
-# Manage background watchers:
+# Manage background watchers (one per repo, however many sessions run):
+cognirepo watch --ensure-running        # start it if it is not running
 cognirepo list                          # show all running watcher daemons
 cognirepo list -n <PID> --view          # tail the log of a specific watcher
 cognirepo list -n <PID> --stop          # stop a watcher
@@ -257,7 +262,7 @@ docker compose up mcp         # MCP stdio server
 
 ## MCP Tools — complete reference
 
-All 35 tools are available to Claude, Cursor, and any MCP-compatible client.
+All 36 tools are available to Claude, Cursor, and any MCP-compatible client.
 
 ### Core retrieval
 
@@ -314,6 +319,12 @@ All 35 tools are available to Claude, Cursor, and any MCP-compatible client.
 | Tool | What it returns | When to use |
 |------|-------------|-------------|
 | `generate_insights(since="90d", repo_path=None)` | Self-contained HTML repo-history report (timeline, decisions, challenges, activity, index health), sourced only from real stored records | "What happened in this repo" / repo-history requests — see [Repo insights](#repo-insights) below |
+
+### Grounded pushback
+
+| Tool | What it returns | When to use |
+|------|-------------|-------------|
+| `check_precedent(instruction)` | `{conflicts: [...], advisory: true}` — flags an instruction that contradicts a recorded decision or a CLAUDE.md invariant, with a citation and a concrete alternative. Never blocks; always advisory. Empty `conflicts` on an ordinary request — no false positives | Before implementing a non-trivial instruction, to check it against recorded precedent first |
 
 ### Cross-repo (organization)
 
@@ -548,11 +559,16 @@ All errors are logged to `.cognirepo/errors/<date>.log` — no raw tracebacks sh
 | Language | Extensions | Install |
 |----------|------------|---------|
 | Python | `.py` | built-in |
+| Swift | `.swift` | `cognirepo[languages]` |
+| Kotlin | `.kt` `.kts` | `cognirepo[languages]` |
 | JavaScript / TypeScript | `.js` `.ts` `.jsx` `.tsx` | `cognirepo[languages]` |
 | Java | `.java` | `cognirepo[languages]` |
+| C# | `.cs` | `cognirepo[languages]` |
 | Go | `.go` | `cognirepo[languages]` |
 | Rust | `.rs` | `cognirepo[languages]` |
+| Ruby | `.rb` | `cognirepo[languages]` |
 | C / C++ | `.c` `.cpp` `.h` | `cognirepo[languages]` |
+| PHP | `.php` | `cognirepo[languages]` |
 
 Full details and roadmap: [docs/LANGUAGES.md](docs/LANGUAGES.md)
 
@@ -562,31 +578,41 @@ Full details and roadmap: [docs/LANGUAGES.md](docs/LANGUAGES.md)
 
 ```
 .cognirepo/
-  config.json              ← project settings (project_id, model, retrieval weights)
-  vector_db/
-    semantic.index         ← FAISS flat index for semantic memory
-    ast.index              ← FAISS IndexIDMap2 for code symbols
-    ast_metadata.json      ← parallel metadata for ast.index rows
+  config.json              ← project settings (project_id, models, retrieval weights, indexing, behaviour bounds)
+  cognirepo.lock           ← cross-process store lock (OS advisory lock; never delete by hand)
   graph/
     graph.pkl              ← NetworkX DiGraph (optionally Fernet-encrypted)
-    behaviour.json         ← per-symbol hit counts, user profile, error patterns
+    graph.journal          ← append-only journal, present only while `index-repo` runs or after a failed save
+    behaviour.json         ← per-symbol hit counts, user profile, error patterns (bounded, see CONFIGURATION.md)
   index/
     ast_index.json         ← reverse symbol index + file records
-    manifest.json          ← git SHA + platform info for integrity checks
+    ast.index              ← FAISS IndexIDMap2 for code symbols
+    ast_metadata.json      ← parallel metadata for ast.index rows
+    manifest.json          ← git SHA, platform info and checksums for integrity checks (`verify-index`)
     summaries.json         ← LLM architectural summaries (Level 1–3)
+    last_indexed.json, endpoints.json, http_calls.json, …   ← indexing bookkeeping
+  vector_db/
+    chroma/                ← default semantic-memory store (ChromaDB); `semantic.index` when `vector_backend: "faiss"`
   memory/
     episodic.json          ← append-only event journal
-  sessions/
-    <uuid>.json            ← conversation session files
-    current.json           ← pointer to most-recent session
-  errors/
-    <date>.log             ← daily error logs (full tracebacks, never shown to users)
+    semantic_metadata.json ← metadata for the local FAISS semantic store (`vector_backend: "faiss"`) and project memory
   learnings/
     learnings.json         ← structured learnings: decisions, bugs, prod issues
+  watchers/                ← watcher registry (<pid>.json), heartbeat, lease (watcher.writer), logs
+  sessions/                ← conversation session files
+  errors/                  ← daily error logs (full tracebacks, never shown to users)
+  hook.log, hook.last      ← output and last result of the git post-commit hook (`install-hooks`)
 ```
 
+Files the loaders set aside are kept, never silently deleted: `graph.pkl.corrupt-<ts>` (may well hold an
+intact graph — see `cognirepo graph restore`), `vector_db/chroma.corrupt-<ts>/`, `*.stale`.
+`cognirepo doctor --resources` lists them with sizes. Expected sizes and tuning knobs:
+[docs/RESOURCES.md](docs/RESOURCES.md).
+
 Everything under `.cognirepo/` is `.gitignore`d by default — never committed.
-Fernet encryption is opt-in at `storage.encrypt: true` in `config.json`.
+Fernet encryption is opt-in at `storage.encrypt: true` in `config.json`; it covers the graph, behaviour
+model, org graph, episodic log and local FAISS store, but **not** the AST index or the default Chroma
+store — see [SECURITY.md](SECURITY.md) for exactly what is and isn't covered.
 
 ---
 
@@ -623,7 +649,10 @@ cognirepo prune [--dry-run]     # prune low-score memories
 cognirepo prime                 # generate session bootstrap brief
 cognirepo status                # live retrieval signal weights + index health
 cognirepo doctor [--fix]        # full health check; --fix auto-repairs common issues
+cognirepo doctor --resources    # processes, store sizes and left-over files (read-only)
 cognirepo benchmark             # run quantitative value benchmarks
+cognirepo install-hooks         # git post-commit hook: reindex changed files after each commit
+cognirepo graph restore         # list quarantined graphs and restore the best intact one (dry-run; --apply)
 
 # Organization
 cognirepo org create <name>     # create local organization
@@ -631,15 +660,17 @@ cognirepo org link <org> [path] # link repo to organization
 cognirepo org list              # list organizations
 
 # Daemon management
-cognirepo list                  # list MCP servers, running daemons
-cognirepo watch                 # manage background file-watcher daemon
+cognirepo list                  # list MCP servers, running daemons (`-n PID --stop` to stop one)
+cognirepo watch --ensure-running  # start the background file-watcher (one per repo); `--status` to inspect
 ```
+
+Every command, flag and exit code: [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md).
 
 ---
 
 ## Future Plans
 
-Priorities drawn from the v0.3.0 benchmark findings and community feedback. Now at v2.0.0 —
+Priorities drawn from the v0.3.0 benchmark findings and community feedback. Now at v2.5.0 —
 some items below have since landed; each is annotated where that's the case.
 
 ### Near-term
@@ -659,6 +690,10 @@ some items below have since landed; each is annotated where that's the case.
 - **CLAUDE.md mandatory-call relaxation** — benchmark feedback (Moby tests) flagged that forcing `context_pack` before every file read adds latency under memory pressure. A `--fast` mode that skips the tool-first gate for files under 50 lines is not yet implemented.
 
 ### Medium-term
+- **Platform (planned for 3.0)** — a single per-user daemon, a local control API (`/api/v1`) with a
+  `cognirepo ui` command, and an SQLite (WAL) graph store to replace the resident in-memory graph. The
+  Engram console that consumes the API lives in its own repository. Local-only by design: no hosted
+  relay, no remote access. Tracked in the "Platform" epic.
 - **Kubernetes / 2M-LOC scale validation** — K8-1 through K8-5 test suite not yet completed. Goal: full scheduling-decision trace at < 8 000 tokens with CogniRepo vs. > 50 000 without.
 - **Plugin-registry pattern detection** — *done (COGNIREPO-203):* a static, annotation-only
   heuristic pass tags symbols reachable via dynamic dispatch — celery-style `@task`/
@@ -674,7 +709,6 @@ some items below have since landed; each is annotated where that's the case.
 
 ### Longer-term
 - **`cognirepo ask` streaming REPL** — full interactive session with tier routing, session persistence, and sub-agent delegation.
-- **Ruby, PHP, C#, Swift grammar support** — tree-sitter grammars exist; need `_TS_FUNCTION_TYPES`/`_TS_CLASS_TYPES` mappings and call-extraction rules per language.
 - **Similarity edges in knowledge graph** — *done (COGNIREPO-202):* post-index FAISS k-NN pass over already-embedded FUNCTION/CLASS symbol vectors adds a `SIMILAR_TO` edge (cosine ≥ 0.80, max 5/node, cross-file only) between near-duplicate symbols, both directions. Gated via `config.json` → `indexing.similarity_edges` (default on below 20k candidate symbols). Weighted (discounted) into `intelligence/retrieval/hybrid.py::_graph_score`.
 - **VS Code / JetBrains extension** — surface `lookup_symbol`, `context_pack`, and `who_calls` directly in the editor sidebar without requiring an MCP-capable host.
 
@@ -687,6 +721,11 @@ some items below have since landed; each is annotated where that's the case.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, component responsibilities, data flow |
 | [docs/architecture/SPECIFICATION.md](docs/architecture/SPECIFICATION.md) | Technical spec, complexity signals, storage layout |
 | [docs/USAGE.md](docs/USAGE.md) | Complete CLI, MCP, and Docker reference |
+| [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md) | Every command and flag (checked against the real CLI by a test) |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | `config.json` fields, environment variables, storage layout |
+| [docs/RESOURCES.md](docs/RESOURCES.md) | Memory and disk footprint, `doctor --resources`, tuning knobs |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common problems: stale index, busy store, hook, stray processes |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each release, with upgrade notes |
 | [docs/METRICS.md](docs/METRICS.md) | Quantitative benchmarks: token reduction, lookup speedup, recall |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to add adapters, tools, and language support |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, data handling, trust model |

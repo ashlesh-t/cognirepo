@@ -18,6 +18,7 @@ import json
 import os
 from datetime import datetime
 
+from core.config.atomic import atomic_json_dump
 from core.config.paths import get_global_path
 
 _BEHAVIOUR_FILE = "user/behaviour.json"
@@ -39,8 +40,7 @@ def _load(rel_path: str) -> dict:
 
 def _save(rel_path: str, data: dict) -> None:
     path = get_global_path(rel_path)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    atomic_json_dump(path, data, indent=2)
 
 
 # ── user preferences (explicit key/value settings) ───────────────────────────

@@ -26,6 +26,7 @@ from __future__ import annotations
 import os
 from typing import Any, Generator, Union
 
+from intelligence.orchestrator.classifier import ADAPTER_STANDALONE_DEFAULTS
 from intelligence.orchestrator.model_adapters.anthropic_adapter import ModelResponse
 from intelligence.orchestrator.model_adapters.errors import ModelCallError
 from intelligence.orchestrator.model_adapters.retry import with_retry
@@ -35,7 +36,7 @@ def call(
     query: str,
     system_prompt: str,
     tool_manifest: list[dict],
-    model_id: str = "gemini-2.0-flash",
+    model_id: str = ADAPTER_STANDALONE_DEFAULTS["gemini"],
     max_tokens: int = 2048,
     verbose: bool = False,
     stream: bool = False,

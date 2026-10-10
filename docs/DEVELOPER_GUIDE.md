@@ -181,6 +181,65 @@ if args.command == "mycommand":
 
 ---
 
+## How to Write a Store File (atomic writes)
+
+Several processes (watcher, one `serve` per agent, the CLI) share `.cognirepo/`. A bare
+`open(path, "w")` truncates the live file first, so a concurrent reader or a crash sees an empty
+or half-written store — and code that treats "unreadable" as "corrupt" then acts on it
+(COGNIREPO-134/#135). Never write a store in place; use `core/config/atomic.py`:
+
+| Need | Call |
+|------|------|
+| bytes / text (encrypt *before* calling) | `atomic_write(path, data)` |
+| JSON | `atomic_json_dump(path, obj, indent=2)` |
+| writer takes a file object (`np.save`, pickle) | `atomic_write_with(path, lambda f: ..., binary=True)` |
+| writer takes a *filename* (`faiss.write_index`) | `with atomic_path(path) as tmp: faiss.write_index(idx, tmp)` |
+
+The helper writes a unique scratch file in the same directory, fsyncs, `os.replace`s it over the
+target and fsyncs the directory; on any error the old file is untouched. It keeps an existing file's
+mode (new files get 0644) and creates missing parent directories. It does **not** lock — a
+read-modify-write cycle still needs `core.config.lock.store_lock()` (#136).
+
+`tests/test_atomic_writes.py` has an AST lint that fails on any new `open(..., "w"/"a"/"x")`,
+`write_text`, `write_bytes`, `faiss.write_index` or `np.save` outside the helper. Genuine exceptions
+(append-only logs, files owned by other tools) go in its `_ALLOWED` table with a reason.
+
+## How to Read a Store File (never mutate from a reader)
+
+A read failure is not proof of corruption: it can be a concurrent writer, or ciphertext you simply
+cannot decrypt (no keyring). Acting on that belief — renaming the file, sweeping scratch files, or
+returning `[]` that the next write persists — destroys good data (COGNIREPO-135). Use
+`core/config/safe_read.py`:
+
+| Situation | Rule |
+|-----------|------|
+| any reader | `read_retry(path, load)` (short backoff). It raises `StoreUnreadableError`; it **never** renames, deletes or writes. Serve an empty value *in memory* if you must, but never persist it. |
+| ciphertext that fails to decrypt (`looks_encrypted(raw)`) | `StoreUnreadableError(..., locked=True)` — never quarantined, never overwritten. |
+| a writer meets an unreadable store | refuse to save (raise), or `quarantine_if_stably_corrupt(path, is_readable)` under `store_lock()`: moves it to `<file>.corrupt-<ts>` only if it stayed unreadable **and unchanged** across two checks; bytes are kept, nothing is deleted. |
+| scratch-file cleanup | only under `store_lock`, only files older than 10 minutes. |
+
+`tests/test_side_effect_free_readers.py` shows the pattern for episodic, learnings, the vector store
+and the AST index.
+
+## How to Read-Modify-Write a Shared Store (locking)
+
+Load → change → save is only safe if nobody else saves in between. Without the lock, two
+processes both load N events, both mint `e_N`, and the later save drops the other's event
+(COGNIREPO-136). Rules:
+
+1. Do the **whole cycle** inside `core.config.lock.store_lock()` and **reload inside it** — never
+   mutate a snapshot loaded before the lock. Allocate ids inside the lock.
+2. `store_lock()` is **re-entrant for the same thread** (a nested `with store_lock():` only bumps a
+   depth counter), so helpers may lock defensively. Other threads/processes still exclude each other.
+3. Stores that live outside the repo (global learnings in `~/.cognirepo`) lock their own file:
+   `store_lock(lock_path=...)`. Never nest two *different* locks; if you must, keep the order
+   graph → ast → vector → episodic → behaviour.
+4. Hold the lock only for the cycle — no network, subprocess or embedding calls inside it.
+5. For in-memory structures that outlive one call (`LocalVectorDB`): remember unsaved changes and,
+   on save, merge them into whatever is on disk (`_sync_locked`) instead of overwriting it.
+
+`tests/test_locked_rmw.py` has the multi-process stress pattern (`_run_workers`) to copy.
+
 ## PR Checklist
 
 Before submitting a pull request:
@@ -201,8 +260,6 @@ Before submitting a pull request:
 
 | Secret | Description |
 |--------|-------------|
-| `COGNIREPO_JWT_SECRET` | JWT signing secret for API tests |
-| `COGNIREPO_PASSWORD_HASH` | Bcrypt password hash for API tests |
 
 Set these in: **GitHub repo → Settings → Secrets and variables → Actions**.
 

@@ -1,6 +1,6 @@
 # CogniRepo MCP Tools Reference
 
-35 tools available via the MCP protocol. These are the functions Claude, Gemini, and Cursor can call.
+36 tools available via the MCP protocol. These are the functions Claude, Gemini, and Cursor can call.
 
 ---
 
@@ -564,6 +564,46 @@ Search memories across ALL repositories in the organization. Prefer `cross_repo_
 
 ---
 
+## check_precedent
+
+**Signature:** `check_precedent(instruction: str, repo_path: str = None) → dict`
+
+**When:** before implementing a non-trivial instruction — COGNIREPO-704 (grounded pushback).
+Checks whether the instruction contradicts a recorded decision or a CLAUDE.md invariant.
+**ALWAYS advisory** — never blocks; the human/agent still makes the final call, same as the
+skill.md §F Gate 1/Gate 2 review model. Fires only on an actual recorded contradiction: a
+structured invariant match (a small, machine-checkable registry mirroring CLAUDE.md's "Key
+rules"), or a decision match — the latter gated behind a reversal/replacement cue
+("instead of", "replace", "stop using", ...) in the instruction itself, so an ordinary request
+never even triggers the decision search.
+
+**Input:**
+```json
+{ "instruction": "hardcode claude-sonnet-4-6 as the default model_id in the new adapter" }
+```
+
+**Output:**
+```json
+{
+  "conflicts": [
+    {
+      "type": "invariant",
+      "name": "model_names_only_in_classifier",
+      "citation": "CLAUDE.md — \"Model names only in intelligence/orchestrator/classifier.py. No hardcoding elsewhere.\"",
+      "related_defect": "COGNIREPO-700-D01",
+      "description": "Hardcoding a model-ID literal outside classifier.py violates this repo's invariant — exactly the pattern COGNIREPO-700-D01 found and fixed at 4 sites.",
+      "suggested_alternative": "Import the model ID from classifier.py's DEFAULT_MODELS_BY_PROVIDER or ADAPTER_STANDALONE_DEFAULTS instead of hardcoding it."
+    }
+  ],
+  "advisory": true
+}
+```
+
+`conflicts` is an explicit empty list (not omitted) on an ordinary request with no relevant
+precedent — "checked, found nothing" rather than silence.
+
+---
+
 ## get_user_profile
 
 **Signature:** `get_user_profile(repo_path: str = None) → dict`
@@ -703,7 +743,14 @@ name (COGNIREPO-400-D01):
     {"ts": "2026-08-07T14:00:00+00:00", "kind": "error", "summary": "ImportError (x3)", "ref": "ImportError"},
     {"ts": "2026-08-06T11:00:00+00:00", "kind": "session", "summary": "how does scoring work", "ref": "sess_abc123"}
   ],
-  "decision_nudge": "no decisions recorded yet — use record_decision for architectural choices"
+  "decision_nudge": "2 recurring topic(s) never promoted to a decision — see consolidation_candidates",
+  "consolidation_candidates": [
+    {
+      "group_summary": "cache invalidation keeps breaking on concurrent writes",
+      "episode_ids": ["e_101", "e_107", "e_115"],
+      "suggested_decision_draft": "record_decision(summary=..., rationale=...) — recurring pattern seen 3x: cache invalidation keeps breaking on concurrent writes"
+    }
+  ]
 }
 ```
 
@@ -721,6 +768,17 @@ text), call `data.memory.timeline.merge()`/`rollup()` directly, or use the
 episodes but 0 decisions — a hint to use `record_decision` for architectural
 choices, since CLAUDE.md's instruction alone doesn't guarantee agents call it.
 Omitted from the payload entirely when there's nothing to nudge about.
+
+**consolidation_candidates** (COGNIREPO-702): computed alongside `decision_nudge`
+when that gap is detected — clusters recurring/near-duplicate episodic events
+(≥3 within 30 days, same topic, reused BM25 similarity from `search_episodes()`)
+that were never promoted to a decision. Each candidate cites the actual
+`episode_ids` as evidence and a `suggested_decision_draft`; **never calls
+`record_decision` automatically** — promotion stays a human/agent judgment call.
+Omitted entirely when there's nothing to consolidate, same honesty bar as
+`generate_insights`. Complementary Learning Systems theory (McClelland et al.
+1995) — the same hippocampus/neocortex consolidation account that directly
+inspired DQN's experience replay (Mnih et al. 2015).
 
 **Episodic events also include `index_event`-typed entries** (COGNIREPO-205):
 `cognirepo index-repo` and `cognirepo org rewire` completions are logged

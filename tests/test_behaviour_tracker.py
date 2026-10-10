@@ -512,6 +512,20 @@ class TestBehaviourSymbolWeights:
         score = bt.get_behaviour_score("symbol::never_seen")
         assert score == 0.0
 
+    def test_get_all_scores_with_recency_includes_last_hit(self, tmp_path, monkeypatch):
+        """COGNIREPO-701 — first real reader of last_hit; get_all_scores() stays untouched."""
+        bt = _make_bt(tmp_path, monkeypatch)
+        bt.record_query("q1", "auth", ["symbol::authenticate"])
+        bt.record_feedback("q1", useful=True)
+
+        scores = bt.get_all_scores_with_recency()
+        assert scores["symbol::authenticate"]["hit_count"] == 1
+        assert scores["symbol::authenticate"]["last_hit"] is not None
+
+        # get_all_scores() (pre-701) unaffected — same flat {symbol: hit_count} shape
+        flat = bt.get_all_scores()
+        assert flat["symbol::authenticate"] == 1.0
+
 
 # ── Persistence ───────────────────────────────────────────────────────────────
 

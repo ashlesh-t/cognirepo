@@ -26,6 +26,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Generator, Union
 
+from intelligence.orchestrator.classifier import ADAPTER_STANDALONE_DEFAULTS
 from intelligence.orchestrator.model_adapters.errors import ModelCallError
 from intelligence.orchestrator.model_adapters.retry import with_retry
 
@@ -45,7 +46,7 @@ def call(
     query: str,
     system_prompt: str,
     tool_manifest: list[dict],
-    model_id: str = "claude-sonnet-4-6",
+    model_id: str = ADAPTER_STANDALONE_DEFAULTS["anthropic"],
     max_tokens: int = 2048,
     verbose: bool = False,
     stream: bool = False,

@@ -146,7 +146,8 @@ All CogniRepo data lives under `.cognirepo/` in the project root. Nothing is wri
     episodic.json              — append-only episodic event journal (JSON lines)
     episodic_archive.json      — rotated events when episodic_max_events is exceeded
   graph/
-    graph.pkl                  — serialised NetworkX DiGraph
+    graph.pkl                  — serialised NetworkX DiGraph (carries G.graph["journal_seq"])
+    graph.journal              — append-only mutation journal (data/graph/journal.py); replay skips seq <= journal_seq; compacted by KnowledgeGraph.save()
   index/
     ast_index.json             — full AST index + reverse_index dict (indexer/ast_indexer.py)
     ast_metadata.json          — parallel FAISS metadata for AST symbol vectors
@@ -192,6 +193,11 @@ STD_PROMPTS/                   — bundled markdown templates (inside the cognir
 - ≤9    → **COMPLEX** — moderate reasoning — Gemini Flash / Claude Sonnet
 - >9    → **EXPERT** — cross-file, architectural, ambiguous — Claude Opus
 
+**Confidence** (COGNIREPO-703): `ClassifierResult.confidence` (`[0, 1]`) is the normalized
+distance from the final score to the nearest tier boundary above — 1.0 far from any boundary
+(decisive), 0.0 sitting exactly on one (near-miss). Purely diagnostic; never affects which tier
+a query lands in.
+
 **Hard overrides** (bypass score):
 - `"full context"` / `"everything related"` → always EXPERT
 - Single word / single symbol → always **QUICK**
@@ -213,7 +219,7 @@ Python indexing continues to work even without `tree-sitter-python` installed, v
 Install additional languages:
 
 ```bash
-pip install cognirepo[languages]   # Python, JS, TS, Java, Go, Rust, C++
+pip install cognirepo[languages]   # Python, JS, TS, Java, C#, Go, Rust, Ruby, C++, Swift, Kotlin, PHP
 ```
 
 The `indexer/language_registry.py` module handles lazy grammar loading and caching.

@@ -151,7 +151,7 @@ See `docs/architecture/graph.md` for the full schema with query examples.
 | `intelligence/indexer/ast_indexer.py` | Multi-language AST parser + symbol extractor + FAISS ingestion |
 | `intelligence/indexer/file_watcher.py` | Watchdog-based hot reload — indexes on file change, prunes on delete |
 
-Supported languages: Python (stdlib `ast`), TypeScript, JavaScript, Go, Rust, Java, C++ (tree-sitter).
+Supported languages: Python (stdlib `ast`), TypeScript, JavaScript, Go, Rust, Ruby, Java, C#, C++, Swift, Kotlin, PHP (tree-sitter).
 
 On file deletion, the watcher:
 1. Removes FAISS vector IDs via `remove_ids()`
@@ -166,8 +166,8 @@ Pluggable vector storage backend:
 
 | Class | Backend |
 |-------|---------|
-| `FAISSAdapter` | Default — FAISS flat index, no external dependency |
-| `ChromaDBAdapter` | Optional — ChromaDB, requires `pip install chromadb` |
+| `ChromaDBAdapter` | **Default** — ChromaDB (`chromadb`). Safe across processes: ids come from a lock-protected counter, creation is serialized, and a crashed opener only quarantines a store that really fails to open (`core/vector_db/factory.py`) |
+| `LocalVectorDB` (faiss) | Fallback / `vector_backend: "faiss"` — FAISS flat index, no external dependency |
 
 Configured via `storage.vector_backend` in `config.json`.
 Use `get_storage_adapter()` factory (`core/vector_db/__init__.py`) — do not instantiate directly.
@@ -188,24 +188,7 @@ Do not hardcode model names outside `intelligence/orchestrator/classifier.py`.
 
 
 
-Key routes:
-- `POST /auth/login` → returns JWT token
-- `POST /memory/store` → `store_memory()`
-- `POST /memory/retrieve` → `retrieve_memory()` (Redis-cached)
-- `GET /graph/symbol/{name}` → `lookup_symbol()` (Redis-cached)
-- `GET /graph/who-calls/{name}` → `who_calls()`
-- `POST /graph/subgraph` → `subgraph()`
-
----
-
-
-Protocol Buffer streaming service for multi-agent communication.
-
-- `QueryService.Query` — unary query
-- `ContextService.StreamContext` — server-streaming context pack
-- `QueryService.SubQueryStream` — client-stream of sub-queries
-
-Run `make proto` to regenerate `cognirepo_pb2.py` after changing the `.proto` file.
+> **Removed interfaces.** An earlier REST API (with JWT auth and a Redis cache) and a gRPC streaming service were removed; the MCP server and the CLI are the supported interfaces. This section is kept as a pointer so old links still land somewhere sensible — see `CHANGELOG.md` for when each went.
 
 ---
 
@@ -216,7 +199,7 @@ Entry point: `cognirepo` → `interface/cli/main.py::main()`
 Key modules:
 - `interface/cli/init_project.py` — `cognirepo init` scaffolding, idempotent
 - `interface/cli/wizard.py` — interactive terminal wizard
-- `interface/cli/daemon.py` — heartbeat, singleton lock, systemd unit generation
+- `interface/cli/daemon.py` — per-repo watcher lease (one watcher per repo), heartbeat, systemd unit generation
 - `interface/cli/seed.py` — seed behaviour graph from git history
 
 ---

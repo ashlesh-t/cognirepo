@@ -1,5 +1,17 @@
 # COGNIREPO-D01 — model-ID literals hardcoded outside classifier.py
 
+**Resolution (2026-09-19):** Added `ADAPTER_STANDALONE_DEFAULTS` to `classifier.py` — covers all
+4 providers' adapter-own defaults (distinct from `DEFAULT_MODELS_BY_PROVIDER`, the QUICK-tier
+routing set, since anthropic's/openai's standalone values differ from their tier defaults).
+Fixed all 4 originally-cited sites plus 3 more of the same class found while verifying the AC1
+grep (`openai_adapter.py`, `grok_adapter.py`, `router.py`'s `_PROVIDER_DEFAULT_MODELS` grok
+entry). `key_probes.py`'s `try/except ImportError` removed — no circular-import risk existed,
+so it was dead defensive code masking the duplicate literal. Regression test
+`tests/test_model_id_invariant.py` pins a refined grep (requires a digit after the model-family
+word) that avoids false-positiving on `sync_claude_memory.py`'s non-model `"claude-"`-prefixed
+tags while still catching real model-ID literals. All 4 ACs PASS — see TEST_SUITE for evidence
+that every adapter default value is byte-identical to pre-fix.
+
 Epic: COGNIREPO-700 · Branch: defect/COGNIREPO-700-D01 · Base: development
 
 ## Backstory

@@ -16,6 +16,10 @@ from datetime import datetime, timezone
 import faiss
 import numpy as np
 
+from core.config.atomic import atomic_write, atomic_path
+from core.config.safe_read import (
+    StoreUnreadableError, looks_encrypted, quarantine_if_stably_corrupt, read_retry,
+)
 from core.config.paths import get_path
 from core.config.lock import store_lock
 from core.vector_db.adapter import VectorStorageAdapter
@@ -51,37 +55,59 @@ class LocalVectorDB(VectorStorageAdapter):
         self.dim = dim
         self._breaker_factory = breaker_factory
         self._cleanup_queue_factory = cleanup_queue_factory
+        # COGNIREPO-135: loading is side-effect free. An unreadable file is NOT renamed or
+        # overwritten here (this constructor runs on every store_memory); it is remembered in
+        # _load_error and a writer decides in _ensure_writable() — see core/config/safe_read.py.
+        self._load_error: dict[str, StoreUnreadableError] = {}
+        # Sample the on-disk stamp BEFORE reading (COGNIREPO-136). Sampled after, a save that
+        # lands between our read and the stamp makes "synced" equal the NEWER state, so save()
+        # would see no change and overwrite it with this stale snapshot — silently dropping
+        # every vector the other process added.
+        _stamp_before_read = self._disk_stamp()
+        _mtime_before_read = self._disk_mtime()
         if os.path.exists(_index_file()):
             try:
-                self.index = faiss.read_index(_index_file())
-            except Exception as exc:  # pylint: disable=broad-except
-                logging.getLogger(__name__).warning(
-                    "semantic.index could not be loaded (%s). "
-                    "This may be a platform mismatch (e.g. x86 index on ARM) or "
-                    "a corrupted file. Starting with an empty index — re-run "
-                    "`cognirepo index-repo .` to rebuild.",
-                    exc,
+                self.index = read_retry(
+                    _index_file(), lambda: faiss.read_index(_index_file()), retry_on=(Exception,),
                 )
-                stale = _index_file() + ".stale"
-                try:
-                    os.rename(_index_file(), stale)
-                except OSError:
-                    pass
+            except StoreUnreadableError as exc:
+                logging.getLogger(__name__).warning(
+                    "semantic.index could not be loaded (%s). Starting with an empty in-memory "
+                    "index; the file is left untouched (this may be a platform mismatch or a "
+                    "concurrent writer). Re-run `cognirepo index-repo .` to rebuild.",
+                    exc.reason,
+                )
+                self._load_error["index"] = exc
                 self.index = faiss.IndexFlatL2(dim)
         else:
             self.index = faiss.IndexFlatL2(dim)
 
         meta_path = _meta_file()
         if os.path.exists(meta_path):
-            self.metadata = self._load_meta()
+            try:
+                self.metadata = self._load_meta()
+            except StoreUnreadableError as exc:
+                logging.getLogger(__name__).warning("%s", exc)
+                self._load_error["meta"] = exc
+                self.metadata = []
         else:
-            # Initialize eagerly — atomic write prevents concurrent-first-write race
+            # Initialize eagerly. Atomic replace alone does NOT prevent the first-write race: a
+            # process that saw "absent" could replace a file another process wrote in the
+            # meantime with "[]", dropping its metadata (COGNIREPO-136). Re-check under the lock.
             os.makedirs(os.path.dirname(meta_path), exist_ok=True)
-            with open(meta_path, "wb") as f:
-                f.write(b"[]")
-            self.metadata = []
+            with store_lock():
+                if os.path.exists(meta_path):
+                    self.metadata = self._load_meta()
+                else:
+                    atomic_write(meta_path, b"[]")
+                    self.metadata = []
 
-        self._loaded_disk_mtime = self._disk_mtime()
+        self._loaded_disk_mtime = _mtime_before_read
+        # Vectors added but not yet saved, and the on-disk state this instance last synced
+        # with. save() uses them to merge into newer disk state instead of overwriting another
+        # process's vectors (see _sync_locked).
+        self._pending: list[tuple] = []
+        self._synced_stamp = _stamp_before_read
 
     # ── cross-process freshness ────────────────────────────────────────────────
 
@@ -96,6 +122,42 @@ class LocalVectorDB(VectorStorageAdapter):
                 pass
         return m
 
+    @staticmethod
+    def _disk_stamp() -> tuple:
+        """(mtime_ns, size) of the index and metadata files — exact, unlike a float mtime."""
+        out = []
+        for p in (_index_file(), _meta_file()):
+            try:
+                st = os.stat(p)
+                out.append((st.st_mtime_ns, st.st_size))
+            except OSError:
+                out.append(None)
+        return tuple(out)
+
+    def _sync_locked(self) -> None:
+        """Merge into newer disk state. Caller holds store_lock().
+
+        If another process saved since this instance last synced, our in-memory index/metadata
+        are stale: saving them would silently drop its vectors (lost update). Reload from disk
+        and re-apply only OUR unsaved adds on top, so rows are appended after the other
+        process's. An unreadable disk state raises StoreUnreadableError — nothing is
+        overwritten (#135).
+        """
+        if self._disk_stamp() == getattr(self, "_synced_stamp", None):
+            return
+        pending = list(getattr(self, "_pending", ()))
+        index = (read_retry(_index_file(), lambda: faiss.read_index(_index_file()),
+                            retry_on=(Exception,))
+                 if os.path.exists(_index_file()) else faiss.IndexFlatL2(self.dim))
+        metadata = self._load_meta() if os.path.exists(_meta_file()) else []
+        for vec, entry in pending:
+            index.add(vec)
+            metadata.append(entry)
+        self.index, self.metadata = index, metadata
+        self._load_error = {}          # both files just read fine
+        self._synced_stamp = self._disk_stamp()
+        self._loaded_disk_mtime = self._disk_mtime()
+
     def _maybe_reload(self) -> None:
         """Reload index + metadata if another process wrote them since load.
 
@@ -104,22 +166,26 @@ class LocalVectorDB(VectorStorageAdapter):
         until the server restarts. Mirrors the mtime pattern used by the
         episodic BM25 cache in retrieval/hybrid.py.
         """
+        if getattr(self, "_pending", None):
+            return  # unsaved adds would be dropped by a reload; save() merges them instead
         disk = self._disk_mtime()
         if disk <= self._loaded_disk_mtime:
             return
+        stamp = self._disk_stamp()  # before reading, same reason as in __init__
         try:
             if os.path.exists(_index_file()):
                 self.index = faiss.read_index(_index_file())
             if os.path.exists(_meta_file()):
                 self.metadata = self._load_meta()
             self._loaded_disk_mtime = disk
+            self._synced_stamp = stamp
         except Exception:  # pylint: disable=broad-except
             # Keep serving the in-memory snapshot on any reload failure.
             pass
 
     # ── metadata persistence (with optional encryption) ───────────────────────
 
-    def _load_meta(self) -> list:
+    def _read_meta_once(self) -> list:
         with open(_meta_file(), "rb") as f:
             raw = f.read()
         from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
@@ -141,30 +207,60 @@ class LocalVectorDB(VectorStorageAdapter):
                 )
         try:
             return json.loads(raw)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            import logging  # pylint: disable=import-outside-toplevel
-            logging.getLogger(__name__).warning(
-                "semantic_metadata.json is not valid JSON. Backing up and starting fresh."
-            )
-            corrupt = _meta_file() + ".corrupt"
-            try:
-                os.rename(_meta_file(), corrupt)
-            except OSError:
-                pass
-            with open(_meta_file(), "wb") as f:
-                f.write(b"[]")
-            return []
+        except ValueError:
+            if looks_encrypted(raw):
+                # intact ciphertext we cannot decrypt: locked, never "corrupt"
+                raise StoreUnreadableError(_meta_file(), "encrypted and cannot be decrypted",
+                                           locked=True)
+            raise
+
+    def _load_meta(self) -> list:
+        """Read the metadata. Side-effect free: never renames or rewrites the file; raises
+        StoreUnreadableError if it stays unreadable after a few retries (#135)."""
+        return read_retry(_meta_file(), self._read_meta_once)
+
+    def _ensure_writable(self) -> None:
+        """Writer-side gate: refuse to persist over a store that failed to load.
+
+        Saving the empty in-memory fallback would destroy a store that was merely unreadable
+        (concurrent writer, missing key). Only if the file stays unreadable AND unchanged is
+        it moved aside (bytes kept in ``<file>.corrupt-<ts>``) so a fresh one can be written.
+        """
+        if not getattr(self, "_load_error", None):
+            return
+        probes = {
+            "index": (_index_file(), lambda: faiss.read_index(_index_file())),
+            "meta": (_meta_file(), self._read_meta_once),
+        }
+        for key, exc in list(self._load_error.items()):
+            if exc.locked:
+                raise exc
+            path, read = probes[key]
+
+            def _readable(read=read) -> bool:
+                try:
+                    read()
+                    return True
+                except Exception:  # pylint: disable=broad-except
+                    return False
+            if _readable():
+                raise StoreUnreadableError(
+                    path, "store failed to load but is readable now (transient) — retry")
+            if quarantine_if_stably_corrupt(path, _readable) is None:
+                raise exc
+            del self._load_error[key]
 
     def _save_meta(self) -> None:
-        from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
-        encrypt, project_id = get_storage_config()
-        content = json.dumps(self.metadata, indent=2).encode()
-        if encrypt:
-            from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
-            content = encrypt_bytes(content, get_or_create_key(project_id))
-        os.makedirs(os.path.dirname(_meta_file()), exist_ok=True)
-        with open(_meta_file(), "wb") as f:
-            f.write(content)
+        with store_lock():  # re-entrant: also called from inside save() / the row mutators
+            self._ensure_writable()
+            from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
+            encrypt, project_id = get_storage_config()
+            content = json.dumps(self.metadata, indent=2).encode()
+            if encrypt:
+                from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+                content = encrypt_bytes(content, get_or_create_key(project_id))
+            atomic_write(_meta_file(), content)
+            self._synced_stamp = self._disk_stamp()
 
     def save(self):
         """
@@ -177,8 +273,12 @@ class LocalVectorDB(VectorStorageAdapter):
         if breaker is not None:
             breaker.check()
         with store_lock():
-            faiss.write_index(self.index, _index_file())
+            self._sync_locked()        # merge into any newer disk state first (#136)
+            self._ensure_writable()
+            with atomic_path(_index_file()) as _tmp:
+                faiss.write_index(self.index, _tmp)
             self._save_meta()
+            self._pending = []
         self._loaded_disk_mtime = self._disk_mtime()
         if breaker is not None:
             breaker.record_success()
@@ -190,14 +290,15 @@ class LocalVectorDB(VectorStorageAdapter):
         """
         vector = np.array([vector]).astype("float32")
 
-        self.index.add(vector)
-
-        self.metadata.append({
+        entry = {
             "text": text,
             "importance": importance,
             "source": source,
             "behaviour_score": behaviour_score,
-        })
+        }
+        self.index.add(vector)
+        self.metadata.append(entry)
+        self._pending.append((vector, entry))
 
         self.save()
 
@@ -221,23 +322,27 @@ class LocalVectorDB(VectorStorageAdapter):
             vec, text, importance = item[0], item[1], item[2]
             entry_source = item[3] if len(item) > 3 else source
             vec = np.array([vec]).astype("float32")
-            self.index.add(vec)
-            self.metadata.append({
+            entry = {
                 "text": text,
                 "importance": importance,
                 "source": entry_source,
                 "behaviour_score": 0.0,
-            })
+            }
+            self.index.add(vec)
+            self.metadata.append(entry)
+            self._pending.append((vec, entry))
         self.save()
         return len(entries)
 
     def update_behaviour_score(self, row_id: int, new_score: float) -> bool:
         """Update behaviour_score for an existing entry by row index."""
-        if row_id < 0 or row_id >= len(self.metadata):
-            return False
-        self.metadata[row_id]["behaviour_score"] = float(new_score)
-        self._save_meta()
-        return True
+        with store_lock():  # reload-modify-write: don't flush a stale snapshot (#136)
+            self._sync_locked()
+            if row_id < 0 or row_id >= len(self.metadata):
+                return False
+            self.metadata[row_id]["behaviour_score"] = float(new_score)
+            self._save_meta()
+            return True
 
     def deprecate_row(self, faiss_row: int) -> bool:
         """
@@ -245,11 +350,13 @@ class LocalVectorDB(VectorStorageAdapter):
         The FAISS index is not rebuilt; the metadata entry is flagged so search
         results skip it.  Returns True if the row was found and updated.
         """
-        if faiss_row < 0 or faiss_row >= len(self.metadata):
-            return False
-        self.metadata[faiss_row]["deprecated"] = True
-        self._save_meta()
-        return True
+        with store_lock():
+            self._sync_locked()
+            if faiss_row < 0 or faiss_row >= len(self.metadata):
+                return False
+            self.metadata[faiss_row]["deprecated"] = True
+            self._save_meta()
+            return True
 
     def suppress_row(self, faiss_row: int, reason: str = "auto_superseded", similarity: float = 1.0) -> bool:
         """
@@ -261,15 +368,17 @@ class LocalVectorDB(VectorStorageAdapter):
 
         Returns True if the row was found and updated.
         """
-        if faiss_row < 0 or faiss_row >= len(self.metadata):
-            return False
-        entry = self.metadata[faiss_row]
-        if entry.get("suppressed") or entry.get("deprecated"):
-            return False  # already suppressed/deprecated
-        entry["suppressed"] = True
-        entry["suppress_reason"] = reason
-        entry["suppressed_at"] = _now_iso()
-        self._save_meta()
+        with store_lock():
+            self._sync_locked()
+            if faiss_row < 0 or faiss_row >= len(self.metadata):
+                return False
+            entry = self.metadata[faiss_row]
+            if entry.get("suppressed") or entry.get("deprecated"):
+                return False  # already suppressed/deprecated
+            entry["suppressed"] = True
+            entry["suppress_reason"] = reason
+            entry["suppressed_at"] = _now_iso()
+            self._save_meta()
         # Enqueue for priority-queue cleanup
         if self._cleanup_queue_factory is not None:
             try:

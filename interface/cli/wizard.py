@@ -157,13 +157,18 @@ _EXTRA_PACKAGES: dict[str, list[str]] = {
     "languages": [
         "tree-sitter-python>=0.23",
         "tree-sitter-javascript>=0.23",
+        "tree-sitter-php>=0.23",
         "tree-sitter-typescript>=0.23",
         "tree-sitter-java>=0.23",
         "tree-sitter-cpp>=0.23",
+        "tree-sitter-c-sharp>=0.23",
         "tree-sitter-go>=0.23",
         "tree-sitter-rust>=0.23",
+        "tree-sitter-ruby>=0.23",
         "tree-sitter-bash>=0.23",
         "tree-sitter-yaml>=0.6",
+        "tree-sitter-swift>=0.7",
+        "tree-sitter-kotlin>=1.1",
     ],
 }
 

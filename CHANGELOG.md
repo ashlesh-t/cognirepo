@@ -8,9 +8,522 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+## [2.5.0] — 2026-10-10
+
+### Highlights
+
+- **Stores are much safer to share between agents.** Every store is written atomically, read-modify-write runs
+  under the lock, readers never rename or overwrite a live store, the graph and the AST index/FAISS rebase
+  onto a newer on-disk state instead of overwriting it, Chroma works across processes, and a busy store is a
+  clear, retryable error instead of a hang or a traceback (#134, #135, #136, #137, #139, #141, #142). Two gaps
+  remain, listed under *Known issues*.
+- **Exactly one watcher per repo, and a much smaller footprint.** A per-repo lease replaces N unregistered
+  watchers (#138); the background watcher is a fresh process (3.5 GB → ~110 MB, #127) that stops when its repo
+  is gone (#119); `behaviour.json` is bounded (77 MB → 3.6 MB, #118); `cognirepo doctor --resources` shows
+  where memory and disk go (#121).
+- **Crash-safe, incremental indexing.** The knowledge graph is journalled while `index-repo` runs (#109), and
+  the post-commit hook now persists the AST index, covers every indexed language and logs its result
+  (#122, #123, #154, #155).
+- **Five new languages:** Ruby, PHP, C#, Swift and Kotlin, with calls attributed inside constructors,
+  accessors and computed properties (#72–#75, #176–#178).
+- **Recovery, diagnostics and honest docs:** `cognirepo graph restore` brings back intact graphs that older
+  versions quarantined (#118); `doctor` inspects the `cognirepo` on PATH, stale processes and the post-commit
+  hook (#119, #123, #124); `CLI_REFERENCE.md` is now checked against the real CLI by a test (#144), and the
+  documentation of removed interfaces (REST/JWT, Redis, gRPC) and of what encryption at rest covers was
+  corrected (#145).
+
+### Upgrade notes
+
+Nothing is removed from the CLI, MCP tools or `config.json`, but some behaviour changed:
+
+- **Re-run `cognirepo install-hooks`.** The post-commit hook now logs to `.cognirepo/hook.log` /
+  `hook.last`, covers every indexed extension and passes `--no-embed`; `cognirepo doctor` warns when the
+  installed block is outdated.
+- **A second watcher no longer starts silently.** `watch --ensure-running` / `--foreground` with a watcher
+  already running exit with a message naming its pid. A watcher that is a thread inside `cognirepo serve`
+  shows as `running (in serve)` in `cognirepo list`, and `list --stop` refuses to signal it.
+- **The background watcher is a separate process.** `index-repo --daemon` and `init` start
+  `python -P -m interface.cli.main watch --foreground` (own session, log in `.cognirepo/watchers/`) instead
+  of forking; the internal `daemonize()` is gone and `run_watcher_with_crash_guard()` now returns whether it
+  ran.
+- **Only one `index-repo` writes the graph at a time.** A second one refuses immediately and names the
+  owner, unless `indexing.writer_wait_secs` makes it queue (#137).
+- **Busy stores.** The CLI exits 75 (`EX_TEMPFAIL`) with a one-line message; MCP tools return
+  `{"error": …, "busy": true, "retryable": true}`. `StoreBusy` subclasses `filelock.Timeout`, so existing
+  `except Timeout` code keeps working.
+- **`behaviour.json` is pruned on first load.** Only the newest 2,000 queries, 50 sessions and the
+  strongest co-edit partners are kept; learned weights, preferences and error counts are untouched. The
+  bounds are configurable under `behaviour` in `config.json`.
+- **New settings:** environment `COGNIREPO_NO_WATCHER`, `COGNIREPO_LOCK_HOLD_WARN_SECS`,
+  `COGNIREPO_LOCK_STRICT`; config `behaviour.*`, `indexing.graph_journal*`, `indexing.writer_wait_secs`.
+- **Optional dependencies:** the `languages` extra now also installs the tree-sitter grammars for Ruby,
+  PHP, C#, Swift and Kotlin. `fsspec` was bumped for CVE-2026-104851.
+- **Docs that described removed features were corrected.** There is no REST API, JWT login, Redis cache or
+  gRPC service, and `SECURITY.md` now states exactly which stores `storage.encrypt` covers.
+
+### Known issues
+
+- **Files deleted in a commit stay in the index** until a full `index-repo` or a running watcher sees them:
+  the post-commit hook skips paths that no longer exist (#169).
+- **A reader can briefly see a mixed index generation.** `ast_index.json`, `ast.index`, `ast_metadata.json`
+  and `manifest.json` are written one after another under the store lock, but a reader that reloads in the
+  middle of a save can pair the new JSON with the previous FAISS/metadata files; `cognirepo verify-index`
+  detects it (#140).
+- **At-rest encryption does not cover the AST index, the default Chroma store, learnings or project memory**
+  (stated in `SECURITY.md`; whether to extend it is #186).
+- **Unused web packages are still installed for every user** — `fastapi`, `uvicorn`, `python-multipart`
+  (#187).
+- **The ~5 GB memory incident (#98 / #105) was never reproduced.** The strongest suspects are fixed here (a
+  3.5 GB forked watcher, N duplicate watchers, whole-file rewrites), but if you see unbounded growth run
+  `cognirepo doctor --resources` and report it.
+- **No always-on watcher yet** (`watch --serve` / autostart with catch-up reindex, #146): the git hook and
+  `watch --ensure-running` cover most of it.
+
+### Security
+- **`fsspec` 2026.3.0 → 2026.6.0 (CVE-2026-104851, HIGH — arbitrary code execution via crafted reference
+  documents).** Flagged by Trivy and pip-audit. cognirepo never imports fsspec; it is a transitive
+  dependency of `huggingface_hub` (which `fastembed` uses to fetch the embedding model), and the affected
+  component is fsspec's reference filesystem, which cognirepo does not use — so the practical exposure was
+  nil, but it gated CI. Impact check: `huggingface_hub` requires only `fsspec>=2023.5.0` (no upper bound),
+  nothing in the 2026.4.0 / 2026.6.0 changelogs touches a feature this project or `huggingface_hub` use on
+  this path (HTTP `pipe_file`, tar/zip closing, `dirFS`, `referenceFS`, FTP, `expand_path` globbing), and
+  the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
+
+### Added
+- **#177 — C# constructors, property accessors and finalizers record their calls.** Constructors
+  (instance and static) are now FUNCTION symbols named `Order.constructor`, and a finalizer is named
+  as declared (`~Order`). A property whose accessors have bodies (`get`/`set`/`init` blocks,
+  `get => …`, expression-bodied `int X => …`) is one FUNCTION symbol named `Order.X` (tagged
+  `property`) carrying the calls from all its accessors. The class prefix keeps these off the CLASS
+  symbol's `file::name` graph node — including the idiomatic `public Customer Customer { … }` — and
+  keeps two classes' constructors apart, so `who_calls` names the class whose constructor does the
+  dependency-injection wiring. Auto-properties, initialisers, event accessors and indexers are
+  unchanged; Java constructors remain a follow-up.
+- **#176 — Swift computed properties and property observers record their calls.** A computed property
+  (`var x: Int { calc() }` or a `get`/`set` pair) and a property with `willSet`/`didSet` observers is
+  now a FUNCTION symbol named `Type.property` (tagged `property`, like a Python `@property`),
+  carrying the calls from all its accessors, so `who_calls` and the call graph see them. Getter, setter
+  and observers share one symbol rather than one each, matching how the property is referenced; the
+  type prefix keeps same-named properties (SwiftUI's `body`) of different types in one file on separate
+  graph nodes, and every binding of a multi-binding declaration is indexed. Stored properties without
+  accessors and local computed variables inside functions (whose calls the function already owns) are
+  not symbols; `lazy` closure initialisers and `subscript` bodies are not covered. Tree-sitter
+  FUNCTION records are now built by one `_function_symbol()` helper, and per-language property
+  handling is a `_PROPERTY_SYMBOL_BUILDERS` entry.
+- **`cognirepo doctor --resources` and `docs/RESOURCES.md` (#121).** One read-only report of where memory and
+  disk go: every cognirepo process (resident memory, age, repo, flagged stale — directory deleted or a
+  one-shot command running for hours), the size of each `.cognirepo/` subdirectory with its largest files,
+  and set-aside/left-over files (quarantines, `.stale` indexes, `.replaced-*`, scratch). `--json` for
+  scripts. The new guide documents the expected footprint (measured: watcher ~100–130 MB, idle `serve`
+  ~220 MB, `index-repo --no-embed` ~125 MB peak, ~7 MB of store for this repo), what each directory holds,
+  every tuning knob that affects memory or disk, and what to do for each thing the report can show. Run
+  against the maintainer's real store it listed 1.1 GB of resident cognirepo processes (half of them
+  stale) and 67 MB of set-aside files, which is what the issue asked to make visible.
+- **#178 — Kotlin language support.** `.kt` and `.kts` files are indexed via `tree-sitter-kotlin` (now
+  part of the `languages` extra, `>=1.1`): classes, interfaces, data/enum/sealed classes, objects and
+  companion objects, functions, extension functions, secondary constructors and `init` blocks.
+  Members that share a name in every class are qualified with their class so they get distinct graph
+  nodes: `Service.constructor`, `Service.init`, `Service.Companion` (unnamed companion). Call edges
+  cover `foo()`, `a.b()`, safe-call
+  `a?.b()` and trailing-lambda calls (`list.forEach { … }`); supertypes are normalised to simple names
+  (`com.x.Base()` → `Base`, `Comparable<T>` → `Comparable`, `Iface by impl` → `Iface`).
+  `build.gradle.kts` was already a Kotlin/Gradle service marker and `build/` / `.gradle/` were already
+  skipped. `cognirepo doctor` lists Kotlin; `semantic_search_code` accepts `language="kotlin"`; the
+  post-commit hook picks up `.kt`/`.kts` via `known_extensions()`. The indexer no longer emits a symbol
+  with an empty name when a grammar's error recovery inserts a zero-width `MISSING` name node, and logs
+  `[parse-errors] <path>` at debug level for any file the grammar could not fully parse. Known
+  tree-sitter-kotlin 1.1.0 limit: an enum whose entries have bodies loses that enum and every later
+  declaration in the file (documented in `docs/LANGUAGES.md`, pinned by a test).
+- **#175 — test that every indexed language has a service marker.** `CLAUDE.md` requires
+  `_SERVICE_MARKERS` (`interface/cli/service_detect.py`) to stay in sync with
+  `language_registry._GRAMMAR_MAP`, but nothing checked it. `tests/test_language_registry_sync.py`
+  derives the languages from `_GRAMMAR_MAP` / `_LANG_LABELS` and fails, naming the language, when one
+  has no marker whose `lang_hint` names it (JavaScript/TypeScript map to `Node.js`) and isn't in the
+  commented `_NO_MARKER_LANGUAGES` allow-list (Shell, YAML, C++). The reverse direction is checked too:
+  every marker's language must be indexed or listed in `_MARKERS_WITHOUT_GRAMMAR` (today: Dart,
+  `pubspec.yaml`). Both allow-lists are themselves checked so they can't go stale, and the
+  `"<Language>/<Tool>"` `lang_hint` convention is documented in `service_detect.py`. No behaviour change.
+- **#74 — C# language support.** `.cs` files are indexed via `tree-sitter-c-sharp` (now part of
+  the `languages` extra): classes, interfaces, structs, records, enums, methods and local functions,
+  plus call edges for `Foo()`, `obj.Foo()`, generic `Foo<T>()` and null-conditional `a?.Foo()`
+  invocations. Constructors are not indexed as functions (same as Java). `cognirepo doctor` lists
+  C#; `semantic_search_code` accepts `language="csharp"`. `record_declaration` also picks up Java
+  16+ records (pinned by a test). `obj/` and `.vs/` are added to the indexer's skip dirs.
+- **#73 — PHP language support.** `.php` files are indexed via `tree-sitter-php` (now part of the
+  `languages` extra, loaded with `language_php()` so files mixing HTML and `<?php` blocks parse):
+  classes, interfaces, traits, enums, functions and methods, INHERITS edges for `extends`,
+  `implements` and trait `use` (namespaced `\Ns\Base` reduced to `Base`), and call edges for
+  `foo()`, `$obj->foo()`, `Foo::bar()` and namespaced `\Ns\foo()`. `cognirepo doctor` lists PHP;
+  `semantic_search_code` accepts `language="php"`; `index-repo --changed-only` picks up `.php` files.
+- **#75 — Swift language support.** `.swift` files are indexed via `tree-sitter-swift` (now part of
+  the `languages` extra; the grammar is versioned 0.7.x, hence `>=0.7`): classes, structs, enums,
+  actors, extensions, protocols, functions, `init`/`deinit` and protocol requirements, inheritance lists,
+  and call edges for `foo()` / `obj.foo()`. An `extension Foo {}` is recorded as a CLASS symbol named
+  `Foo` at the extension site, so `lookup_symbol("Foo")` returns the type and its extensions.
+  `Package.swift` is detected as a Swift service marker; `cognirepo doctor` lists Swift. `Pods/`,
+  `.build/`, `Carthage/` and `DerivedData/` are added to the indexer's skip dirs. The shared
+  `call_expression` callee fallback only accepts Swift callee shapes, with a JS/TS/Go regression test.
+- **#72 — Ruby language support.** `.rb` files are indexed via `tree-sitter-ruby` (now part of
+  the `languages` extra): classes, modules, instance and `def self.` methods, call edges
+  (`foo()`, `recv.foo()`, `Mod::foo`; `class`/`new` are skipped as non-symbol callees) and
+  superclasses (namespaced `Mod::Base` is reduced to `Base` so INHERITS edges resolve). Ruby's `class`/`module` node types are
+  scoped to Ruby via the new per-language `_TS_LANG_FUNCTION_TYPES`/`_TS_LANG_CLASS_TYPES` maps so
+  they never match JS class expressions or TS `module` blocks. `cognirepo doctor` lists Ruby.
+- **#137/#139 (graph half) — multi-writer safety for the graph journal.** (1) A running
+  `index-repo` takes an exclusive OS lock (`graph/graph.journal.writer`, the LevelDB/Lucene
+  write-lock pattern) for the whole run; a second one is refused with `indexing is already running
+  (pid N)` (exit 1) or queues for `indexing.writer_wait_secs`. The kernel drops the lock if the
+  holder dies, so a crash leaves no stale lease. (2) Journal records now carry their sequence
+  number in the frame header and the next seq is read from the file tail under `store_lock`
+  (length+crc scan, no decrypt) — two writers can no longer emit colliding seqs. (3) Every graph
+  mutation is remembered until it is on disk; `save()` and `reload_if_changed()` now compare disk
+  state and, if another process wrote since, reload it and re-apply the unsaved ops on top
+  (Git-style compare-and-swap-then-redo) instead of overwriting — a long-lived watcher can no
+  longer replace a newer `index-repo` result with its stale copy. `ops/cron/prune_memory.py` now
+  mutates through the journaled primitives (conditional `remove_node_if_degree_at_most`, so a rebased
+  prune never deletes a node another writer just connected). A failed journal flush keeps its ops in
+  the unsynced log instead of dropping them. Not covered: the AST index / FAISS stores still save
+  last-writer-wins (#139 remainder). Design + prior art: `docs/architecture/GRAPH_CONCURRENCY.md`.
+- **#109 — incremental knowledge-graph persistence (journal).** `index-repo` now appends graph
+  mutations to `.cognirepo/graph/graph.journal` every N files / T seconds instead of holding
+  everything until one end-of-run `graph.pkl` write. `KnowledgeGraph._load()` replays the journal
+  on top of `graph.pkl`; `save()` compacts it (`journal_seq` marker pickled inside the graph makes
+  replay idempotent across a crash between the atomic replace and the journal unlink). Records are
+  length-prefixed + crc32-checked (torn tail ignored by readers, truncated by the single writer) and
+  Fernet-encrypted per segment under `storage.encrypt`; an undecryptable journal is preserved and
+  blocks `save()` like `GraphLockedError`. A circuit-breaker-failed final save no longer loses the
+  graph. `graph.pkl` stays the single consolidated file for readers; `kg.G` remains the in-memory
+  read model. **Not** addressed (follow-up): the live graph is still fully resident, so this does not
+  lower query-time memory or the compaction-time peak. New primitives `remove_node`, `remove_edge`,
+  `set_node_attrs`, `set_edge_attrs`, `copy_edge`; `ASTIndexer` no longer mutates `kg.G` directly.
+  Replay streams one segment at a time (peak = graph + one segment); `begin_journal()` finds the
+  append point with a length+crc-only boundary scan (no decrypt/unpickle under `store_lock`); pending
+  ops are bounded by an estimated byte budget as well as op count.
+  Mid-file journal damage is refused (never truncated away); readers replay only new segments when
+  `graph.pkl` is unchanged. Knobs: `indexing.graph_journal`, `graph_journal_flush_files`, `graph_journal_flush_secs`.
+
+### Changed
+- **Guides brought up to date with this release.** `README.md`: the *Storage layout* was wrong in several
+  places (`ast.index` / `ast_metadata.json` shown under `vector_db/` — they live in `index/`; no `watchers/`,
+  journal, lock, hook files or Chroma store) and is rewritten from real stores; the quick start, CLI summary
+  and documentation table gain `install-hooks`, `doctor --resources`, `graph restore`, one-watcher-per-repo
+  and links to `CLI_REFERENCE`, `CONFIGURATION`, `RESOURCES`, `TROUBLESHOOTING`; a roadmap line for the
+  planned 3.0 platform work. `docs/USAGE.md`: new *Keeping the index fresh* (watcher, git hook, on-demand)
+  and *Diagnostics and recovery* (doctor, quarantined-graph recovery, busy store). `docs/TROUBLESHOOTING.md`:
+  new *Processes, Locks & Hooks* — busy store (exit 75), stray processes / memory, "a watcher is already
+  running", a hook that is not indexing, deleted files lingering (#169), quarantined graphs, and the
+  smaller `behaviour.json`.
+- **#95 — episode dict schema keys extracted to `data/memory/episodic_schema.py`.**
+  `episodic_memory.py` and `timeline.py` both accessed the episode dict via duplicated hardcoded
+  string literals (`"event"`, `"metadata"`, `"time"`, and `"type"` within metadata). Pure
+  refactor, no behavior change — both files now import `EVENT`/`METADATA`/`TIME`/`METADATA_TYPE`
+  from the new module.
+
+### Fixed
+- **Release smoke test could not pass.** `scripts/smoke_test.sh` and `.ps1` ran `cognirepo init --password
+  smoketest …`, but `--password` went away with the REST/JWT API (`unrecognized arguments`), so step 2 failed
+  before anything was tested. Removed the flag; the five steps (init, index, lookup, store/retrieve memory,
+  MCP server start) pass.
+- **The test suite wrote to the developer's real `~/.cognirepo/org_graph.pkl`.** Every run added its fixture
+  repos to it (205 were found in one checkout, all under `/tmp`/`pytest`), flooding `cognirepo doctor` with
+  "Org member … index not found" and making parallel test workers contend on the one real-home org lock.
+  `conftest` now points `COGNIREPO_ORG_GRAPH` at a per-test temp file; a full run leaves the real file
+  untouched.
+- **#141 — lock hygiene: a busy store is a clear retryable error, nothing waits forever, slow work is out of
+  the lock.** (1) A lock timeout surfaced as a raw `filelock.Timeout` traceback. `store_lock()` now raises
+  `StoreBusy` (still a `Timeout` subclass) naming the lock and the wait; MCP tools return
+  `{"error": …, "busy": true, "retryable": true}` (and `store_memory` no longer records a busy attempt as
+  stored); the CLI prints one line and exits 75 (`EX_TEMPFAIL`). (2) The org-graph lock had **no timeout** —
+  one hung holder blocked `link_repos` and org search in every repo; it now waits 15 s, is re-entrant, and
+  follows `COGNIREPO_ORG_GRAPH` instead of always contending on the real-home lock. `OrgGraph.load/save`
+  also stopped turning a busy lock into "start with an empty graph" / "log and carry on" (a timeout is an
+  `OSError`, so `link_repos` had looked successful while dropping the edge). (3) `git rev-parse` (index
+  manifest) and the OS-keychain lookup (graph and org-graph encryption) no longer run while holding the
+  store lock. A lock held over 10 s is logged on release. (4) `last_context.json` lives in `$HOME` but was
+  guarded by the repo-local lock; it now has its own lock beside it (2 s, best-effort), and
+  `save_query_context` reads the old snapshot inside the lock instead of before it, which dropped a
+  concurrent writer's `sections`. (5) The documented rule "never nest two different store locks" is now
+  enforced (`LockOrderError` under `COGNIREPO_LOCK_STRICT=1`, which every test runs with; no existing code
+  path nested), and the full lock inventory with timeouts is in `docs/architecture/GRAPH_CONCURRENCY.md`.
+  (6) The remaining raw `FileLock`s were moved onto `store_lock` too, and the places that swallowed a busy
+  lock now say so: `BehaviourTracker` (a raw `Timeout` reached MCP clients), the Tier-2 queue (a busy lock
+  read as "queue empty", so `expand_on_access` reported a false "not found"; the initial queue write was
+  logged and dropped, so the Tier-2 files were never indexed; the read returned "0 files"). MCP and the CLI
+  catch the `filelock.Timeout` base class, so any future raw lock is still reported as busy. A test fails if
+  `FileLock(` reappears in store code.
+- **#118 — `behaviour.json` no longer grows without bound (77 MB → 3.6 MB), and quarantined graphs can be
+  restored.** (1) Everything in `behaviour.json` except the 50-entry style buffer was unbounded and the
+  whole file was rewritten, pretty-printed, on every save. Measured on the real 77.0 MB file, the bulk was
+  `file_edit_cooccurrence` (a pair for every two files touched in a session, i.e. quadratic). Now bounded
+  on load and on save, after the cross-process merge so a stale writer cannot bring entries back:
+  2000 queries (text ≤ 500 chars, ≤ 20 symbols each), 50 sessions × 200 files, the 30 strongest co-edit
+  partners per file, 500 terms, 20 files per error type (each can be changed under `behaviour` in
+  `config.json`, see `docs/CONFIGURATION.md`; a prune that drops 100+ entries is logged); JSON is written compactly. The same file now
+  loads, prunes and saves to 3.57 MB, and a long simulated run plateaus instead of growing. Not in this
+  change: an append-only behaviour store (pairs with #115). (2) The three `graph.pkl.corrupt-*` files in
+  that checkout were not corrupt — intact Fernet ciphertext (41,327 / 1,122 / 2 nodes) that pre-#97 code
+  quarantined when `keyring` was missing. New `cognirepo graph restore [--apply] [--force]` inspects each
+  quarantine with the current key (recoverable / locked / corrupt) and restores the largest recoverable one
+  by copying it; it never overwrites a readable `graph.pkl` without `--force`. (3) New
+  `cognirepo graph prune-quarantine [--days 30] [--apply]` removes only genuinely unreadable quarantines
+  older than the retention window, never recoverable or locked ones. `doctor` now classifies quarantined
+  graphs and only warns about a recoverable one when `graph.pkl` is missing or unreadable.
+- **`SECURITY.md` overstated what encryption at rest covers, and named the wrong algorithm.** It said
+  "AES-256 GCM" and "all files in `vector_db/`, `graph/`, `index/`". The code uses Fernet (AES-128-CBC +
+  HMAC-SHA256) and, with `storage.encrypt: true`, encrypts the knowledge graph and its journal,
+  `behaviour.json`, the org graph, the episodic log and the local FAISS store — **not** the AST index, the
+  default Chroma store, learnings or project memory. The document now says exactly that, states plainly
+  that there is no network API or auth layer (the only listener is the optional `cognirepo metrics`
+  exporter on `127.0.0.1:9090`), and points at the follow-up for extending coverage (#186). Unused web/auth
+  packages that are still installed for every user are tracked in #187.
+- **#127 — the watcher started by `index-repo --daemon` no longer carries the indexing run's heap
+  (3.5 GB → 113 MB).** The background watcher was a double-fork of the calling process, so it inherited
+  everything that process held — after `index-repo` the embedding model, the FAISS index and every parsed
+  AST — while a fresh `watch --ensure-running` watcher on the same index uses ~100 MB. Forking a process
+  that already runs threads and native libraries is also unsafe: the forked daemon ignored SIGTERM for 30 s
+  and had to be SIGKILLed. `daemonize()` is replaced by `spawn_detached_watcher()`: a new interpreter
+  (`python -P -m interface.cli.main watch --foreground`, own session, log appended, stdin `/dev/null`)
+  that loads only what a watcher needs and registers itself under the per-repo lease. `-P` keeps the repo's
+  own `interface/` package, if it has one, from shadowing cognirepo's. `watch --ensure-running` no longer
+  builds a graph and index it threw away. The daemon's command line is now `watch --foreground` instead of
+  its parent's (`init`, `index-repo`), so it is recognisable in `ps`. Measured on this repo: RSS 3,558 MB →
+  113 MB, `list --stop` 30 s + SIGKILL → 0.2 s clean stop.
+- **#119 — "leaked `cognirepo init` processes": a watcher now stops when its repo is gone, the test suite
+  no longer creates them, and `doctor` finds the ones that exist.** 12 (later 80, ~40 MB each, days old)
+  `python -m interface.cli.main init` processes turned out not to be stuck `init` runs: `init` starts a
+  background watcher by forking itself, a fork keeps its parent's command line, and these watchers watched
+  temp directories of test runs that pytest had deleted — reparented to `systemd --user`, with nothing to
+  tell them to stop. (1) The watcher's crash-guard loop now checks every 5 s that its directory still
+  exists and stops cleanly (final flush, registration removed) when it does not. (2) The test suite
+  was the source: tests that run `init` — in-process or as a subprocess — left a real daemon each. A
+  new `COGNIREPO_NO_WATCHER` environment variable (also useful in CI and containers) makes `init` /
+  `index-repo --daemon` skip the background watcher and `serve` skip its in-process one; the suite sets it
+  unless a test requests `real_watcher_spawn`. (3) `cognirepo doctor` warns about stale cognirepo processes
+  — directory deleted, or a one-shot command running for over 6 h — with their combined memory and the
+  `kill` command; `serve` sessions are never reported.
+- **#138 — there is now exactly one watcher per repo.** Every `cognirepo serve` (one per agent session)
+  started its own unregistered watcher thread, the "singleton" flock was taken on a per-pid file so it
+  excluded nothing, `watch --daemon` registered itself after the fork (check-then-act), and the shared
+  heartbeat could not tell one live watcher from three: N sessions meant N watchers, each with its own
+  graph and index, all saving. The process that runs the observer now takes a per-repo lease (OS file
+  lock, released by the kernel on death) inside `run_watcher_with_crash_guard()`, the single place every
+  watcher goes through. Only the holder loads the graph/index, registers and heartbeats; other `serve`
+  sessions stand by and take over if it dies; `watch --daemon` reports whether it started or someone else
+  already holds the lease. A watcher embedded in a `serve` session is marked and `list --stop` no longer
+  offers to kill the agent's server. `run_watcher_with_crash_guard()` now returns whether it ran.
+- **#139 — a stale writer no longer overwrites the AST index / FAISS store.** The graph already rebased on
+  save; `ast_index.json`, `ast.index` and `ast_metadata.json` still saved last-writer-wins, so a long-lived
+  watcher's next save silently dropped every file an `index-repo` had indexed since it loaded — leaving the
+  graph (`who_calls`) and the symbol index (`lookup_symbol`, `context_pack`) disagreeing. `ASTIndexer` now
+  tracks the files it changed and, if disk moved on, re-applies just those onto the newer state under the
+  lock (vectors are transplanted with `reconstruct`, no re-embedding; ids renumbered). `reload_if_changed()`
+  keeps unsaved local edits. Also: a replaced file's stale file-summary vectors are removed on rebase.
+  Design and limits: `docs/architecture/GRAPH_CONCURRENCY.md`.
+- **#123 — the post-commit hook no longer discards its errors.** It ran `index-repo --files … 2>/dev/null &`,
+  so when the pipx venv lost `keyring` every hook run failed to save the encrypted graph and nobody saw it.
+  The hook now appends all output to `<store>/hook.log` (rotated at 256 KiB, one `.1` kept) and writes the
+  run's `ts`/`exit`/`files` to `<store>/hook.last` — in plain shell, so it also records `cognirepo: command
+  not found` (exit 127). It is still backgrounded, and a repo's very first commit is now seen
+  (`diff-tree --root`). `cognirepo doctor` warns about a failed last run and about an outdated installed
+  block (re-run `install-hooks`); `get_session_brief` lists a failed hook run under `known_blind_spots`.
+- **#154 — `index-repo --files` / `--changed-only` never saved the AST index.** Both incremental paths
+  (`--files` is what the post-commit hook runs) called `index_file()` then only `kg.save()`, so a
+  hook-indexed file landed in the graph but not in `ast_index.json`/FAISS/manifest: `who_calls` saw new
+  code while `lookup_symbol`/`context_pack` did not. Both now go through one helper
+  (`_incremental_index` in `interface/cli/main.py`) that runs the #122 base-graph guard first (which also
+  loads the existing AST index), re-indexes, rebuilds the reverse index / resolves touched call stubs /
+  recounts symbols like the watcher's flush, then `indexer.save()` (under `store_lock`) before `kg.save()`.
+  `--no-embed` is now honoured on these paths, and the hook passes it, so a commit no longer loads the
+  ~2 GB embedding model. The hook's extension filter (previously a hard-coded `py|js|ts|java|go|rs|cpp|c|h`)
+  is generated from `language_registry.known_extensions()`, and `--changed-only` uses
+  `supported_extensions()` instead of its own hard-coded set; re-running `install-hooks` replaces an
+  outdated block in place. New tests (`tests/test_incremental_persist.py`) check a fresh process can
+  `lookup_symbol` a hook-indexed function and fail if either extension list diverges from the registry.
+- **#155 — `index-repo --changed-only` claimed to "fall back to a full reindex" when git failed but did
+  nothing** (exit 0, last-indexed sha recorded). It now exits `1` with an accurate message, indexes nothing
+  and does not write `last_indexed.json`.
+- **#142 — Chroma (the default vector backend) lost writes across processes and could quarantine a healthy
+  store.** Measured with real processes before the fix: 6 workers x 15 adds kept **20 of 90** vectors and one
+  worker died creating the store. Causes and fixes: (1) ids were minted from `count()` read once at open, so
+  concurrent processes — and any `add` after a `remove()` — re-used live ids and chroma **silently ignored**
+  the add; ids now come from a counter file advanced under a cross-process lock before the add (never below the
+  live count; numeric strings are kept because callers use them as row ids; `_next_id - 1` still names the id
+  just stored). (2) Concurrent first-time creation raced inside chroma's schema setup (`table collections
+  already exists`); creation is now serialized behind the lock. (3) The open-sentinel was one shared `.opening`
+  file: one opener's cleanup erased another's evidence, and a sentinel left by an opener that was merely
+  **killed** (OOM, hook timeout) made the next process rename the whole store — even while a peer had it open.
+  Sentinels are now per process (`.opening.<pid>`, pid + start time so pid reuse can't fool it), live openers
+  write `.open.<pid>` markers, and a store is quarantined only if no live peer holds it **and a throw-away
+  subprocess still fails to open it** — a store that opens fine is never renamed. After a quarantine chroma's
+  per-process client cache is cleared. (4) The store path is resolved through `get_cognirepo_dir()` like every
+  other store (it used to walk up from the cwd and fall back to `~/.cognirepo`, which is also why
+  `test_default_returns_local_vector_db` kept opening — and quarantining — the developer's REAL home store).
+  Docs now state the real default backend (`chroma`). Chroma's own concurrent adds were measured to be safe
+  once ids are unique; a long-lived reader's HNSW view of a peer's very recent writes was seen to lag (not
+  addressed).
+- **#125 — the generated systemd unit could never start.** It emitted `watch --daemon-foreground`, a flag
+  that did not exist, so systemd crash-looped. New `cognirepo watch --foreground` (alias
+  `--daemon-foreground`, so units already written start working) runs the watcher in the foreground under
+  the crash guard, registers its own PID file (so `list`, `watch --status`, the singleton check and
+  `--stop` see it) and logs to stderr/journald. The unit now uses it, quotes a repo path with spaces as one
+  argument and sets `TimeoutStopSec=60`. A test starts, queries and stops a real watcher with both flags.
+- **#126 — `cognirepo list --stop` reported success and cleared the registration while the watcher kept
+  running, so `watch --ensure-running` started a second watcher on the same repo.** `stop_watcher_and_wait()`
+  now sends SIGTERM, waits up to 30 s for the process to be gone, escalates to SIGKILL (only if
+  `/proc/<pid>/cmdline` still looks like cognirepo — never a recycled pid), and removes the PID/heartbeat
+  files only afterwards; outcomes are `stopped` / `killed` (warns about unflushed edits) / `failed`
+  (registration kept, exit 1) / `not_found`. In the watcher: SIGTERM sets a stop flag the loop checks even if
+  the `KeyboardInterrupt` is swallowed, arms a watchdog that forces exit if the final flush hangs for 20 s,
+  a second SIGTERM exits immediately, and a stop during a crash never restarts. Also: a zombie
+  (exited, un-reaped) process no longer counts as alive — `kill(pid, 0)` succeeds on one, which made a
+  stopped watcher show as "running" forever.
+- **#144 — `docs/CLI_REFERENCE.md` documented a CLI that does not exist, and a test now keeps it honest.** It
+  advertised `cognirepo watch start|stop|status` (the parser has `--status`, `--ensure-running`,
+  `--foreground`, `--path`; stopping is `list -n <pid> --stop`), `ask --model/--tier` and `seed --days`
+  (no such flags), `user-prefs [KEY [VALUE]]` (the real interface is `--set KEY VALUE`), had **no section**
+  for six real commands (`coverage`, `export-spec`, `graph-stats`, `install-hooks`, `uninstall-hooks`,
+  `update-directives`) and missed ~35 flags on 14 others (`init --parent-repo/--service-type/…`,
+  `index-repo --tier/--no-graph/--remove-lock`, `doctor --release-check`, `setup --targets`, the `org`
+  subcommands …). All corrected from the real parser. New `tests/test_cli_docs_sync.py` captures the actual
+  argparse tree and fails when a command has no section, a flag is undocumented, a documented flag or a usage
+  example uses one that does not exist, or a usage line advertises subcommands the parser lacks.
+- **#124 — `doctor` now inspects the `cognirepo` on PATH, not just the interpreter running it.** Hooks and
+  MCP clients launch the PATH `cognirepo` (typically a pipx venv), which can differ from a dev checkout's
+  interpreter. New `interface/cli/install_probe.py` reads that script's shebang, probes the interpreter in
+  a read-only subprocess (imports `keyring`/`cryptography`, `keyring.get_keyring()` and a throw-away
+  `get_password`, version, and a content hash of its `interface/cli/main.py`) and `doctor` reports, with the
+  exact fix: `storage.encrypt: true` but the packages are missing (`pipx inject cognirepo keyring
+  cryptography`, or a `pip install` for that interpreter), a keyring with the fail/null backend or a failing
+  lookup (keys unreadable ⇒ encrypted stores stay locked), and a PATH install that is a stale snapshot of the
+  working tree (`pipx install --force <repo>`). Interpreters are compared by environment root, not
+  `realpath`: every venv's `python` symlinks to the same system python, so a pipx venv and a dev venv looked
+  identical and the PATH install was never checked (found by running it against a real pipx install).
+- **Heartbeat left behind for a dead watcher (intermittent CI failure).** The heartbeat thread had no stop
+  signal, so a write still in flight — or the very first write, if the watcher exits straight away — could
+  land *after* `clear_heartbeat_if_owned()` and recreate a heartbeat for a dead process, which then reported
+  "Heartbeat: OK" for the next two minutes. `start_heartbeat_thread()` now has a stop event and
+  `stop_heartbeat_thread()` stops and joins it; `run_watcher_with_crash_guard()` does that *before* removing
+  the PID file and heartbeat. The fsync added to atomic writes in #134 had widened the window enough to fail
+  `test_pid_file_and_heartbeat_removed_on_clean_exit` on CI runners; a regression test reproduces the race
+  deterministically with a slow write.
+
+- **#145 — documentation described features that no longer exist.** The REST API, JWT / password login,
+  Redis cache and gRPC streaming service were removed in earlier releases, but `FEATURES.md`,
+  `ARCHITECTURE.md`, `CONFIGURATION.md`, `DEVELOPER_GUIDE.md`, `SECURITY.md` and the CLI module docstring
+  still documented them as shipped (endpoints, `COGNIREPO_JWT_SECRET`, `COGNIREPO_PASSWORD_HASH`,
+  `COGNIREPO_REDIS_URL`, `redis.enabled`, `port`, `cognirepo wait-api`, `--via-api`, `--idle-timeout`). They
+  are removed; `FEATURES.md` now has a short "Removed interfaces" section so nobody goes looking for them;
+  `docs/auth.md` (two lines about JWT, linked from nowhere) is deleted; the stale JWT/bcrypt/`api_port`
+  setup in `tests/conftest.py` is gone.
+- **#128 — deleting a file left an orphan degree-0 `symbol::<name>` stub in the graph.**
+  `KnowledgeGraph._redirect_edges_to_stub` decided "something references this symbol" from its raw
+  neighbours, which include its own `DEFINED_IN` edge to the FILE node being removed in the same
+  call, so even an unreferenced function got a stub. `remove_file_nodes` now excludes the nodes it is
+  removing, and a symbol only gets a stub if it is referenced from outside the file (an incoming
+  `CALLED_BY` or `INHERITS` edge — call edges are stored in both directions, so adjacency alone
+  can't tell a deleted *caller* from a deleted *callee*). Stubs that lose their last edge because
+  their caller file was removed are dropped too. New `orphan_stubs()` / `remove_orphan_stubs()`;
+  `integrity_report()` gains `orphan_stubs`, `cognirepo doctor` counts them and
+  `cognirepo graph repair --apply` removes existing leftovers. Callers in other files still keep
+  their edges via an unresolved stub (D10 behaviour unchanged).
+
+- **#136 — unlocked read-modify-write lost updates and duplicated ids.** Every RMW of a shared store
+  now runs under the cross-process lock and reloads *inside* it: `episodic.log_event` /
+  `mark_stale` (ids allocated inside the lock), the learnings `store()` / `deprecate()` (a per-store
+  lock file, since the global learnings live in `~/.cognirepo` outside any repo-local lock),
+  `LocalVectorDB` (`add` / `add_batch` remember unsaved vectors and `save()` merges them into newer
+  disk state via `_sync_locked` instead of overwriting another process's vectors; `update_behaviour_score`
+  / `deprecate_row` / `suppress_row` reload under the lock before editing), and `ProjectMemory.add`
+  (reloads from disk inside the lock; an unreadable store is never written over). Measured against
+  the old code with real processes: 8 × 50 `log_event` kept 116 of 400 events, 8 × 25 learnings kept
+  158 of 200, 8 × 15 vector adds kept 40 of 120; all now exact. `store_lock()` is now **re-entrant
+  for the same thread** (nested use used to block 15 s on its own fd — part of #141) and accepts
+  `lock_path=`. Still open from #141: catching `filelock.Timeout`, shorter lock holds in
+  `ASTIndexer.save` / `KnowledgeGraph.save`, the org-graph lock timeout.
+- **#135 — readers no longer rename, sweep or overwrite live stores on a failed read.** New
+  `core/config/safe_read.py` (`read_retry`, `StoreUnreadableError`, `looks_encrypted`,
+  `quarantine_if_stably_corrupt`). Readers retry briefly and then raise or serve an empty value *in
+  memory* — they never mutate the file. Only a **writer** quarantines, and only a file that stays
+  unreadable *and unchanged* across two checks (bytes kept in `<file>.corrupt-<ts>`, nothing deleted);
+  Fernet ciphertext that cannot be decrypted is treated as locked, never as corrupt. Fixed:
+  `episodic._load` / `learning_store._load` returned `[]` on a decode error and the next write saved
+  it (history wiped); `LocalVectorDB.__init__` (built on every `store_memory`) renamed
+  `semantic.index` to `.stale` on any read failure and `_load_meta` renamed the metadata and wrote
+  `[]` over it; `ASTIndexer.load()` renamed `ast.index` / `ast_index.json` / `ast_metadata.json` and
+  swept `*.tmp` files without the lock — deleting a live writer's scratch file made its
+  `os.replace` fail. The sweep now runs only under `store_lock`, only on files older than 10
+  minutes. A store that failed to load is never saved over (`LocalVectorDB`, `ASTIndexer.save()`
+  refuse until a writer quarantines it or it heals). Episodic rotation no longer trims entries when
+  the archive can't be read or written. A platform-mismatched FAISS binary is moved to `.stale` by
+  the writer, not on load.
+- **#134 — every store is now written atomically.** New `core/config/atomic.py`
+  (`atomic_write` / `atomic_json_dump` / `atomic_write_with` / `atomic_path`: unique scratch file in
+  the same directory → fsync → `os.replace` → fsync dir; the old file survives any failure). All
+  `.cognirepo` stores that were written in place now use it: FAISS indexes (`semantic.index`,
+  `ast.index`, project memory, docs index, doctor repair — via `faiss.write_index` to the scratch
+  path), their metadata, `episodic.json` / archive / vector cache, learnings, project memory, the
+  AST `manifest.json`, behaviour, org graph, orgs, sessions, cleanup queue, tier-2 queues,
+  scanners' outputs, summaries, last-indexed sha, watcher trail, last-context autosave, prune
+  outputs, `config.json`, and the watcher heartbeat / pid files. `ASTIndexer._atomic_json_dump`
+  delegates to the helper. Also fixes `cleanup_suppressed()` opening the vector metadata `"wb"`
+  *before* encrypting it, which left the file empty if encryption failed. A new AST lint test fails
+  on any new bare in-place write outside the helper (documented `_ALLOWED` exceptions: append-only
+  logs, other tools' config files, files that already do tmp+replace). Readers that quarantine on a
+  torn read (#135) and read-modify-write locking (#136) are separate issues.
+- **#122 — incremental `index-repo --files` / `--changed-only` (the post-commit hook) and the file
+  watcher could replace a full graph with a fragment.** After a quarantine removed `graph.pkl`, the
+  hook saved a 2-node graph as the whole graph (41,327 → 1,122 → 2 nodes over time). A full
+  `index_repo` now stamps a journaled `complete` marker on the graph (`KnowledgeGraph.mark_complete`);
+  `--files`, `--changed-only` and the watcher's graph save go through
+  `KnowledgeGraph.incremental_base_status()` and **refuse to save** (CLI exit 2 with "run a full
+  `cognirepo index-repo .` once"; watcher warns once) when the base graph is missing, empty, locked,
+  or an unmarked fragment (fewer than half as many FILE nodes as the AST index has files; graphs
+  written before the marker keep working if they cover the repo). `skip_graph` runs never claim
+  completeness.
+- **#98/#105 — likely root cause found: `cognirepo serve`'s auto-watcher had the same
+  graph-save gap as #107, with no self-raised breaker ceiling and no recovery at all.**
+  `intelligence/indexer/file_watcher.py`'s `graph.save()` calls (reached on every debounced
+  edit, inside the long-lived `serve` process where the embedding model stays resident for the
+  whole session) previously just logged `graph.save failed: ...` and moved on with no retry.
+  New `RepoFileHandler._save_graph()`: on an actual circuit-breaker trip, evict the model and
+  retry once (reactive, not proactive — evicting on every save would force a reload on every
+  keystroke-triggered reindex). Verified live against the real celery project with the breaker
+  ceiling forced to 50 MB: tripped, recovered, saved correctly. Grounded in the same mechanism
+  #107 confirmed, reached through the code path that actually matches the original incident's
+  shape (a long session, not a single command) — see `docs/rca/COGNIREPO-98-oom-memory-growth.md`
+  §6 for the full writeup and what's still unverified.
+- **#107 — knowledge graph never saved on medium/large repos (circuit breaker trips at `kg.save()`).**
+  `index-repo` on a real-world repo (celery: 416 files, 10,668 embedded symbols) peaked at 5276 MB
+  RSS at graph-save time, above even the pre-existing 4000 MB self-raised ceiling — the graph was
+  silently skipped every run. Root cause: the cached embedding model (~2 GB: ONNX session +
+  tokenizer) stayed resident through `kg.save()`, on top of the graph itself. `_direct_index()` now
+  evicts the model (`data.memory.embeddings.evict_model()`) right before saving — it's reloaded
+  cheaply at the next embed call — and retries once after the breaker's own cooldown if it still
+  trips. `CircuitBreaker` gained a public `cooldown` property. Verified live: the celery graph now
+  saves (10,936 nodes / 57,987 edges) with no breaker trip.
+- **#97 — encrypted `graph.pkl` silently quarantined when `keyring` is missing.** With
+  `storage.encrypt: true`, a hook/server interpreter lacking `keyring` could not decrypt, so
+  `KnowledgeGraph._load()` unpickled ciphertext, judged the file corrupt and moved it to
+  `graph.pkl.corrupt-<ts>`. A file that is still a Fernet token after the decrypt attempt is now
+  left untouched, the graph starts empty in memory, and `save()` raises `GraphLockedError` rather
+  than overwrite it. `cognirepo doctor` gains a check that `keyring` + `cryptography` are
+  importable when encryption is on.
+
 ## [2.4.1] — 2026-09-18
 
 ### Fixed
+- **#98 — OOM-kill safety net (root cause of the 5 GB growth still unidentified).** The circuit
+  breaker's default RSS limit was 80 % of total RAM (~12 GB on a 15 GB host), so it could never
+  trip before the kernel OOM killer; it is now `min(80 % RAM, 3072 MB)`. The MCP server also runs
+  a memory watchdog (`interface/server/memory_watchdog.py`): at 75 % of the limit it evicts
+  heavy resources and runs `gc`, at the limit it trips the breaker so heavy ops shed load.
+- **#100 — stale editable install made `cognirepo serve` die at import with a bare
+  `CONNECTION_CLOSED`.** `serve` now catches the `ImportError` and prints the cause, the
+  interpreter and the reinstall command to stderr. `cognirepo doctor` gains two checks: the MCP
+  server module must resolve from a neutral cwd (fails loudly with the reinstall command), and
+  installed-metadata version vs code version (warns on drift). The version shown by the banner,
+  `doctor` and `--version` now comes from one place (`core.config.version`: `version.yml`, else
+  installed metadata) instead of three; its wrong `2.0.0` fallback is gone.
 - **COGNIREPO-600-D01 — `benchmark.py`'s `REPO_ROOT` pointed at the wrong tree.** A refactor
   (`719cf60`) moved `benchmark.py` one directory deeper without updating its parent-count
   constant, so every `tests/fixtures/` golden-set lookup silently failed, and the

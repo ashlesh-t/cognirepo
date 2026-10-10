@@ -12,6 +12,7 @@ tests/test_graph.py — knowledge graph node/edge/traversal/serialise tests.
 from __future__ import annotations
 
 import os
+import pickle
 
 
 class TestKnowledgeGraph:
@@ -77,6 +78,18 @@ class TestKnowledgeGraph:
         kg2 = KnowledgeGraph()
         assert kg2.node_exists("persist_me")
         assert kg2.node_exists("persist_file")
+
+    def test_save_streams_pickle_without_encryption(self):
+        """COGNIREPO-107 follow-up: plaintext save() streams pickle.dump()
+        straight to the file handle (no pickle.dumps() byte-buffer copy)."""
+        from data.graph.knowledge_graph import KnowledgeGraph, NodeType, _graph_file
+        kg = KnowledgeGraph()
+        kg.add_node("streamed", NodeType.FUNCTION)
+        kg.save()
+        with open(_graph_file(), "rb") as f:
+            raw = f.read()
+        assert not raw.startswith(b"gAAAAA")  # not Fernet — this is a raw pickle
+        assert pickle.loads(raw).has_node("streamed")
 
     def test_idempotent_add_node(self):
         from data.graph.knowledge_graph import KnowledgeGraph, NodeType
@@ -152,6 +165,59 @@ class TestKnowledgeGraphIntegrity:
 
         report2 = kg.integrity_report(str(tmp_path))
         assert report2["dangling_files"] == []
+
+
+class TestEncryptedGraphWithoutKeyring:
+    """COGNIREPO-97: undecryptable (Fernet) graph.pkl must never be quarantined or overwritten."""
+
+    CIPHERTEXT = b"gAAAAA" + b"B" * 200
+
+    def _setup(self, monkeypatch):
+        import sys
+        import core.security as sec
+        from data.graph.knowledge_graph import _graph_file
+
+        monkeypatch.setattr(sec, "get_storage_config", lambda: (True, "proj"))
+        monkeypatch.setitem(sys.modules, "keyring", None)  # ImportError on import
+        path = _graph_file()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as f:
+            f.write(self.CIPHERTEXT)
+        return path
+
+    def test_missing_keyring_does_not_quarantine(self, tmp_path, monkeypatch):
+        import glob
+        import warnings
+        from data.graph.knowledge_graph import KnowledgeGraph
+
+        path = self._setup(monkeypatch)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            kg = KnowledgeGraph()  # must not raise
+
+        assert kg.G.number_of_nodes() == 0
+        assert os.path.exists(path)
+        assert open(path, "rb").read() == self.CIPHERTEXT
+        assert glob.glob(path + ".corrupt-*") == []
+        assert any("keyring" in str(w.message) for w in caught)
+
+    def test_locked_graph_refuses_to_save(self, tmp_path, monkeypatch):
+        import pytest
+        from data.graph.knowledge_graph import GraphLockedError, KnowledgeGraph
+
+        path = self._setup(monkeypatch)
+        kg = KnowledgeGraph()
+        kg.add_node("x", "CONCEPT")
+        with pytest.raises(GraphLockedError):
+            kg.save()
+        assert open(path, "rb").read() == self.CIPHERTEXT
+
+    def test_reload_if_changed_does_not_reload_loop(self, tmp_path, monkeypatch):
+        from data.graph.knowledge_graph import KnowledgeGraph
+
+        self._setup(monkeypatch)
+        kg = KnowledgeGraph()
+        assert kg.reload_if_changed() is False
 
 
 class TestKnowledgeGraphCorruptionQuarantine:
