@@ -142,6 +142,110 @@ class TestSwiftIndexing:
         assert "Swift" in summary["languages"]
 
 
+_PROPERTY_SRC = """\
+    class Shape {
+        var area: Int { calc() }
+        var name: String {
+            get { load() }
+            set { store(newValue) }
+        }
+        var score = 0 {
+            willSet { before(newValue) }
+            didSet { after() }
+        }
+        let plain = make()
+        func draw() {
+            var local: Int { compute() }
+        }
+    }
+    var shared: Shape { build() }
+"""
+
+
+def _callers_of(graph, name: str) -> list[str]:
+    """Graph-only who_calls lookup (mirrors tests/test_indexer_multilang.py::_callers_of)."""
+    from data.graph.knowledge_graph import EdgeType
+    node = f"symbol::{name}"
+    if not graph.G.has_node(node):
+        candidates = [n for n in graph.G.nodes() if n.endswith(f"::{name}") and not n.startswith("symbol::")]
+        if not candidates:
+            return []
+        node = candidates[0]
+    return [s for s in graph.G.successors(node) if graph.G[node][s].get("rel") == EdgeType.CALLS]
+
+
+class TestSwiftPropertyCalls:
+    """#176 — calls in computed properties and property observers are attributed to a
+    FUNCTION symbol named after the property, qualified by its type."""
+
+    def _symbols(self, fresh_indexer, tmp_path, monkeypatch) -> list[dict]:
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "Shape.swift", _PROPERTY_SRC)
+        return fresh_indexer.index_file("Shape.swift", str(src))["symbols"]
+
+    def test_computed_property(self, fresh_indexer, tmp_path, monkeypatch):
+        area = _by_name(self._symbols(fresh_indexer, tmp_path, monkeypatch), "Shape.area", 2)
+        assert area["type"] == "FUNCTION"
+        assert area["tags"] == ["property"]
+        assert area["calls"] == ["calc"]
+
+    def test_getter_setter_pair_is_one_symbol(self, fresh_indexer, tmp_path, monkeypatch):
+        syms = self._symbols(fresh_indexer, tmp_path, monkeypatch)
+        assert [s["start_line"] for s in syms if s["name"] == "Shape.name"] == [3]
+        assert _by_name(syms, "Shape.name", 3)["calls"] == ["load", "store"]
+
+    def test_will_set_and_did_set(self, fresh_indexer, tmp_path, monkeypatch):
+        score = _by_name(self._symbols(fresh_indexer, tmp_path, monkeypatch), "Shape.score", 7)
+        assert score["type"] == "FUNCTION"
+        assert score["calls"] == ["before", "after"]
+
+    def test_top_level_computed_property_is_unqualified(self, fresh_indexer, tmp_path, monkeypatch):
+        shared = _by_name(self._symbols(fresh_indexer, tmp_path, monkeypatch), "shared", 16)
+        assert shared["calls"] == ["build"]
+
+    def test_stored_and_local_properties_not_symbols(self, fresh_indexer, tmp_path, monkeypatch):
+        syms = self._symbols(fresh_indexer, tmp_path, monkeypatch)
+        names = {s["name"] for s in syms}
+        assert not names & {"plain", "Shape.plain", "local", "draw.local"}
+        # the local computed variable's call still belongs to the enclosing function
+        assert "compute" in _by_name(syms, "draw", 12)["calls"]
+
+    def test_who_calls_sees_property_callers(self, fresh_indexer, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path, "Shape.swift", _PROPERTY_SRC + "    func calc() -> Int { 1 }\n    func after() {}\n")
+        fresh_indexer.index_repo(str(tmp_path))
+        assert any(c.endswith("::Shape.area") for c in _callers_of(fresh_indexer.graph, "calc"))
+        assert any(c.endswith("::Shape.score") for c in _callers_of(fresh_indexer.graph, "after"))
+
+    def test_multi_binding_declaration_yields_every_property(self, fresh_indexer, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "S.swift", """\
+            struct S {
+                var a: Int { calc() }, b: Int { calc2() }
+                var c = 1, d: Int { calc3() }
+            }
+        """)
+        syms = fresh_indexer.index_file("S.swift", str(src))["symbols"]
+        props = {s["name"]: s["calls"] for s in syms if s["tags"] == ["property"]}
+        assert props == {"S.a": ["calc"], "S.b": ["calc2"], "S.d": ["calc3"]}
+
+    def test_same_property_name_in_two_types_gets_two_graph_nodes(self, fresh_indexer, tmp_path, monkeypatch):
+        """SwiftUI: every View has `body`; graph node ids are `file::name`, so the owner prefix
+        is what keeps `who_calls` able to say which view made the call."""
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path, "Views.swift", """\
+            struct A: View {
+                var body: some View { render() }
+            }
+            struct B: View {
+                var body: some View { draw() }
+            }
+        """)
+        fresh_indexer.index_repo(str(tmp_path))
+        assert any(c.endswith("Views.swift::A.body") for c in _callers_of(fresh_indexer.graph, "render"))
+        assert any(c.endswith("Views.swift::B.body") for c in _callers_of(fresh_indexer.graph, "draw"))
+
+
 class TestSharedCallExpressionBranch:
     """The Swift callee fallback lives in the shared `call_expression` branch — pin that
     JS/TS/Go call extraction is unchanged by it."""

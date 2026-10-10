@@ -9,7 +9,8 @@ tests/test_indexer_csharp.py — C# (.cs) indexing via tree-sitter-c-sharp (#74)
 
 Covers:
   - classes, interfaces, structs, records, enums
-  - methods and local functions (constructors are not indexed, same as Java)
+  - methods and local functions; constructors, finalizers and properties with accessor
+    bodies (#177)
   - call extraction for Foo(), obj.Foo() and generic Foo<T>() invocations
   - base list extraction
   - registry / service-marker wiring
@@ -96,9 +97,11 @@ class TestCSharpIndexing:
         functions = {s["name"] for s in syms if s["type"] == "FUNCTION"}
         assert {"Verify", "Total", "Add"} <= functions
 
-    def test_constructor_not_indexed_as_function(self, fresh_indexer, tmp_path, monkeypatch):
+    def test_constructor_not_named_after_class(self, fresh_indexer, tmp_path, monkeypatch):
+        """A FUNCTION named like the class would share its `file::TokenService` node id."""
         syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
         assert not any(s["name"] == "TokenService" and s["type"] == "FUNCTION" for s in syms)
+        assert "Init" in _by_name(syms, "TokenService.constructor", "FUNCTION")["calls"]
 
     def test_calls_extracted(self, fresh_indexer, tmp_path, monkeypatch):
         syms = _symbols(fresh_indexer, tmp_path, monkeypatch)
@@ -126,6 +129,109 @@ class TestCSharpIndexing:
         summary = fresh_indexer.index_repo(str(tmp_path))
         assert summary["symbols"] > 0
         assert "C#" in summary["languages"]
+
+
+_MEMBERS_SRC = """\
+    public class Svc : Base {
+        public Svc(IRepo repo) : base(repo) { Wire(repo); }
+        static Svc() { Boot(); }
+        ~Svc() { Release(); }
+        public int Count {
+            get { return Load(); }
+            set { Store(value); }
+        }
+        public int Area => Calc();
+        public int Bodied { get => Fetch(); init => Assign(value); }
+        public int Auto { get; set; } = Make();
+        public void Run() { }
+    }
+"""
+
+
+def _callers_of(graph, name: str) -> list[str]:
+    """Graph-only who_calls lookup (mirrors tests/test_indexer_multilang.py::_callers_of)."""
+    from data.graph.knowledge_graph import EdgeType
+    node = f"symbol::{name}"
+    if not graph.G.has_node(node):
+        candidates = [n for n in graph.G.nodes() if n.endswith(f"::{name}") and not n.startswith("symbol::")]
+        if not candidates:
+            return []
+        node = candidates[0]
+    return [s for s in graph.G.successors(node) if graph.G[node][s].get("rel") == EdgeType.CALLS]
+
+
+class TestCSharpMemberCalls:
+    """#177 — calls in constructors, property accessors and finalizers are attributed."""
+
+    def _symbols(self, fresh_indexer, tmp_path, monkeypatch) -> list[dict]:
+        monkeypatch.chdir(tmp_path)
+        src = _write(tmp_path, "Svc.cs", _MEMBERS_SRC)
+        return fresh_indexer.index_file("Svc.cs", str(src))["symbols"]
+
+    def test_constructors(self, fresh_indexer, tmp_path, monkeypatch):
+        syms = self._symbols(fresh_indexer, tmp_path, monkeypatch)
+        ctors = {s["start_line"]: s["calls"] for s in syms if s["name"] == "Svc.constructor"}
+        assert ctors == {2: ["Wire"], 3: ["Boot"]}  # instance and static constructor
+
+    def test_finalizer(self, fresh_indexer, tmp_path, monkeypatch):
+        fin = _by_name(self._symbols(fresh_indexer, tmp_path, monkeypatch), "~Svc", "FUNCTION")
+        assert fin["calls"] == ["Release"]
+
+    def test_property_accessors(self, fresh_indexer, tmp_path, monkeypatch):
+        syms = self._symbols(fresh_indexer, tmp_path, monkeypatch)
+        count = _by_name(syms, "Svc.Count", "FUNCTION")
+        assert count["tags"] == ["property"]
+        assert count["calls"] == ["Load", "Store"]
+        assert _by_name(syms, "Svc.Area", "FUNCTION")["calls"] == ["Calc"]  # expression-bodied
+        assert _by_name(syms, "Svc.Bodied", "FUNCTION")["calls"] == ["Fetch", "Assign"]
+
+    def test_auto_property_not_a_symbol(self, fresh_indexer, tmp_path, monkeypatch):
+        syms = self._symbols(fresh_indexer, tmp_path, monkeypatch)
+        assert not {"Auto", "Svc.Auto"} & {s["name"] for s in syms}
+
+    def test_who_calls_sees_member_callers(self, fresh_indexer, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path, "Svc.cs", _MEMBERS_SRC)
+        _write(tmp_path, "Helpers.cs", """\
+            static class Helpers {
+                static void Wire(IRepo r) { }
+                static int Calc() => 1;
+                static void Release() { }
+            }
+        """)
+        fresh_indexer.index_repo(str(tmp_path))
+        graph = fresh_indexer.graph
+        assert any(c.endswith("::Svc.constructor") for c in _callers_of(graph, "Wire"))
+        assert any(c.endswith("::Svc.Area") for c in _callers_of(graph, "Calc"))
+        assert any(c.endswith("::~Svc") for c in _callers_of(graph, "Release"))
+
+    def test_property_named_like_its_type_keeps_the_class_node(self, fresh_indexer, tmp_path, monkeypatch):
+        """The "Color Color" pattern: a property named like a class in the same file must not
+        overwrite that CLASS's `file::name` graph node or hang its calls on it."""
+        from data.graph.knowledge_graph import EdgeType
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path, "Model.cs", """\
+            class Base { }
+            class Customer : Base { public int Id { get; set; } }
+            class Order { public Customer Customer { get { return repo.Load(); } } }
+        """)
+        fresh_indexer.index_repo(str(tmp_path))
+        g = fresh_indexer.graph.G
+        cls = "Model.cs::Customer"
+        assert g.nodes[cls]["line"] == 2
+        assert not [n for n in g.successors(cls) if g[cls][n].get("rel") == EdgeType.CALLS]
+        assert any(c.endswith("::Order.Customer") for c in _callers_of(fresh_indexer.graph, "Load"))
+
+    def test_constructors_of_two_classes_get_distinct_graph_nodes(self, fresh_indexer, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        _write(tmp_path, "Two.cs", """\
+            class Order { public Order() { Wire(); } }
+            class Invoice { public Invoice() { Wire(); } }
+            static class Di { static void Wire() { } }
+        """)
+        fresh_indexer.index_repo(str(tmp_path))
+        callers = set(_callers_of(fresh_indexer.graph, "Wire"))
+        assert {"Two.cs::Order.constructor", "Two.cs::Invoice.constructor"} <= callers
 
 
 class TestJavaRecordsAreClasses:
