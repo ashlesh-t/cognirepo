@@ -265,9 +265,12 @@ class TestLocalVectorDB:
         with mock.patch("core.config.safe_read.time.sleep"):
             db = LocalVectorDB()
             db.save()
-        directory = os.path.dirname(_index_file())
-        kept = _names(directory, "semantic.index.corrupt-")
-        assert len(kept) == 1 and open(os.path.join(directory, kept[0]), "rb").read() == b"junk"
+        # The flat file is a hard link into the pinned generation (#140): the quarantined bytes
+        # sit beside it in that generation's directory.
+        gen_root = os.path.join(os.path.dirname(_index_file()), "semantic.gen")
+        kept = [os.path.join(gen_root, g, n) for g in os.listdir(gen_root) if g.startswith("gen-")
+                for n in _names(os.path.join(gen_root, g), "semantic.index.corrupt-")]
+        assert len(kept) == 1 and open(kept[0], "rb").read() == b"junk"
         assert faiss.read_index(_index_file()).ntotal == 0
 
     def test_locked_metadata_is_never_quarantined(self, isolated_cognirepo):
@@ -334,7 +337,12 @@ class TestASTIndexerLoad:
                     idx.save()
             assert open(index_file, "rb").read() == b"{broken"
             idx.save()                                   # stable corruption → quarantine, then write
-        kept = _names(os.path.dirname(index_file), "ast_index.json.corrupt-")
+        # The flat file is a hard link into the pinned generation (#140), so the quarantined bytes
+        # sit beside it in that generation's directory.
+        index_dir = os.path.dirname(index_file)
+        kept = _names(index_dir, "ast_index.json.corrupt-") + [
+            n for g in os.listdir(os.path.join(index_dir, "ast.gen")) if g.startswith("gen-")
+            for n in _names(os.path.join(index_dir, "ast.gen", g), "ast_index.json.corrupt-")]
         assert len(kept) == 1
         assert json.load(open(index_file))["files"] == {}
 

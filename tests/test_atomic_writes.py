@@ -203,6 +203,10 @@ _ALLOWED: dict[tuple[str, str], str] = {
     ("interface/cli/daemon.py", "write_systemd_unit"): "generated user unit file, not a store",
     ("interface/server/mcp_server.py", "_spawn_background_reindex"): "O_EXCL lock-file creation is itself atomic",
     ("interface/server/mcp_server.py", "_write_manifest"): "dev-time package manifest, not .cognirepo data",
+    ("intelligence/indexer/ast_indexer.py", "save"): "writes into the scratch dir of a GenerationStore.publish(), "
+                                                      "which fsyncs and renames the whole group into place (#140)",
+    ("core/vector_db/local_vector_db.py", "_index"): "writes into the scratch dir of a GenerationStore.publish(), "
+                                                          "which fsyncs and renames the group into place (#140)",
     ("interface/tools/bg_progress.py", "_write"): "already tmp + os.replace",
     ("interface/tools/bg_progress.py", "request_stop"): "already tmp + os.replace",
     ("interface/tools/progress_window.py", "_request_stop"): "already tmp + os.replace",
