@@ -7,12 +7,16 @@
 """
 tests/test_language_registry_sync.py — enforce the CLAUDE.md invariant that
 interface/cli/service_detect.py::_SERVICE_MARKERS stays in sync with
-intelligence/indexer/language_registry.py::_GRAMMAR_MAP (#175).
+intelligence/indexer/language_registry.py::_GRAMMAR_MAP (#175), in both directions.
 
 Every language the indexer can parse must either have a build/manifest marker
 (so `cognirepo init` can detect it as a service) or be listed in
-_NO_MARKER_LANGUAGES with the reason it has none. A new language therefore
-fails here until someone adds its marker or consciously allow-lists it.
+_NO_MARKER_LANGUAGES with the reason it has none. Conversely, every marker must
+name a language the indexer can parse, or be listed in _MARKERS_WITHOUT_GRAMMAR.
+A new language or marker therefore fails here until someone decides.
+
+Relies on the `lang_hint` convention documented in service_detect.py:
+"<Language>/<Tool>", where the first segment is the language's _LANG_LABELS label.
 """
 from __future__ import annotations
 
@@ -31,6 +35,11 @@ _NO_MARKER_LANGUAGES: dict[str, str] = {
     "YAML": "config/data files, not a project type",
     "C++": "no single conventional manifest (CMakeLists.txt, Makefile, meson.build, Bazel …); "
            "adding one would change service detection, so it is a separate decision",
+}
+
+# Markers whose language the indexer can't parse yet (marker present, grammar not added).
+_MARKERS_WITHOUT_GRAMMAR: dict[str, str] = {
+    "Dart": "pubspec.yaml — no Dart grammar yet; candidate for a language issue",
 }
 
 
@@ -80,6 +89,33 @@ def test_no_marker_allow_list_is_not_stale():
     )
     assert not not_indexed, f"_NO_MARKER_LANGUAGES lists languages not in _GRAMMAR_MAP: {not_indexed}"
     assert not has_marker, f"_NO_MARKER_LANGUAGES lists languages that now have a marker: {has_marker}"
+
+
+def _marker_first_segments() -> set[str]:
+    """The language part of each lang_hint ("Java/Maven" → "Java", "Node.js" → "Node.js")."""
+    return {hint.split("/")[0].strip() for _service_type, hint in _SERVICE_MARKERS.values()}
+
+
+def test_every_marker_language_is_indexed():
+    indexed = _registry_languages() | set(_MARKER_ALIASES.values())
+    orphans = sorted(
+        lang for lang in _marker_first_segments()
+        if lang not in indexed and lang not in _MARKERS_WITHOUT_GRAMMAR
+    )
+    assert not orphans, (
+        f"_SERVICE_MARKERS names languages the indexer can't parse: {orphans}. Add the grammar to "
+        "language_registry._GRAMMAR_MAP, fix the lang_hint (\"<Language>/<Tool>\", first segment = "
+        "the _LANG_LABELS label), or add it to _MARKERS_WITHOUT_GRAMMAR in this test with the reason."
+    )
+
+
+def test_markers_without_grammar_list_is_not_stale():
+    indexed = _registry_languages() | set(_MARKER_ALIASES.values())
+    markers = _marker_first_segments()
+    now_indexed = sorted(lang for lang in _MARKERS_WITHOUT_GRAMMAR if lang in indexed)
+    no_marker = sorted(lang for lang in _MARKERS_WITHOUT_GRAMMAR if lang not in markers)
+    assert not now_indexed, f"_MARKERS_WITHOUT_GRAMMAR lists languages that are now indexed: {now_indexed}"
+    assert not no_marker, f"_MARKERS_WITHOUT_GRAMMAR lists languages with no marker: {no_marker}"
 
 
 def test_aliases_point_at_real_markers():

@@ -229,8 +229,10 @@ Versioning: [Semantic Versioning](https://semver.org/)
   `language_registry._GRAMMAR_MAP`, but nothing checked it. `tests/test_language_registry_sync.py`
   derives the languages from `_GRAMMAR_MAP` / `_LANG_LABELS` and fails, naming the language, when one
   has no marker whose `lang_hint` names it (JavaScript/TypeScript map to `Node.js`) and isn't in the
-  commented `_NO_MARKER_LANGUAGES` allow-list (Shell, YAML, C++). The allow-list is itself checked so
-  it can't go stale. No behaviour change.
+  commented `_NO_MARKER_LANGUAGES` allow-list (Shell, YAML, C++). The reverse direction is checked too:
+  every marker's language must be indexed or listed in `_MARKERS_WITHOUT_GRAMMAR` (today: Dart,
+  `pubspec.yaml`). Both allow-lists are themselves checked so they can't go stale, and the
+  `"<Language>/<Tool>"` `lang_hint` convention is documented in `service_detect.py`. No behaviour change.
 - **`cognirepo doctor --resources` and `docs/RESOURCES.md` (#121).** One read-only report of where memory and
   disk go: every cognirepo process (resident memory, age, repo, flagged stale — directory deleted or a
   one-shot command running for hours), the size of each `.cognirepo/` subdirectory with its largest files,
