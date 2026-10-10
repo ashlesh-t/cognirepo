@@ -150,6 +150,13 @@ See `docs/architecture/graph.md` for the full schema with query examples.
 |--------|---------------|
 | `intelligence/indexer/ast_indexer.py` | Multi-language AST parser + symbol extractor + FAISS ingestion |
 | `intelligence/indexer/file_watcher.py` | Watchdog-based hot reload — indexes on file change, prunes on delete |
+| `core/config/generation.py` | `GenerationStore` — publishes a multi-file store as one immutable generation behind an atomic `CURRENT` pointer |
+
+**On-disk consistency.** `ast_index.json`, `ast.index`, `ast_metadata.json` and `manifest.json` are
+written as one generation under `.cognirepo/index/ast.gen/gen-N/` and made live by atomically replacing
+`ast.gen/CURRENT`. Readers pin a generation, so they never see a mix of old and new files; a crash
+mid-save leaves the previous generation current. The flat `index/*` files are hard links to the current
+generation. The semantic store (`vector_db/semantic.gen/`) works the same way. See [ADR 001](adr/001-storage-consistency.md) for the consistency model per data class.
 
 Supported languages: Python (stdlib `ast`), TypeScript, JavaScript, Go, Rust, Ruby, Java, C#, C++, Swift, Kotlin, PHP (tree-sitter).
 

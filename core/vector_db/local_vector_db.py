@@ -16,7 +16,8 @@ from datetime import datetime, timezone
 import faiss
 import numpy as np
 
-from core.config.atomic import atomic_write, atomic_path
+from core.config.atomic import atomic_write
+from core.config.generation import GenerationStore, link_or_copy
 from core.config.safe_read import (
     StoreUnreadableError, looks_encrypted, quarantine_if_stably_corrupt, read_retry,
 )
@@ -33,6 +34,47 @@ def _index_file() -> str:
 
 def _meta_file() -> str:
     return get_path("memory/semantic_metadata.json")
+
+
+def _semantic_store() -> GenerationStore:
+    """Generation store holding semantic.index + semantic_metadata.json (COGNIREPO-140)."""
+    return GenerationStore(get_path("vector_db/semantic.gen"))
+
+
+def _read_paths() -> tuple[str, str]:
+    """(semantic.index, semantic_metadata.json) of ONE generation — never one of each era."""
+    got = _semantic_store().resolve({
+        "semantic.index": _index_file(),
+        "semantic_metadata.json": _meta_file(),
+    })
+    return got["semantic.index"], got["semantic_metadata.json"]
+
+
+def publish_semantic(index, meta_bytes: bytes, *, keep_index: bool = False) -> None:
+    """Publish index + metadata as one generation. Caller holds ``store_lock()``.
+
+    ``index`` is the in-memory FAISS index to write. With ``keep_index`` an existing index file is
+    hard-linked into the new generation instead (no copy) — for metadata-only changes such as
+    behaviour scores or soft-deletes; ``index`` is the fallback when there is none yet.
+    ``meta_bytes`` is the final (already encrypted) content.
+    """
+    keep_from = _read_paths()[0] if keep_index else None
+    if keep_from is not None and not os.path.exists(keep_from):
+        keep_from = None
+
+    def _index(path: str) -> None:
+        if keep_from is not None:
+            link_or_copy(keep_from, path)
+        else:
+            faiss.write_index(index, path)
+
+    def _meta(path: str) -> None:
+        atomic_write(path, meta_bytes, fsync=False)   # publish() fsyncs the whole group
+
+    _semantic_store().publish(
+        {"semantic.index": _index, "semantic_metadata.json": _meta},
+        mirror={"semantic.index": _index_file(), "semantic_metadata.json": _meta_file()},
+    )
 
 
 class LocalVectorDB(VectorStorageAdapter):
@@ -65,10 +107,13 @@ class LocalVectorDB(VectorStorageAdapter):
         # every vector the other process added.
         _stamp_before_read = self._disk_stamp()
         _mtime_before_read = self._disk_mtime()
-        if os.path.exists(_index_file()):
+        # One generation for both files (COGNIREPO-140): resolved once, so the index and its
+        # metadata can never come from different saves.
+        index_path, meta_path = _read_paths()
+        if os.path.exists(index_path):
             try:
                 self.index = read_retry(
-                    _index_file(), lambda: faiss.read_index(_index_file()), retry_on=(Exception,),
+                    index_path, lambda: faiss.read_index(index_path), retry_on=(Exception,),
                 )
             except StoreUnreadableError as exc:
                 logging.getLogger(__name__).warning(
@@ -82,10 +127,9 @@ class LocalVectorDB(VectorStorageAdapter):
         else:
             self.index = faiss.IndexFlatL2(dim)
 
-        meta_path = _meta_file()
         if os.path.exists(meta_path):
             try:
-                self.metadata = self._load_meta()
+                self.metadata = self._load_meta(meta_path)
             except StoreUnreadableError as exc:
                 logging.getLogger(__name__).warning("%s", exc)
                 self._load_error["meta"] = exc
@@ -97,7 +141,7 @@ class LocalVectorDB(VectorStorageAdapter):
             os.makedirs(os.path.dirname(meta_path), exist_ok=True)
             with store_lock():
                 if os.path.exists(meta_path):
-                    self.metadata = self._load_meta()
+                    self.metadata = self._load_meta(meta_path)
                 else:
                     atomic_write(meta_path, b"[]")
                     self.metadata = []
@@ -146,10 +190,11 @@ class LocalVectorDB(VectorStorageAdapter):
         if self._disk_stamp() == getattr(self, "_synced_stamp", None):
             return
         pending = list(getattr(self, "_pending", ()))
-        index = (read_retry(_index_file(), lambda: faiss.read_index(_index_file()),
+        index_path, meta_path = _read_paths()
+        index = (read_retry(index_path, lambda: faiss.read_index(index_path),
                             retry_on=(Exception,))
-                 if os.path.exists(_index_file()) else faiss.IndexFlatL2(self.dim))
-        metadata = self._load_meta() if os.path.exists(_meta_file()) else []
+                 if os.path.exists(index_path) else faiss.IndexFlatL2(self.dim))
+        metadata = self._load_meta(meta_path) if os.path.exists(meta_path) else []
         for vec, entry in pending:
             index.add(vec)
             metadata.append(entry)
@@ -173,10 +218,11 @@ class LocalVectorDB(VectorStorageAdapter):
             return
         stamp = self._disk_stamp()  # before reading, same reason as in __init__
         try:
-            if os.path.exists(_index_file()):
-                self.index = faiss.read_index(_index_file())
-            if os.path.exists(_meta_file()):
-                self.metadata = self._load_meta()
+            index_path, meta_path = _read_paths()
+            if os.path.exists(index_path):
+                self.index = faiss.read_index(index_path)
+            if os.path.exists(meta_path):
+                self.metadata = self._load_meta(meta_path)
             self._loaded_disk_mtime = disk
             self._synced_stamp = stamp
         except Exception:  # pylint: disable=broad-except
@@ -185,8 +231,9 @@ class LocalVectorDB(VectorStorageAdapter):
 
     # ── metadata persistence (with optional encryption) ───────────────────────
 
-    def _read_meta_once(self) -> list:
-        with open(_meta_file(), "rb") as f:
+    def _read_meta_once(self, path: "str | None" = None) -> list:
+        path = path or _read_paths()[1]
+        with open(path, "rb") as f:
             raw = f.read()
         from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
         encrypt, project_id = get_storage_config()
@@ -210,14 +257,15 @@ class LocalVectorDB(VectorStorageAdapter):
         except ValueError:
             if looks_encrypted(raw):
                 # intact ciphertext we cannot decrypt: locked, never "corrupt"
-                raise StoreUnreadableError(_meta_file(), "encrypted and cannot be decrypted",
+                raise StoreUnreadableError(path, "encrypted and cannot be decrypted",
                                            locked=True)
             raise
 
-    def _load_meta(self) -> list:
+    def _load_meta(self, path: "str | None" = None) -> list:
         """Read the metadata. Side-effect free: never renames or rewrites the file; raises
         StoreUnreadableError if it stays unreadable after a few retries (#135)."""
-        return read_retry(_meta_file(), self._read_meta_once)
+        path = path or _read_paths()[1]
+        return read_retry(path, lambda: self._read_meta_once(path))
 
     def _ensure_writable(self) -> None:
         """Writer-side gate: refuse to persist over a store that failed to load.
@@ -228,9 +276,10 @@ class LocalVectorDB(VectorStorageAdapter):
         """
         if not getattr(self, "_load_error", None):
             return
+        index_path, meta_path = _read_paths()
         probes = {
-            "index": (_index_file(), lambda: faiss.read_index(_index_file())),
-            "meta": (_meta_file(), self._read_meta_once),
+            "index": (index_path, lambda: faiss.read_index(index_path)),
+            "meta": (meta_path, lambda: self._read_meta_once(meta_path)),
         }
         for key, exc in list(self._load_error.items()):
             if exc.locked:
@@ -250,7 +299,9 @@ class LocalVectorDB(VectorStorageAdapter):
                 raise exc
             del self._load_error[key]
 
-    def _save_meta(self) -> None:
+    def _save_meta(self, *, write_index: bool = False) -> None:
+        """Publish the metadata (and, with ``write_index``, the in-memory FAISS index) as one
+        generation. Metadata-only calls link the existing index file rather than rewriting it."""
         with store_lock():  # re-entrant: also called from inside save() / the row mutators
             self._ensure_writable()
             from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
@@ -259,7 +310,7 @@ class LocalVectorDB(VectorStorageAdapter):
             if encrypt:
                 from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
                 content = encrypt_bytes(content, get_or_create_key(project_id))
-            atomic_write(_meta_file(), content)
+            publish_semantic(self.index, content, keep_index=not write_index)
             self._synced_stamp = self._disk_stamp()
 
     def save(self):
@@ -275,9 +326,7 @@ class LocalVectorDB(VectorStorageAdapter):
         with store_lock():
             self._sync_locked()        # merge into any newer disk state first (#136)
             self._ensure_writable()
-            with atomic_path(_index_file()) as _tmp:
-                faiss.write_index(self.index, _tmp)
-            self._save_meta()
+            self._save_meta(write_index=True)
             self._pending = []
         self._loaded_disk_mtime = self._disk_mtime()
         if breaker is not None:
