@@ -188,24 +188,7 @@ Do not hardcode model names outside `intelligence/orchestrator/classifier.py`.
 
 
 
-Key routes:
-- `POST /auth/login` → returns JWT token
-- `POST /memory/store` → `store_memory()`
-- `POST /memory/retrieve` → `retrieve_memory()` (Redis-cached)
-- `GET /graph/symbol/{name}` → `lookup_symbol()` (Redis-cached)
-- `GET /graph/who-calls/{name}` → `who_calls()`
-- `POST /graph/subgraph` → `subgraph()`
-
----
-
-
-Protocol Buffer streaming service for multi-agent communication.
-
-- `QueryService.Query` — unary query
-- `ContextService.StreamContext` — server-streaming context pack
-- `QueryService.SubQueryStream` — client-stream of sub-queries
-
-Run `make proto` to regenerate `cognirepo_pb2.py` after changing the `.proto` file.
+> **Removed interfaces.** An earlier REST API (with JWT auth and a Redis cache) and a gRPC streaming service were removed; the MCP server and the CLI are the supported interfaces. This section is kept as a pointer so old links still land somewhere sensible — see `CHANGELOG.md` for when each went.
 
 ---
 

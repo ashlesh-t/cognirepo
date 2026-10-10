@@ -19,6 +19,22 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
+- **#145 — documentation described features that no longer exist.** The REST API, JWT / password login,
+  Redis cache and gRPC streaming service were removed in earlier releases, but `FEATURES.md`,
+  `ARCHITECTURE.md`, `CONFIGURATION.md`, `DEVELOPER_GUIDE.md`, `SECURITY.md` and the CLI module docstring
+  still documented them as shipped (endpoints, `COGNIREPO_JWT_SECRET`, `COGNIREPO_PASSWORD_HASH`,
+  `COGNIREPO_REDIS_URL`, `redis.enabled`, `port`, `cognirepo wait-api`, `--via-api`, `--idle-timeout`). They
+  are removed; `FEATURES.md` now has a short "Removed interfaces" section so nobody goes looking for them;
+  `docs/auth.md` (two lines about JWT, linked from nowhere) is deleted; the stale JWT/bcrypt/`api_port`
+  setup in `tests/conftest.py` is gone.
+- **`SECURITY.md` overstated what encryption at rest covers, and named the wrong algorithm.** It said
+  "AES-256 GCM" and "all files in `vector_db/`, `graph/`, `index/`". The code uses Fernet (AES-128-CBC +
+  HMAC-SHA256) and, with `storage.encrypt: true`, encrypts the knowledge graph and its journal,
+  `behaviour.json`, the org graph, the episodic log and the local FAISS store — **not** the AST index, the
+  default Chroma store, learnings or project memory. The document now says exactly that, states plainly
+  that there is no network API or auth layer (the only listener is the optional `cognirepo metrics`
+  exporter on `127.0.0.1:9090`), and points at the follow-up for extending coverage (#186). Unused web/auth
+  packages that are still installed for every user are tracked in #187.
 - **#141 — lock hygiene: a busy store is a clear retryable error, nothing waits forever, slow work is out of
   the lock.** (1) A lock timeout surfaced as a raw `filelock.Timeout` traceback. `store_lock()` now raises
   `StoreBusy` (still a `Timeout` subclass) naming the lock and the wait; MCP tools return

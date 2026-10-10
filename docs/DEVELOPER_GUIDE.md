@@ -260,8 +260,6 @@ Before submitting a pull request:
 
 | Secret | Description |
 |--------|-------------|
-| `COGNIREPO_JWT_SECRET` | JWT signing secret for API tests |
-| `COGNIREPO_PASSWORD_HASH` | Bcrypt password hash for API tests |
 
 Set these in: **GitHub repo → Settings → Secrets and variables → Actions**.
 
