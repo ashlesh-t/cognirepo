@@ -670,7 +670,7 @@ Every command, flag and exit code: [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md
 
 ## Future Plans
 
-Priorities drawn from the v0.3.0 benchmark findings and community feedback. Now at v2.4.1 —
+Priorities drawn from the v0.3.0 benchmark findings and community feedback. Now at v2.5.0 —
 some items below have since landed; each is annotated where that's the case.
 
 ### Near-term

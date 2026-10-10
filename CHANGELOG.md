@@ -8,6 +8,77 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+## [2.5.0] — 2026-10-10
+
+### Highlights
+
+- **Stores are much safer to share between agents.** Every store is written atomically, read-modify-write runs
+  under the lock, readers never rename or overwrite a live store, the graph and the AST index/FAISS rebase
+  onto a newer on-disk state instead of overwriting it, Chroma works across processes, and a busy store is a
+  clear, retryable error instead of a hang or a traceback (#134, #135, #136, #137, #139, #141, #142). Two gaps
+  remain, listed under *Known issues*.
+- **Exactly one watcher per repo, and a much smaller footprint.** A per-repo lease replaces N unregistered
+  watchers (#138); the background watcher is a fresh process (3.5 GB → ~110 MB, #127) that stops when its repo
+  is gone (#119); `behaviour.json` is bounded (77 MB → 3.6 MB, #118); `cognirepo doctor --resources` shows
+  where memory and disk go (#121).
+- **Crash-safe, incremental indexing.** The knowledge graph is journalled while `index-repo` runs (#109), and
+  the post-commit hook now persists the AST index, covers every indexed language and logs its result
+  (#122, #123, #154, #155).
+- **Five new languages:** Ruby, PHP, C#, Swift and Kotlin, with calls attributed inside constructors,
+  accessors and computed properties (#72–#75, #176–#178).
+- **Recovery, diagnostics and honest docs:** `cognirepo graph restore` brings back intact graphs that older
+  versions quarantined (#118); `doctor` inspects the `cognirepo` on PATH, stale processes and the post-commit
+  hook (#119, #123, #124); `CLI_REFERENCE.md` is now checked against the real CLI by a test (#144), and the
+  documentation of removed interfaces (REST/JWT, Redis, gRPC) and of what encryption at rest covers was
+  corrected (#145).
+
+### Upgrade notes
+
+Nothing is removed from the CLI, MCP tools or `config.json`, but some behaviour changed:
+
+- **Re-run `cognirepo install-hooks`.** The post-commit hook now logs to `.cognirepo/hook.log` /
+  `hook.last`, covers every indexed extension and passes `--no-embed`; `cognirepo doctor` warns when the
+  installed block is outdated.
+- **A second watcher no longer starts silently.** `watch --ensure-running` / `--foreground` with a watcher
+  already running exit with a message naming its pid. A watcher that is a thread inside `cognirepo serve`
+  shows as `running (in serve)` in `cognirepo list`, and `list --stop` refuses to signal it.
+- **The background watcher is a separate process.** `index-repo --daemon` and `init` start
+  `python -P -m interface.cli.main watch --foreground` (own session, log in `.cognirepo/watchers/`) instead
+  of forking; the internal `daemonize()` is gone and `run_watcher_with_crash_guard()` now returns whether it
+  ran.
+- **Only one `index-repo` writes the graph at a time.** A second one refuses immediately and names the
+  owner, unless `indexing.writer_wait_secs` makes it queue (#137).
+- **Busy stores.** The CLI exits 75 (`EX_TEMPFAIL`) with a one-line message; MCP tools return
+  `{"error": …, "busy": true, "retryable": true}`. `StoreBusy` subclasses `filelock.Timeout`, so existing
+  `except Timeout` code keeps working.
+- **`behaviour.json` is pruned on first load.** Only the newest 2,000 queries, 50 sessions and the
+  strongest co-edit partners are kept; learned weights, preferences and error counts are untouched. The
+  bounds are configurable under `behaviour` in `config.json`.
+- **New settings:** environment `COGNIREPO_NO_WATCHER`, `COGNIREPO_LOCK_HOLD_WARN_SECS`,
+  `COGNIREPO_LOCK_STRICT`; config `behaviour.*`, `indexing.graph_journal*`, `indexing.writer_wait_secs`.
+- **Optional dependencies:** the `languages` extra now also installs the tree-sitter grammars for Ruby,
+  PHP, C#, Swift and Kotlin. `fsspec` was bumped for CVE-2026-104851.
+- **Docs that described removed features were corrected.** There is no REST API, JWT login, Redis cache or
+  gRPC service, and `SECURITY.md` now states exactly which stores `storage.encrypt` covers.
+
+### Known issues
+
+- **Files deleted in a commit stay in the index** until a full `index-repo` or a running watcher sees them:
+  the post-commit hook skips paths that no longer exist (#169).
+- **A reader can briefly see a mixed index generation.** `ast_index.json`, `ast.index`, `ast_metadata.json`
+  and `manifest.json` are written one after another under the store lock, but a reader that reloads in the
+  middle of a save can pair the new JSON with the previous FAISS/metadata files; `cognirepo verify-index`
+  detects it (#140).
+- **At-rest encryption does not cover the AST index, the default Chroma store, learnings or project memory**
+  (stated in `SECURITY.md`; whether to extend it is #186).
+- **Unused web packages are still installed for every user** — `fastapi`, `uvicorn`, `python-multipart`
+  (#187).
+- **The ~5 GB memory incident (#98 / #105) was never reproduced.** The strongest suspects are fixed here (a
+  3.5 GB forked watcher, N duplicate watchers, whole-file rewrites), but if you see unbounded growth run
+  `cognirepo doctor --resources` and report it.
+- **No always-on watcher yet** (`watch --serve` / autostart with catch-up reindex, #146): the git hook and
+  `watch --ensure-running` cover most of it.
+
 ### Security
 - **`fsspec` 2026.3.0 → 2026.6.0 (CVE-2026-104851, HIGH — arbitrary code execution via crafted reference
   documents).** Flagged by Trivy and pip-audit. cognirepo never imports fsspec; it is a transitive
@@ -17,6 +88,136 @@ Versioning: [Semantic Versioning](https://semver.org/)
   nothing in the 2026.4.0 / 2026.6.0 changelogs touches a feature this project or `huggingface_hub` use on
   this path (HTTP `pipe_file`, tar/zip closing, `dirFS`, `referenceFS`, FTP, `expand_path` globbing), and
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
+
+### Added
+- **#177 — C# constructors, property accessors and finalizers record their calls.** Constructors
+  (instance and static) are now FUNCTION symbols named `Order.constructor`, and a finalizer is named
+  as declared (`~Order`). A property whose accessors have bodies (`get`/`set`/`init` blocks,
+  `get => …`, expression-bodied `int X => …`) is one FUNCTION symbol named `Order.X` (tagged
+  `property`) carrying the calls from all its accessors. The class prefix keeps these off the CLASS
+  symbol's `file::name` graph node — including the idiomatic `public Customer Customer { … }` — and
+  keeps two classes' constructors apart, so `who_calls` names the class whose constructor does the
+  dependency-injection wiring. Auto-properties, initialisers, event accessors and indexers are
+  unchanged; Java constructors remain a follow-up.
+- **#176 — Swift computed properties and property observers record their calls.** A computed property
+  (`var x: Int { calc() }` or a `get`/`set` pair) and a property with `willSet`/`didSet` observers is
+  now a FUNCTION symbol named `Type.property` (tagged `property`, like a Python `@property`),
+  carrying the calls from all its accessors, so `who_calls` and the call graph see them. Getter, setter
+  and observers share one symbol rather than one each, matching how the property is referenced; the
+  type prefix keeps same-named properties (SwiftUI's `body`) of different types in one file on separate
+  graph nodes, and every binding of a multi-binding declaration is indexed. Stored properties without
+  accessors and local computed variables inside functions (whose calls the function already owns) are
+  not symbols; `lazy` closure initialisers and `subscript` bodies are not covered. Tree-sitter
+  FUNCTION records are now built by one `_function_symbol()` helper, and per-language property
+  handling is a `_PROPERTY_SYMBOL_BUILDERS` entry.
+- **`cognirepo doctor --resources` and `docs/RESOURCES.md` (#121).** One read-only report of where memory and
+  disk go: every cognirepo process (resident memory, age, repo, flagged stale — directory deleted or a
+  one-shot command running for hours), the size of each `.cognirepo/` subdirectory with its largest files,
+  and set-aside/left-over files (quarantines, `.stale` indexes, `.replaced-*`, scratch). `--json` for
+  scripts. The new guide documents the expected footprint (measured: watcher ~100–130 MB, idle `serve`
+  ~220 MB, `index-repo --no-embed` ~125 MB peak, ~7 MB of store for this repo), what each directory holds,
+  every tuning knob that affects memory or disk, and what to do for each thing the report can show. Run
+  against the maintainer's real store it listed 1.1 GB of resident cognirepo processes (half of them
+  stale) and 67 MB of set-aside files, which is what the issue asked to make visible.
+- **#178 — Kotlin language support.** `.kt` and `.kts` files are indexed via `tree-sitter-kotlin` (now
+  part of the `languages` extra, `>=1.1`): classes, interfaces, data/enum/sealed classes, objects and
+  companion objects, functions, extension functions, secondary constructors and `init` blocks.
+  Members that share a name in every class are qualified with their class so they get distinct graph
+  nodes: `Service.constructor`, `Service.init`, `Service.Companion` (unnamed companion). Call edges
+  cover `foo()`, `a.b()`, safe-call
+  `a?.b()` and trailing-lambda calls (`list.forEach { … }`); supertypes are normalised to simple names
+  (`com.x.Base()` → `Base`, `Comparable<T>` → `Comparable`, `Iface by impl` → `Iface`).
+  `build.gradle.kts` was already a Kotlin/Gradle service marker and `build/` / `.gradle/` were already
+  skipped. `cognirepo doctor` lists Kotlin; `semantic_search_code` accepts `language="kotlin"`; the
+  post-commit hook picks up `.kt`/`.kts` via `known_extensions()`. The indexer no longer emits a symbol
+  with an empty name when a grammar's error recovery inserts a zero-width `MISSING` name node, and logs
+  `[parse-errors] <path>` at debug level for any file the grammar could not fully parse. Known
+  tree-sitter-kotlin 1.1.0 limit: an enum whose entries have bodies loses that enum and every later
+  declaration in the file (documented in `docs/LANGUAGES.md`, pinned by a test).
+- **#175 — test that every indexed language has a service marker.** `CLAUDE.md` requires
+  `_SERVICE_MARKERS` (`interface/cli/service_detect.py`) to stay in sync with
+  `language_registry._GRAMMAR_MAP`, but nothing checked it. `tests/test_language_registry_sync.py`
+  derives the languages from `_GRAMMAR_MAP` / `_LANG_LABELS` and fails, naming the language, when one
+  has no marker whose `lang_hint` names it (JavaScript/TypeScript map to `Node.js`) and isn't in the
+  commented `_NO_MARKER_LANGUAGES` allow-list (Shell, YAML, C++). The reverse direction is checked too:
+  every marker's language must be indexed or listed in `_MARKERS_WITHOUT_GRAMMAR` (today: Dart,
+  `pubspec.yaml`). Both allow-lists are themselves checked so they can't go stale, and the
+  `"<Language>/<Tool>"` `lang_hint` convention is documented in `service_detect.py`. No behaviour change.
+- **#74 — C# language support.** `.cs` files are indexed via `tree-sitter-c-sharp` (now part of
+  the `languages` extra): classes, interfaces, structs, records, enums, methods and local functions,
+  plus call edges for `Foo()`, `obj.Foo()`, generic `Foo<T>()` and null-conditional `a?.Foo()`
+  invocations. Constructors are not indexed as functions (same as Java). `cognirepo doctor` lists
+  C#; `semantic_search_code` accepts `language="csharp"`. `record_declaration` also picks up Java
+  16+ records (pinned by a test). `obj/` and `.vs/` are added to the indexer's skip dirs.
+- **#73 — PHP language support.** `.php` files are indexed via `tree-sitter-php` (now part of the
+  `languages` extra, loaded with `language_php()` so files mixing HTML and `<?php` blocks parse):
+  classes, interfaces, traits, enums, functions and methods, INHERITS edges for `extends`,
+  `implements` and trait `use` (namespaced `\Ns\Base` reduced to `Base`), and call edges for
+  `foo()`, `$obj->foo()`, `Foo::bar()` and namespaced `\Ns\foo()`. `cognirepo doctor` lists PHP;
+  `semantic_search_code` accepts `language="php"`; `index-repo --changed-only` picks up `.php` files.
+- **#75 — Swift language support.** `.swift` files are indexed via `tree-sitter-swift` (now part of
+  the `languages` extra; the grammar is versioned 0.7.x, hence `>=0.7`): classes, structs, enums,
+  actors, extensions, protocols, functions, `init`/`deinit` and protocol requirements, inheritance lists,
+  and call edges for `foo()` / `obj.foo()`. An `extension Foo {}` is recorded as a CLASS symbol named
+  `Foo` at the extension site, so `lookup_symbol("Foo")` returns the type and its extensions.
+  `Package.swift` is detected as a Swift service marker; `cognirepo doctor` lists Swift. `Pods/`,
+  `.build/`, `Carthage/` and `DerivedData/` are added to the indexer's skip dirs. The shared
+  `call_expression` callee fallback only accepts Swift callee shapes, with a JS/TS/Go regression test.
+- **#72 — Ruby language support.** `.rb` files are indexed via `tree-sitter-ruby` (now part of
+  the `languages` extra): classes, modules, instance and `def self.` methods, call edges
+  (`foo()`, `recv.foo()`, `Mod::foo`; `class`/`new` are skipped as non-symbol callees) and
+  superclasses (namespaced `Mod::Base` is reduced to `Base` so INHERITS edges resolve). Ruby's `class`/`module` node types are
+  scoped to Ruby via the new per-language `_TS_LANG_FUNCTION_TYPES`/`_TS_LANG_CLASS_TYPES` maps so
+  they never match JS class expressions or TS `module` blocks. `cognirepo doctor` lists Ruby.
+- **#137/#139 (graph half) — multi-writer safety for the graph journal.** (1) A running
+  `index-repo` takes an exclusive OS lock (`graph/graph.journal.writer`, the LevelDB/Lucene
+  write-lock pattern) for the whole run; a second one is refused with `indexing is already running
+  (pid N)` (exit 1) or queues for `indexing.writer_wait_secs`. The kernel drops the lock if the
+  holder dies, so a crash leaves no stale lease. (2) Journal records now carry their sequence
+  number in the frame header and the next seq is read from the file tail under `store_lock`
+  (length+crc scan, no decrypt) — two writers can no longer emit colliding seqs. (3) Every graph
+  mutation is remembered until it is on disk; `save()` and `reload_if_changed()` now compare disk
+  state and, if another process wrote since, reload it and re-apply the unsaved ops on top
+  (Git-style compare-and-swap-then-redo) instead of overwriting — a long-lived watcher can no
+  longer replace a newer `index-repo` result with its stale copy. `ops/cron/prune_memory.py` now
+  mutates through the journaled primitives (conditional `remove_node_if_degree_at_most`, so a rebased
+  prune never deletes a node another writer just connected). A failed journal flush keeps its ops in
+  the unsynced log instead of dropping them. Not covered: the AST index / FAISS stores still save
+  last-writer-wins (#139 remainder). Design + prior art: `docs/architecture/GRAPH_CONCURRENCY.md`.
+- **#109 — incremental knowledge-graph persistence (journal).** `index-repo` now appends graph
+  mutations to `.cognirepo/graph/graph.journal` every N files / T seconds instead of holding
+  everything until one end-of-run `graph.pkl` write. `KnowledgeGraph._load()` replays the journal
+  on top of `graph.pkl`; `save()` compacts it (`journal_seq` marker pickled inside the graph makes
+  replay idempotent across a crash between the atomic replace and the journal unlink). Records are
+  length-prefixed + crc32-checked (torn tail ignored by readers, truncated by the single writer) and
+  Fernet-encrypted per segment under `storage.encrypt`; an undecryptable journal is preserved and
+  blocks `save()` like `GraphLockedError`. A circuit-breaker-failed final save no longer loses the
+  graph. `graph.pkl` stays the single consolidated file for readers; `kg.G` remains the in-memory
+  read model. **Not** addressed (follow-up): the live graph is still fully resident, so this does not
+  lower query-time memory or the compaction-time peak. New primitives `remove_node`, `remove_edge`,
+  `set_node_attrs`, `set_edge_attrs`, `copy_edge`; `ASTIndexer` no longer mutates `kg.G` directly.
+  Replay streams one segment at a time (peak = graph + one segment); `begin_journal()` finds the
+  append point with a length+crc-only boundary scan (no decrypt/unpickle under `store_lock`); pending
+  ops are bounded by an estimated byte budget as well as op count.
+  Mid-file journal damage is refused (never truncated away); readers replay only new segments when
+  `graph.pkl` is unchanged. Knobs: `indexing.graph_journal`, `graph_journal_flush_files`, `graph_journal_flush_secs`.
+
+### Changed
+- **Guides brought up to date with this release.** `README.md`: the *Storage layout* was wrong in several
+  places (`ast.index` / `ast_metadata.json` shown under `vector_db/` — they live in `index/`; no `watchers/`,
+  journal, lock, hook files or Chroma store) and is rewritten from real stores; the quick start, CLI summary
+  and documentation table gain `install-hooks`, `doctor --resources`, `graph restore`, one-watcher-per-repo
+  and links to `CLI_REFERENCE`, `CONFIGURATION`, `RESOURCES`, `TROUBLESHOOTING`; a roadmap line for the
+  planned 3.0 platform work. `docs/USAGE.md`: new *Keeping the index fresh* (watcher, git hook, on-demand)
+  and *Diagnostics and recovery* (doctor, quarantined-graph recovery, busy store). `docs/TROUBLESHOOTING.md`:
+  new *Processes, Locks & Hooks* — busy store (exit 75), stray processes / memory, "a watcher is already
+  running", a hook that is not indexing, deleted files lingering (#169), quarantined graphs, and the
+  smaller `behaviour.json`.
+- **#95 — episode dict schema keys extracted to `data/memory/episodic_schema.py`.**
+  `episodic_memory.py` and `timeline.py` both accessed the episode dict via duplicated hardcoded
+  string literals (`"event"`, `"metadata"`, `"time"`, and `"type"` within metadata). Pure
+  refactor, no behavior change — both files now import `EVENT`/`METADATA`/`TIME`/`METADATA_TYPE`
+  from the new module.
 
 ### Fixed
 - **Release smoke test could not pass.** `scripts/smoke_test.sh` and `.ps1` ran `cognirepo init --password
@@ -279,137 +480,6 @@ Versioning: [Semantic Versioning](https://semver.org/)
   or an unmarked fragment (fewer than half as many FILE nodes as the AST index has files; graphs
   written before the marker keep working if they cover the repo). `skip_graph` runs never claim
   completeness.
-
-### Added
-- **#177 — C# constructors, property accessors and finalizers record their calls.** Constructors
-  (instance and static) are now FUNCTION symbols named `Order.constructor`, and a finalizer is named
-  as declared (`~Order`). A property whose accessors have bodies (`get`/`set`/`init` blocks,
-  `get => …`, expression-bodied `int X => …`) is one FUNCTION symbol named `Order.X` (tagged
-  `property`) carrying the calls from all its accessors. The class prefix keeps these off the CLASS
-  symbol's `file::name` graph node — including the idiomatic `public Customer Customer { … }` — and
-  keeps two classes' constructors apart, so `who_calls` names the class whose constructor does the
-  dependency-injection wiring. Auto-properties, initialisers, event accessors and indexers are
-  unchanged; Java constructors remain a follow-up.
-- **#176 — Swift computed properties and property observers record their calls.** A computed property
-  (`var x: Int { calc() }` or a `get`/`set` pair) and a property with `willSet`/`didSet` observers is
-  now a FUNCTION symbol named `Type.property` (tagged `property`, like a Python `@property`),
-  carrying the calls from all its accessors, so `who_calls` and the call graph see them. Getter, setter
-  and observers share one symbol rather than one each, matching how the property is referenced; the
-  type prefix keeps same-named properties (SwiftUI's `body`) of different types in one file on separate
-  graph nodes, and every binding of a multi-binding declaration is indexed. Stored properties without
-  accessors and local computed variables inside functions (whose calls the function already owns) are
-  not symbols; `lazy` closure initialisers and `subscript` bodies are not covered. Tree-sitter
-  FUNCTION records are now built by one `_function_symbol()` helper, and per-language property
-  handling is a `_PROPERTY_SYMBOL_BUILDERS` entry.
-- **`cognirepo doctor --resources` and `docs/RESOURCES.md` (#121).** One read-only report of where memory and
-  disk go: every cognirepo process (resident memory, age, repo, flagged stale — directory deleted or a
-  one-shot command running for hours), the size of each `.cognirepo/` subdirectory with its largest files,
-  and set-aside/left-over files (quarantines, `.stale` indexes, `.replaced-*`, scratch). `--json` for
-  scripts. The new guide documents the expected footprint (measured: watcher ~100–130 MB, idle `serve`
-  ~220 MB, `index-repo --no-embed` ~125 MB peak, ~7 MB of store for this repo), what each directory holds,
-  every tuning knob that affects memory or disk, and what to do for each thing the report can show. Run
-  against the maintainer's real store it listed 1.1 GB of resident cognirepo processes (half of them
-  stale) and 67 MB of set-aside files, which is what the issue asked to make visible.
-- **#178 — Kotlin language support.** `.kt` and `.kts` files are indexed via `tree-sitter-kotlin` (now
-  part of the `languages` extra, `>=1.1`): classes, interfaces, data/enum/sealed classes, objects and
-  companion objects, functions, extension functions, secondary constructors and `init` blocks.
-  Members that share a name in every class are qualified with their class so they get distinct graph
-  nodes: `Service.constructor`, `Service.init`, `Service.Companion` (unnamed companion). Call edges
-  cover `foo()`, `a.b()`, safe-call
-  `a?.b()` and trailing-lambda calls (`list.forEach { … }`); supertypes are normalised to simple names
-  (`com.x.Base()` → `Base`, `Comparable<T>` → `Comparable`, `Iface by impl` → `Iface`).
-  `build.gradle.kts` was already a Kotlin/Gradle service marker and `build/` / `.gradle/` were already
-  skipped. `cognirepo doctor` lists Kotlin; `semantic_search_code` accepts `language="kotlin"`; the
-  post-commit hook picks up `.kt`/`.kts` via `known_extensions()`. The indexer no longer emits a symbol
-  with an empty name when a grammar's error recovery inserts a zero-width `MISSING` name node, and logs
-  `[parse-errors] <path>` at debug level for any file the grammar could not fully parse. Known
-  tree-sitter-kotlin 1.1.0 limit: an enum whose entries have bodies loses that enum and every later
-  declaration in the file (documented in `docs/LANGUAGES.md`, pinned by a test).
-- **#175 — test that every indexed language has a service marker.** `CLAUDE.md` requires
-  `_SERVICE_MARKERS` (`interface/cli/service_detect.py`) to stay in sync with
-  `language_registry._GRAMMAR_MAP`, but nothing checked it. `tests/test_language_registry_sync.py`
-  derives the languages from `_GRAMMAR_MAP` / `_LANG_LABELS` and fails, naming the language, when one
-  has no marker whose `lang_hint` names it (JavaScript/TypeScript map to `Node.js`) and isn't in the
-  commented `_NO_MARKER_LANGUAGES` allow-list (Shell, YAML, C++). The reverse direction is checked too:
-  every marker's language must be indexed or listed in `_MARKERS_WITHOUT_GRAMMAR` (today: Dart,
-  `pubspec.yaml`). Both allow-lists are themselves checked so they can't go stale, and the
-  `"<Language>/<Tool>"` `lang_hint` convention is documented in `service_detect.py`. No behaviour change.
-- **#74 — C# language support.** `.cs` files are indexed via `tree-sitter-c-sharp` (now part of
-  the `languages` extra): classes, interfaces, structs, records, enums, methods and local functions,
-  plus call edges for `Foo()`, `obj.Foo()`, generic `Foo<T>()` and null-conditional `a?.Foo()`
-  invocations. Constructors are not indexed as functions (same as Java). `cognirepo doctor` lists
-  C#; `semantic_search_code` accepts `language="csharp"`. `record_declaration` also picks up Java
-  16+ records (pinned by a test). `obj/` and `.vs/` are added to the indexer's skip dirs.
-- **#73 — PHP language support.** `.php` files are indexed via `tree-sitter-php` (now part of the
-  `languages` extra, loaded with `language_php()` so files mixing HTML and `<?php` blocks parse):
-  classes, interfaces, traits, enums, functions and methods, INHERITS edges for `extends`,
-  `implements` and trait `use` (namespaced `\Ns\Base` reduced to `Base`), and call edges for
-  `foo()`, `$obj->foo()`, `Foo::bar()` and namespaced `\Ns\foo()`. `cognirepo doctor` lists PHP;
-  `semantic_search_code` accepts `language="php"`; `index-repo --changed-only` picks up `.php` files.
-- **#75 — Swift language support.** `.swift` files are indexed via `tree-sitter-swift` (now part of
-  the `languages` extra; the grammar is versioned 0.7.x, hence `>=0.7`): classes, structs, enums,
-  actors, extensions, protocols, functions, `init`/`deinit` and protocol requirements, inheritance lists,
-  and call edges for `foo()` / `obj.foo()`. An `extension Foo {}` is recorded as a CLASS symbol named
-  `Foo` at the extension site, so `lookup_symbol("Foo")` returns the type and its extensions.
-  `Package.swift` is detected as a Swift service marker; `cognirepo doctor` lists Swift. `Pods/`,
-  `.build/`, `Carthage/` and `DerivedData/` are added to the indexer's skip dirs. The shared
-  `call_expression` callee fallback only accepts Swift callee shapes, with a JS/TS/Go regression test.
-- **#72 — Ruby language support.** `.rb` files are indexed via `tree-sitter-ruby` (now part of
-  the `languages` extra): classes, modules, instance and `def self.` methods, call edges
-  (`foo()`, `recv.foo()`, `Mod::foo`; `class`/`new` are skipped as non-symbol callees) and
-  superclasses (namespaced `Mod::Base` is reduced to `Base` so INHERITS edges resolve). Ruby's `class`/`module` node types are
-  scoped to Ruby via the new per-language `_TS_LANG_FUNCTION_TYPES`/`_TS_LANG_CLASS_TYPES` maps so
-  they never match JS class expressions or TS `module` blocks. `cognirepo doctor` lists Ruby.
-- **#137/#139 (graph half) — multi-writer safety for the graph journal.** (1) A running
-  `index-repo` takes an exclusive OS lock (`graph/graph.journal.writer`, the LevelDB/Lucene
-  write-lock pattern) for the whole run; a second one is refused with `indexing is already running
-  (pid N)` (exit 1) or queues for `indexing.writer_wait_secs`. The kernel drops the lock if the
-  holder dies, so a crash leaves no stale lease. (2) Journal records now carry their sequence
-  number in the frame header and the next seq is read from the file tail under `store_lock`
-  (length+crc scan, no decrypt) — two writers can no longer emit colliding seqs. (3) Every graph
-  mutation is remembered until it is on disk; `save()` and `reload_if_changed()` now compare disk
-  state and, if another process wrote since, reload it and re-apply the unsaved ops on top
-  (Git-style compare-and-swap-then-redo) instead of overwriting — a long-lived watcher can no
-  longer replace a newer `index-repo` result with its stale copy. `ops/cron/prune_memory.py` now
-  mutates through the journaled primitives (conditional `remove_node_if_degree_at_most`, so a rebased
-  prune never deletes a node another writer just connected). A failed journal flush keeps its ops in
-  the unsynced log instead of dropping them. Not covered: the AST index / FAISS stores still save
-  last-writer-wins (#139 remainder). Design + prior art: `docs/architecture/GRAPH_CONCURRENCY.md`.
-- **#109 — incremental knowledge-graph persistence (journal).** `index-repo` now appends graph
-  mutations to `.cognirepo/graph/graph.journal` every N files / T seconds instead of holding
-  everything until one end-of-run `graph.pkl` write. `KnowledgeGraph._load()` replays the journal
-  on top of `graph.pkl`; `save()` compacts it (`journal_seq` marker pickled inside the graph makes
-  replay idempotent across a crash between the atomic replace and the journal unlink). Records are
-  length-prefixed + crc32-checked (torn tail ignored by readers, truncated by the single writer) and
-  Fernet-encrypted per segment under `storage.encrypt`; an undecryptable journal is preserved and
-  blocks `save()` like `GraphLockedError`. A circuit-breaker-failed final save no longer loses the
-  graph. `graph.pkl` stays the single consolidated file for readers; `kg.G` remains the in-memory
-  read model. **Not** addressed (follow-up): the live graph is still fully resident, so this does not
-  lower query-time memory or the compaction-time peak. New primitives `remove_node`, `remove_edge`,
-  `set_node_attrs`, `set_edge_attrs`, `copy_edge`; `ASTIndexer` no longer mutates `kg.G` directly.
-  Replay streams one segment at a time (peak = graph + one segment); `begin_journal()` finds the
-  append point with a length+crc-only boundary scan (no decrypt/unpickle under `store_lock`); pending
-  ops are bounded by an estimated byte budget as well as op count.
-  Mid-file journal damage is refused (never truncated away); readers replay only new segments when
-  `graph.pkl` is unchanged. Knobs: `indexing.graph_journal`, `graph_journal_flush_files`, `graph_journal_flush_secs`.
-### Changed
-- **Guides brought up to date with this release.** `README.md`: the *Storage layout* was wrong in several
-  places (`ast.index` / `ast_metadata.json` shown under `vector_db/` — they live in `index/`; no `watchers/`,
-  journal, lock, hook files or Chroma store) and is rewritten from real stores; the quick start, CLI summary
-  and documentation table gain `install-hooks`, `doctor --resources`, `graph restore`, one-watcher-per-repo
-  and links to `CLI_REFERENCE`, `CONFIGURATION`, `RESOURCES`, `TROUBLESHOOTING`; a roadmap line for the
-  planned 3.0 platform work. `docs/USAGE.md`: new *Keeping the index fresh* (watcher, git hook, on-demand)
-  and *Diagnostics and recovery* (doctor, quarantined-graph recovery, busy store). `docs/TROUBLESHOOTING.md`:
-  new *Processes, Locks & Hooks* — busy store (exit 75), stray processes / memory, "a watcher is already
-  running", a hook that is not indexing, deleted files lingering (#169), quarantined graphs, and the
-  smaller `behaviour.json`.
-- **#95 — episode dict schema keys extracted to `data/memory/episodic_schema.py`.**
-  `episodic_memory.py` and `timeline.py` both accessed the episode dict via duplicated hardcoded
-  string literals (`"event"`, `"metadata"`, `"time"`, and `"type"` within metadata). Pure
-  refactor, no behavior change — both files now import `EVENT`/`METADATA`/`TIME`/`METADATA_TYPE`
-  from the new module.
-
-### Fixed
 - **#98/#105 — likely root cause found: `cognirepo serve`'s auto-watcher had the same
   graph-save gap as #107, with no self-raised breaker ceiling and no recovery at all.**
   `intelligence/indexer/file_watcher.py`'s `graph.save()` calls (reached on every debounced
