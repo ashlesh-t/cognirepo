@@ -19,14 +19,6 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the full test suite plus a real fastembed model load/embed pass on 2026.6.0. No code changes needed.
 
 ### Fixed
-- **`SECURITY.md` overstated what encryption at rest covers, and named the wrong algorithm.** It said
-  "AES-256 GCM" and "all files in `vector_db/`, `graph/`, `index/`". The code uses Fernet (AES-128-CBC +
-  HMAC-SHA256) and, with `storage.encrypt: true`, encrypts the knowledge graph and its journal,
-  `behaviour.json`, the org graph, the episodic log and the local FAISS store — **not** the AST index, the
-  default Chroma store, learnings or project memory. The document now says exactly that, states plainly
-  that there is no network API or auth layer (the only listener is the optional `cognirepo metrics`
-  exporter on `127.0.0.1:9090`), and points at the follow-up for extending coverage (#186). Unused web/auth
-  packages that are still installed for every user are tracked in #187.
 - **#141 — lock hygiene: a busy store is a clear retryable error, nothing waits forever, slow work is out of
   the lock.** (1) A lock timeout surfaced as a raw `filelock.Timeout` traceback. `store_lock()` now raises
   `StoreBusy` (still a `Timeout` subclass) naming the lock and the wait; MCP tools return
@@ -66,6 +58,14 @@ Versioning: [Semantic Versioning](https://semver.org/)
   `cognirepo graph prune-quarantine [--days 30] [--apply]` removes only genuinely unreadable quarantines
   older than the retention window, never recoverable or locked ones. `doctor` now classifies quarantined
   graphs and only warns about a recoverable one when `graph.pkl` is missing or unreadable.
+- **`SECURITY.md` overstated what encryption at rest covers, and named the wrong algorithm.** It said
+  "AES-256 GCM" and "all files in `vector_db/`, `graph/`, `index/`". The code uses Fernet (AES-128-CBC +
+  HMAC-SHA256) and, with `storage.encrypt: true`, encrypts the knowledge graph and its journal,
+  `behaviour.json`, the org graph, the episodic log and the local FAISS store — **not** the AST index, the
+  default Chroma store, learnings or project memory. The document now says exactly that, states plainly
+  that there is no network API or auth layer (the only listener is the optional `cognirepo metrics`
+  exporter on `127.0.0.1:9090`), and points at the follow-up for extending coverage (#186). Unused web/auth
+  packages that are still installed for every user are tracked in #187.
 - **#127 — the watcher started by `index-repo --daemon` no longer carries the indexing run's heap
   (3.5 GB → 113 MB).** The background watcher was a double-fork of the calling process, so it inherited
   everything that process held — after `index-repo` the embedding model, the FAISS index and every parsed
