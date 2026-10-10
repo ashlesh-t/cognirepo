@@ -18,6 +18,8 @@ Complete documentation for every command, MCP tool, and configuration option.
 10. [GitHub Copilot Integration](#github-copilot-integration)
 11. [Adding API Keys](#adding-api-keys)
 12. [Personas](#personas)
+13. [Keeping the index fresh](#keeping-the-index-fresh)
+14. [Diagnostics and recovery](#diagnostics-and-recovery)
 
 ---
 
@@ -266,6 +268,62 @@ export COGNIREPO_CB_RSS_LIMIT_MB=3000   # trip at 3 GB RSS
 `cognirepo serve` also runs a memory watchdog (samples RSS every 5 s). At 75% of the limit it
 evicts the embedding model/graph/indexer and runs `gc`; at the limit it trips the breaker so
 heavy operations shed load. It never kills the server; its actions are logged to stderr.
+
+---
+
+## Keeping the index fresh
+
+Three ways, used together or separately:
+
+**1. The file watcher.** One background watcher per repo, no matter how many agent sessions you run.
+```bash
+cognirepo watch --ensure-running   # start it if it is not running (a separate ~100 MB process)
+cognirepo watch --status           # PID, heartbeat age, last reindex
+cognirepo list                     # all watchers; `cognirepo list -n <PID> --stop` stops one
+```
+`cognirepo serve` (the MCP server) also runs a watcher thread, but only the first session holds the repo's
+lease and watches; the others stand by and take over if it dies. Starting a second one prints who holds it.
+For a supervised always-on watcher the generated systemd unit runs `cognirepo watch --foreground`.
+Set `COGNIREPO_NO_WATCHER=1` to start no watcher at all (CI, containers).
+
+**2. The git post-commit hook.**
+```bash
+cognirepo install-hooks     # reindex the files each commit changed, in the background
+cognirepo uninstall-hooks
+```
+The hook runs `index-repo --files … --no-embed` (it never loads the embedding model; vectors for those
+files catch up on the next full `index-repo`). Its output goes to `.cognirepo/hook.log` and the last result
+to `.cognirepo/hook.last`; `cognirepo doctor` warns when the last run failed or the installed block is
+outdated — re-run `install-hooks` after upgrading. Files *deleted* in a commit are not removed from the
+index by the hook yet (a full `index-repo` or the watcher does); see issue #169.
+
+**3. On demand.** `cognirepo index-repo .` (full) or `cognirepo index-repo --changed-only` (files git
+reports as changed; needs an existing complete index).
+
+---
+
+## Diagnostics and recovery
+
+```bash
+cognirepo doctor              # health checks; exit 0 healthy, 1 warnings, 2 errors
+cognirepo doctor --resources  # which cognirepo processes use how much memory, store sizes, left-over files
+cognirepo doctor --json       # machine-readable
+```
+
+**A quarantined graph is not necessarily a corrupt one.** If a graph file could not be read it is set aside
+as `graph/graph.pkl.corrupt-<ts>` rather than overwritten — and older versions did this to perfectly good
+encrypted graphs when `keyring` was missing. To see what is recoverable:
+```bash
+cognirepo graph restore                 # lists each quarantine as recoverable / locked / corrupt; dry-run
+cognirepo graph restore --apply         # restore the largest recoverable one (copies; never deletes)
+cognirepo graph prune-quarantine --apply  # remove only genuinely unreadable ones older than 30 days
+```
+`graph restore` refuses to replace a readable `graph.pkl` unless you pass `--force`.
+
+**A busy store.** If another process holds a store lock for longer than 15 s, a command prints
+`the CogniRepo store is busy … retry in a moment` and exits 75; an MCP tool returns
+`{"busy": true, "retryable": true}`. Nothing was changed; just retry. See
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md#the-cognirepo-store-is-busy-exit-75-busy-true).
 
 ---
 

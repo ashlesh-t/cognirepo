@@ -274,6 +274,68 @@ pip install --upgrade cognirepo
 
 ---
 
+## Processes, Locks & Hooks
+
+### "The CogniRepo store is busy" (exit 75, `busy: true`)
+
+Another process (often another agent saving a large index) held a store lock for longer than this one
+would wait (15 s for most stores). **Nothing was changed** — retry in a moment. The CLI exits 75
+(`EX_TEMPFAIL`); an MCP tool returns `{"error": …, "busy": true, "retryable": true}`.
+
+If it persists, look for something stuck rather than touching lock files (they are OS advisory locks; the
+kernel releases them when a process dies, and deleting the file does nothing useful):
+```bash
+cognirepo doctor --resources   # shows every cognirepo process, its memory and age, and stale ones
+```
+A lock that is held for over 10 s is also logged as a warning when it is released.
+
+### Many `cognirepo` processes, or a lot of memory
+
+```bash
+cognirepo doctor --resources
+```
+Expect one watcher (~100–130 MB) per repo and one `serve` (~220 MB) per agent session. Processes marked
+**STALE** belong to a deleted directory or a one-shot command that has run for hours; `cognirepo doctor`
+prints the `kill` command. Older versions left watchers behind (and forked them from `index-repo`, carrying
+GBs of heap) — upgrade, then stop them. Sizes and tuning: [RESOURCES.md](RESOURCES.md).
+
+### "A watcher is already running" / `list --stop` says the watcher is inside `serve`
+
+Only one watcher runs per repo. If a `cognirepo serve` session holds it, `cognirepo list` shows it as
+`running (in serve)` and `list --stop` will not signal it (that would stop your agent's server) — it ends
+with that session. To run a standalone watcher instead, stop the session that holds it.
+
+### The post-commit hook is not indexing my commits
+
+```bash
+cat .cognirepo/hook.last      # ts / exit / files of the last run
+tail .cognirepo/hook.log      # its output
+cognirepo doctor              # warns on a failed last run or an outdated hook block
+cognirepo install-hooks       # refresh the hook (also picks up newly supported languages)
+```
+Common causes: `cognirepo` not on the `PATH` git uses (exit 127 in `hook.log`), a pipx install missing
+`keyring`/`cryptography` while `storage.encrypt` is on (the save fails), or no complete index yet — run a
+full `cognirepo index-repo .` once, because the hook only updates an existing complete graph.
+
+### A file I deleted still shows up in results
+
+Deleting a file in a commit does not remove it from the index through the hook yet (known issue #169).
+A full `cognirepo index-repo .`, or a running watcher, removes it.
+
+### `doctor` reports quarantined graph files
+
+Run `cognirepo graph restore` — a quarantine may hold an intact graph (see [USAGE.md](USAGE.md#diagnostics-and-recovery)).
+If `graph.pkl` is healthy the quarantines are just history; `cognirepo graph prune-quarantine` clears the
+unreadable old ones.
+
+### `behaviour.json` got smaller after upgrading
+
+Expected: it is now bounded (newest 2,000 queries, 50 sessions, …). Learned weights, preferences and error
+counts are kept; only old history is dropped. The bounds are configurable under `behaviour` in
+`config.json` ([CONFIGURATION.md](CONFIGURATION.md)).
+
+---
+
 ## General Fixes
 
 ### Graph is empty / "encrypted but could not be decrypted"
