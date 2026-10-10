@@ -176,6 +176,16 @@ Versioning: [Semantic Versioning](https://semver.org/)
   a second SIGTERM exits immediately, and a stop during a crash never restarts. Also: a zombie
   (exited, un-reaped) process no longer counts as alive — `kill(pid, 0)` succeeds on one, which made a
   stopped watcher show as "running" forever.
+- **#144 — `docs/CLI_REFERENCE.md` documented a CLI that does not exist, and a test now keeps it honest.** It
+  advertised `cognirepo watch start|stop|status` (the parser has `--status`, `--ensure-running`,
+  `--foreground`, `--path`; stopping is `list -n <pid> --stop`), `ask --model/--tier` and `seed --days`
+  (no such flags), `user-prefs [KEY [VALUE]]` (the real interface is `--set KEY VALUE`), had **no section**
+  for six real commands (`coverage`, `export-spec`, `graph-stats`, `install-hooks`, `uninstall-hooks`,
+  `update-directives`) and missed ~35 flags on 14 others (`init --parent-repo/--service-type/…`,
+  `index-repo --tier/--no-graph/--remove-lock`, `doctor --release-check`, `setup --targets`, the `org`
+  subcommands …). All corrected from the real parser. New `tests/test_cli_docs_sync.py` captures the actual
+  argparse tree and fails when a command has no section, a flag is undocumented, a documented flag or a usage
+  example uses one that does not exist, or a usage line advertises subcommands the parser lacks.
 - **#124 — `doctor` now inspects the `cognirepo` on PATH, not just the interpreter running it.** Hooks and
   MCP clients launch the PATH `cognirepo` (typically a pipx venv), which can differ from a dev checkout's
   interpreter. New `interface/cli/install_probe.py` reads that script's shebang, probes the interpreter in
