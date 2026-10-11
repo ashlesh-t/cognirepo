@@ -37,7 +37,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from typing import Any
-from core.config.atomic import atomic_json_dump, atomic_path, atomic_write
+from core.config.atomic import atomic_json_dump
 
 # ── paths ─────────────────────────────────────────────────────────────────────
 # NOTE: resolved lazily via get_path() to respect --project-dir / COGNIREPO_DIR
@@ -126,12 +126,15 @@ def _rebuild_faiss(kept: list[dict[str, Any]], dry_run: bool) -> int:
         dim = vectors.shape[1]
         index = faiss.IndexFlatL2(dim)
         index.add(vectors)  # pylint: disable=no-value-for-parameter
-        with atomic_path(_semantic_index()) as _tmp:
-            faiss.write_index(index, _tmp)
         # rewrite metadata with contiguous row IDs
         for i, entry in enumerate(kept):
             entry["faiss_row"] = i
-        atomic_json_dump(_semantic_meta(), kept, indent=2)
+        # index + metadata go out as ONE generation, under the lock (COGNIREPO-140): written one
+        # after the other, a reader between the two renames paired the new index with old rows.
+        from core.config.lock import store_lock  # pylint: disable=import-outside-toplevel
+        from core.vector_db.local_vector_db import publish_semantic  # pylint: disable=import-outside-toplevel
+        with store_lock():
+            publish_semantic(index, json.dumps(kept, indent=2).encode("utf-8"))
         return len(kept)
     except Exception as exc:  # pylint: disable=broad-except
         print(f"[prune] FAISS rebuild failed: {exc}", file=sys.stderr)
@@ -314,7 +317,10 @@ def cleanup_suppressed(
     if encrypt:
         from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
         content = encrypt_bytes(content, get_or_create_key(project_id))
-    atomic_write(_semantic_meta(), content)
+    from core.config.lock import store_lock  # pylint: disable=import-outside-toplevel
+    from core.vector_db.local_vector_db import publish_semantic  # pylint: disable=import-outside-toplevel
+    with store_lock():
+        publish_semantic(db.index, content, keep_index=True)
 
     # Check rebuild threshold
     total = len(db.metadata)

@@ -8,6 +8,24 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Added
+- **Generation pointer for the AST index (#140).** `ast_index.json`, `ast.index`, `ast_metadata.json` and
+  `manifest.json` are now published together as one immutable generation (`index/ast.gen/gen-N/`) behind an
+  atomically replaced `CURRENT` pointer (`core/config/generation.py`). Before, `save()` renamed the four files
+  one after another, so a lock-free reader (the MCP server) that reloaded in between paired the new
+  `ast_index.json` with the old FAISS index/metadata and recorded that as current — a persistent
+  `faiss_id` ↔ row mismatch until the next save. Readers now pin one generation (snapshot isolation, no reader
+  locks); a crash at any publish step leaves the previous generation intact; old generations are removed after
+  a grace period. The flat `index/*` files remain as hard links to the current generation, so `verify-index`,
+  `doctor` and other direct readers are unchanged. The semantic store (`semantic.index` +
+  `semantic_metadata.json`, `vector_db/semantic.gen/`) had the same failure shape — a reader between the two
+  renames saw `index.ntotal != len(metadata)` — and now uses the same mechanism, including the `prune` /
+  `cleanup_suppressed` rebuilds, which previously wrote the pair with no lock. Metadata-only updates hard-link
+  the unchanged index into the new generation rather than rewriting it.
+- **ADR 001 — storage consistency model (#143)**, `docs/adr/001-storage-consistency.md`: full ACID (SQLite WAL)
+  for primary data; atomic publish + snapshot isolation (generation pointer) for derived/rebuildable data;
+  the integrity epic's reader/writer rules made normative; ordered migration plan that unblocks #115.
+
 ### Security
 - **`fsspec` 2026.3.0 → 2026.6.0 (CVE-2026-104851, HIGH — arbitrary code execution via crafted reference
   documents).** Flagged by Trivy and pip-audit. cognirepo never imports fsspec; it is a transitive

@@ -46,6 +46,7 @@ import numpy as np
 import warnings
 
 from core.config.atomic import atomic_json_dump, atomic_path
+from core.config.generation import GenerationStore
 from core.config.lock import StoreBusy
 from core.config.safe_read import StoreUnreadableError, quarantine_if_stably_corrupt, read_retry
 from data.graph.knowledge_graph import KnowledgeGraph, NodeType, EdgeType
@@ -75,6 +76,26 @@ def _ast_meta_file() -> str:
 
 def _manifest_file() -> str:
     return get_path("index/manifest.json")
+
+
+def _ast_gen_store() -> GenerationStore:
+    """The generation store holding the AST group (COGNIREPO-140)."""
+    return GenerationStore(get_path("index/ast.gen"))
+
+
+def _group_paths() -> tuple[str, str, str]:
+    """(ast_index.json, ast.index, ast_metadata.json) of ONE generation — the one CURRENT names.
+
+    The three files are only mutually consistent within a single generation, so a reader must
+    take all of them from the same place (see ``GenerationStore.resolve`` for when the flat
+    ``index/`` files are used instead).
+    """
+    got = _ast_gen_store().resolve({
+        "ast_index.json": _ast_index_file(),
+        "ast.index": _ast_faiss_file(),
+        "ast_metadata.json": _ast_meta_file(),
+    })
+    return got["ast_index.json"], got["ast.index"], got["ast_metadata.json"]
 
 
 #: how long the Tier-2 queue file lock is waited for before StoreBusy (write/trim, and the initial read)
@@ -327,7 +348,7 @@ def _sha256_file(path: str) -> str:
 
 
 def _write_manifest(repo_root: str | None = None, symbol_count: int = 0, file_count: int = 0,
-                    git_commit: str | None = None) -> None:
+                    git_commit: str | None = None, *, group_dir: str | None = None) -> None:
     """
     Write .cognirepo/index/manifest.json after a successful index run.
 
@@ -339,7 +360,14 @@ def _write_manifest(repo_root: str | None = None, symbol_count: int = 0, file_co
     The manifest ties the index state to a git commit SHA and records
     platform metadata so architecture mismatches can be detected on load.
     Run `cognirepo verify-index` to check integrity at any time.
+
+    ``group_dir``: write into (and checksum the files of) that generation directory instead of
+    the flat ``index/`` files — ``ASTIndexer.save`` does this so the manifest is part of the
+    atomically published group (COGNIREPO-140).
     """
+    def _p(name: str, flat: str) -> str:
+        return os.path.join(group_dir, name) if group_dir else flat
+
     manifest = {
         "git_commit": git_commit if git_commit is not None else _git_head(repo_root),
         "indexed_at": _now(),
@@ -350,15 +378,15 @@ def _write_manifest(repo_root: str | None = None, symbol_count: int = 0, file_co
             "faiss": faiss.__version__,
         },
         "index_checksums": {
-            "ast_index.json": _sha256_file(_ast_index_file()),
-            "ast.index":      _sha256_file(_ast_faiss_file()),
-            "ast_metadata.json": _sha256_file(_ast_meta_file()),
+            "ast_index.json": _sha256_file(_p("ast_index.json", _ast_index_file())),
+            "ast.index":      _sha256_file(_p("ast.index", _ast_faiss_file())),
+            "ast_metadata.json": _sha256_file(_p("ast_metadata.json", _ast_meta_file())),
         },
         "source_file_count": file_count,
         "symbol_count": symbol_count,
     }
     try:
-        atomic_json_dump(_manifest_file(), manifest, indent=2)
+        atomic_json_dump(_p("manifest.json", _manifest_file()), manifest, indent=2)
     except OSError as exc:
         log.warning("Could not write index manifest: %s", exc)
 
@@ -3159,18 +3187,31 @@ class ASTIndexer:
             # graph_stats reported "last indexed 2h ago" and
             # "index_age_minutes: 0" in the same payload. See COGNIREPO-D14.
             self.index_data["indexed_at"] = _now()
-            self._atomic_json_dump(self.index_data, _ast_index_file())
-            if self.faiss_index is not None:
-                with atomic_path(_ast_faiss_file()) as _tmp:
-                    faiss.write_index(self.faiss_index, _tmp)
-            self._atomic_json_dump(self.faiss_meta, _ast_meta_file())
-
-            # Write integrity manifest after all index files are on disk
+            self._ensure_faiss()
             repo_root = self.index_data.get("repo_root") or None
             file_count = len(self.index_data.get("files", {}))
             symbol_count = self.index_data.get("total_symbols", len(self.faiss_meta))
-            _write_manifest(repo_root=repo_root, symbol_count=symbol_count, file_count=file_count,
-                            git_commit=git_commit)
+
+            # COGNIREPO-140: publish the four files as ONE generation. Per-file atomic renames
+            # left a window in which a lock-free reader paired the new ast_index.json with the
+            # old ast.index / ast_metadata.json and recorded that as current. The manifest is
+            # written into the generation too, so it always describes the files beside it.
+            _ast_gen_store().publish(
+                {
+                    "ast_index.json": lambda p: self._atomic_json_dump(self.index_data, p),
+                    "ast.index": lambda p: faiss.write_index(self.faiss_index, p),
+                    "ast_metadata.json": lambda p: self._atomic_json_dump(self.faiss_meta, p),
+                },
+                finalize=lambda d: _write_manifest(
+                    repo_root=repo_root, symbol_count=symbol_count, file_count=file_count,
+                    git_commit=git_commit, group_dir=d),
+                mirror={
+                    "ast_index.json": _ast_index_file(),
+                    "ast.index": _ast_faiss_file(),
+                    "ast_metadata.json": _ast_meta_file(),
+                    "manifest.json": _manifest_file(),
+                },
+            )
 
             # Adopt our own write as the freshness baseline so reload_if_changed()
             # doesn't bounce the writer's in-memory state back off disk.
@@ -3331,16 +3372,18 @@ class ASTIndexer:
         # COGNIREPO-135: loading never renames or rewrites anything. Failures are recorded
         # and save() decides (see _resolve_load_errors).
         self._load_errors: dict[str, StoreUnreadableError] = {}  # pylint: disable=attribute-defined-outside-init
-        if os.path.exists(_ast_index_file()):
-            loaded, err = self._read_json_or_default(_ast_index_file(), None)
+        # COGNIREPO-140: all three files come from one generation (a snapshot), never a mix.
+        idx_path, faiss_path, meta_path = _group_paths()
+        if os.path.exists(idx_path):
+            loaded, err = self._read_json_or_default(idx_path, None)
             if err is not None:
-                self._load_errors[_ast_index_file()] = err
+                self._load_errors[idx_path] = err
             elif loaded is not None:
                 self.index_data = loaded
-        if os.path.exists(_ast_faiss_file()):
+        if os.path.exists(faiss_path):
             try:
                 self.faiss_index = read_retry(
-                    _ast_faiss_file(), lambda: faiss.read_index(_ast_faiss_file()),
+                    faiss_path, lambda: faiss.read_index(faiss_path),
                     retry_on=(Exception,),
                 )
             except StoreUnreadableError as exc:
@@ -3349,14 +3392,14 @@ class ASTIndexer:
                     "index; the file is left untouched. Re-run `cognirepo index-repo .` "
                     "to rebuild.", exc.reason,
                 )
-                self._load_errors[_ast_faiss_file()] = exc
+                self._load_errors[faiss_path] = exc
                 self._ensure_faiss()
         else:
             self._ensure_faiss()
-        if os.path.exists(_ast_meta_file()):
-            meta, err = self._read_json_or_default(_ast_meta_file(), [])
+        if os.path.exists(meta_path):
+            meta, err = self._read_json_or_default(meta_path, [])
             if err is not None:
-                self._load_errors[_ast_meta_file()] = err
+                self._load_errors[meta_path] = err
             self.faiss_meta = meta
         self._loaded = True
         self._dirty().clear()

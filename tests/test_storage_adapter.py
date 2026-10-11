@@ -58,7 +58,7 @@ class TestLocalVectorDB:
             "core.vector_db.local_vector_db._meta_file",
             lambda: str(tmp_path / "semantic_metadata.json"),
         )
-        monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
+        monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self, path=None: [])
         from core.vector_db.local_vector_db import LocalVectorDB
         return LocalVectorDB(dim=4)
 
@@ -148,7 +148,7 @@ class TestLocalVectorDBBreakerAndCleanupDI:
             "core.vector_db.local_vector_db._meta_file",
             lambda: str(tmp_path / "semantic_metadata.json"),
         )
-        monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
+        monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self, path=None: [])
         from core.vector_db.local_vector_db import LocalVectorDB
         return LocalVectorDB(dim=4, **kwargs)
 
@@ -227,7 +227,7 @@ class TestLocalVectorDBBreakerAndCleanupDI:
             "core.vector_db.local_vector_db._meta_file",
             lambda: str(tmp_path / "semantic_metadata.json"),
         )
-        monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
+        monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self, path=None: [])
 
         from core.vector_db.factory import get_vector_adapter
         adapter = get_vector_adapter(
@@ -304,7 +304,7 @@ class TestGetVectorAdapter:
                 "core.vector_db.local_vector_db._meta_file",
                 lambda: str(tmp_path / "semantic_metadata.json"),
             )
-            monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self: [])
+            monkeypatch.setattr("core.vector_db.local_vector_db.LocalVectorDB._load_meta", lambda self, path=None: [])
             from core.vector_db.local_vector_db import LocalVectorDB
             adapter = get_vector_adapter()
             assert isinstance(adapter, LocalVectorDB)
