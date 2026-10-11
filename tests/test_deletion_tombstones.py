@@ -152,3 +152,19 @@ def test_full_index_leaves_no_tombstone_for_a_deleted_file(indexed_repo, monkeyp
     from intelligence.indexer import tombstones
     assert "b.py" not in ix.index_data["files"]
     assert tombstones.load() == {}
+
+
+def test_purge_then_compact_reclaims_dead_metadata(isolated_cognirepo, tmp_path, monkeypatch):
+    from data.graph.knowledge_graph import KnowledgeGraph
+    from intelligence.indexer.ast_indexer import ASTIndexer
+    from tests.test_ast_index_rebase import FakeModel
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "g.py").write_text("\n".join(f"def f{i}():\n    return {i}\n" for i in range(30)))
+    ix = ASTIndexer(graph=KnowledgeGraph())
+    ix.model = FakeModel()
+    ix.index_file("g.py")
+    assert not ix.compact_if_dead()                  # nothing dead yet
+    ix.remove_file("g.py")
+    assert ix.faiss_meta_stats()["dead"] >= 25
+    assert ix.compact_if_dead()
+    assert len(ix.faiss_meta) == ix.faiss_index.ntotal == 0

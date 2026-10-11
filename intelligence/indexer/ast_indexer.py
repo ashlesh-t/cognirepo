@@ -2959,6 +2959,18 @@ class ASTIndexer:
             "dead_ratio": round(dead / retained, 4) if retained else 0.0,
         }
 
+    def compact_if_dead(self, threshold: int = 25) -> bool:
+        """``compact_faiss()`` once ``threshold`` dead/dangling metadata rows have piled up.
+
+        Compaction reconstructs every live vector, so it is gated rather than run on each save.
+        Used by ``index-repo --files`` after a tombstone purge (the watcher has its own gate).
+        """
+        stats = self.faiss_meta_stats()
+        if stats["dead"] + stats["dangling"] < threshold:
+            return False
+        self.compact_faiss()
+        return True
+
     def compact_faiss(self) -> dict:
         """Rebuild the FAISS index + metadata keeping only live symbol records.
 

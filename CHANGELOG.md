@@ -35,7 +35,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   `indexing.delete_grace_secs` (default 60), on the next hook run, watcher flush or `index-repo`. A file that
   reappears inside the window (editor atomic save, branch switch) just clears its tombstone. The removal is
   one shared `ASTIndexer.remove_file()`, now also used by the watcher. `doctor` and `get_session_brief` report
-  a purge that never ran.
+  a purge that never ran. After a hook-side purge, dead `ast_metadata.json` rows are compacted once 25 pile up (as the watcher does).
 
 ### Security
 - **`fsspec` 2026.3.0 → 2026.6.0 (CVE-2026-104851, HIGH — arbitrary code execution via crafted reference

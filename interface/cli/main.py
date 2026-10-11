@@ -2380,7 +2380,13 @@ def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
             continue
         touched |= {s["name"] for s in (record or {}).get("symbols", [])}
         indexed += 1
-    touched |= indexer.purge_tombstones(root=os.getcwd())   # tombstones past the grace window
+    purged = indexer.purge_tombstones(root=os.getcwd())   # tombstones past the grace window
+    touched |= purged
+    if purged:
+        try:
+            indexer.compact_if_dead()    # purge leaves dead ast_metadata rows; reclaim them (#169)
+        except Exception as exc:  # pylint: disable=broad-except
+            log.debug("index-repo %s: compact_faiss skipped: %s", mode, exc)
     # Same post-batch bookkeeping as the watcher's flush (file_watcher.py).
     indexer._build_reverse_index()  # pylint: disable=protected-access
     if touched:
