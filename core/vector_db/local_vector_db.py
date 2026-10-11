@@ -63,6 +63,7 @@ def publish_semantic(index, meta_bytes: bytes, *, keep_index: bool = False) -> N
         keep_from = None
 
     def _index(path: str) -> None:
+        # Sharing the inode is safe because published generation files are never modified in place.
         if keep_from is not None:
             link_or_copy(keep_from, path)
         else:

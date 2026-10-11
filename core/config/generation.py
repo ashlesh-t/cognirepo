@@ -135,6 +135,8 @@ class GenerationStore:
         """
         names = list(flat)
         probe = flat[names[0]]
+        # Bounded retry: if GC removes the generation between current() and the exists() check
+        # below, a newer one has necessarily been published, so re-reading CURRENT finds it.
         for _ in range(3):
             n = self.current()
             if n is None or not os.path.exists(probe):
@@ -168,6 +170,8 @@ class GenerationStore:
         """
         os.makedirs(self.root, exist_ok=True)
         cur = self.current()
+        # Also look at generations on disk: if CURRENT is missing/corrupt, reusing a number that
+        # already exists would make the rename below collide with (or clobber) a live generation.
         n = max([cur or 0, *self.generations()]) + 1
         scratch = tempfile.mkdtemp(dir=self.root, prefix=_SCRATCH_PREFIX)
         try:
@@ -191,6 +195,9 @@ class GenerationStore:
         return n
 
     def _mirror(self, n: int, mirror: Mapping[str, str]) -> None:
+        # Not atomic across files: flat paths are relinked one at a time, so a flat-path reader
+        # can briefly see a mix. Generation-aware readers (``resolve``) ignore the flat files
+        # while they are managed, which is what makes this window harmless to them.
         d = self.gen_dir(n)
         for name, flat in mirror.items():
             src = os.path.join(d, name)
