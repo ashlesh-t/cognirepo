@@ -1276,13 +1276,22 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
                 )
         _git_dir = _find_git_dir()
         if _git_dir is not None:
-            _hook_path = _git_dir / "hooks" / "post-commit"
-            if _hook_path.exists() and _hs.hook_is_outdated(
-                    _hook_path.read_text(encoding="utf-8", errors="replace"),
-                    _hook_block(), _HOOK_SENTINEL_START):
+            for _ev in _HOOK_EVENTS:
+                _hook_path = _git_dir / "hooks" / _ev
+                if _hook_path.exists() and _hs.hook_is_outdated(
+                        _hook_path.read_text(encoding="utf-8", errors="replace"),
+                        _hook_block(_ev), _HOOK_SENTINEL_START):
+                    _warn(
+                        f"{_ev} hook — the installed block is outdated (older ones discarded "
+                        "errors or missed newer languages)",
+                        "Run: cognirepo install-hooks",
+                    )
+            _missing = [e for e in _HOOK_EVENTS
+                        if not (_git_dir / "hooks" / e).exists()]
+            if (_git_dir / "hooks" / "post-commit").exists() and _missing:
                 _warn(
-                    "Post-commit hook — the installed block is outdated (older ones discarded "
-                    "errors or missed newer languages)",
+                    f"Git hooks — not installed: {', '.join(_missing)} (the index goes stale after "
+                    "a branch switch, pull or rebase)",
                     "Run: cognirepo install-hooks",
                 )
     except Exception as _exc:  # pylint: disable=broad-except
@@ -3191,8 +3200,8 @@ def _print_help() -> None:
     _row("org link-repos",   "Declare dependency edge between two repos in org graph")
     _row("org graph",        "Print org-level bidirectional dependency graph")
     _row("list",              "List / inspect / stop running watcher daemons")
-    _row("install-hooks",      "Install git post-commit hook for incremental reindex")
-    _row("uninstall-hooks",    "Remove cognirepo git hook block from post-commit")
+    _row("install-hooks",      "Install git hooks (commit/checkout/merge/rebase) for incremental reindex")
+    _row("uninstall-hooks",    "Remove the cognirepo git hook blocks")
     _row("update-directives",  "Regenerate agent directive files from latest templates")
 
     # ── Global flags ──────────────────────────────────────────────────────────
@@ -3219,6 +3228,8 @@ def _find_git_dir() -> "Path | None":
 
 _HOOK_SENTINEL_START = "# >>> cognirepo-hook-start <<<"
 _HOOK_SENTINEL_END   = "# >>> cognirepo-hook-end <<<"
+_HOOK_EVENTS = ("post-commit", "post-checkout", "post-merge", "post-rewrite")
+_HOOK_FULL_REINDEX_FILES = 1000   # a bigger change runs a full index-repo, not a giant argv
 
 
 def _hook_ext_regex() -> str:
@@ -3233,8 +3244,8 @@ def _hook_ext_regex() -> str:
     return "\\.(" + "|".join(exts) + ")$"
 
 
-def _hook_block() -> str:
-    """The post-commit hook body between the cognirepo sentinels.
+def _hook_block(event: str = "post-commit") -> str:
+    """The hook body for ``event`` between the cognirepo sentinels.
 
     ``--no-embed``: the hook runs on every commit, and embedding would load the ~2 GB
     model each time. The AST index + graph are what lookup_symbol/who_calls need; vectors
@@ -3248,20 +3259,58 @@ def _hook_block() -> str:
     could not be trusted to record it. ``--root`` makes a repo's very first commit visible to
     ``diff-tree`` (it lists nothing for a root commit without it). The store is ``.cognirepo`` in the repo root, else
     ``$COGNIREPO_DIR``, else ``~/.cognirepo``. Still backgrounded: the commit is never delayed.
+
+    ``post-checkout`` / ``post-merge`` / ``post-rewrite`` (branch switch, pull/merge, rebase) keep
+    the index in step with the files on disk: ``index-repo --files`` over what changed between the
+    two commits, deletions included (they are tombstoned, COGNIREPO-169). A change touching more
+    than ``_HOOK_FULL_REINDEX_FILES`` files runs a full ``index-repo`` instead of a huge argument
+    list. A file checkout (``git checkout -- f``) is not a branch switch and is ignored.
     """
+    if event == "post-commit":
+        compute = (
+            "changed=$(git diff-tree --root --no-commit-id -r --name-only HEAD \\\n"
+            f"  | grep -E '{_hook_ext_regex()}')\n"
+        )
+    else:
+        if event == "post-checkout":
+            # $1 old HEAD, $2 new HEAD, $3 1 = branch checkout, 0 = file checkout
+            cond = "[ \"$3\" = 1 ] && [ \"$1\" != \"$2\" ]"
+            span = "\"$1\" \"$2\""
+        elif event == "post-merge":
+            cond = "true"
+            span = "ORIG_HEAD HEAD"
+        else:   # post-rewrite: $1 is "rebase" or "amend"; amend already ran post-commit
+            cond = "[ \"$1\" = rebase ]"
+            span = "ORIG_HEAD HEAD"
+        # No `exit` here: the block may sit in a hook that has the user's own commands after it.
+        compute = (
+            "changed=\n"
+            f"if {cond}; then\n"
+            f"  changed=$(git diff --name-only --no-renames {span} 2>/dev/null \\\n"
+            f"    | grep -E '{_hook_ext_regex()}')\n"
+            "fi\n"
+        )
+    run = (
+        "cognirepo index-repo --files $changed --no-watch --no-embed 2>&1\n"
+        if event == "post-commit" else
+        "if [ \"$(echo \"$changed\" | wc -w | tr -d ' ')\" -gt " + str(_HOOK_FULL_REINDEX_FILES) + " ]; then\n"
+        "        cognirepo index-repo . --no-watch --no-embed 2>&1\n"
+        "      else\n"
+        "        cognirepo index-repo --files $changed --no-watch --no-embed 2>&1\n"
+        "      fi\n"
+    )
     return (
         _HOOK_SENTINEL_START + "\n"
-        "changed=$(git diff-tree --root --no-commit-id -r --name-only HEAD \\\n"
-        f"  | grep -E '{_hook_ext_regex()}')\n"
-        "if [ -n \"$changed\" ]; then\n"
+        + compute
+        + "if [ -n \"$changed\" ]; then\n"
         "  (\n"
         "    d=.cognirepo; [ -d \"$d\" ] || d=\"${COGNIREPO_DIR:-$HOME/.cognirepo}\"\n"
         "    mkdir -p \"$d\" 2>/dev/null\n"
         "    log=\"$d/hook.log\"\n"
         "    if [ -f \"$log\" ] && [ \"$(wc -c < \"$log\" | tr -d ' ')\" -gt 262144 ]; then mv -f \"$log\" \"$log.1\"; fi\n"
         "    {\n"
-        "      echo \"--- $(date -u +%Y-%m-%dT%H:%M:%SZ) post-commit $(git rev-parse --short HEAD 2>/dev/null)\"\n"
-        "      cognirepo index-repo --files $changed --no-watch --no-embed 2>&1\n"
+        f"      echo \"--- $(date -u +%Y-%m-%dT%H:%M:%SZ) {event} $(git rev-parse --short HEAD 2>/dev/null)\"\n"
+        f"      {run}"
         "      rc=$?\n"
         "      echo \"exit=$rc\"\n"
         "    } >> \"$log\" 2>&1\n"
@@ -3274,7 +3323,12 @@ def _hook_block() -> str:
 
 
 def _cmd_install_hooks() -> int:
-    """Write a post-commit git hook that incrementally reindexes changed files."""
+    """Write the git hooks that keep the index in step with the files on disk.
+
+    ``post-commit`` reindexes what a commit changed; ``post-checkout`` / ``post-merge`` /
+    ``post-rewrite`` do the same after a branch switch, pull/merge or rebase, so the index does
+    not stay on the previous branch's files.
+    """
     import re  # pylint: disable=import-outside-toplevel
     git_dir = _find_git_dir()
     if git_dir is None:
@@ -3282,63 +3336,65 @@ def _cmd_install_hooks() -> int:
         return 1
     hooks_dir = git_dir / "hooks"
     hooks_dir.mkdir(exist_ok=True)
-    hook_file = hooks_dir / "post-commit"
-    block = _hook_block()
-    if hook_file.exists():
-        content = hook_file.read_text(encoding="utf-8")
-        if _HOOK_SENTINEL_START in content:
-            if block in content:
-                print("install-hooks: cognirepo block already present.")
-                return 0
-            # An older block (e.g. a stale extension list) — replace it in place so
-            # re-running install-hooks picks up new languages (COGNIREPO-154).
-            content = re.sub(
-                re.escape(_HOOK_SENTINEL_START) + r".*?" + re.escape(_HOOK_SENTINEL_END) + r"\n?",
-                lambda _m: block,
-                content,
-                flags=re.DOTALL,
-            )
-            hook_file.write_text(content, encoding="utf-8")
-            print(f"install-hooks: updated cognirepo block in {hook_file}")
-            return 0
-        hook_file.write_text(content.rstrip("\n") + "\n\n" + block, encoding="utf-8")
-    else:
-        hook_file.write_text("#!/bin/sh\n" + block, encoding="utf-8")
-    hook_file.chmod(0o755)
-    print(f"install-hooks: wrote post-commit hook → {hook_file}")
+    for event in _HOOK_EVENTS:
+        hook_file = hooks_dir / event
+        block = _hook_block(event)
+        if hook_file.exists():
+            content = hook_file.read_text(encoding="utf-8")
+            if _HOOK_SENTINEL_START in content:
+                if block in content:
+                    print(f"install-hooks: cognirepo block already present in {event}.")
+                    continue
+                # An older block (e.g. a stale extension list) — replace it in place so
+                # re-running install-hooks picks up new languages (COGNIREPO-154).
+                content = re.sub(
+                    re.escape(_HOOK_SENTINEL_START) + r".*?" + re.escape(_HOOK_SENTINEL_END) + r"\n?",
+                    lambda _m, _b=block: _b,
+                    content,
+                    flags=re.DOTALL,
+                )
+                hook_file.write_text(content, encoding="utf-8")
+                print(f"install-hooks: updated cognirepo block in {hook_file}")
+                continue
+            hook_file.write_text(content.rstrip("\n") + "\n\n" + block, encoding="utf-8")
+        else:
+            hook_file.write_text("#!/bin/sh\n" + block, encoding="utf-8")
+        hook_file.chmod(0o755)
+        print(f"install-hooks: wrote {event} hook → {hook_file}")
     return 0
 
 
 def _cmd_uninstall_hooks() -> int:
-    """Remove the cognirepo block from .git/hooks/post-commit."""
-    from pathlib import Path  # pylint: disable=import-outside-toplevel
+    """Remove the cognirepo block from every hook ``install-hooks`` writes."""
     import re as _re  # pylint: disable=import-outside-toplevel
     git_dir = _find_git_dir()
     if git_dir is None:
         print("uninstall-hooks: not a git repository.")
         return 1
-    hook_file = git_dir / "hooks" / "post-commit"
-    if not hook_file.exists():
-        print("uninstall-hooks: cognirepo block not found (no post-commit hook).")
-        return 0
-    content = hook_file.read_text(encoding="utf-8")
-    if _HOOK_SENTINEL_START not in content:
+    found = False
+    for event in _HOOK_EVENTS:
+        hook_file = git_dir / "hooks" / event
+        if not hook_file.exists():
+            continue
+        content = hook_file.read_text(encoding="utf-8")
+        if _HOOK_SENTINEL_START not in content:
+            continue
+        found = True
+        # Remove block between sentinels (inclusive)
+        cleaned = _re.sub(
+            r"\n*" + _re.escape(_HOOK_SENTINEL_START) + r".*?" + _re.escape(_HOOK_SENTINEL_END) + r"\n?",
+            "",
+            content,
+            flags=_re.DOTALL,
+        ).rstrip("\n") + "\n"
+        if cleaned.strip() in ("", "#!/bin/sh"):
+            hook_file.unlink()
+            print(f"uninstall-hooks: removed {event} hook entirely ({hook_file})")
+        else:
+            hook_file.write_text(cleaned, encoding="utf-8")
+            print(f"uninstall-hooks: removed cognirepo block from {hook_file}")
+    if not found:
         print("uninstall-hooks: cognirepo block not found.")
-        return 0
-    # Remove block between sentinels (inclusive)
-    cleaned = _re.sub(
-        r"\n*" + _re.escape(_HOOK_SENTINEL_START) + r".*?" + _re.escape(_HOOK_SENTINEL_END) + r"\n?",
-        "",
-        content,
-        flags=_re.DOTALL,
-    ).rstrip("\n") + "\n"
-    stripped = cleaned.strip()
-    if stripped in ("", "#!/bin/sh"):
-        hook_file.unlink()
-        print(f"uninstall-hooks: removed post-commit hook entirely ({hook_file})")
-    else:
-        hook_file.write_text(cleaned, encoding="utf-8")
-        print(f"uninstall-hooks: removed cognirepo block from {hook_file}")
     return 0
 
 
@@ -4301,8 +4357,8 @@ def _main():
     )
 
     # install-hooks / uninstall-hooks / update-directives
-    sub.add_parser("install-hooks", help="Install git post-commit hook for incremental reindex")
-    sub.add_parser("uninstall-hooks", help="Remove cognirepo git hook block from post-commit")
+    sub.add_parser("install-hooks", help="Install git hooks (commit/checkout/merge/rebase) for incremental reindex")
+    sub.add_parser("uninstall-hooks", help="Remove the cognirepo git hook blocks")
     sub.add_parser(
         "update-directives",
         help="Regenerate CLAUDE.md / GEMINI.md / .cursor/rules from latest templates",
