@@ -19,6 +19,15 @@ import os
 from core.config.paths import get_path
 
 
+def _stuck_tombstones() -> list[str]:
+    """Deleted files hidden but not purged well past the grace window (COGNIREPO-169)."""
+    try:
+        from intelligence.indexer import tombstones  # pylint: disable=import-outside-toplevel
+        return tombstones.expired(grace=max(tombstones.grace_secs() * 5, 300))
+    except Exception:  # pylint: disable=broad-except
+        return []
+
+
 def _detect_blind_spots(index_health: dict) -> list[str]:
     """
     Derive known blind spots from the current index state.
@@ -293,6 +302,12 @@ def prime_session() -> dict:
     # ── known blind spots ─────────────────────────────────────────────────────
     try:
         brief["known_blind_spots"] = _detect_blind_spots(brief["index_health"])
+        _stuck = _stuck_tombstones()
+        if _stuck:
+            brief["known_blind_spots"].append(
+                f"{len(_stuck)} deleted file(s) are hidden but not purged from the index "
+                f"({', '.join(_stuck[:3])}). Run: cognirepo index-repo --changed-only"
+            )
     except Exception:  # pylint: disable=broad-except
         pass  # always best-effort — never block the brief
 

@@ -1261,12 +1261,17 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
                     "truncated": len(fallback) > 50,
                 }
 
+        from intelligence.indexer import tombstones as _tomb  # pylint: disable=import-outside-toplevel
+        _gone = _tomb.hidden()      # deleted, not yet purged (COGNIREPO-169)
+
         def _collect_callers(node: str, found_via: str) -> list[dict]:
             callers: list[dict] = []
             for caller in g.G.successors(node):
                 edge_data = g.G[node][caller]
                 if edge_data.get("rel") == EdgeType.CALLS:
                     node_data = dict(g.G.nodes[caller])
+                    if node_data.get("file", "") in _gone:
+                        continue
                     callers.append({
                         "caller": caller,
                         "file": node_data.get("file", ""),
@@ -1294,6 +1299,8 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
                 edge_data = g.G[caller][_search_node2]
                 if edge_data.get("rel") == EdgeType.CALLED_BY:
                     node_data = dict(g.G.nodes[caller])
+                    if node_data.get("file", "") in _gone:
+                        continue
                     result.append({
                         "caller": caller,
                         "file": node_data.get("file", ""),
