@@ -9,6 +9,12 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Added
+- **Branch-aware hooks.** `install-hooks` now also writes `post-checkout`, `post-merge` and `post-rewrite`
+  hooks that run `index-repo --files` over the files that differ between the two commits (deletions
+  included, via the #169 tombstones), so the index follows a branch switch, pull or rebase instead of
+  staying on the previous branch until the next commit. Over 1000 changed files runs a full `index-repo`;
+  file checkouts, same-commit switches and `--amend` are ignored. `uninstall-hooks` removes all four and
+  `doctor` warns when any is missing or outdated. Re-run `install-hooks` once after upgrading.
 - **Generation pointer for the AST index (#140).** `ast_index.json`, `ast.index`, `ast_metadata.json` and
   `manifest.json` are now published together as one immutable generation (`index/ast.gen/gen-N/`) behind an
   atomically replaced `CURRENT` pointer (`core/config/generation.py`). Before, `save()` renamed the four files

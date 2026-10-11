@@ -562,7 +562,7 @@ cognirepo graph-stats
 
 ## cognirepo install-hooks
 
-Write the git post-commit hook that keeps the index fresh: it runs `cognirepo index-repo --files <changed> --no-watch --no-embed` in the background after each commit.
+Write the git hooks that keep the index fresh. `post-commit` runs `cognirepo index-repo --files <changed> --no-watch --no-embed` in the background after each commit; `post-checkout` (branch switch), `post-merge` and `post-rewrite` (rebase) run it over the files that differ between the two commits, deleted files included. More than 1000 changed files runs a full `index-repo` instead. File checkouts, same-commit switches and `--amend` are ignored.
 
 ```bash
 cognirepo install-hooks
@@ -574,7 +574,7 @@ Idempotent. An outdated cognirepo block is replaced in place and any lines of yo
 
 ## cognirepo uninstall-hooks
 
-Remove the cognirepo block from `.git/hooks/post-commit`.
+Remove the cognirepo block from `post-commit`, `post-checkout`, `post-merge` and `post-rewrite`.
 
 ```bash
 cognirepo uninstall-hooks

@@ -651,7 +651,7 @@ cognirepo status                # live retrieval signal weights + index health
 cognirepo doctor [--fix]        # full health check; --fix auto-repairs common issues
 cognirepo doctor --resources    # processes, store sizes and left-over files (read-only)
 cognirepo benchmark             # run quantitative value benchmarks
-cognirepo install-hooks         # git post-commit hook: reindex changed files after each commit
+cognirepo install-hooks         # git hooks: reindex changed files after a commit, branch switch, pull or rebase
 cognirepo graph restore         # list quarantined graphs and restore the best intact one (dry-run; --apply)
 
 # Organization

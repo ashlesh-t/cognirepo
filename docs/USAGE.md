@@ -286,16 +286,21 @@ lease and watches; the others stand by and take over if it dies. Starting a seco
 For a supervised always-on watcher the generated systemd unit runs `cognirepo watch --foreground`.
 Set `COGNIREPO_NO_WATCHER=1` to start no watcher at all (CI, containers).
 
-**2. The git post-commit hook.**
+**2. The git hooks.**
 ```bash
-cognirepo install-hooks     # reindex the files each commit changed, in the background
+cognirepo install-hooks     # post-commit, post-checkout, post-merge, post-rewrite
 cognirepo uninstall-hooks
 ```
+`post-commit` reindexes the files each commit changed, in the background. `post-checkout` (branch switch),
+`post-merge` (pull/merge) and `post-rewrite` (rebase) reindex the files that differ between the two commits,
+so the index follows the branch instead of staying on the previous one. A change touching more than 1000
+files runs a full `index-repo` instead. A file checkout (`git checkout -- f`) and a switch to the same
+commit do nothing.
 The hook runs `index-repo --files … --no-embed` (it never loads the embedding model; vectors for those
 files catch up on the next full `index-repo`). Its output goes to `.cognirepo/hook.log` and the last result
 to `.cognirepo/hook.last`; `cognirepo doctor` warns when the last run failed or the installed block is
-outdated — re-run `install-hooks` after upgrading. Files *deleted* in a commit are not removed from the
-index by the hook yet (a full `index-repo` or the watcher does); see issue #169.
+outdated or a hook is missing — re-run `install-hooks` after upgrading. Files *deleted* by a commit or a
+branch switch are hidden from retrieval at once and purged after `indexing.delete_grace_secs` (default 60).
 
 **3. On demand.** `cognirepo index-repo .` (full) or `cognirepo index-repo --changed-only` (files git
 reports as changed; needs an existing complete index).

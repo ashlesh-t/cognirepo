@@ -319,8 +319,15 @@ full `cognirepo index-repo .` once, because the hook only updates an existing co
 
 ### A file I deleted still shows up in results
 
-Deleting a file in a commit does not remove it from the index through the hook yet (known issue #169).
-A full `cognirepo index-repo .`, or a running watcher, removes it.
+A file deleted in a commit or by a branch switch is hidden from retrieval at once and purged from the index
+after `indexing.delete_grace_secs` (default 60), on the next hook run, watcher flush or `index-repo`. If it
+still shows up, run `cognirepo doctor` (it flags a purge that never ran) and `cognirepo install-hooks`.
+
+### The index is stale after I switched branches or pulled
+
+`cognirepo install-hooks` also installs `post-checkout`, `post-merge` and `post-rewrite` hooks that reindex
+the files that differ. `cognirepo doctor` warns when they are missing. Repos set up before this release only
+have the post-commit hook — re-run `install-hooks`.
 
 ### `doctor` reports quarantined graph files
 
