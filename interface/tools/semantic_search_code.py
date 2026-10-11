@@ -18,6 +18,7 @@ from pathlib import Path
 
 from data.memory.embeddings import encode_with_timeout
 from intelligence.indexer.ast_indexer import ASTIndexer
+from intelligence.indexer import tombstones
 from data.graph.knowledge_graph import KnowledgeGraph
 
 # language label → file extensions mapping (for the optional language filter)
@@ -84,6 +85,7 @@ def semantic_search_code(
 
     ext_filter = _lang_extensions(language)
     results: list[dict] = []
+    gone = tombstones.hidden()
 
     for dist, fid in zip(distances[0], ids[0]):
         if fid < 0 or fid >= len(indexer.faiss_meta):
@@ -95,6 +97,8 @@ def semantic_search_code(
             continue
 
         file_path = meta.get("file", "")
+        if file_path in gone:
+            continue            # deleted, not yet purged (COGNIREPO-169)
         if ext_filter is not None:
             ext = Path(file_path).suffix.lower()
             if ext not in ext_filter:

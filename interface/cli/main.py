@@ -1168,6 +1168,21 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     except Exception as _exc:  # pylint: disable=broad-except
         logger.debug("doctor: graph quarantine check failed: %s", _exc)
 
+    # ── Deleted files hidden but never purged (COGNIREPO-169) ─────────────────
+    try:
+        from intelligence.indexer import tombstones as _tomb  # pylint: disable=import-outside-toplevel
+        _stuck = _tomb.expired(grace=max(_tomb.grace_secs() * 5, 300))
+        if _stuck:
+            _warn(
+                f"Index — {len(_stuck)} deleted file(s) are hidden but were never purged "
+                f"({', '.join(_stuck[:3])}); the purge runs on the next hook, watcher flush or index-repo",
+                "Run: cognirepo index-repo --changed-only",
+            )
+        elif verbose:
+            _ok("Index — no deleted files awaiting purge")
+    except Exception as _exc:  # pylint: disable=broad-except
+        logger.debug("doctor: tombstone check failed: %s", _exc)
+
     # ── Check 22: encryption enabled but keyring/cryptography missing ────────
     # Hooks and MCP servers may run under a different interpreter (e.g. a pipx
     # venv) than the one that wrote the encrypted store. Without these two
@@ -2349,6 +2364,12 @@ def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
     indexer._embed_enabled = embed  # pylint: disable=protected-access
     indexed = 0
     touched: set[str] = set()
+    # A listed path that is gone from disk is a deletion (COGNIREPO-169): hide it at once,
+    # purge it once the grace window passes (a delete+create "atomic save" never gets purged).
+    deleted = [r for r in files if not os.path.exists(os.path.abspath(r))]
+    files = [r for r in files if r not in deleted]
+    from intelligence.indexer import tombstones  # pylint: disable=import-outside-toplevel
+    tombstones.mark(r for r in deleted if r in indexer.index_data.get("files", {}))
     for rel in files:
         old = indexer.index_data.get("files", {}).get(rel, {}).get("symbols", [])
         touched |= {s["name"] for s in old}
@@ -2359,6 +2380,7 @@ def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
             continue
         touched |= {s["name"] for s in (record or {}).get("symbols", [])}
         indexed += 1
+    touched |= indexer.purge_tombstones(root=os.getcwd())   # tombstones past the grace window
     # Same post-batch bookkeeping as the watcher's flush (file_watcher.py).
     indexer._build_reverse_index()  # pylint: disable=protected-access
     if touched:
@@ -2368,6 +2390,7 @@ def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
     )
     indexer.save()
     kg.save()
+    indexer.finish_tombstones()
     return indexed
 
 
@@ -2400,6 +2423,9 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
         # interleave two indexers over the same stores — refuse instead.
         print(f"  ✗ {busy}", file=sys.stderr)
         sys.exit(1)
+    # A full walk rebuilt the index from disk: deletions it already dropped need no tombstone (#169).
+    from intelligence.indexer import tombstones as _tomb  # pylint: disable=import-outside-toplevel
+    _tomb.clear([p for p in _tomb.load() if p not in indexer.index_data.get("files", {})])
     elapsed = time.time() - t0
     rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
@@ -4513,8 +4539,13 @@ def _main():
                 f for f in _diff + _untracked
                 if os.path.splitext(f)[1] in _supported_exts and os.path.isfile(f)
             ]
-            if _changed:
-                _indexed = _incremental_index(_changed, "--changed-only", embed=not args.no_embed)
+            # Files deleted since HEAD (COGNIREPO-169): handed over as paths that are not on disk.
+            _deleted = [
+                f for f in _diff
+                if os.path.splitext(f)[1] in _supported_exts and not os.path.exists(f)
+            ]
+            if _changed or _deleted:
+                _indexed = _incremental_index(_changed + _deleted, "--changed-only", embed=not args.no_embed)
                 print(f"Re-indexed {_indexed} changed file(s): {', '.join(_changed[:5])}"
                       + (" …" if len(_changed) > 5 else ""))
             else:
@@ -4525,7 +4556,8 @@ def _main():
 
         # ── selective reindex (--files) ──────────────────────────────────────
         if getattr(args, "files", None):
-            _files = [f for f in args.files if os.path.isfile(os.path.abspath(f))]
+            # Paths that no longer exist are deletions: _incremental_index tombstones them (#169).
+            _files = [f for f in args.files if not os.path.isdir(os.path.abspath(f))]
             _indexed = _incremental_index(_files, "--files", embed=not args.no_embed)
             print(f"Re-indexed {_indexed} file(s).")
             return

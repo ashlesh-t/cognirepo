@@ -198,6 +198,14 @@ class RepoFileHandler(FileSystemEventHandler):
             except Exception as exc:  # pylint: disable=broad-except
                 print(f"[watcher] error processing {action} for {abs_path}: {exc}", file=sys.stderr)
 
+        try:
+            from intelligence.indexer import tombstones  # pylint: disable=import-outside-toplevel
+            tombstones.clear(removed_rel_paths)     # removed here: nothing left to purge later
+            # Collect deletions a hook tombstoned earlier whose grace window has passed (#169).
+            touched_symbol_names |= self.indexer.purge_tombstones(root=self.repo_root)
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"[watcher] tombstone purge failed: {exc}", file=sys.stderr)
+
         self.indexer._build_reverse_index()  # pylint: disable=protected-access
         # Scoped stub resolution: reconcile only the symbols this batch touched
         # (added or removed) instead of a full-graph sweep — keeps orphaned
@@ -231,6 +239,8 @@ class RepoFileHandler(FileSystemEventHandler):
             save_error = f"{save_error + '; ' if save_error else ''}graph.save failed: {exc}"
             print(f"[watcher] graph.save failed: {exc}", file=sys.stderr)
 
+        if save_error is None:
+            self.indexer.finish_tombstones()      # purge persisted: the tombstones can go (#169)
         self._write_last_watcher_reindex(reindexed_rel_paths, removed_rel_paths, error=save_error)
 
         if any_reindexed:
@@ -390,24 +400,7 @@ class RepoFileHandler(FileSystemEventHandler):
         defined in the file — for scoped call-stub resolution in flush()).
         """
         rel_path = os.path.relpath(abs_path, self.repo_root)
-        existing = self.indexer.index_data.get("files", {}).get(rel_path, {})
-        old_names = {s["name"] for s in existing.get("symbols", [])}
-        old_ids = [
-            s["faiss_id"]
-            for s in existing.get("symbols", [])
-            if s.get("faiss_id", -1) >= 0
-        ]
-        if old_ids and self.indexer.faiss_index is not None:
-            try:
-                import numpy as np  # pylint: disable=import-outside-toplevel
-                self.indexer.faiss_index.remove_ids(np.array(old_ids, dtype=np.int64))
-            except Exception as _exc:  # pylint: disable=broad-except
-                import logging as _logging  # pylint: disable=import-outside-toplevel
-                _logging.getLogger(__name__).warning("FAISS remove_ids failed for %s: %s", abs_path, _exc)
-
-        self.graph.remove_file_nodes(rel_path)
-        self.indexer.index_data["files"].pop(rel_path, None)
-        self.indexer.note_file_removed(rel_path)  # rebase-on-save must delete it from a newer disk copy too
+        old_names = self.indexer.remove_file(rel_path)   # shared with index-repo --files (#169)
         return rel_path, old_names
 
     # ── synchronous single-event helpers (debounce_ms=0, or direct calls) ────

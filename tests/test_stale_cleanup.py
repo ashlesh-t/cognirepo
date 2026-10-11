@@ -176,6 +176,11 @@ class TestFileWatcherRemove:
         }
         indexer._build_reverse_index = MagicMock(side_effect=indexer.index_data["reverse_index"].clear)
         indexer.save = MagicMock()
+        # The watcher delegates removal to ASTIndexer.remove_file (COGNIREPO-169): run the real one.
+        from intelligence.indexer.ast_indexer import ASTIndexer
+        indexer.graph = kg
+        indexer.faiss_meta = []
+        indexer.remove_file = lambda rel: ASTIndexer.remove_file(indexer, rel)
 
         kg.save = MagicMock()
 

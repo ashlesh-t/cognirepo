@@ -64,6 +64,7 @@ from data.memory.embeddings import get_model
 log = logging.getLogger(__name__)
 
 from core.config.paths import get_path
+from intelligence.indexer import tombstones as _tombstones
 
 def _ast_index_file() -> str:
     return get_path("index/ast_index.json")
@@ -76,6 +77,12 @@ def _ast_meta_file() -> str:
 
 def _manifest_file() -> str:
     return get_path("index/manifest.json")
+
+
+def _visible(locations: list[dict]) -> list[dict]:
+    """Drop locations in files tombstoned by a deletion (COGNIREPO-169)."""
+    gone = _tombstones.hidden()
+    return [loc for loc in locations if loc["file"] not in gone] if gone else locations
 
 
 def _ast_gen_store() -> GenerationStore:
@@ -2153,6 +2160,8 @@ class ASTIndexer:
         self._ensure_faiss()
         if abs_path is None:
             abs_path = rel_path
+        if rel_path in _tombstones.hidden() and os.path.exists(abs_path):
+            _tombstones.clear([rel_path])   # reappeared inside the grace window (COGNIREPO-169)
 
         # ── per-file size guard (T7) ──────────────────────────────────────────
         try:
@@ -2874,13 +2883,23 @@ class ASTIndexer:
     # ── lookup ────────────────────────────────────────────────────────────────
 
     @functools.lru_cache(maxsize=512)
-    def lookup_symbol(self, symbol_name: str) -> list[dict]:
-        """O(1) reverse-index lookup. Returns [{'file': str, 'line': int}]."""
+    def _lookup_symbol_cached(self, symbol_name: str) -> list[dict]:
         entries = self.index_data.get("reverse_index", {}).get(symbol_name, [])
         return [{"file": f, "line": l} for f, l in entries]
 
+    def lookup_symbol(self, symbol_name: str) -> list[dict]:
+        """O(1) reverse-index lookup. Returns [{'file': str, 'line': int}].
+
+        Files tombstoned by a deletion (COGNIREPO-169) are filtered out on every call, outside
+        the cache, so a deletion made by another process hides at once without a reload.
+        """
+        return _visible(self._lookup_symbol_cached(symbol_name))
+
+    lookup_symbol.cache_clear = _lookup_symbol_cached.cache_clear   # type: ignore[attr-defined]
+    lookup_symbol.cache_info = _lookup_symbol_cached.cache_info     # type: ignore[attr-defined]
+
     @functools.lru_cache(maxsize=512)
-    def lookup_word(self, word: str) -> list[dict]:
+    def _lookup_word_cached(self, word: str) -> list[dict]:
         """Word-level reverse-index lookup.
 
         Returns [{'file': str, 'line': int}] for all occurrences of *word*
@@ -2893,11 +2912,18 @@ class ASTIndexer:
         word_lower = word.lower()
         entries = self.index_data.get("word_reverse_index", {}).get(word_lower, [])
         if not entries:
-            # fallback: exact symbol name match
-            return self.lookup_symbol(word)
+            # fallback: exact symbol name match (unfiltered: the caller filters)
+            return self._lookup_symbol_cached(word)
         results = [{"file": f, "line": l} for f, l in entries]
         results.sort(key=lambda x: x["file"])
         return results
+
+    def lookup_word(self, word: str) -> list[dict]:
+        """Word-level lookup with tombstoned files filtered out (see ``lookup_symbol``)."""
+        return _visible(self._lookup_word_cached(word))
+
+    lookup_word.cache_clear = _lookup_word_cached.cache_clear   # type: ignore[attr-defined]
+    lookup_word.cache_info = _lookup_word_cached.cache_info     # type: ignore[attr-defined]
 
     def faiss_meta_stats(self) -> dict:
         """Report live-vs-retained FAISS metadata records.
@@ -2998,6 +3024,62 @@ class ASTIndexer:
     def _dirty(self) -> dict:
         """The dirty-file map (created lazily: some callers build an indexer via ``__new__``)."""
         return self.__dict__.setdefault("_dirty_files", {})
+
+    def remove_file(self, rel_path: str) -> set[str]:
+        """Remove one file from every store this indexer owns (in memory; the caller saves).
+
+        FAISS vectors (symbols and the file summary), graph nodes and edges, and the
+        ``index_data["files"]`` record go; ``note_file_removed`` makes rebase-on-save delete the
+        file from a newer on-disk copy too. Returns the symbol names the file defined, for scoped
+        call-stub resolution. Shared by the watcher and ``index-repo --files`` so they cannot drift.
+        """
+        existing = self.index_data.get("files", {}).get(rel_path, {})
+        names = {s["name"] for s in existing.get("symbols", [])}
+        ids = {s["faiss_id"] for s in existing.get("symbols", []) if s.get("faiss_id", -1) >= 0}
+        ids |= {i for i, m in enumerate(getattr(self, "faiss_meta", []))
+                if m.get("source") == "file_summary" and m.get("file") == rel_path}
+        if ids and self.faiss_index is not None:
+            try:
+                self.faiss_index.remove_ids(np.array(sorted(ids), dtype=np.int64))
+            except Exception as exc:  # pylint: disable=broad-except
+                log.warning("FAISS remove_ids failed for %s: %s", rel_path, exc)
+        self.graph.remove_file_nodes(rel_path)
+        self.index_data.get("files", {}).pop(rel_path, None)
+        self.note_file_removed(rel_path)
+        return names
+
+    def purge_tombstones(self, *, grace: "float | None" = None, root: "str | None" = None) -> set[str]:
+        """Purge tombstoned files whose grace window has passed (COGNIREPO-169). Caller saves.
+
+        A tombstone whose file is back on disk is cleared instead (it was an atomic save or a
+        branch switch). Returns the symbol names removed, for call-stub resolution. Call ``finish_tombstones()`` after saving.
+        """
+        names: set[str] = set()
+        purged: list[str] = []
+        revived: list[str] = []
+        base = root or self.index_data.get("repo_root") or os.getcwd()
+        for rel in _tombstones.expired(grace):
+            if os.path.exists(os.path.join(base, rel)):
+                revived.append(rel)
+                continue
+            names |= self.remove_file(rel)
+            purged.append(rel)
+        if purged or revived:
+            self._build_reverse_index()
+            self.index_data["total_symbols"] = sum(
+                len(f.get("symbols", [])) for f in self.index_data.get("files", {}).values()
+            )
+        if names:
+            self._resolve_call_stubs(names=names)
+        # Cleared by finish_tombstones() AFTER the caller saves: if the save fails the tombstone
+        # must survive, or the half-purged file would be served again.
+        self.__dict__.setdefault("_tombstones_done", []).extend(purged + revived)
+        return names
+
+    def finish_tombstones(self) -> None:
+        """Drop the tombstones ``purge_tombstones`` handled; call once the stores are saved."""
+        done = self.__dict__.pop("_tombstones_done", [])
+        _tombstones.clear(done)
 
     def note_file_removed(self, rel_path: str) -> None:
         """Record that ``rel_path`` was removed from this instance's index (for rebase-on-save)."""

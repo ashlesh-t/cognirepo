@@ -26,6 +26,17 @@ Versioning: [Semantic Versioning](https://semver.org/)
   for primary data; atomic publish + snapshot isolation (generation pointer) for derived/rebuildable data;
   the integrity epic's reader/writer rules made normative; ordered migration plan that unblocks #115.
 
+### Fixed
+- **Files deleted in a commit no longer linger in the index (#169).** `index-repo --files` (the post-commit
+  hook) and `--changed-only` used to skip a path that was no longer on disk, so a deleted file kept answering
+  `lookup_symbol` / `context_pack` / `who_calls` and stayed in FAISS and the graph. A listed path that is gone
+  is now **tombstoned** at once (`index/tombstones.json`): retrieval skips it immediately. It is **purged** —
+  vectors (symbols and file summary), graph nodes and edges, reverse indexes, call stubs — once older than
+  `indexing.delete_grace_secs` (default 60), on the next hook run, watcher flush or `index-repo`. A file that
+  reappears inside the window (editor atomic save, branch switch) just clears its tombstone. The removal is
+  one shared `ASTIndexer.remove_file()`, now also used by the watcher. `doctor` and `get_session_brief` report
+  a purge that never ran.
+
 ### Security
 - **`fsspec` 2026.3.0 → 2026.6.0 (CVE-2026-104851, HIGH — arbitrary code execution via crafted reference
   documents).** Flagged by Trivy and pip-audit. cognirepo never imports fsspec; it is a transitive

@@ -37,6 +37,7 @@ from data.graph.behaviour_tracker import BehaviourTracker
 from data.graph.graph_utils import extract_entities_from_text, make_node_id
 from data.graph.knowledge_graph import KnowledgeGraph, EdgeType, NodeType
 from intelligence.indexer.ast_indexer import ASTIndexer
+from intelligence.indexer import tombstones
 from data.memory.circuit_breaker import CircuitOpenError
 from data.memory.embeddings import encode_with_timeout
 from data.memory.episodic_memory import get_history
@@ -375,6 +376,7 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
 
         results: list[dict] = []
         seen: set[str] = set()
+        gone = tombstones.hidden()
         for dist, fid in zip(distances[0], ids[0]):
             if fid < 0 or fid >= len(self.indexer.faiss_meta):
                 continue
@@ -382,6 +384,8 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
             # include file_summary entries — they answer "what does X.py do?" queries
 
             file_path = meta.get("file", "")
+            if file_path in gone:
+                continue        # deleted, not yet purged (COGNIREPO-169)
             name = meta.get("name", "")
             line = meta.get("start_line", -1)
             sym_type = meta.get("type", "SYMBOL")
@@ -803,6 +807,10 @@ def _apply_min_score(result: list[dict], min_score: float | None) -> list[dict]:
     (cold index scenario), return full list annotated with _cold_fallback=True
     rather than returning an empty list.
     """
+    gone = tombstones.hidden()
+    if gone and result:
+        # A cached answer can predate a deletion made by another process (COGNIREPO-169).
+        result = [r for r in result if str(r.get("_id", "")).split("::", 1)[0] not in gone]
     threshold = min_score if min_score is not None else _DEFAULT_MIN_SCORE
     if threshold <= 0 or not result:
         return result

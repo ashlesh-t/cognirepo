@@ -60,6 +60,7 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 | `indexing.graph_journal` | bool | `true` | Journal knowledge-graph mutations to `graph/graph.journal` while `index-repo` runs, so an interrupted run or a failed final `graph.pkl` save does not lose the indexed graph (COGNIREPO-109). `false` restores the old single end-of-run save. |
 | `indexing.graph_journal_flush_files` | int | `200` | Flush the journal roughly every this many files' worth of graph changes (~25 ops/file). |
 | `indexing.writer_wait_secs` | float | `0` | A second `index-repo` while another one holds the graph writer lease (`graph/graph.journal.writer`) refuses immediately with the owner's pid (`0`), or queues behind it for up to this many seconds (COGNIREPO-137). |
+| `indexing.delete_grace_secs` | float | `60` | A file deleted in a commit is hidden from retrieval at once and purged (vectors, graph, index records) after this many seconds, on the next hook run, watcher flush or `index-repo`. A file that reappears inside the window is simply kept. `0` purges immediately (COGNIREPO-169). |
 | `indexing.graph_journal_flush_secs` | float | `30` | Also flush when this many seconds passed since the last flush. |
 | `behaviour.max_query_history` | int | `2000` | Query-history entries kept in `graph/behaviour.json` (newest kept). Only recent windows (5–20 min) are ever read; what queries taught retrieval is stored in `symbol_weights`, which is never pruned. |
 | `behaviour.max_sessions` | int | `50` | Watcher sessions kept in the session registry (newest kept). |
@@ -116,6 +117,7 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
   index/                    ← AST symbol index
     ast_index.json          ← full AST index + reverse_index dict (ast_indexer.py)
     ast_metadata.json       ← parallel FAISS metadata for AST vectors
+    tombstones.json         ← deleted files hidden from retrieval, awaiting purge (absent when none)
   sessions/                 ← conversation session history
   errors/                   ← error logs (date-stamped)
     2026-04-03.log
