@@ -7,14 +7,6 @@
 """Tests for api/metrics.py — Prometheus metrics."""
 import pytest
 
-try:
-    from fastapi.testclient import TestClient
-    _FASTAPI = True
-except ImportError:
-    _FASTAPI = False
-
-pytestmark = pytest.mark.skipif(not _FASTAPI, reason="fastapi not installed")
-
 from core.metrics import metrics_available
 
 # REST API removed — HTTP endpoint tests are skipped until a web server is re-added.

@@ -474,6 +474,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
   than overwrite it. `cognirepo doctor` gains a check that `keyring` + `cryptography` are
   importable when encryption is on.
 
+### Removed
+- **#187 — unused web/auth dependencies.** `fastapi` and `uvicorn` are no longer core dependencies and `bcrypt` is
+  gone from the `dev` extra; `fastapi` and `bcrypt` are dropped from `requirements.txt`. Nothing in shipped code
+  imported them (REST/JWT API removed in #145). `uvicorn`, `starlette`, `PyJWT` and `python-multipart` are still
+  installed because `mcp[cli]` itself requires them; `python-multipart>=0.0.30` stays declared only as a security floor.
+
+
 ## [2.4.1] — 2026-09-18
 
 ### Fixed

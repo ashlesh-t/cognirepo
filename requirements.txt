@@ -4,7 +4,6 @@ anthropic==0.97.0
 anyio==4.14.2
 attrs==26.1.0
 bandit==1.9.4
-bcrypt==5.0.0
 build==1.4.4
 certifi==2026.2.25
 cffi==2.0.0
@@ -18,7 +17,6 @@ docstring_parser==0.17.0
 durationpy==0.10
 execnet==2.1.2
 faiss-cpu==1.13.2
-fastapi==0.135.2
 fastembed==0.8.0
 filelock==3.25.2
 flatbuffers==25.12.19
