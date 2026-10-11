@@ -9,6 +9,16 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Added
+- **Always-on watcher (#146).** `cognirepo watch --autostart on` installs a per-repo user service — a
+  systemd user unit (Linux), launchd agent (macOS) or Task Scheduler logon task (Windows) — that runs the new
+  `watch --serve` (alias of `--foreground`, no fork) at login and restarts it after a crash or kill;
+  `--autostart off` removes it. Idempotent; `init` offers it as a y/N prompt (default No) instead of only
+  writing a unit file you had to enable by hand. A watcher already started by hand is stopped first so the
+  service can take the repo lease. **Catch-up reindex:** every watcher start (service, `--ensure-running`,
+  the `serve` auto-watcher, and each crash-restart) first indexes files modified after their index record and
+  removes files deleted while nobody was watching — a `stat()` scan of `git ls-files`, then the normal
+  debounced batch. Only Linux was exercised end-to-end; launchd/Task Scheduler are covered by unit tests.
+  Windows gets start-at-logon, not crash supervision (see `docs/CONFIGURATION.md`).
 - **Branch-aware hooks.** `install-hooks` now also writes `post-checkout`, `post-merge` and `post-rewrite`
   hooks that run `index-repo --files` over the files that differ between the two commits (deletions
   included, via the #169 tombstones), so the index follows a branch switch, pull or rebase instead of

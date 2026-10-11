@@ -487,32 +487,19 @@ def generate_systemd_unit(repo_path: str) -> str:
     Returns the unit file content as a string.  The caller should write it to
     ``.cognirepo/cognirepo-watcher.service``.
     """
-    import shlex  # pylint: disable=import-outside-toplevel
     import shutil  # pylint: disable=import-outside-toplevel
     cognirepo_bin = shutil.which("cognirepo") or "cognirepo"
     abs_repo = os.path.abspath(repo_path)
     # `watch --foreground` is a real foreground mode (COGNIREPO-125): it registers itself, runs
     # under the crash guard and logs to stderr, which systemd sends to the journal. Quoting keeps
     # a repo path with spaces as ONE argument (systemd honours shell-style quotes in ExecStart).
-    exec_start = " ".join(shlex.quote(a) for a in (cognirepo_bin, "watch", "--path", abs_repo, "--foreground"))
-    unit = f"""\
-[Unit]
-Description=CogniRepo file watcher for {abs_repo}
-After=network.target
-
-[Service]
-Type=simple
-ExecStart={exec_start}
-Restart=on-failure
-RestartSec=10
-# SIGTERM triggers the watcher's final flush (bounded by GRACEFUL_STOP_SECS = {GRACEFUL_STOP_SECS:.0f}s)
-TimeoutStopSec=60
-WorkingDirectory={abs_repo}
-
-[Install]
-WantedBy=default.target
-"""
-    return unit
+    from interface.ui.autostart import systemd  # pylint: disable=import-outside-toplevel
+    return systemd.render(
+        "cognirepo-watcher",
+        [cognirepo_bin, "watch", "--path", abs_repo, "--foreground"],
+        abs_repo,
+        f"CogniRepo file watcher for {abs_repo}",
+    )
 
 
 def write_systemd_unit(repo_path: str) -> Path:

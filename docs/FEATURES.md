@@ -160,6 +160,8 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | Crash-recovery loop | ✅ | `run_watcher_with_crash_guard()` — restarts on crash; SIGTERM stops it with a bounded final flush (`GRACEFUL_STOP_SECS`), a stop flag that can't be swallowed, and a forced exit on a second SIGTERM |
 | Foreground watcher (`watch --foreground`) | ✅ | Registers itself, logs to stderr, stops on SIGTERM — what the systemd unit runs (`--daemon-foreground` is a legacy alias) |
 | Systemd unit file generation | ✅ | `generate_systemd_unit()` / `write_systemd_unit()` |
+| Always-on watcher (`watch --autostart on\|off`) | ✅ | Per-repo systemd / launchd / Task Scheduler service running `watch --serve`; Linux verified |
+| Catch-up reindex on watcher start | ✅ | Files edited/deleted while no watcher ran are re-indexed/removed (`find_stale_paths`, stat-only) |
 | `cognirepo list` — list running daemons | ✅ | `list_watchers()` |
 | `cognirepo list --stop` | ✅ | SIGTERM, **waits for the process to be gone**, escalates to SIGKILL after 30 s (only if the pid still looks like cognirepo), and clears the registration only afterwards (`stop_watcher_and_wait()`) |
 | `cognirepo list --view` | ✅ | Interactive log tail |
