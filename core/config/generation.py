@@ -31,6 +31,7 @@ a reader that loses that race re-reads ``CURRENT`` and retries.
 that still opens ``index/ast_index.json`` directly keeps working with no extra disk use.
 """
 import contextlib
+import json
 import logging
 import os
 import shutil
@@ -48,6 +49,7 @@ _log = logging.getLogger(__name__)
 _CURRENT = "CURRENT"
 _PREFIX = "gen-"
 _SCRATCH_PREFIX = ".incoming-"
+_MIRROR_STATS = "MIRROR.json"   # flat path -> recent [size, mtime_ns]; see GenerationStore.resolve
 
 
 def same_file(a: str, b: str) -> bool:
@@ -74,11 +76,25 @@ def link_or_copy(src: str, dst: str) -> None:
         shutil.copy2(src, dst)
 
 
-def _link_over(src: str, dst: str) -> None:
-    """Atomically make ``dst`` a hard link to ``src`` (copy where links are unsupported)."""
+def _stat_pair(path: str) -> "list[int] | None":
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return [st.st_size, st.st_mtime_ns]
+
+
+def _link_over(src: str, dst: str, on_staged: "Callable[[str], None] | None" = None) -> None:
+    """Atomically make ``dst`` a hard link to ``src`` (copy where links are unsupported).
+
+    ``on_staged(tmp)`` runs just before the final rename, while ``tmp`` already has the stat
+    ``dst`` will have afterwards.
+    """
     tmp = f"{dst}.{uuid.uuid4().hex[:8]}.tmp"
     try:
         link_or_copy(src, tmp)
+        if on_staged is not None:
+            on_staged(tmp)
         os.replace(tmp, dst)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -132,6 +148,11 @@ class GenerationStore:
         Any generation counts for "managed", not just the current one: between the pointer flip
         and the flat re-link a reader must still follow ``CURRENT``, not fall back to flat files
         that are being replaced one by one.
+
+        Where hard links are unavailable (FAT, some network/container filesystems) ``mirror``
+        falls back to copies, so there is no shared inode to detect. Then the flat probe counts as
+        managed while its (size, mtime) still equals what we recorded when we wrote it
+        (``MIRROR.json``); an out-of-band edit changes that and the flat file wins as usual.
         """
         names = list(flat)
         probe = flat[names[0]]
@@ -142,8 +163,11 @@ class GenerationStore:
             if n is None or not os.path.exists(probe):
                 break
             d = self.gen_dir(n)
-            managed = same_file(probe, os.path.join(d, names[0])) or any(
-                same_file(probe, os.path.join(self.gen_dir(g), names[0])) for g in self.generations()
+            managed = (
+                same_file(probe, os.path.join(d, names[0]))
+                or any(same_file(probe, os.path.join(self.gen_dir(g), names[0]))
+                       for g in self.generations())
+                or self._mirror_unchanged(probe)
             )
             if not managed:
                 break
@@ -182,17 +206,50 @@ class GenerationStore:
             for name in os.listdir(scratch):
                 _fsync_file(os.path.join(scratch, name))
             _fsync_dir(scratch)
-            os.chmod(scratch, 0o755)   # mkdtemp is 0700; readers may be other users' agents
+            os.chmod(scratch, 0o755)  # nosec B103 - mkdtemp is 0700; same-user and other-user agents must read it
             os.rename(scratch, self.gen_dir(n))      # the group appears all at once...
             _fsync_dir(self.root)
         except BaseException:
             shutil.rmtree(scratch, ignore_errors=True)
             raise
         atomic_write(os.path.join(self.root, _CURRENT), f"{n}\n")   # ...and is published here
+        if cur is not None:
+            # GC grace counts from when a generation stopped being current, not from when it was
+            # built: a reader that read CURRENT just before this flip may still be loading it.
+            with contextlib.suppress(OSError):
+                os.utime(self.gen_dir(cur))
         if mirror:
             self._mirror(n, mirror)
         self._gc(n)
         return n
+
+    def _mirror_unchanged(self, flat_path: str) -> bool:
+        """True if ``flat_path`` still has a stat we recorded when mirroring (copy fallback)."""
+        try:
+            with open(os.path.join(self.root, _MIRROR_STATS), encoding="utf-8") as f:
+                known = json.load(f).get(flat_path, [])
+        except (OSError, ValueError, AttributeError):
+            return False
+        return _stat_pair(flat_path) in known
+
+    def _record_mirror(self, flat: str, staged: str) -> None:
+        """Remember the stat ``flat`` will have once ``staged`` replaces it.
+
+        Written BEFORE the replace and keeping the previous stat too, so the flat file is
+        recognised as ours both before and after the swap.
+        """
+        path = os.path.join(self.root, _MIRROR_STATS)
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        new = _stat_pair(staged)
+        old = _stat_pair(flat)
+        data[flat] = [x for x in (old, new) if x is not None]
+        atomic_write(path, json.dumps(data), fsync=False)
 
     def _mirror(self, n: int, mirror: Mapping[str, str]) -> None:
         # Not atomic across files: flat paths are relinked one at a time, so a flat-path reader
@@ -205,7 +262,7 @@ class GenerationStore:
                 continue
             os.makedirs(os.path.dirname(flat) or ".", exist_ok=True)
             try:
-                _link_over(src, flat)
+                _link_over(src, flat, lambda tmp, flat=flat: self._record_mirror(flat, tmp))
             except OSError as exc:       # the generation is already published; flat is a courtesy
                 _log.warning("could not mirror %s to %s: %s", name, flat, exc)
 

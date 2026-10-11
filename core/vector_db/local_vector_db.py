@@ -9,6 +9,7 @@
 Local vector database module using FAISS for storing and searching semantic embeddings.
 """
 
+import contextlib
 import os
 import json
 from datetime import datetime, timezone
@@ -278,6 +279,7 @@ class LocalVectorDB(VectorStorageAdapter):
         if not getattr(self, "_load_error", None):
             return
         index_path, meta_path = _read_paths()
+        index_flat, meta_flat = _index_file(), _meta_file()
         probes = {
             "index": (index_path, lambda: faiss.read_index(index_path)),
             "meta": (meta_path, lambda: self._read_meta_once(meta_path)),
@@ -298,6 +300,13 @@ class LocalVectorDB(VectorStorageAdapter):
                     path, "store failed to load but is readable now (transient) — retry")
             if quarantine_if_stably_corrupt(path, _readable) is None:
                 raise exc
+            # ``path`` sits inside an immutable generation; the legacy flat file is a hard link
+            # to the same corrupt inode. Drop it, or a metadata-only publish (keep_index) would
+            # resolve back to it and link the corrupt index into the new generation.
+            flat = index_flat if key == "index" else meta_flat
+            if flat != path:
+                with contextlib.suppress(OSError):
+                    os.unlink(flat)
             del self._load_error[key]
 
     def _save_meta(self, *, write_index: bool = False) -> None:

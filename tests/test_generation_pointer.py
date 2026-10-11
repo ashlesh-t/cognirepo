@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import threading
+import time
 
 import numpy as np
 import pytest
@@ -85,6 +86,47 @@ class TestGenerationStore:
         for i in range(4):
             graced.publish({"a": _put(0, str(i))})
         assert graced.generations() == [1, 2, 3, 4]   # too young to collect
+
+    def _no_links(self, monkeypatch):
+        def nolink(*_a, **_k):
+            raise OSError("links unsupported")
+        monkeypatch.setattr(os, "link", nolink)
+
+    def test_resolve_follows_generation_without_hard_links(self, tmp_path, monkeypatch):
+        self._no_links(monkeypatch)
+        st = GenerationStore(str(tmp_path / "g"))
+        flat = str(tmp_path / "flat.txt")
+        st.publish({"a": _put(0, "one")}, mirror={"a": flat})
+        st.publish({"a": _put(0, "two")}, mirror={"a": flat})
+        assert not os.path.samefile(flat, os.path.join(st.gen_dir(2), "a"))   # plain copies
+        assert st.resolve({"a": flat}) == {"a": os.path.join(st.gen_dir(2), "a")}
+
+    def test_resolve_follows_pointer_mid_mirror_without_hard_links(self, tmp_path, monkeypatch):
+        """Pointer flipped but flat copy not yet replaced: still the new generation."""
+        self._no_links(monkeypatch)
+        st = GenerationStore(str(tmp_path / "g"))
+        flat = str(tmp_path / "flat.txt")
+        st.publish({"a": _put(0, "one")}, mirror={"a": flat})
+        monkeypatch.setattr(GenerationStore, "_mirror", lambda *a, **k: None)
+        st.publish({"a": _put(0, "two")}, mirror={"a": flat})
+        assert st.resolve({"a": flat}) == {"a": os.path.join(st.gen_dir(2), "a")}
+
+    def test_hand_edit_wins_without_hard_links(self, tmp_path, monkeypatch):
+        self._no_links(monkeypatch)
+        st = GenerationStore(str(tmp_path / "g"))
+        flat = str(tmp_path / "flat.txt")
+        st.publish({"a": _put(0, "one")}, mirror={"a": flat})
+        with open(flat, "w", encoding="utf-8") as f:
+            f.write("edited by hand, longer")
+        assert st.resolve({"a": flat}) == {"a": flat}
+
+    def test_gc_grace_counts_from_supersession(self, tmp_path):
+        st = GenerationStore(str(tmp_path / "g"), keep=1, grace_secs=3600)
+        st.publish({"a": _put(0, "1")})
+        old = time.time() - 7200                       # built long ago, was current until now
+        os.utime(st.gen_dir(1), (old, old))
+        st.publish({"a": _put(0, "2")})
+        assert st.generations() == [1, 2]              # gen-1 only just stopped being current
 
 
 class TestASTIndexerGenerations:
@@ -212,6 +254,22 @@ class TestSemanticStoreGenerations:
                 break
         t.join()
         assert n > 1 and not errors, errors[:5]
+
+    def test_quarantined_index_is_not_relinked_by_metadata_only_publish(self, isolated_cognirepo):
+        import faiss
+        from core.vector_db.local_vector_db import _index_file, _semantic_store
+        db = self._db()
+        db.add(np.random.rand(384).tolist(), "a", 0.5)
+        st = _semantic_store()
+        with open(os.path.join(st.gen_dir(st.current()), "semantic.index"), "r+b") as f:
+            f.write(b"garbage-garbage-garbage")        # same inode as the flat link
+        db2 = self._db()
+        assert db2._load_error
+        db2.update_behaviour_score(0, 0.9)             # writer path runs _ensure_writable
+        if os.path.exists(_index_file()):
+            faiss.read_index(_index_file())            # raises if the corrupt inode came back
+        fresh = self._db()
+        assert not fresh._load_error                   # no corrupt index carried forward
 
     def test_prune_rebuild_is_one_generation(self, isolated_cognirepo):
         from core.vector_db.local_vector_db import _semantic_store
