@@ -14,7 +14,7 @@ Read-only. Three sections:
 
 * **Processes** — every running cognirepo process: command (`watch`, `serve`, `init`, …), resident memory,
   age, repo, and whether it looks stale (its directory was deleted, or a one-shot command has run for
-  hours). Linux only (`/proc`).
+  hours). Linux only (`/proc`) — the watcher itself runs on Linux, macOS and Windows.
 * **Stores** — size of each `.cognirepo/` subdirectory, biggest first, with its largest files.
 * **Set-aside and left-over files** — quarantines (`*.corrupt-*`), `*.replaced-*`, `*.stale` indexes and
   scratch files: bytes nobody is using and nobody deleted.

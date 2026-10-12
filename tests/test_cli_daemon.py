@@ -36,33 +36,13 @@ def test_daemon_module_does_not_import_fcntl_at_toplevel():
             )
 
 
-def test_daemon_start_friendly_error_on_unsupported_os(monkeypatch, tmp_path, capsys):
-    """
-    When sys.platform is not 'linux', the watch command must print a friendly
-    message to stderr and exit with code 2, not raise ImportError.
-    """
+def test_watch_is_not_refused_on_macos(monkeypatch, tmp_path, capsys):
+    """#148: `watch` used to print "Linux only" and exit 2 off Linux; it now runs everywhere."""
     monkeypatch.setattr(sys, "platform", "darwin")  # simulate macOS
-
-    # We need to call main() with 'watch --status' args
-    import importlib
     import interface.cli.main as main_mod
-    importlib.reload(main_mod)
-
-    import argparse
-
-    # Patch sys.argv then call main — it should sys.exit(2)
-    monkeypatch.setattr(sys, "argv", ["cognirepo", "watch", "--status"])
-
-    try:
-        main_mod.main()
-        assert False, "Expected SystemExit(2)"
-    except SystemExit as exc:
-        assert exc.code == 2, f"Expected exit code 2, got {exc.code}"
-
-    captured = capsys.readouterr()
-    assert "Linux only" in captured.err or "linux" in captured.err.lower(), (
-        f"Expected friendly 'Linux only' message in stderr, got: {captured.err!r}"
-    )
+    monkeypatch.setattr(sys, "argv", ["cognirepo", "watch", "--status", "--path", str(tmp_path)])
+    main_mod.main()   # would raise SystemExit(2) if still gated
+    assert "Daemon" in capsys.readouterr().out
 
 
 class TestRunWatcherWithCrashGuardKeyboardInterrupt:

@@ -22,6 +22,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from core.config import procutil
 from core.config.atomic import atomic_write
 from core.config.paths import get_cognirepo_dir, get_cognirepo_dir_for_repo
 
@@ -578,7 +579,7 @@ def spawn_detached_watcher(repo_path: str, log_path: str) -> "subprocess.Popen":
                 [sys.executable, "-P", "-m", "interface.cli.main", "watch", "--foreground",
                  "--path", repo_path],
                 stdin=devnull, stdout=log, stderr=log, cwd=repo_path, env=env,
-                start_new_session=True, close_fds=True,
+                **procutil.detach_kwargs(),
             )
     except OSError as exc:
         raise WatcherSpawnError(f"could not start the watcher process ({sys.executable}): {exc}") from exc
@@ -609,17 +610,9 @@ def register_watcher(pid: int, name: str, path: str, log_path: str, kind: str | 
 def _is_alive(pid: int) -> bool:
     """True if ``pid`` is a running process. A zombie (exited, not yet reaped by its parent) is
     NOT alive: ``kill(pid, 0)`` still succeeds on one, which made a watcher that had really
-    stopped look "running" forever and made ``list --stop`` time out (COGNIREPO-126)."""
-    try:
-        os.kill(pid, 0)
-    except (ProcessLookupError, PermissionError):
-        return False
-    try:
-        with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
-            # "<pid> (<comm>) <state> ..." — comm may contain spaces/parens, so split after the LAST ')'
-            return fh.read().rsplit(")", 1)[1].split()[0] != "Z"
-    except (OSError, IndexError):
-        return True  # no /proc (macOS) or unreadable: fall back to "kill succeeded"
+    stopped look "running" forever and made ``list --stop`` time out (COGNIREPO-126).
+    Platform handling (incl. Windows, where kill(pid, 0) would terminate it) is in procutil (#148)."""
+    return procutil.pid_alive(pid)
 
 
 def list_watchers() -> list[dict]:
@@ -699,7 +692,7 @@ def stop_watcher_and_wait(
         return "embedded"   # a thread inside `cognirepo serve`: signalling the pid would kill the server
     pid, path = int(w["pid"]), w.get("path")
     try:
-        os.kill(pid, signal.SIGTERM)
+        procutil.request_stop(pid)
     except ProcessLookupError:
         pass  # raced with a normal exit
     except PermissionError:
@@ -710,7 +703,7 @@ def stop_watcher_and_wait(
         if not _looks_like_cognirepo(pid):
             return "failed"  # the pid now belongs to something else — never SIGKILL a stranger
         try:
-            os.kill(pid, signal.SIGKILL)
+            procutil.force_kill(pid)
         except ProcessLookupError:
             pass
         except PermissionError:
