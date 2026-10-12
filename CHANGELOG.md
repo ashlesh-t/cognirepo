@@ -9,6 +9,14 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Added
+- **Background watcher on macOS and Windows (#148).** `cognirepo watch` is no longer refused outside Linux.
+  The detached start was already fork-free; the remaining Linux-only pieces are fixed in the new
+  `core/config/procutil.py`: the liveness probe no longer uses `os.kill(pid, 0)` on Windows (where it would
+  *terminate* the process; it uses `OpenProcess`/`GetExitCodeProcess`), Windows detaches with
+  `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` instead of `start_new_session`, and `signal.SIGKILL` falls
+  back where it does not exist. On Windows `list --stop` is a hard terminate (no catchable signal for a
+  console-less process), so the final flush is skipped; the next watcher start's catch-up scan recovers it.
+  Verified by unit tests of each platform branch only — not run on macOS/Windows.
 - **Branch-aware hooks.** `install-hooks` now also writes `post-checkout`, `post-merge` and `post-rewrite`
   hooks that run `index-repo --files` over the files that differ between the two commits (deletions
   included, via the #169 tombstones), so the index follows a branch switch, pull or rebase instead of

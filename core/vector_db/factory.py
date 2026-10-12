@@ -66,19 +66,8 @@ def _proc_start(pid: int) -> "str | None":
 
 def _pid_alive(pid: int) -> bool:
     """Running process? A zombie (exited, un-reaped) is not alive."""
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True          # exists, owned by someone else
-    except (OSError, ValueError):
-        return False
-    try:
-        with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
-            return fh.read().rsplit(")", 1)[1].split()[0] != "Z"
-    except (OSError, IndexError):
-        return True
+    from core.config.procutil import pid_alive  # pylint: disable=import-outside-toplevel
+    return pid_alive(pid)
 
 
 def _record(pid: "int | None" = None) -> dict:
