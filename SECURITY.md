@@ -106,7 +106,8 @@ endpoint that reads arbitrary files or executes commands. Remote access is out o
 CogniRepo has **no remote API and no user accounts**. (An earlier REST API with JWT login was removed.) The only authenticated surface is the local control API described above.
 
 - **MCP** (`cognirepo serve`) talks to your AI tool over **stdio**: no port is opened.
-- Network listeners are opt-in: the **`cognirepo ui`** control API (loopback only, token-authenticated — see above) and the optional **`cognirepo metrics`** exporter (Prometheus `/metrics`). It binds `127.0.0.1:9090` by default, has **no authentication**, and exposes operational counters only. Do not bind it to `0.0.0.0` on an untrusted network.
+- Network listeners are opt-in. The **`cognirepo ui`** control API is loopback-only and token-authenticated (see above).
+- The optional **`cognirepo metrics`** exporter (Prometheus `/metrics`) binds `127.0.0.1:9090` by default, has **no authentication**, and exposes operational counters only. Do not bind it to `0.0.0.0` on an untrusted network.
 - Model calls go out to the provider you configured (see "What leaves the machine").
 
 ---
@@ -152,7 +153,7 @@ The following patterns are watched by TruffleHog:
 CogniRepo is designed for **local developer use**. The threat model assumes:
 
 1. **Trusted local user** — No multi-tenant isolation. `.cognirepo/` is user-owned.
-2. **Network access is optional** — MCP runs over stdio; the only listener is the optional `metrics` exporter, bound to `127.0.0.1` by default.
+2. **Network access is optional** — MCP runs over stdio; the only listeners are the optional `ui` control API and `metrics` exporter, both bound to `127.0.0.1` by default.
 3. **Secrets never leave the machine** — API keys are passed via environment variables, not stored in `.cognirepo/`.
 4. **Encryption defends against disk theft** — Encrypts stored embeddings and graphs; does not protect against a compromised process.
 
