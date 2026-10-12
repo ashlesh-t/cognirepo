@@ -380,14 +380,15 @@ cognirepo sessions [--limit N]
 Manage the background file-watcher. There are no `start` / `stop` / `status` subcommands: starting is `--ensure-running` (or `--foreground` under a supervisor), status is `--status`, and stopping is `cognirepo list -n <PID_OR_NAME> --stop` (see [`list`](#cognirepo-list)).
 
 ```bash
-cognirepo watch [--status | --ensure-running | --foreground] [--path DIR]
+cognirepo watch [--status | --ensure-running | --serve | --autostart on|off] [--path DIR]
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--status` | `False` | Print daemon status: PID, heartbeat age, last reindex |
 | `--ensure-running` | `False` | Start the watcher (a fresh background process) if it is not running or its heartbeat is stale (> 60 s) |
-| `--foreground`, `--daemon-foreground` | `False` | Run the watcher in the foreground under the crash guard — what the generated systemd/launchd unit runs. Registers itself, logs to stderr, stops cleanly on SIGTERM. `--daemon-foreground` is the name older generated units use |
+| `--serve`, `--foreground`, `--daemon-foreground` | `False` | Run the watcher in the foreground under the crash guard — what the autostart service runs; catches up on changes made while it was down first. Registers itself, logs to stderr, stops cleanly on SIGTERM. `--daemon-foreground` is the name older generated units use |
+| `--autostart on\|off` | unset | `on`: install a per-repo user service (systemd / launchd / Task Scheduler) that runs `watch --serve` at login and restarts it after a crash; `off`: remove it. Idempotent. See [CONFIGURATION](CONFIGURATION.md#always-on-watcher-watch---autostart) |
 | `--path DIR` | `.` | Repo root to watch |
 
 **One watcher per repo (COGNIREPO-138).** However many processes try to start a watcher — `watch --daemon`,

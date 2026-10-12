@@ -2709,6 +2709,45 @@ def _write_last_indexed_sha(repo_path: str) -> None:
         pass  # non-git repos silently skip
 
 
+def _watcher_service_argv(repo: str) -> "list[str]":
+    """Command a service manager runs: ``watch --serve`` in the foreground, no fork."""
+    import shutil  # pylint: disable=import-outside-toplevel
+    exe = shutil.which("cognirepo")
+    base = [exe] if exe else [sys.executable, "-m", "interface.cli.main"]
+    return [*base, "watch", "--path", repo, "--serve"]
+
+
+def _cmd_watch_autostart(repo: str, state: str) -> int:
+    """``watch --autostart on|off`` (#146). One service per repo; both directions idempotent."""
+    from interface.ui.autostart import AutostartError, backend, unit_name_for_repo  # pylint: disable=import-outside-toplevel
+    name = unit_name_for_repo(repo)
+    try:
+        mod = backend()
+        if state == "off":
+            if mod.uninstall(name):
+                print(f"[cognirepo] Autostart removed ({name}); the service and its watcher are stopped.")
+            else:
+                print("[cognirepo] Autostart was not enabled for this repo; nothing to remove.")
+            return 0
+        # A watcher started by hand / by init holds the repo lease, so the service's `watch --serve`
+        # would find it taken, exit 0 and (Restart=on-failure) never be retried. Hand over to the
+        # service: stop that one (flushes its edits) and let the service take the lease. An embedded
+        # watcher belongs to a live `serve` session and is left alone.
+        from interface.cli.daemon import is_watcher_running_for_path, stop_watcher_and_wait  # pylint: disable=import-outside-toplevel
+        held = is_watcher_running_for_path(repo)
+        if held and held.get("kind") != "embedded":
+            print(f"[cognirepo] Handing the repo over to the service: stopping watcher PID {held['pid']} first...")
+            stop_watcher_and_wait(str(held["pid"]))
+        where = mod.install(name, _watcher_service_argv(repo), repo, f"CogniRepo file watcher for {repo}")
+    except AutostartError as exc:
+        print(f"[cognirepo] Could not change autostart: {exc}", file=sys.stderr)
+        return 1
+    print(f"[cognirepo] Autostart enabled ({where}). The watcher now starts at login, is restarted "
+          "if it crashes, and re-indexes whatever changed while it was down.\n"
+          "  Remove with: cognirepo watch --autostart off")
+    return 0
+
+
 def _start_watcher(path: str, kg=None, indexer=None, daemon: bool = False) -> None:
     """Start the file watcher, in this process or as a separate detached process (``daemon=True``).
 
@@ -2825,7 +2864,7 @@ def _start_watcher(path: str, kg=None, indexer=None, daemon: bool = False) -> No
         print(f"Watching {abs_path} for changes. Ctrl+C to stop.")
 
     def _make_observer():
-        return create_watcher(abs_path, indexer, kg, behaviour, session_id)
+        return create_watcher(abs_path, indexer, kg, behaviour, session_id, catch_up_on_start=True)
 
     def _stop_observer(obs):
         _flush_and_stop_observer(obs)
@@ -2878,7 +2917,7 @@ def _start_watcher_bg(path: str) -> None:
             _session_id = f"watch_auto_{int(_time.time())}"
 
             def _make():
-                return create_watcher(abs_path, _indexer, _kg, _bt, _session_id)
+                return create_watcher(abs_path, _indexer, _kg, _bt, _session_id, catch_up_on_start=True)
 
             def _stop(obs):
                 _flush_and_stop_observer(obs)
@@ -4073,13 +4112,20 @@ def _main():
         help="Start the watcher if it is not running or its heartbeat is stale (> 60s).",
     )
     p_watch_cmd.add_argument(
-        "--foreground", "--daemon-foreground",
+        "--foreground", "--serve", "--daemon-foreground",
         dest="foreground",
         action="store_true",
         default=False,
         help="Run the watcher in the foreground under the crash guard (for systemd/launchd). "
              "Registers itself, logs to stderr, stops cleanly on SIGTERM. "
              "(--daemon-foreground is the name older generated units use.)",
+    )
+    p_watch_cmd.add_argument(
+        "--autostart",
+        choices=("on", "off"),
+        default=None,
+        help="on: install a per-repo user service (systemd / launchd / Task Scheduler) that runs "
+             "'watch --serve' at login and restarts it after a crash; off: remove it. Idempotent.",
     )
     p_watch_cmd.add_argument(
         "--path",
@@ -4443,35 +4489,19 @@ def _main():
         if kg is not None:
             _start_watcher(".", kg, indexer, daemon=True)
 
-        # prompt for systemd auto-restart (only on Linux, skip in non-interactive)
-        if sys.platform == "linux":
-            _systemd = False
-            if non_interactive:
-                _systemd = False  # don't auto-enable systemd in scripted mode
-            elif sys.stdin.isatty():
-                print(
-                    "\nEnable systemd auto-restart? CogniRepo will restart automatically\n"
-                    "if the watcher crashes or the machine reboots. (y/N): ",
-                    end="", flush=True,
-                )
-                try:
-                    _sa = input().strip().lower()
-                    _systemd = _sa in ("y", "yes")
-                except EOFError:
-                    _systemd = False
-
-            if _systemd:
-                try:
-                    from interface.cli.daemon import write_systemd_unit  # pylint: disable=import-outside-toplevel
-                    _unit_path = write_systemd_unit(".")
-                    print(
-                        f"\n[cognirepo] systemd unit written to {_unit_path}\n"
-                        f"  To enable:\n"
-                        f"    systemctl --user enable {_unit_path}\n"
-                        f"    systemctl --user start cognirepo-watcher"
-                    )
-                except Exception:  # pylint: disable=broad-except
-                    pass
+        # Opt-in always-on watcher (#146): asked only on a terminal, default No, never in scripted mode.
+        if not non_interactive and sys.stdin.isatty():
+            print(
+                "\nStart the watcher automatically at login and restart it if it crashes?\n"
+                "(a per-repo user service; remove any time with `cognirepo watch --autostart off`) (y/N): ",
+                end="", flush=True,
+            )
+            try:
+                _auto = input().strip().lower() in ("y", "yes")
+            except EOFError:
+                _auto = False
+            if _auto:
+                _cmd_watch_autostart(os.path.abspath("."), "on")
 
         # ── org graph: register this repo ────────────────────────────────────────
         _no_link = getattr(args, "no_link", False)
@@ -4951,6 +4981,9 @@ def _main():
         )
         abs_watch_path = os.path.abspath(args.path)
 
+        if args.autostart:
+            sys.exit(_cmd_watch_autostart(abs_watch_path, args.autostart))
+
         if args.status:
             # Path-scoped: an unrelated process rooted elsewhere can own the
             # heartbeat slot, which is how "Daemon: not running" used to print
@@ -5007,7 +5040,7 @@ def _main():
             _start_watcher(abs_watch_path, kg, indexer, daemon=False)
             return
 
-        print("Use --status, --ensure-running or --foreground. See: cognirepo watch --help")
+        print("Use --status, --ensure-running, --serve or --autostart on|off. See: cognirepo watch --help")
         return
 
     if args.command == "install-hooks":

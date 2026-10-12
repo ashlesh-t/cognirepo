@@ -283,7 +283,15 @@ cognirepo list                     # all watchers; `cognirepo list -n <PID> --st
 ```
 `cognirepo serve` (the MCP server) also runs a watcher thread, but only the first session holds the repo's
 lease and watches; the others stand by and take over if it dies. Starting a second one prints who holds it.
-For a supervised always-on watcher the generated systemd unit runs `cognirepo watch --foreground`.
+Every watcher start first **catches up**: files edited or deleted while no watcher was running are
+re-indexed before it settles into watching live events.
+
+For an always-on watcher, let the OS supervise it:
+```bash
+cognirepo watch --autostart on     # per-repo user service: starts at login, restarted after a crash
+cognirepo watch --autostart off    # remove it and stop the service's watcher
+```
+The service runs `cognirepo watch --serve` (foreground, no fork). `cognirepo init` offers this as a y/N prompt.
 Set `COGNIREPO_NO_WATCHER=1` to start no watcher at all (CI, containers).
 
 **2. The git hooks.**

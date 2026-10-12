@@ -24,6 +24,7 @@ thread and belongs to the `cognirepo serve` or `cognirepo watch` lifecycle.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import threading
@@ -58,6 +59,8 @@ _DEFAULT_DEBOUNCE_MS = 500
 # every live vector — too costly to run after every single keystroke-triggered
 # save. See COGNIREPO-D-B follow-up.
 _FAISS_COMPACT_DEAD_THRESHOLD = 25
+
+log = logging.getLogger(__name__)
 
 
 class RepoFileHandler(FileSystemEventHandler):
@@ -483,21 +486,102 @@ class RepoFileHandler(FileSystemEventHandler):
             print(f"[watcher] error re-indexing {abs_path}: {exc}", file=sys.stderr)
 
 
+def _parse_ts(value: str) -> float | None:
+    """ISO-8601 ``indexed_at`` -> epoch seconds, or None if it is missing or unparseable."""
+    from datetime import datetime  # pylint: disable=import-outside-toplevel
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def find_stale_paths(repo_root: str, indexed_files: dict) -> tuple[list[str], list[str]]:
+    """Compare the working tree with the AST index; returns ``(changed, removed)`` as absolute paths.
+
+    Used on watcher start to cover downtime: nothing was observing while the watcher was down, so
+    edits made then are in neither the index nor any event queue. *changed* are supported files
+    that are new to the index or modified after their record's ``indexed_at``; *removed* are
+    indexed files that are no longer on disk. Candidates come from ``git ls-files`` (tracked plus
+    untracked-not-ignored), so ignore rules match ``index-repo`` / ``--changed-only``. Not a git
+    repo (or git missing) -> ``([], [])`` rather than guessing; the live events still work.
+    Cheap on purpose: stat() only. A touched-but-identical file is queued, and ``index_file``'s
+    sha256 check then skips it.
+    """
+    import subprocess  # pylint: disable=import-outside-toplevel
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+            cwd=repo_root, stderr=subprocess.DEVNULL,
+        ).decode("utf-8", "surrogateescape")
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return [], []
+    # `--cached` still lists a tracked file that was deleted from the working tree, so existence
+    # is decided by stat(), not by git: a vanished file must fall through to `removed` below.
+    mtimes: dict[str, float] = {}
+    for rel in out.split("\0"):
+        if rel and is_supported(Path(rel)):
+            try:
+                mtimes[rel] = os.stat(os.path.join(repo_root, rel)).st_mtime
+            except OSError:
+                pass
+
+    changed: list[str] = []
+    for rel, mtime in mtimes.items():
+        abs_path = os.path.join(repo_root, rel)
+        rec = indexed_files.get(rel)
+        indexed_at = _parse_ts(rec.get("indexed_at", "")) if rec else None
+        if rec is None or indexed_at is None or mtime > indexed_at:
+            changed.append(abs_path)
+
+    removed = [
+        os.path.join(repo_root, rel) for rel in indexed_files
+        if rel not in mtimes and is_supported(Path(rel))
+        and not os.path.exists(os.path.join(repo_root, rel))
+    ]
+    return changed, removed
+
+
+def catch_up(handler: RepoFileHandler) -> int:
+    """Queue whatever changed while no watcher was running; returns how many paths were queued.
+
+    Goes through the handler's normal debounced queue, so the batch is indexed, saved and
+    tombstoned by exactly the code that handles live events.
+    """
+    try:
+        changed, removed = find_stale_paths(handler.repo_root, handler.indexer.index_data.get("files", {}))
+    except Exception as exc:  # pylint: disable=broad-except
+        log.warning("watcher catch-up scan failed (%s); live events still work", exc)
+        return 0
+    for path in changed:
+        handler._queue("reindex", path)  # pylint: disable=protected-access
+    for path in removed:
+        handler._queue("remove", path)  # pylint: disable=protected-access
+    if changed or removed:
+        log.info("watcher catch-up: %d changed, %d removed since the last index", len(changed), len(removed))
+    return len(changed) + len(removed)
+
+
 def create_watcher(
     repo_root: str,
     indexer: "ASTIndexer",
     graph: "KnowledgeGraph",
     behaviour: "BehaviourTracker",
     session_id: str,
+    catch_up_on_start: bool = False,
 ) -> Observer:
     """
     Create, schedule, and start a watchdog Observer.
     Caller must call observer.stop() / observer.join() on shutdown — do that
     via stop_watching() below, which also flushes any pending debounced events.
+
+    ``catch_up_on_start`` first queues files changed while nothing was watching (see ``catch_up``);
+    the observer is already running, so an edit made during the scan is queued too.
     """
     handler = RepoFileHandler(repo_root, indexer, graph, behaviour, session_id)
     observer = Observer()
     observer.schedule(handler, repo_root, recursive=True)
     observer._cognirepo_handler = handler  # pylint: disable=protected-access
     observer.start()
+    if catch_up_on_start:
+        catch_up(handler)
     return observer
