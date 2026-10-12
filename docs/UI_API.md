@@ -36,11 +36,13 @@ The only token-less responses are the data-free landing page / static console as
 | `GET` | `/api/v1/status` | Version, repo, watcher daemon health, MCP tool inventory, indexer status |
 | `GET` | `/api/v1/graph?node=&depth=&limit=` | Read-only knowledge-graph slice. `depth` 0–3 (default 1), `limit` 1–2000 (default 200). Without `node`: the highest-degree nodes. Only whitelisted attributes are returned |
 | `GET` | `/api/v1/harness` | Which agent clients (Claude Code, Cursor, VS Code, Gemini CLI) have the CogniRepo MCP server configured — names only, never args/env — plus a fixed-field summary of the shared last context (no query text) |
+| `GET` | `/api/v1/insights` | `{exists, generated_at, bytes}` for the repo's insights report (`.claude/insights/<repo>-insights.html`) |
+| `GET` | `/api/v1/insights/report` | The report HTML, read-only, from that one fixed path (no path/name parameter exists). Sent with `Content-Security-Policy: sandbox; default-src 'none'` so it can sit in an `<iframe sandbox>` (`frame-ancestors 'self'`); `?download=1` sends it as an attachment. `404 no_report` if absent, if the path is a symlink (or under one), or if it exceeds 8 MiB |
 | `GET` | `/api/v1/services` | State of the allowlisted services |
 | `POST` | `/api/v1/services/{name}/start` | Start a service. Body must be `{"confirm": true}` (strict boolean) |
 | `POST` | `/api/v1/services/{name}/stop` | Stop a service. Body must be `{"confirm": true}` |
 
-**Service allowlist:** `watcher` (the repo's file-watcher daemon; Linux only) and `metrics` (in-process Prometheus
+**Service allowlist:** `watcher` (the repo's file-watcher daemon), `insights` (`start` regenerates the report by running `cognirepo insights`; one run at a time, `stop` is `409 not_stoppable`) and `metrics` (in-process Prometheus
 `/metrics` on `127.0.0.1:9090`). Any other name is a `404` before anything else is evaluated. Each service
 maps to fixed code with a fixed argv — nothing from a request reaches a command line.
 

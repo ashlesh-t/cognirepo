@@ -103,9 +103,10 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
                     return _deny(401, "unauthorized")
                 cfg.limiter.record_success(client)
         response = await call_next(request)
-        response.headers["Content-Security-Policy"] = _CSP
+        # A handler may set a stricter/different policy (the sandboxed insights report); default otherwise.
+        response.headers.setdefault("Content-Security-Policy", _CSP)
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = "DENY"
+        response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store"
         return response
@@ -146,6 +147,30 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
         """Which agent clients have CogniRepo's MCP server configured (names only, no args/env)."""
         from interface.tools.agent_clients import agent_clients  # pylint: disable=import-outside-toplevel
         return agent_clients(app.state.repo_root)
+
+    @app.get("/api/v1/insights", response_model=m.InsightsInfo, summary="Whether the insights report exists, and when it was generated")
+    def insights_info() -> dict[str, Any]:
+        from interface.ui import insights_view  # pylint: disable=import-outside-toplevel
+        return insights_view.info(app.state.repo_root)
+
+    @app.get("/api/v1/insights/report", response_class=HTMLResponse, responses={404: {"model": m.ErrorBody}},
+             summary="The insights report HTML, read-only, from its one fixed path")
+    def insights_report(download: bool = Query(default=False)) -> Response:
+        """Never takes a path. Served sandboxed (no scripts, no network, no forms); ``?download=1`` sends it as an attachment."""
+        from interface.ui import insights_view  # pylint: disable=import-outside-toplevel
+        path = insights_view.safe_report_file(app.state.repo_root)
+        if path is None:
+            return _deny(404, "no_report")
+        with open(path, "rb") as fh:
+            body = fh.read()
+        headers = {
+            "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
+                                       "frame-ancestors 'self'",
+            "X-Frame-Options": "SAMEORIGIN",
+        }
+        if download:
+            headers["Content-Disposition"] = 'attachment; filename="insights.html"'
+        return Response(body, media_type="text/html; charset=utf-8", headers=headers)
 
     @app.get("/api/v1/services", response_model=list[m.ServiceState], summary="State of the allowlisted services")
     def list_services() -> list[dict[str, Any]]:

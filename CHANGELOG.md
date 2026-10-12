@@ -461,6 +461,11 @@ Versioning: [Semantic Versioning](https://semver.org/)
   string literals (`"event"`, `"metadata"`, `"time"`, and `"type"` within metadata). Pure
   refactor, no behavior change — both files now import `EVENT`/`METADATA`/`TIME`/`METADATA_TYPE`
   from the new module.
+- **#147 — insights report in the control API.** `GET /api/v1/insights` (`{exists, generated_at, bytes}`) and
+  `GET /api/v1/insights/report` (the HTML, read-only, sandboxed CSP, `?download=1`), served only from the fixed
+  `.claude/insights/<repo>-insights.html` path — symlinks, symlinked directories and oversized files are refused
+  and no client-supplied path exists. `insights` is a third service in the allowlist: `start` (with `confirm`)
+  regenerates the report via `cognirepo insights`. The `watcher` service is no longer refused off Linux (#148).
 - **#129 — local-only control API + `cognirepo ui`.** Versioned `/api/v1` served by a new foreground
   server (FastAPI/uvicorn, already dependencies): `GET status | graph | harness | services`,
   `POST services/{watcher|metrics}/{start|stop}` (allowlist, strict `confirm: true`, fixed argv, audit-logged),
