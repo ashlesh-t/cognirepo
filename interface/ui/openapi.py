@@ -29,8 +29,8 @@ def main(argv: list[str]) -> int:
     text = render()
     if "--write" in argv:
         os.makedirs(os.path.dirname(SPEC_PATH), exist_ok=True)
-        with open(SPEC_PATH, "w", encoding="utf-8") as f:
-            f.write(text)
+        from core.config.atomic import atomic_write  # pylint: disable=import-outside-toplevel
+        atomic_write(SPEC_PATH, text)
         print(f"wrote {os.path.normpath(SPEC_PATH)}")
     else:
         sys.stdout.write(text)
