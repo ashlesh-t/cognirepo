@@ -603,8 +603,8 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     try:
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         _kg = KnowledgeGraph()
-        _nodes = _kg.G.number_of_nodes()
-        _edges = _kg.G.number_of_edges()
+        _nodes = _kg.node_count()
+        _edges = _kg.edge_count()
         _ok(f"Knowledge graph — {_nodes:,} nodes · {_edges:,} edges")
         if verbose:
             _gpath = get_path("graph/graph.pkl")
@@ -1439,8 +1439,8 @@ def _cmd_status() -> None:
         kg = KnowledgeGraph()
         bt = BehaviourTracker(kg, store_fn=store_memory)
 
-        g_nodes = kg.G.number_of_nodes()
-        g_edges = kg.G.number_of_edges()
+        g_nodes = kg.node_count()
+        g_edges = kg.edge_count()
         b_count = len(bt.data.get("symbol_weights", {}))
 
         # Index age
@@ -2297,7 +2297,7 @@ def _maybe_tip_index_repo() -> None:
     """Print an index-repo tip when the graph is empty (cold-start hint)."""
     try:
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
-        if KnowledgeGraph().G.number_of_nodes() == 0:
+        if KnowledgeGraph().node_count() == 0:
             print("Tip: run 'cognirepo index-repo .' to enable graph-based retrieval.")
     except Exception:  # pylint: disable=broad-except
         pass

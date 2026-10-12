@@ -452,7 +452,7 @@ _EMPTY_GRAPH_WARNING = {
 
 
 def _graph_is_empty() -> bool:
-    return _get_graph().G.number_of_nodes() == 0
+    return _get_graph().node_count() == 0
 
 
 def _annotate_with_symbol(repo_list: list[dict], symbol: str) -> list[dict]:
@@ -1046,7 +1046,7 @@ def lookup_symbol(name: str, include_org: bool = False, repo_path: str | None = 
                 return []
             idx = _get_indexer()
         else:
-            if g.G.number_of_nodes() == 0:
+            if g.node_count() == 0:
                 logger.info("lookup_symbol: graph empty for repo_path, returning []")
                 return []
 
@@ -1233,7 +1233,7 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
                 return {"local_callers": [], "cross_repo_callers": [], "truncated": False}
             g = _get_graph()
         else:
-            if g.G.number_of_nodes() == 0:
+            if g.node_count() == 0:
                 logger.info("who_calls: graph empty for repo_path, returning empty dict")
                 return {"local_callers": [], "cross_repo_callers": [], "truncated": False}
 
@@ -1247,7 +1247,7 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
         if not g.node_exists(callee_node):
             # Try resolved real nodes: any node whose last segment matches function_name
             _candidates = [
-                n for n in g.G.nodes()
+                n for n in g.node_ids()
                 if n.endswith(f"::{function_name}") and not n.startswith("symbol::")
             ]
             if _candidates:
@@ -1266,10 +1266,10 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
 
         def _collect_callers(node: str, found_via: str) -> list[dict]:
             callers: list[dict] = []
-            for caller in g.G.successors(node):
-                edge_data = g.G[node][caller]
+            for caller in g.successors(node):
+                edge_data = g.edge_data(node, caller) or {}
                 if edge_data.get("rel") == EdgeType.CALLS:
-                    node_data = dict(g.G.nodes[caller])
+                    node_data = g.node_attrs(caller)
                     if node_data.get("file", "") in _gone:
                         continue
                     callers.append({
@@ -1286,7 +1286,7 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
 
         if not result and _real_callee is None:
             # Check if stub is tagged as resolved/ambiguous and search real nodes too
-            stub_data = dict(g.G.nodes.get(callee_node, {}))
+            stub_data = g.node_attrs(callee_node)
             if stub_data.get("ambiguous") and stub_data.get("candidates"):
                 for cand_file in stub_data["candidates"][:3]:
                     real_node = f"{cand_file}::{function_name}"
@@ -1295,10 +1295,10 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
         if not result:
             # Legacy direction: predecessors with CALLED_BY
             _search_node2 = _real_callee or callee_node
-            for caller in g.G.predecessors(_search_node2):
-                edge_data = g.G[caller][_search_node2]
+            for caller in g.predecessors(_search_node2):
+                edge_data = g.edge_data(caller, _search_node2) or {}
                 if edge_data.get("rel") == EdgeType.CALLED_BY:
-                    node_data = dict(g.G.nodes[caller])
+                    node_data = g.node_attrs(caller)
                     if node_data.get("file", "") in _gone:
                         continue
                     result.append({
@@ -1313,7 +1313,7 @@ def who_calls(function_name: str, repo_path: str | None = None) -> dict:
                 result = fallback
             else:
                 # Check if stub exists but is unresolved (function defined but never called)
-                _stub_data = dict(g.G.nodes.get(callee_node, {}))
+                _stub_data = g.node_attrs(callee_node)
                 _note = (
                     f"No callers found for '{function_name}' in graph or via grep fallback. "
                     "For Go receiver methods, ensure the repo is indexed: "
@@ -1481,7 +1481,7 @@ def subgraph(entity: str, depth: int = 2, repo_path: str | None = None) -> dict:
                 return _EMPTY_GRAPH_WARNING
             g = _get_graph()
         else:
-            if g.G.number_of_nodes() == 0:
+            if g.node_count() == 0:
                 return _EMPTY_GRAPH_WARNING
         _MAX_NODES, _MAX_EDGES = 200, 500
         _MAX_RESPONSE_CHARS = 30_000
@@ -1492,10 +1492,10 @@ def subgraph(entity: str, depth: int = 2, repo_path: str | None = None) -> dict:
         entity_lower = entity.lower()
         fuzzy_candidates = sorted(
             (
-                n for n in g.G.nodes
+                n for n in g.node_ids()
                 if n.lower().endswith(f"::{entity_lower}") or n.lower() == entity_lower
             ),
-            key=g.G.degree,
+            key=g.degree,
             reverse=True,
         )
         for candidate in candidates + fuzzy_candidates:
@@ -1596,10 +1596,10 @@ def graph_stats(repo_path: str | None = None) -> dict:
         integrity = g.integrity_report(integrity_root)
         from data.graph.knowledge_graph import PYTHON_BUILTINS  # pylint: disable=import-outside-toplevel
         concept_nodes = [
-            n for n, d in g.G.nodes(data=True)
+            n for n, d in g.nodes_with_data()
             if d.get("type") == "CONCEPT" and n.split("::")[-1] not in PYTHON_BUILTINS
         ]
-        top_concepts = sorted(concept_nodes, key=g.G.degree, reverse=True)[:5]
+        top_concepts = sorted(concept_nodes, key=g.degree, reverse=True)[:5]
         last_indexed = None
         full_indexed_at = None
         index_age_minutes = None

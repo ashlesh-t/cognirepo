@@ -82,6 +82,10 @@ def _run_doctor(
                 return 4218
         class _FakeKG:
             G = _FakeG()
+            def node_count(self):
+                return self.G.number_of_nodes()
+            def edge_count(self):
+                return self.G.number_of_edges()
             def integrity_report(self, repo_root):  # pylint: disable=unused-argument
                 return {"orphans": [], "dangling_files": [], "swept_at": "2026-01-01T00:00:00+00:00"}
         fake_graph_mod.KnowledgeGraph = _FakeKG

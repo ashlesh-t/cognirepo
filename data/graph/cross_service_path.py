@@ -19,9 +19,12 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import networkx as nx
+
+if TYPE_CHECKING:
+    from data.graph.knowledge_graph import KnowledgeGraph
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +41,7 @@ def _weight_cost(w: float) -> float:
     return _DEFAULT_COST
 
 
-def _load_kg(repo_abs: str) -> "nx.DiGraph | None":
+def _load_kg(repo_abs: str) -> "KnowledgeGraph | None":
     """Load the KnowledgeGraph for a given repo directory."""
     try:
         from core.config.paths import _CTX_DIR, get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
@@ -47,7 +50,7 @@ def _load_kg(repo_abs: str) -> "nx.DiGraph | None":
         token = _CTX_DIR.set(sib_dir)
         try:
             kg = KnowledgeGraph()
-            return kg.G
+            return kg
         finally:
             _CTX_DIR.reset(token)
     except Exception as exc:  # pylint: disable=broad-except
@@ -167,14 +170,9 @@ def find_symbol_path(
         kg_g = _load_kg(_from_repo)
         if kg_g is None:
             return {"error": "Could not load knowledge graph", "path": [], "hops": -1}
-        try:
-            raw_path = nx.shortest_path(kg_g, from_node, to_node)
-        except (nx.NetworkXNoPath, nx.NodeNotFound):
-            # Try undirected fallback
-            try:
-                raw_path = nx.shortest_path(kg_g.to_undirected(), from_node, to_node)
-            except Exception:  # pylint: disable=broad-except
-                return {"error": f"No path between '{from_symbol}' and '{to_symbol}'", "path": [], "hops": -1}
+        raw_path = kg_g.path_between(from_node, to_node) or kg_g.path_between(from_node, to_node, undirected=True)
+        if raw_path is None:  # directed first, then ignoring edge direction
+            return {"error": f"No path between '{from_symbol}' and '{to_symbol}'", "path": [], "hops": -1}
         path_steps = [
             {"node": n, "repo": os.path.basename(_from_repo), "repo_path": _from_repo, "type": "local"}
             for n in raw_path
@@ -229,13 +227,9 @@ def find_symbol_path(
         # Local KG path from entry to exit
         local_steps: list[str] = []
         if entry_node and exit_node and entry_node != exit_node:
-            try:
-                local_steps = nx.shortest_path(kg_g, entry_node, exit_node)
-            except (nx.NetworkXNoPath, nx.NodeNotFound):
-                try:
-                    local_steps = nx.shortest_path(kg_g.to_undirected(), entry_node, exit_node)
-                except Exception:  # pylint: disable=broad-except
-                    local_steps = [entry_node, exit_node] if entry_node and exit_node else []
+            local_steps = (kg_g.path_between(entry_node, exit_node)
+                           or kg_g.path_between(entry_node, exit_node, undirected=True)
+                           or [entry_node, exit_node])
         elif entry_node:
             local_steps = [entry_node]
 
@@ -264,27 +258,27 @@ def find_symbol_path(
     }
 
 
-def _find_entry_node(kg_g: "nx.DiGraph", prev_repo: str, this_repo: str) -> "str | None":
+def _find_entry_node(kg_g: "KnowledgeGraph", prev_repo: str, this_repo: str) -> "str | None":
     """Find the ENDPOINT node in kg_g that receives calls from prev_repo."""
     ep_prefix = f"endpoint::{this_repo}::"
-    for node in kg_g.nodes:
+    for node in kg_g.node_ids():
         if node.startswith(ep_prefix):
             return node
     # Fallback: any node with ENDPOINT type
-    for node, data in kg_g.nodes(data=True):
+    for node, data in kg_g.nodes_with_data():
         if data.get("type") == "ENDPOINT" or "ENDPOINT" in str(data.get("node_type", "")):
             return node
     return None
 
 
-def _find_exit_node(kg_g: "nx.DiGraph", this_repo: str, next_repo: str) -> "str | None":
+def _find_exit_node(kg_g: "KnowledgeGraph", this_repo: str, next_repo: str) -> "str | None":
     """Find the function node in kg_g that CALLS_ENDPOINT in next_repo."""
     next_ep_prefix = f"endpoint::{next_repo}::"
-    for u, v, data in kg_g.edges(data=True):
+    for u, v, data in kg_g.edges_with_data():
         if data.get("edge_type") == "CALLS_ENDPOINT" and str(v).startswith(next_ep_prefix):
             return u
     # Fallback: any CALLS_ENDPOINT edge
-    for u, v, data in kg_g.edges(data=True):
+    for u, v, data in kg_g.edges_with_data():
         if data.get("edge_type") == "CALLS_ENDPOINT":
             return u
     return None

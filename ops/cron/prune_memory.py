@@ -151,16 +151,16 @@ def _prune_graph(dry_run: bool) -> dict[str, int]:
     try:
         from data.graph.knowledge_graph import KnowledgeGraph, NodeType  # pylint: disable=import-outside-toplevel
         kg = KnowledgeGraph()
-        orphans = [n for n in list(kg.G.nodes()) if kg.G.degree(n) == 0]
+        orphans = [n for n in kg.node_ids() if kg.degree(n) == 0]
         stats["orphans_removed"] = len(orphans)
         if not dry_run:
             for _nid in orphans:
                 kg.remove_node_if_degree_at_most(_nid, 0)
         # Remove concept nodes with no edges (very cold)
         cold = [
-            n for n in list(kg.G.nodes())
-            if kg.G.nodes[n].get("node_type") == NodeType.CONCEPT
-            and kg.G.degree(n) <= 1
+            n for n in kg.node_ids()
+            if kg.node_attrs(n).get("node_type") == NodeType.CONCEPT
+            and kg.degree(n) <= 1
         ]
         stats["cold_nodes_removed"] = len(cold)
         if not dry_run:

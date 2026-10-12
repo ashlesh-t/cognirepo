@@ -210,7 +210,7 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
         self.indexer.load()
         # Cache undirected view once — to_undirected() is O(V+E) and was
         # previously called once per candidate per query (up to 20× per retrieve).
-        self._undirected = self.graph.G.to_undirected()
+        self._undirected = self.graph.undirected_snapshot()
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -496,7 +496,7 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
         score 1.0 immediately, and one-hop neighbours score 0.5.
         Falls back to undirected path search when no directed path exists.
         """
-        if not query_entities or self.graph.G.number_of_nodes() == 0:
+        if not query_entities or self.graph.node_count() == 0:
             return 0.0
 
         # candidate node id: prefer explicit _symbol, fall back to text-derived
@@ -530,11 +530,8 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
                 # Try directed first (fast), then undirected
                 hops = self.graph.hop_distance(node_id, cand_node)
                 if hops >= 1_000_000:
-                    try:
-                        import networkx as _nx  # pylint: disable=import-outside-toplevel
-                        hops = _nx.shortest_path_length(g_undirected, node_id, cand_node)
-                    except Exception:  # pylint: disable=broad-except
-                        hops = 1_000_000
+                    undirected_hops = g_undirected.hops(node_id, cand_node)
+                    hops = 1_000_000 if undirected_hops is None else undirected_hops
                 if min_hops is None or hops < min_hops:
                     min_hops = hops
                     best_entity_node = node_id
@@ -552,8 +549,8 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
 
     def _is_similar_to_only_link(self, a: str, b: str) -> bool:
         """True if the only edge(s) directly connecting a and b are SIMILAR_TO."""
-        edge_ab = self.graph.G.get_edge_data(a, b)
-        edge_ba = self.graph.G.get_edge_data(b, a)
+        edge_ab = self.graph.edge_data(a, b)
+        edge_ba = self.graph.edge_data(b, a)
         rels = [e.get("rel") for e in (edge_ab, edge_ba) if e]
         return bool(rels) and all(r == EdgeType.SIMILAR_TO for r in rels)
 
@@ -574,8 +571,8 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
         for bounded latency and groups that actually reflect direct coupling — the same
         precautionary direction as the integrity gate (COGNIREPO-501 Analyze correction).
         """
-        g = self.graph.G
-        if not g.has_node(start_node):
+        g = self.graph
+        if not g.node_exists(start_node):
             return set()
         from collections import deque  # pylint: disable=import-outside-toplevel
         visited = {start_node}
@@ -583,7 +580,7 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
         files: set[str] = set()
 
         def _record(node: str) -> None:
-            data = g.nodes[node]
+            data = g.node_attrs(node)
             if data.get("type") == NodeType.FILE:
                 files.add(node)
             elif data.get("file"):
@@ -602,8 +599,8 @@ class HybridRetriever:  # pylint: disable=too-few-public-methods
                     break
                 if nxt in visited:
                     continue
-                edge_fwd = g.get_edge_data(current, nxt) or {}
-                edge_bwd = g.get_edge_data(nxt, current) or {}
+                edge_fwd = g.edge_data(current, nxt) or {}
+                edge_bwd = g.edge_data(nxt, current) or {}
                 rels = {edge_fwd.get("rel"), edge_bwd.get("rel")}
                 if not rels & _STRUCTURAL_EDGE_TYPES:
                     continue
