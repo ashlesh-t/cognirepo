@@ -207,6 +207,7 @@ Key modules:
 - `interface/cli/init_project.py` — `cognirepo init` scaffolding, idempotent
 - `interface/cli/wizard.py` — interactive terminal wizard
 - `interface/cli/daemon.py` — per-repo watcher lease (one watcher per repo), heartbeat, systemd unit generation
+- `interface/ui/autostart/` — `systemd` / `launchd` / `schtasks` backends behind `install(name, argv, cwd)` / `uninstall(name)` (#146)
 - `interface/cli/seed.py` — seed behaviour graph from git history
 
 ---
