@@ -4337,6 +4337,9 @@ def _main():
     p_ui.add_argument("--serve", action="store_true", default=False,
                       help="Run the server in the foreground (used internally and by autostart)")
     p_ui.add_argument("--stop", action="store_true", default=False, help="Stop the running UI server")
+    p_ui.add_argument("--autostart", choices=("on", "off"), default=None,
+                      help="Enable/disable starting the console at login (systemd --user / launchd / Task Scheduler). "
+                           "Always loopback-only. Opt-in; off by default.")
     p_ui.add_argument("--unsafe-bind", action="store_true", default=False,
                       help="DANGEROUS: allow a non-loopback bind address")
     p_ui.add_argument("--allow-origin", action="append", default=None, metavar="ORIGIN",

@@ -92,6 +92,14 @@ def run_ui(args: Any) -> int:
     if getattr(args, "stop", False):
         return _stop()
 
+    autostart = getattr(args, "autostart", None)
+    if autostart:
+        from interface.ui import console_autostart as _auto  # pylint: disable=import-outside-toplevel
+        result = _auto.enable(repo_root) if autostart == "on" else _auto.disable()
+        print(("autostart: " if result.ok else "autostart FAILED: ") + result.detail,
+              file=sys.stdout if result.ok else sys.stderr)
+        return 0 if result.ok else 1
+
     sess = read_session()
     if sess and is_listening(sess["port"]):
         if os.path.abspath(sess.get("repo_root", "")) != repo_root:
@@ -109,6 +117,11 @@ def run_ui(args: Any) -> int:
 
     if not console_installed():
         print(CONSOLE_INSTALL_HINT)
+    if not getattr(args, "no_open", False):  # interactive launches only; never from --serve/--no-open scripts
+        from interface.ui import console_autostart as _auto  # pylint: disable=import-outside-toplevel
+        prompted = _auto.maybe_prompt(repo_root)
+        if prompted is not None:
+            print(("autostart: " if prompted.ok else "autostart FAILED: ") + prompted.detail)
     opened = False
     if not getattr(args, "no_open", False):
         try:
