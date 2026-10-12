@@ -51,6 +51,12 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the integrity epic's reader/writer rules made normative; ordered migration plan that unblocks #115.
 
 ### Fixed
+- **Generation pointer: first-publish reader race (#140).** `GenerationStore.resolve()` returned the flat file
+  paths while a store's very first publish was still linking them, so a reader could open a new
+  `semantic.index` with an empty `semantic_metadata.json` (`ntotal=1 meta=0`; seen as an intermittent failure of
+  `test_reader_never_sees_index_and_metadata_from_different_saves` under load, 2 in ~40 runs). A `.mirror-pending`
+  marker now makes `resolve()` read the (complete) generation until the flat files are linked; a flat file the
+  user deleted by hand still means "start from nothing".
 - **Files deleted in a commit no longer linger in the index (#169).** `index-repo --files` (the post-commit
   hook) and `--changed-only` used to skip a path that was no longer on disk, so a deleted file kept answering
   `lookup_symbol` / `context_pack` / `who_calls` and stayed in FAISS and the graph. A listed path that is gone
