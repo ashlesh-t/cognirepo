@@ -28,9 +28,7 @@ dependencies = [
     "fastembed>=0.3.6",
     # MCP server
     "mcp[cli]==1.28.1",
-    # REST API + Server
-    "fastapi>=0.115.0",
-    "uvicorn>=0.30.0",
+    # HTTP client
     "httpx>=0.27.0",
     # graph + indexer
     "networkx>=3.3",
@@ -49,7 +47,6 @@ dependencies = [
     # system metrics + connectivity
     "psutil>=6.0",
     "requests>=2.33",
-    "python-multipart>=0.0.30",
 ]
 
 [project.urls]
@@ -87,6 +84,13 @@ security = [
 cli = [
     "tqdm>=4.60",
 ]
+ui = [
+    # Local control API behind `cognirepo ui` (interface/ui). Not needed by the
+    # MCP server or the CLI. Install: pip install 'cognirepo[ui]'
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "python-multipart>=0.0.30",
+]
 providers = [
     # Model routing for `cognirepo ask`. Not required for MCP index server.
     # Install: pip install 'cognirepo[providers]'
@@ -112,6 +116,10 @@ dev = [
     "prometheus-client>=0.20",
     "build>=1.0",
     "bcrypt>=4.0",
+    # interface/ui tests
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "python-multipart>=0.0.30",
     # Include providers so tests can import router/adapters without install hint
     "anthropic>=0.87.0",
     "google-genai>=0.3",
