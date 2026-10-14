@@ -121,3 +121,188 @@ class TestStatusShape:
         assert data["daemon"]["state"] in {"running", "stale", "stopped"}
         assert data["mcp"]["tool_count"] > 0
         json.dumps(data)  # serialisable
+
+
+class TestGraph:
+    @pytest.fixture
+    def seeded(self, isolated_cognirepo):
+        from data.graph.knowledge_graph import EdgeType, KnowledgeGraph, NodeType
+        from interface.tools import graph_view
+        graph_view.reset_cache()
+        kg = KnowledgeGraph()
+        kg.add_node("a.py", NodeType.FILE)
+        for i in range(5):
+            kg.add_node(f"a.py::f{i}", NodeType.FUNCTION, file="a.py", line=i, secret="SHOULD-NOT-LEAK")
+            kg.add_edge(f"a.py::f{i}", "a.py", EdgeType.DEFINED_IN, internal="x")
+        kg.add_node("b.py::far", NodeType.FUNCTION, file="b.py")
+        kg.add_edge("a.py::f0", "b.py::far", EdgeType.CALLED_BY)
+        kg.save()
+        yield kg
+        graph_view.reset_cache()
+
+    def test_overview_and_bounds(self, client, seeded):
+        d = client.get("/api/v1/graph?limit=3", headers=AUTH).json()
+        assert d["stats"]["nodes"] == 7 and len(d["nodes"]) == 3 and d["truncated"] is True
+        assert client.get("/api/v1/graph?limit=2001", headers=AUTH).status_code == 422
+        assert client.get("/api/v1/graph?depth=9", headers=AUTH).status_code == 422
+
+    def test_neighbourhood_depth(self, client, seeded):
+        one = client.get("/api/v1/graph?node=a.py::f1&depth=1", headers=AUTH).json()
+        ids1 = {n["id"] for n in one["nodes"]}
+        assert ids1 == {"a.py::f1", "a.py"}
+        two = client.get("/api/v1/graph?node=a.py::f1&depth=3", headers=AUTH).json()
+        assert "b.py::far" in {n["id"] for n in two["nodes"]}
+
+    def test_unknown_node_and_whitelisted_attrs(self, client, seeded):
+        assert client.get("/api/v1/graph?node=nope", headers=AUTH).json()["found"] is False
+        raw = client.get("/api/v1/graph?node=a.py::f1&depth=1", headers=AUTH).text
+        assert "SHOULD-NOT-LEAK" not in raw and "internal" not in raw
+
+    def test_graph_view_is_read_only(self, client, seeded):
+        pkl = os.path.join(".cognirepo", "graph", "graph.pkl")
+        before = os.stat(pkl).st_mtime_ns
+        client.get("/api/v1/graph", headers=AUTH)
+        client.get("/api/v1/graph?node=a.py::f2&depth=2", headers=AUTH)
+        assert os.stat(pkl).st_mtime_ns == before
+        assert not os.path.exists(os.path.join(".cognirepo", "graph", "graph.journal"))
+
+    def test_missing_graph_is_empty_not_error(self, client, isolated_cognirepo):
+        from interface.tools import graph_view
+        graph_view.reset_cache()
+        d = client.get("/api/v1/graph", headers=AUTH).json()
+        assert d["stats"] == {"nodes": 0, "edges": 0} and d["nodes"] == []
+
+
+class FakeServices:
+    """Stand-in so API tests never spawn processes."""
+
+    def __init__(self):
+        self.calls = []
+
+    @staticmethod
+    def allowed():
+        return ("watcher", "metrics")
+
+    def start(self, name):
+        self.calls.append(("start", name))
+        return {"name": name, "state": "running", "changed": True}
+
+    def stop(self, name):
+        self.calls.append(("stop", name))
+        return {"name": name, "state": "stopped", "changed": True}
+
+    def status(self, name=None):
+        return [{"name": "watcher", "state": "stopped"}, {"name": "metrics", "state": "stopped"}]
+
+    def shutdown(self):
+        pass
+
+
+@pytest.fixture
+def svc_client(tmp_path, audit):
+    fake = FakeServices()
+    cfg = sec.SecurityConfig(token=TOKEN, port=PORT)
+    with TestClient(create_app(cfg, str(tmp_path), audit, services=fake), base_url=f"http://127.0.0.1:{PORT}") as c:
+        c.fake = fake
+        yield c
+
+
+class TestServices:
+    def test_requires_token(self, svc_client):
+        assert svc_client.post("/api/v1/services/watcher/start", json={"confirm": True}).status_code == 401
+        assert svc_client.fake.calls == []
+
+    @pytest.mark.parametrize("name", ["bash", "sh", "../etc/passwd", "watcher;ls", "WATCHER", "rm", "python"])
+    def test_names_outside_allowlist_rejected(self, svc_client, name):
+        r = svc_client.post(f"/api/v1/services/{name}/start", json={"confirm": True}, headers=AUTH)
+        assert r.status_code in (404, 405) and svc_client.fake.calls == []
+
+    def test_unknown_name_checked_before_confirm(self, svc_client):
+        assert svc_client.post("/api/v1/services/bash/stop", json={}, headers=AUTH).status_code == 404
+
+    @pytest.mark.parametrize("body", [None, {}, {"confirm": False}, {"confirm": "true"}, {"confirm": 1}])
+    def test_confirm_required(self, svc_client, body):
+        r = svc_client.post("/api/v1/services/watcher/start", json=body, headers=AUTH)
+        assert r.status_code in (400, 422) and svc_client.fake.calls == []
+
+    def test_start_stop_with_confirm_and_audited(self, svc_client, audit):
+        assert svc_client.post("/api/v1/services/watcher/start", json={"confirm": True}, headers=AUTH).status_code == 200
+        assert svc_client.post("/api/v1/services/metrics/stop", json={"confirm": True}, headers=AUTH).status_code == 200
+        assert svc_client.fake.calls == [("start", "watcher"), ("stop", "metrics")]
+        records = audit.tail()
+        assert [r["action"] for r in records] == ["service_start", "service_stop"]
+        assert records[0]["service"] == "watcher" and records[0]["result"] == "ok" and TOKEN not in json.dumps(records)
+
+    def test_denials_are_audited_too(self, svc_client, audit):
+        svc_client.post("/api/v1/services/bash/start", json={"confirm": True}, headers=AUTH)
+        svc_client.post("/api/v1/services/watcher/start", json={}, headers=AUTH)
+        assert [r["result"] for r in audit.tail()] == ["denied_unknown_service", "denied_no_confirm"]
+
+    def test_no_generic_exec_or_file_endpoints(self, svc_client):
+        paths = set(svc_client.get("/api/v1/openapi.json", headers=AUTH).json()["paths"])
+        assert paths == {"/api/v1/session", "/api/v1/status", "/api/v1/graph", "/api/v1/harness",
+                         "/api/v1/services", "/api/v1/services/{name}/start", "/api/v1/services/{name}/stop"}
+
+
+class TestServiceManager:
+    def test_metrics_start_stop_idempotent_loopback(self):
+        from interface.ui.services import ServiceManager
+        m = ServiceManager(".", metrics_port=0)
+        try:
+            a = m.start("metrics")
+            assert a["state"] == "running" and a["changed"] is True and a["port"] > 0
+            assert m._metrics_server.server_address[0] == "127.0.0.1"
+            assert m.start("metrics")["changed"] is False
+            assert m.stop("metrics")["state"] == "stopped" and m.stop("metrics")["changed"] is False
+        finally:
+            m.shutdown()
+
+    def test_watcher_spawns_fixed_argv_only(self, monkeypatch, tmp_path):
+        import subprocess
+        import sys
+
+        from interface.ui import services as S
+        seen = {}
+        monkeypatch.setattr(S.ServiceManager, "_watcher_record", lambda self: None)
+        monkeypatch.setattr(S.sys, "platform", "linux")
+        monkeypatch.setattr(subprocess, "Popen", lambda argv, **kw: seen.update(argv=argv, kw=kw))
+        out = S.ServiceManager(str(tmp_path)).start("watcher")
+        assert out["state"] == "starting"
+        assert seen["argv"] == [sys.executable, "-m", "interface.cli.main", "watch", "--path", str(tmp_path), "--ensure-running"]
+        assert seen["kw"].get("shell") is not True and seen["kw"]["start_new_session"] is True
+
+    def test_watcher_unsupported_platform(self, monkeypatch, tmp_path):
+        from interface.ui import services as S
+        monkeypatch.setattr(S.ServiceManager, "_watcher_record", lambda self: None)
+        monkeypatch.setattr(S.sys, "platform", "win32")
+        with pytest.raises(S.ServiceError) as ei:
+            S.ServiceManager(str(tmp_path)).start("watcher")
+        assert ei.value.status == 501
+
+
+class TestHarness:
+    def test_reports_names_only_never_args_or_env(self, client, tmp_path, monkeypatch):
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {
+            "cognirepo": {"command": "/usr/bin/cognirepo", "args": ["serve", "--key", "SUPERSECRET"], "env": {"K": "SUPERSECRET"}},
+            "other": {"command": "x"}}}))
+        (tmp_path / ".cursor").mkdir()
+        (tmp_path / ".cursor" / "mcp.json").write_text("{not json")
+        r = client.get("/api/v1/harness", headers=AUTH)
+        assert r.status_code == 200 and "SUPERSECRET" not in r.text
+        by = {c["client"]: c for c in r.json()["clients"]}
+        assert by["claude-code"]["registered"] is True
+        assert by["claude-code"]["configs"][0]["servers"] == [{"name": "cognirepo", "command": "cognirepo"}]
+        assert by["cursor"]["registered"] is False and by["cursor"]["configs"][0]["readable"] is False
+        assert "gemini-cli" in by
+
+    def test_last_context_has_fixed_fields_only(self, client, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        repo = os.path.basename(str(tmp_path))
+        d = home / ".cognirepo" / repo
+        d.mkdir(parents=True)
+        (d / "last_context.json").write_text(json.dumps({"generated_at": "t", "tool": "x", "repo": repo,
+                                                         "query": "private question", "sections": [1, 2]}))
+        lc = client.get("/api/v1/harness", headers=AUTH).json()["last_context"]
+        assert lc == {"generated_at": "t", "tool": "x", "repo": repo, "section_count": 2}
