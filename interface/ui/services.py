@@ -20,7 +20,9 @@ import threading
 import time
 from typing import Any
 
-ALLOWED: tuple[str, ...] = ("watcher", "metrics")
+from core.config import procutil
+
+ALLOWED: tuple[str, ...] = ("watcher", "metrics", "insights")
 
 
 class ServiceError(Exception):
@@ -41,6 +43,7 @@ class ServiceManager:
         self.metrics_port = metrics_port
         self._metrics_server = None
         self._metrics_thread: threading.Thread | None = None
+        self._insights_proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
 
     # ── watcher ──────────────────────────────────────────────────────────────
@@ -49,13 +52,11 @@ class ServiceManager:
         return is_watcher_running_for_path(self.repo_root)
 
     def _spawn_watcher(self) -> None:
-        if not sys.platform.startswith("linux"):
-            raise ServiceError(501, "unsupported_platform", "the watcher daemon is supported on Linux only")
         # Fixed argv; nothing from the request reaches it.
         argv = [sys.executable, "-m", "interface.cli.main", "watch", "--path", self.repo_root, "--ensure-running"]
         subprocess.Popen(  # nosec B603 — fixed argv, no shell
             argv, cwd=self.repo_root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, start_new_session=True,
+            stderr=subprocess.DEVNULL, **procutil.detach_kwargs(),
         )
 
     def _watcher_status(self) -> dict[str, Any]:
@@ -110,19 +111,44 @@ class ServiceManager:
             self._metrics_server = self._metrics_thread = None
             return {**self._metrics_status(), "changed": True}
 
+    # ── insights (regenerate the report; one run at a time) ──────────────────
+    def _insights_running(self) -> bool:
+        proc = self._insights_proc
+        return proc is not None and proc.poll() is None
+
+    def _insights_status(self) -> dict[str, Any]:
+        return {"name": "insights", "state": "running" if self._insights_running() else "idle"}
+
+    def _insights_start(self) -> dict[str, Any]:
+        """Regenerate the report with the existing generator (`cognirepo insights`) — fixed argv,
+        nothing from the request reaches it; the UI process itself never imports the collector."""
+        with self._lock:
+            if self._insights_running():
+                return {**self._insights_status(), "changed": False}
+            argv = [sys.executable, "-m", "interface.cli.main", "insights"]
+            self._insights_proc = subprocess.Popen(  # nosec B603 — fixed argv, no shell
+                argv, cwd=self.repo_root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, **procutil.detach_kwargs(),
+            )
+            return {**self._insights_status(), "changed": True}
+
     # ── public API ───────────────────────────────────────────────────────────
     def status(self, name: str | None = None) -> Any:
         if name is None:
             return [self.status(n) for n in ALLOWED]
         self._check(name)
-        return self._watcher_status() if name == "watcher" else self._metrics_status()
+        return {"watcher": self._watcher_status, "metrics": self._metrics_status,
+                "insights": self._insights_status}[name]()
 
     def start(self, name: str) -> dict[str, Any]:
         self._check(name)
-        return self._watcher_start() if name == "watcher" else self._metrics_start()
+        return {"watcher": self._watcher_start, "metrics": self._metrics_start,
+                "insights": self._insights_start}[name]()
 
     def stop(self, name: str) -> dict[str, Any]:
         self._check(name)
+        if name == "insights":
+            raise ServiceError(409, "not_stoppable", "a report run finishes on its own")
         return self._watcher_stop() if name == "watcher" else self._metrics_stop()
 
     def shutdown(self) -> None:

@@ -117,6 +117,12 @@ class LastContext(BaseModel):
     section_count: int
 
 
+class InsightsInfo(BaseModel):
+    exists: bool
+    generated_at: str | None = None
+    bytes: int = 0
+
+
 class HarnessResponse(BaseModel):
     clients: list[HarnessClient]
     last_context: LastContext | None = None

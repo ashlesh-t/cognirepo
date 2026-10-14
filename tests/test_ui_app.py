@@ -8,6 +8,7 @@
 """tests/test_ui_app.py — control API guard + /status (COGNIREPO-129)."""
 import json
 import os
+from unittest import mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -241,7 +242,8 @@ class TestServices:
     def test_no_generic_exec_or_file_endpoints(self, svc_client):
         paths = set(svc_client.get("/api/v1/openapi.json", headers=AUTH).json()["paths"])
         assert paths == {"/api/v1/session", "/api/v1/status", "/api/v1/graph", "/api/v1/harness",
-                         "/api/v1/services", "/api/v1/services/{name}/start", "/api/v1/services/{name}/stop"}
+                         "/api/v1/services", "/api/v1/services/{name}/start", "/api/v1/services/{name}/stop",
+                         "/api/v1/insights", "/api/v1/insights/report"}
 
 
 class TestServiceManager:
@@ -271,13 +273,14 @@ class TestServiceManager:
         assert seen["argv"] == [sys.executable, "-m", "interface.cli.main", "watch", "--path", str(tmp_path), "--ensure-running"]
         assert seen["kw"].get("shell") is not True and seen["kw"]["start_new_session"] is True
 
-    def test_watcher_unsupported_platform(self, monkeypatch, tmp_path):
+    def test_watcher_start_is_not_gated_to_linux(self, monkeypatch, tmp_path):
+        """#148: the watcher runs on macOS/Windows too; the old 501 'Linux only' gate is gone."""
         from interface.ui import services as S
         monkeypatch.setattr(S.ServiceManager, "_watcher_record", lambda self: None)
         monkeypatch.setattr(S.sys, "platform", "win32")
-        with pytest.raises(S.ServiceError) as ei:
-            S.ServiceManager(str(tmp_path)).start("watcher")
-        assert ei.value.status == 501
+        with mock.patch.object(S.subprocess, "Popen") as popen:
+            out = S.ServiceManager(str(tmp_path)).start("watcher")
+        assert out["state"] == "starting" and popen.called
 
 
 class TestHarness:

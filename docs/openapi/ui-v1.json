@@ -432,6 +432,35 @@
         "title": "IndexerStatus",
         "type": "object"
       },
+      "InsightsInfo": {
+        "properties": {
+          "bytes": {
+            "default": 0,
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "generated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generated At"
+          }
+        },
+        "required": [
+          "exists"
+        ],
+        "title": "InsightsInfo",
+        "type": "object"
+      },
       "LastContext": {
         "properties": {
           "generated_at": {
@@ -829,6 +858,93 @@
           }
         },
         "summary": "Agent clients with CogniRepo configured"
+      }
+    },
+    "/api/v1/insights": {
+      "get": {
+        "operationId": "insights_info_api_v1_insights_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsightsInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "Whether the insights report exists, and when it was generated"
+      }
+    },
+    "/api/v1/insights/report": {
+      "get": {
+        "description": "Never takes a path. Served sandboxed (no scripts, no network, no forms); ``?download=1`` sends it as an attachment.",
+        "operationId": "insights_report_api_v1_insights_report_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "download",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Download",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "404": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "The insights report HTML, read-only, from its one fixed path"
       }
     },
     "/api/v1/services": {
