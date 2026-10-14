@@ -160,6 +160,20 @@ class EdgeType:  # pylint: disable=too-few-public-methods
     SIMILAR_TO = "SIMILAR_TO"  # embedding-distance near-duplicate symbols (added both directions)
 
 
+class UndirectedView:  # pylint: disable=too-few-public-methods
+    """Frozen undirected copy of the graph for hop-distance queries (see ``undirected_snapshot``)."""
+
+    def __init__(self, graph: "nx.Graph") -> None:
+        self._g = graph
+
+    def hops(self, src: str, dst: str) -> int | None:
+        """Hop distance ignoring direction; None if either node is missing or they are not connected."""
+        try:
+            return nx.shortest_path_length(self._g, src, dst)
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            return None
+
+
 class KnowledgeGraph:
     """Thin wrapper around a networkx DiGraph with CogniRepo-specific conventions."""
 
@@ -912,6 +926,73 @@ class KnowledgeGraph:
     def node_exists(self, node_id: str) -> bool:
         """Return True if node_id is present in the graph."""
         return self.G.has_node(node_id)
+
+    # ── read facade (#115) ───────────────────────────────────────────────────
+    # Everything outside this class reads the graph through these methods, never through ``.G``,
+    # so the storage behind them can change (SQLite, ADR 002) without touching ~65 call sites.
+    # They return plain lists/dicts (copies), never live networkx views: a caller can iterate
+    # while the graph is mutated, and nothing networkx-specific leaks out.
+
+    def node_count(self) -> int:
+        """Number of nodes."""
+        return self.G.number_of_nodes()
+
+    def edge_count(self) -> int:
+        """Number of edges."""
+        return self.G.number_of_edges()
+
+    def has_edge(self, src: str, dst: str) -> bool:
+        """True if the directed edge src -> dst exists."""
+        return self.G.has_edge(src, dst)
+
+    def node_ids(self) -> list[str]:
+        """All node ids (a snapshot list)."""
+        return list(self.G.nodes())
+
+    def nodes_with_data(self) -> list[tuple[str, dict]]:
+        """All ``(node_id, attrs)`` pairs (a snapshot; attrs are copies)."""
+        return [(n, dict(d)) for n, d in self.G.nodes(data=True)]
+
+    def node_attrs(self, node_id: str) -> dict:
+        """Attributes of a node (a copy); ``{}`` if the node does not exist."""
+        return dict(self.G.nodes[node_id]) if self.G.has_node(node_id) else {}
+
+    def successors(self, node_id: str) -> list[str]:
+        """Targets of edges leaving node_id (callees, for CALLS); ``[]`` if the node is missing."""
+        return list(self.G.successors(node_id)) if self.G.has_node(node_id) else []
+
+    def predecessors(self, node_id: str) -> list[str]:
+        """Sources of edges entering node_id (callers, for CALLS); ``[]`` if the node is missing."""
+        return list(self.G.predecessors(node_id)) if self.G.has_node(node_id) else []
+
+    def edge_data(self, src: str, dst: str) -> dict | None:
+        """Attributes of the edge src -> dst (a copy), or None if there is no such edge."""
+        data = self.G.get_edge_data(src, dst)
+        return None if data is None else dict(data)
+
+    def degree(self, node_id: str) -> int:
+        """In + out degree; 0 if the node is missing."""
+        return self.G.degree(node_id) if self.G.has_node(node_id) else 0
+
+    def edges_with_data(self) -> list[tuple[str, str, dict]]:
+        """All ``(src, dst, attrs)`` triples (a snapshot; attrs are copies)."""
+        return [(u, v, dict(d)) for u, v, d in self.G.edges(data=True)]
+
+    def in_degrees(self) -> list[tuple[str, int]]:
+        """``(node_id, in_degree)`` for every node."""
+        return list(self.G.in_degree())
+
+    def undirected_snapshot(self) -> "UndirectedView":
+        """A frozen undirected copy for repeated proximity queries (build once, ask many times)."""
+        return UndirectedView(self.G.to_undirected())
+
+    def path_between(self, src: str, dst: str, undirected: bool = False) -> list[str] | None:
+        """Shortest node path src -> dst, or None. ``undirected=True`` ignores edge direction."""
+        graph = self.G.to_undirected() if undirected else self.G
+        try:
+            return nx.shortest_path(graph, src, dst)
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            return None
 
     def get_neighbours(
         self,

@@ -9,6 +9,14 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Added
+- **Knowledge-graph read facade (#115, ADR 002 step 1).** `KnowledgeGraph` gains `node_count`, `edge_count`,
+  `has_edge`, `node_ids`, `nodes_with_data`, `edges_with_data`, `node_attrs`, `successors`, `predecessors`,
+  `edge_data`, `degree`, `in_degrees`, `path_between` and `undirected_snapshot`, and every caller outside
+  `data/graph/` (`mcp_server`, `ast_indexer`, `hybrid`, `router`, `prime_session`, `prune_memory`, the CLI,
+  `cross_service_path`) now uses them instead of reaching into `kg.G`. They return copies/lists, so iterating
+  while the graph changes is safe, and missing nodes give empty results instead of a networkx error. No storage
+  change: this is the prerequisite for putting the graph on SQLite. `tests/test_graph_facade.py` fails if new
+  code touches `.G` outside the graph modules.
 - **Background watcher on macOS and Windows (#148).** `cognirepo watch` is no longer refused outside Linux.
   The detached start was already fork-free; the remaining Linux-only pieces are fixed in the new
   `core/config/procutil.py`: the liveness probe no longer uses `os.kill(pid, 0)` on Windows (where it would

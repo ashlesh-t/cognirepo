@@ -70,7 +70,7 @@ def _detect_blind_spots(index_health: dict) -> list[str]:
         kg = KnowledgeGraph()
         pkl_path = get_path("graph/graph.pkl")
         pkl_exists = _os.path.exists(pkl_path)
-        if kg.G.number_of_nodes() == 0:
+        if kg.node_count() == 0:
             if pkl_exists:
                 spots.append(
                     "Knowledge graph file exists but loaded empty (likely corrupted). "
@@ -237,9 +237,9 @@ def prime_session() -> dict:
     try:
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         kg = KnowledgeGraph()
-        if kg.G.number_of_nodes() > 0:
+        if kg.node_count() > 0:
             top = sorted(
-                [(n, d) for n, d in kg.G.in_degree() if not n.startswith("concept::")],
+                [(n, d) for n, d in kg.in_degrees() if not n.startswith("concept::")],
                 key=lambda x: x[1],
                 reverse=True,
             )[:5]
