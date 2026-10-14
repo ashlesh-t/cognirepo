@@ -28,7 +28,7 @@ worth reporting.
 | What | Typical | Notes |
 |---|---|---|
 | Background **watcher** (`watch --foreground`, or started by `index-repo --daemon`) | **~100–130 MB** resident | A fresh process that loads only the graph and index. Before #127 a watcher forked from `index-repo` carried the whole indexing heap (3.5 GB measured). |
-| `cognirepo serve` (MCP server, one per agent session) | **~220 MB** idle | Includes its watcher thread when it holds the repo's watcher lease. Sessions that do not hold the lease stand by and load nothing extra (#138). |
+| `cognirepo serve` (MCP server, one per agent session) | **~430 MB** right after connect, **~670 MB** after a few queries (measured on a repo with a 190 MB `.cognirepo/`; 3 sessions ≈ 2.0 GB, 5 ≈ 3.4 GB) | Cost is per session and almost none of it is shared (`scripts/measure_serve_footprint.py`, ADR 003). The earlier ~220 MB figure was for a smaller store before the model and index were loaded. Idle eviction (`idle_ttl_seconds`, default 600) only helps sessions that are actually idle. Includes the watcher thread when the session holds the repo's watcher lease; sessions that do not hold it stand by and load nothing extra (#138). |
 | `index-repo --no-embed`, whole repo | **~125 MB peak** | Parse + graph only. |
 | `index-repo` with embeddings | peak is dominated by the embedding model — an ONNX session of roughly **2 GB** resident (recorded in COGNIREPO-107) | The code evicts the model before saving the graph to stay under the circuit breaker. |
 | `.cognirepo/` after a full index of this repo | **~7 MB** (`index/` 4.7 MB, `graph/` 2.4 MB) without embeddings | Add `vector_db/` (Chroma) if you store semantic memory and embed. |
