@@ -15,6 +15,7 @@ import time
 import webbrowser
 from typing import Any
 
+from interface.ui import UI_INSTALL_HINT, ui_extra_missing
 from interface.ui import security as sec
 from interface.ui.session import clear_session, is_listening, read_session
 
@@ -69,6 +70,15 @@ def _url(sess: dict, with_token: bool) -> str:
     return f"{base}#token={sess['token']}" if with_token else base
 
 
+def _require_ui_extra() -> bool:
+    """False (after printing the install hint) when the optional ``[ui]`` extra is absent."""
+    missing = ui_extra_missing()
+    if missing:
+        print(f"cognirepo ui: the control API needs {', '.join(missing)}, which the core install "
+              f"leaves out.\n  Install it with: {UI_INSTALL_HINT}", file=sys.stderr)
+    return not missing
+
+
 def run_ui(args: Any) -> int:
     """Entry point for ``cognirepo ui`` (see docs/UI_API.md). Returns an exit code."""
     repo_root = os.path.abspath(os.getcwd())
@@ -76,6 +86,10 @@ def run_ui(args: Any) -> int:
     port = getattr(args, "port", None)
     unsafe = bool(getattr(args, "unsafe_bind", False))
     origins = list(getattr(args, "allow_origin", None) or [])
+
+    wants_off = getattr(args, "autostart", None) == "off"
+    if not (getattr(args, "stop", False) or wants_off) and not _require_ui_extra():
+        return 1
 
     if getattr(args, "serve", False):
         from interface.ui.server import serve  # pylint: disable=import-outside-toplevel

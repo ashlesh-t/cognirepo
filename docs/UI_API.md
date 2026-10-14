@@ -6,6 +6,9 @@ commands. The machine-readable contract is [`docs/openapi/ui-v1.json`](openapi/u
 (regenerate with `python -m interface.ui.openapi --write`; a test fails if it drifts).
 
 ## Quick start
+
+Requires the optional `[ui]` extra (fastapi, uvicorn): `pip install 'cognirepo[ui]'`, or for a pipx install `pipx inject cognirepo 'cognirepo[ui]'`. Without it `cognirepo ui` prints this hint and exits 1 (`--stop` and `--autostart off` still work).
+
 ```bash
 cognirepo ui                  # start the server if needed, open http://127.0.0.1:8731/#token=…
 cognirepo ui --no-open        # print the tokenised URL instead of opening a browser

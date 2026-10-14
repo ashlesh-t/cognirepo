@@ -182,6 +182,8 @@ pipx install -e '.[dev,security,languages]'
 
 > **Note:** CPU-only embeddings are the default (fastembed/ONNX, no PyTorch/CUDA required).
 > For GPU: `pipx inject cognirepo 'cognirepo[gpu]'` then install torch separately.
+>
+> For the local control API / console (`cognirepo ui`): `pipx inject cognirepo 'cognirepo[ui]'` (or `pip install 'cognirepo[ui]'`). It is not part of the core install.
 
 ### Run
 
