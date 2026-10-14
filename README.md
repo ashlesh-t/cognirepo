@@ -612,6 +612,7 @@ intact graph — see `cognirepo graph restore`), `vector_db/chroma.corrupt-<ts>/
 [docs/RESOURCES.md](docs/RESOURCES.md).
 
 Everything under `.cognirepo/` is `.gitignore`d by default — never committed.
+The control API (`cognirepo ui`) keeps its session token, audit log and autostart choice in the *global* dir, `~/.cognirepo/ui/` (mode 0600), not in the repo.
 Fernet encryption is opt-in at `storage.encrypt: true` in `config.json`; it covers the graph, behaviour
 model, org graph, episodic log and local FAISS store, but **not** the AST index or the default Chroma
 store — see [SECURITY.md](SECURITY.md) for exactly what is and isn't covered.
@@ -713,6 +714,22 @@ some items below have since landed; each is annotated where that's the case.
 - **`cognirepo ask` streaming REPL** — full interactive session with tier routing, session persistence, and sub-agent delegation.
 - **Similarity edges in knowledge graph** — *done (COGNIREPO-202):* post-index FAISS k-NN pass over already-embedded FUNCTION/CLASS symbol vectors adds a `SIMILAR_TO` edge (cosine ≥ 0.80, max 5/node, cross-file only) between near-duplicate symbols, both directions. Gated via `config.json` → `indexing.similarity_edges` (default on below 20k candidate symbols). Weighted (discounted) into `intelligence/retrieval/hybrid.py::_graph_score`.
 - **VS Code / JetBrains extension** — surface `lookup_symbol`, `context_pack`, and `who_calls` directly in the editor sidebar without requiring an MCP-capable host.
+
+---
+
+## Security — local-only control API
+
+`cognirepo ui` starts a **loopback-only** control API (`/api/v1`) and opens the optional console. The model:
+
+- **Binds `127.0.0.1` only.** A non-loopback `--host` (including `0.0.0.0`) is refused unless you pass `--unsafe-bind`, which prints a loud warning.
+- **Per-session random token** required on every request (constant-time compare), delivered in the URL *fragment* (never sent to a server), swapped for an `httpOnly; SameSite=Strict` cookie, then stripped from the URL.
+- **`Host` and `Origin` are validated** (exact match, no wildcard CORS) — blocks DNS rebinding and cross-site requests.
+- **Brute-force lockout** with exponential backoff on bad tokens.
+- **Start/stop only for an allowlist of services** (`watcher`, `metrics`), requiring the token **and** an explicit `confirm: true`; every attempt is written to a local audit log.
+- **No endpoint reads arbitrary files or runs arbitrary commands**, and the UI process is read-only with respect to your index.
+- **Nothing leaves your machine**: no hosted relay, no telemetry, no remote access. Autostart at login is **opt-in** (default off) and still loopback-only.
+
+Details, endpoint reference and the OpenAPI contract: [docs/UI_API.md](docs/UI_API.md).
 
 ---
 
