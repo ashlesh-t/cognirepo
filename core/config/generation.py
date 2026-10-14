@@ -50,6 +50,8 @@ _CURRENT = "CURRENT"
 _PREFIX = "gen-"
 _SCRATCH_PREFIX = ".incoming-"
 _MIRROR_STATS = "MIRROR.json"   # flat path -> recent [size, mtime_ns]; see GenerationStore.resolve
+#: present in a generation from publish until its flat files are linked (see resolve())
+_MIRROR_PENDING = ".mirror-pending"
 
 
 def same_file(a: str, b: str) -> bool:
@@ -160,9 +162,19 @@ class GenerationStore:
         # below, a newer one has necessarily been published, so re-reading CURRENT finds it.
         for _ in range(3):
             n = self.current()
-            if n is None or not os.path.exists(probe):
+            if n is None:
                 break
             d = self.gen_dir(n)
+            if not os.path.exists(probe):
+                # CURRENT is flipped before the flat files are linked, so on the very first
+                # publish the probe is legitimately missing for a moment. Returning the flat
+                # paths here let the caller open them *after* they were linked one at a time and
+                # read a new index with an empty/old metadata. The marker says "mirror not done
+                # yet": read the generation, which is complete. (A deleted flat file with no
+                # marker still means "start from nothing", as before.)
+                if os.path.exists(os.path.join(d, _MIRROR_PENDING)) and os.path.exists(os.path.join(d, names[0])):
+                    return {name: os.path.join(d, name) for name in names}
+                break
             managed = (
                 same_file(probe, os.path.join(d, names[0]))
                 or any(same_file(probe, os.path.join(self.gen_dir(g), names[0]))
@@ -203,6 +215,9 @@ class GenerationStore:
                 write(os.path.join(scratch, name))
             if finalize is not None:
                 finalize(scratch)
+            if mirror:
+                with open(os.path.join(scratch, _MIRROR_PENDING), "w", encoding="ascii") as fh:
+                    fh.write("1\n")      # inside the scratch dir that is renamed into place whole
             for name in os.listdir(scratch):
                 _fsync_file(os.path.join(scratch, name))
             _fsync_dir(scratch)
@@ -220,6 +235,8 @@ class GenerationStore:
                 os.utime(self.gen_dir(cur))
         if mirror:
             self._mirror(n, mirror)
+            with contextlib.suppress(OSError):
+                os.unlink(os.path.join(self.gen_dir(n), _MIRROR_PENDING))
         self._gc(n)
         return n
 
