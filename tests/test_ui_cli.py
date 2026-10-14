@@ -195,3 +195,15 @@ class TestGracefulShutdown:
         assert not sess_file.exists(), "stale session token left on disk"
         audit = (tmp_path / "g" / "ui" / "audit.log").read_text()
         assert "server_start" in audit and "server_stop" in audit
+
+
+def test_run_ui_points_at_the_extra_when_deps_missing(monkeypatch, capsys):
+    monkeypatch.setattr(ui_cli, "ui_extra_missing", lambda: ["fastapi", "uvicorn"])
+    assert ui_cli.run_ui(argparse.Namespace()) == 1
+    assert "pip install 'cognirepo[ui]'" in capsys.readouterr().err
+
+
+def test_run_ui_stop_does_not_need_the_extra(monkeypatch):
+    monkeypatch.setattr(ui_cli, "ui_extra_missing", lambda: ["fastapi"])
+    monkeypatch.setattr(ui_cli, "_stop", lambda: 0)
+    assert ui_cli.run_ui(argparse.Namespace(stop=True)) == 0
