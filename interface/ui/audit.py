@@ -13,7 +13,8 @@ import threading
 import time
 from typing import Any
 
-_SECRET_KEYS = frozenset({"token", "authorization", "cookie", "set-cookie", "password"})
+from core.redact import drop_secrets
+
 _MAX_BYTES = 1_048_576
 
 
@@ -26,7 +27,7 @@ class AuditLog:
         self._lock = threading.Lock()
 
     def log(self, action: str, **fields: Any) -> None:
-        clean = {k: v for k, v in fields.items() if k.lower() not in _SECRET_KEYS}
+        clean = drop_secrets(fields)
         record = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "action": action, **clean}
         line = (json.dumps(record, default=str) + "\n").encode("utf-8")
         with self._lock:

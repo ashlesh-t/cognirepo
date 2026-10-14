@@ -11,17 +11,19 @@ import os
 import time
 from typing import Any
 
-from fastapi import Body, FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi import Body, FastAPI, Header, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StrictBool
 
+from core import events
 from interface.ui import security as sec
+from interface.ui import event_stream
 from interface.ui import models as m
 from interface.ui.audit import AuditLog
 from interface.ui.services import ServiceError, ServiceManager
-from interface.ui.status import API_VERSION, collect_status
+from interface.ui.status import API_VERSION, _store_dir, collect_status
 
 _BOOTSTRAP_JS = """\
 // Swap the one-time URL-fragment token for an httpOnly SameSite=Strict cookie, then strip the URL.
@@ -171,6 +173,26 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
         if download:
             headers["Content-Disposition"] = 'attachment; filename="insights.html"'
         return Response(body, media_type="text/html; charset=utf-8", headers=headers)
+
+    stream_counter = app.state.stream_counter = {"n": 0}
+
+    @app.get("/api/v1/events", summary="Live event stream (SSE): tool calls, watcher re-indexes, service actions",
+             response_class=StreamingResponse,
+             responses={200: {"description": "text/event-stream. `id:` is the event `seq`; send it back as `Last-Event-ID` to resume. "
+                                             "A `: heartbeat` comment is sent every 15 s.",
+                              "content": {"text/event-stream": {"schema": {"type": "string"}}}},
+                        429: {"model": m.ErrorBody, "description": "Too many open streams, or locked out"}})
+    async def events_stream(request: Request, session: str | None = Query(default=None, max_length=64),
+                            types: str | None = Query(default=None, max_length=200, description="comma-separated globs, e.g. `tool.*,graph.delta`"),
+                            replay: int = Query(default=0, ge=0, le=200, description="send the last N events first (ignored with Last-Event-ID)"),
+                            last_event_id: str | None = Header(default=None)) -> Response:
+        if stream_counter["n"] >= event_stream.MAX_STREAMS:
+            return _deny(429, "too_many_streams")
+        gen = event_stream.stream(
+            request.is_disconnected, _store_dir(app.state.repo_root),
+            after=event_stream.parse_last_event_id(last_event_id), replay=replay, session=session,
+            types=events.parse_types(types), counter=stream_counter)
+        return StreamingResponse(gen, media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
 
     @app.get("/api/v1/services", response_model=list[m.ServiceState], summary="State of the allowlisted services")
     def list_services() -> list[dict[str, Any]]:

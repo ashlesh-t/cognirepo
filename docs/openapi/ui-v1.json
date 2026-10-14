@@ -751,6 +751,118 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/events": {
+      "get": {
+        "operationId": "events_stream_api_v1_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session"
+            }
+          },
+          {
+            "description": "comma-separated globs, e.g. `tool.*,graph.delta`",
+            "in": "query",
+            "name": "types",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "comma-separated globs, e.g. `tool.*,graph.delta`",
+              "title": "Types"
+            }
+          },
+          {
+            "description": "send the last N events first (ignored with Last-Event-ID)",
+            "in": "query",
+            "name": "replay",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "send the last N events first (ignored with Last-Event-ID)",
+              "maximum": 200,
+              "minimum": 0,
+              "title": "Replay",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "last-event-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "text/event-stream. `id:` is the event `seq`; send it back as `Last-Event-ID` to resume. A `: heartbeat` comment is sent every 15 s."
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too many open streams, or locked out"
+          }
+        },
+        "summary": "Live event stream (SSE): tool calls, watcher re-indexes, service actions"
+      }
+    },
     "/api/v1/graph": {
       "get": {
         "description": "Read-only, bounded knowledge-graph slice (never the whole graph).",
