@@ -49,6 +49,15 @@ The only token-less responses are the data-free landing page / static console as
 `/metrics` on `127.0.0.1:9090`). Any other name is a `404` before anything else is evaluated. Each service
 maps to fixed code with a fixed argv — nothing from a request reaches a command line.
 
+**Honest results:** a service action returns `state: "failed"` with a machine-readable `reason` (and a short `detail`)
+instead of promising success. Watcher `start`: `not_initialised` (no `.cognirepo/config.json`), `disabled_by_env`
+(`COGNIREPO_NO_WATCHER`), `spawn_failed` (the launcher exited non-zero; `detail` is the last line of its output, kept in
+`<store>/watchers/ui-start.log`). `start` waits up to ~2 s for the watcher to register: `running` with its `pid`, or
+`starting` if it is still loading. Watcher `stop` uses the same escalation as `cognirepo list --stop` (SIGTERM, then
+SIGKILL, bounded to ~11 s): `stopped` (with `detail: "needed SIGKILL"` when escalated) or `failed`/`stop_failed`; a
+watcher embedded in an MCP server is `409 embedded_watcher`. `metrics` start without `prometheus_client` is
+`failed`/`dependency_missing`. The audit log records these as `result: "failed"`.
+
 ### Status codes
 `200` ok · `400` `confirm_required` · `401` missing/invalid token · `403` bad `Host`/`Origin` · `404` unknown service/path ·
 `409` `port_in_use` · `422` invalid parameters · `429` locked out (`Retry-After` seconds) · `501` unsupported platform.

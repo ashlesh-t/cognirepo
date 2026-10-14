@@ -134,3 +134,5 @@ class ServiceState(BaseModel):
     pid: int | None = None
     port: int | None = None
     changed: bool | None = None
+    reason: str | None = None     # set when state == "failed": a machine-readable cause
+    detail: str | None = None

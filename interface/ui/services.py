@@ -13,6 +13,7 @@ anything else happens.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess  # nosec B404 — fixed argv only, see _spawn_watcher
 import sys
@@ -23,6 +24,10 @@ from typing import Any
 from core.config import procutil
 
 ALLOWED: tuple[str, ...] = ("watcher", "metrics", "insights")
+
+_START_WAIT_SECS = 2.0
+_STOP_WAIT_SECS = 8.0
+_KILL_WAIT_SECS = 3.0
 
 
 class ServiceError(Exception):
@@ -51,13 +56,38 @@ class ServiceManager:
         from interface.cli.daemon import is_watcher_running_for_path  # pylint: disable=import-outside-toplevel
         return is_watcher_running_for_path(self.repo_root)
 
-    def _spawn_watcher(self) -> None:
-        # Fixed argv; nothing from the request reaches it.
+    def _watcher_log_path(self) -> str:
+        from core.config.paths import get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+        return os.path.join(get_cognirepo_dir_for_repo(self.repo_root), "watchers", "ui-start.log")
+
+    def _initialised(self) -> bool:
+        from core.config.paths import get_cognirepo_dir_for_repo  # pylint: disable=import-outside-toplevel
+        return os.path.isfile(os.path.join(get_cognirepo_dir_for_repo(self.repo_root), "config.json"))
+
+    def _spawn_watcher(self) -> subprocess.Popen:
+        """Run ``watch --ensure-running`` with its output captured (it used to be discarded, so a
+        failure was invisible). Fixed argv; nothing from the request reaches it."""
         argv = [sys.executable, "-m", "interface.cli.main", "watch", "--path", self.repo_root, "--ensure-running"]
-        subprocess.Popen(  # nosec B603 — fixed argv, no shell
-            argv, cwd=self.repo_root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, **procutil.detach_kwargs(),
-        )
+        log_path = self._watcher_log_path()
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "wb") as log:    # truncated per attempt: it describes only the latest one
+            return subprocess.Popen(  # nosec B603 — fixed argv, no shell
+                argv, cwd=self.repo_root, stdin=subprocess.DEVNULL, stdout=log,
+                stderr=subprocess.STDOUT, **procutil.detach_kwargs(),
+            )
+
+    def _log_tail(self) -> str:
+        try:
+            with open(self._watcher_log_path(), "rb") as fh:
+                lines = fh.read()[-2000:].decode("utf-8", "replace").strip().splitlines()
+        except OSError:
+            return ""
+        return lines[-1][:300] if lines else ""
+
+    @staticmethod
+    def _failed(name: str, reason: str, detail: str = "", **extra: Any) -> dict[str, Any]:
+        return {"name": name, "state": "failed", "pid": None, "changed": False, "reason": reason,
+                "detail": detail, **extra}
 
     def _watcher_status(self) -> dict[str, Any]:
         rec = self._watcher_record()
@@ -66,20 +96,54 @@ class ServiceManager:
     def _watcher_start(self) -> dict[str, Any]:
         if self._watcher_record():
             return {**self._watcher_status(), "changed": False}
-        self._spawn_watcher()
+        if os.environ.get("COGNIREPO_NO_WATCHER"):
+            return self._failed("watcher", "disabled_by_env", "COGNIREPO_NO_WATCHER is set")
+        if not self._initialised():
+            return self._failed("watcher", "not_initialised", "no .cognirepo/ for this repo; run `cognirepo init`")
+        try:
+            proc = self._spawn_watcher()
+        except OSError as exc:
+            return self._failed("watcher", "spawn_failed", str(exc)[:300])
+        # The launcher hands off to a detached watcher and exits; wait briefly so the response says
+        # what happened instead of promising "starting".
+        deadline = time.monotonic() + _START_WAIT_SECS
+        while time.monotonic() < deadline:
+            rec = self._watcher_record()
+            if rec:
+                self._reap_later(proc)
+                return {"name": "watcher", "state": "running", "pid": rec.get("pid"), "changed": True}
+            rc = proc.poll()
+            if rc not in (None, 0):
+                return self._failed("watcher", "spawn_failed", self._log_tail() or f"launcher exited with {rc}")
+            time.sleep(0.1)
+        self._reap_later(proc)
+        # Slow to register (loading the index) is not a failure — but say so rather than "running".
         return {"name": "watcher", "state": "starting", "pid": None, "changed": True}
+
+    @staticmethod
+    def _reap_later(proc: subprocess.Popen) -> None:
+        if proc.poll() is None:
+            threading.Thread(target=proc.wait, daemon=True, name="cognirepo-ui-reap").start()
 
     def _watcher_stop(self) -> dict[str, Any]:
         rec = self._watcher_record()
         if not rec:
             return {**self._watcher_status(), "changed": False}
-        from interface.cli.daemon import _is_alive, stop_watcher  # pylint: disable=import-outside-toplevel
+        from interface.cli.daemon import stop_watcher_and_wait  # pylint: disable=import-outside-toplevel
         pid = rec["pid"]
-        stop_watcher(str(pid))
-        deadline = time.monotonic() + 5.0  # stop_watcher only *sends* SIGTERM (see #126)
-        while time.monotonic() < deadline and _is_alive(pid):
-            time.sleep(0.1)
-        return {"name": "watcher", "state": "stopped" if not _is_alive(pid) else "stopping", "pid": pid, "changed": True}
+        # Same stop as `cognirepo list --stop`: SIGTERM, then SIGKILL if it ignores it, and the
+        # registration is removed only once the process is really gone. Bounded waits keep the request short.
+        outcome = stop_watcher_and_wait(str(pid), timeout=_STOP_WAIT_SECS, kill_wait=_KILL_WAIT_SECS)
+        if outcome in ("stopped", "killed"):
+            return {"name": "watcher", "state": "stopped", "pid": pid, "changed": True,
+                    **({"detail": "needed SIGKILL"} if outcome == "killed" else {})}
+        if outcome == "not_found":
+            return {**self._watcher_status(), "changed": False}
+        if outcome == "embedded":
+            raise ServiceError(409, "embedded_watcher",
+                               "this watcher is a thread inside an MCP server; stop that agent session instead")
+        return {**self._failed("watcher", "stop_failed", "the watcher is still alive after SIGTERM/SIGKILL"),
+                "pid": pid, "changed": True}
 
     # ── metrics (in-process /metrics server, loopback only) ──────────────────
     def _metrics_status(self) -> dict[str, Any]:
@@ -91,6 +155,8 @@ class ServiceManager:
         with self._lock:
             if self._metrics_server is not None:
                 return {**self._metrics_status(), "changed": False}
+            if importlib.util.find_spec("prometheus_client") is None:    # the scrape endpoint would 501
+                return self._failed("metrics", "dependency_missing", "prometheus_client is not installed")
             from interface.cli.metrics_server import create_metrics_server  # pylint: disable=import-outside-toplevel
             try:
                 server = create_metrics_server("127.0.0.1", self.metrics_port)

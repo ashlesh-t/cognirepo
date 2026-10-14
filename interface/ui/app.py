@@ -195,7 +195,9 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
         except ServiceError as exc:
             _audit("error", code=exc.code)
             return _deny(exc.status, exc.code)
-        _audit("ok", state=result.get("state"), changed=result.get("changed"))
+        failed = result.get("state") == "failed"
+        _audit("failed" if failed else "ok", state=result.get("state"), changed=result.get("changed"),
+               **({"reason": result.get("reason")} if failed else {}))
         return JSONResponse(result)
 
     @app.post("/api/v1/services/{name}/start", response_model=m.ServiceState, summary="Start an allowlisted service (needs confirm=true)",
