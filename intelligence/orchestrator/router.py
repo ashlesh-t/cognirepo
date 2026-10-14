@@ -506,12 +506,12 @@ def _who_calls(func_name: str, _bundle) -> str | None:
             return None
 
         kg = KnowledgeGraph()
-        graph = kg.G
+        graph = kg
         target = f"symbol::{func_name}"
 
-        if not graph.has_node(target):
+        if not graph.node_exists(target):
             lower_f = func_name.lower()
-            for n in graph.nodes():
+            for n in graph.node_ids():
                 if n.startswith("symbol::") and n[8:].lower() == lower_f:
                     target = n
                     func_name = n[8:]
@@ -519,7 +519,7 @@ def _who_calls(func_name: str, _bundle) -> str | None:
             else:
                 return f"No call graph data for `{func_name}`."
 
-        callers = list(graph.predecessors(target))
+        callers = graph.predecessors(target)
         if not callers:
             return f"No recorded callers for `{func_name}`."
         lines = [f"Callers of `{func_name}`:"]
@@ -555,8 +555,7 @@ def _graph_stats() -> str | None:
     try:
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         kg = KnowledgeGraph()
-        graph = kg.G
-        return f"Knowledge graph: {graph.number_of_nodes()} nodes, {graph.number_of_edges()} edges."
+        return f"Knowledge graph: {kg.node_count()} nodes, {kg.edge_count()} edges."
     except Exception:  # pylint: disable=broad-except
         return None
 

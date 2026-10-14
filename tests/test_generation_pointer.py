@@ -111,6 +111,36 @@ class TestGenerationStore:
         st.publish({"a": _put(0, "two")}, mirror={"a": flat})
         assert st.resolve({"a": flat}) == {"a": os.path.join(st.gen_dir(2), "a")}
 
+    def test_first_publish_window_before_any_flat_link_reads_the_generation(self, tmp_path):
+        """CURRENT is flipped before the flat files exist. A reader resolving in that window used to get
+        the flat paths, then open them after they were linked one at a time: new index, empty metadata."""
+        st = GenerationStore(str(tmp_path / "g"))
+        flat = {"a": str(tmp_path / "flat_a"), "b": str(tmp_path / "flat_b")}
+        seen = {}
+        real_link = __import__("core.config.generation", fromlist=["_link_over"])._link_over
+
+        def spy(src, dst, on_staged=None):
+            seen.setdefault("before_first_link", st.resolve(flat))
+            return real_link(src, dst, on_staged)
+
+        import core.config.generation as gmod
+        gmod._link_over, orig = spy, gmod._link_over
+        try:
+            st.publish({"a": _put(0, "x"), "b": _put(0, "y")}, mirror=flat)
+        finally:
+            gmod._link_over = orig
+        gen = st.gen_dir(1)
+        assert seen["before_first_link"] == {"a": os.path.join(gen, "a"), "b": os.path.join(gen, "b")}
+        assert not os.path.exists(os.path.join(gen, ".mirror-pending"))      # cleared once linked
+        assert st.resolve(flat)["a"] == os.path.join(gen, "a")
+
+    def test_deleted_flat_file_still_means_start_over(self, tmp_path):
+        st = GenerationStore(str(tmp_path / "g"))
+        flat = {"a": str(tmp_path / "flat_a")}
+        st.publish({"a": _put(0, "x")}, mirror=flat)
+        os.unlink(flat["a"])                               # user resets the store by hand
+        assert st.resolve(flat) == flat
+
     def test_hand_edit_wins_without_hard_links(self, tmp_path, monkeypatch):
         self._no_links(monkeypatch)
         st = GenerationStore(str(tmp_path / "g"))

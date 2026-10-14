@@ -9,6 +9,14 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Added
+- **Knowledge-graph read facade (#115, ADR 002 step 1).** `KnowledgeGraph` gains `node_count`, `edge_count`,
+  `has_edge`, `node_ids`, `nodes_with_data`, `edges_with_data`, `node_attrs`, `successors`, `predecessors`,
+  `edge_data`, `degree`, `in_degrees`, `path_between` and `undirected_snapshot`, and every caller outside
+  `data/graph/` (`mcp_server`, `ast_indexer`, `hybrid`, `router`, `prime_session`, `prune_memory`, the CLI,
+  `cross_service_path`) now uses them instead of reaching into `kg.G`. They return copies/lists, so iterating
+  while the graph changes is safe, and missing nodes give empty results instead of a networkx error. No storage
+  change: this is the prerequisite for putting the graph on SQLite. `tests/test_graph_facade.py` fails if new
+  code touches `.G` outside the graph modules.
 - **Background watcher on macOS and Windows (#148).** `cognirepo watch` is no longer refused outside Linux.
   The detached start was already fork-free; the remaining Linux-only pieces are fixed in the new
   `core/config/procutil.py`: the liveness probe no longer uses `os.kill(pid, 0)` on Windows (where it would
@@ -51,6 +59,12 @@ Versioning: [Semantic Versioning](https://semver.org/)
   the integrity epic's reader/writer rules made normative; ordered migration plan that unblocks #115.
 
 ### Fixed
+- **Generation pointer: first-publish reader race (#140).** `GenerationStore.resolve()` returned the flat file
+  paths while a store's very first publish was still linking them, so a reader could open a new
+  `semantic.index` with an empty `semantic_metadata.json` (`ntotal=1 meta=0`; seen as an intermittent failure of
+  `test_reader_never_sees_index_and_metadata_from_different_saves` under load, 2 in ~40 runs). A `.mirror-pending`
+  marker now makes `resolve()` read the (complete) generation until the flat files are linked; a flat file the
+  user deleted by hand still means "start from nothing".
 - **Files deleted in a commit no longer linger in the index (#169).** `index-repo --files` (the post-commit
   hook) and `--changed-only` used to skip a path that was no longer on disk, so a deleted file kept answering
   `lookup_symbol` / `context_pack` / `who_calls` and stayed in FAISS and the graph. A listed path that is gone
@@ -461,6 +475,25 @@ Versioning: [Semantic Versioning](https://semver.org/)
   string literals (`"event"`, `"metadata"`, `"time"`, and `"type"` within metadata). Pure
   refactor, no behavior change — both files now import `EVENT`/`METADATA`/`TIME`/`METADATA_TYPE`
   from the new module.
+- **#147 — insights report in the control API.** `GET /api/v1/insights` (`{exists, generated_at, bytes}`) and
+  `GET /api/v1/insights/report` (the HTML, read-only, sandboxed CSP, `?download=1`), served only from the fixed
+  `.claude/insights/<repo>-insights.html` path — symlinks, symlinked directories and oversized files are refused
+  and no client-supplied path exists. `insights` is a third service in the allowlist: `start` (with `confirm`)
+  regenerates the report via `cognirepo insights`. The `watcher` service is no longer refused off Linux (#148).
+- **#129 — local-only control API + `cognirepo ui`.** Versioned `/api/v1` served by a new foreground
+  server (FastAPI/uvicorn, already dependencies): `GET status | graph | harness | services`,
+  `POST services/{watcher|metrics}/{start|stop}` (allowlist, strict `confirm: true`, fixed argv, audit-logged),
+  plus a committed OpenAPI contract (`docs/openapi/ui-v1.json`, drift-tested) and `docs/UI_API.md`.
+  Security: loopback-only bind (`--unsafe-bind` to override, with a loud warning), per-session random token
+  compared in constant time, exact `Host`/`Origin` allowlists (no wildcard CORS), bad-token lockout with
+  exponential backoff, CSP/nosniff/no-store headers, token delivered in the URL fragment and swapped for an
+  `httpOnly; SameSite=Strict` cookie, no endpoint that reads arbitrary files or runs commands. The UI process
+  is read-only and never imports `ASTIndexer`/`LocalVectorDB`. `cognirepo ui` spawns the server detached,
+  reuses a running one, `--stop` stops it, and prints install instructions if the optional `cognirepo-console`
+  package is missing (nothing is fetched at runtime). Opt-in autostart (`--autostart on|off`, first-run
+  prompt defaults to No) via systemd `--user` / launchd / Task Scheduler, idempotent and loopback-only.
+  `_cmd_list_mcp` now shares its config-source list with the new `interface/tools/agent_clients.py`;
+  `metrics_server` gains `create_metrics_server()`.
 
 ### Fixed
 - **#98/#105 — likely root cause found: `cognirepo serve`'s auto-watcher had the same

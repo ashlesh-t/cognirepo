@@ -2441,16 +2441,16 @@ class ASTIndexer:
         """
         from data.graph.knowledge_graph import EdgeType, NodeType  # pylint: disable=import-outside-toplevel
 
-        if self.graph.G.number_of_nodes() == 0:
+        if self.graph.node_count() == 0:
             return
 
         rev = self.index_data.get("reverse_index", {})
         if names is not None:
             stub_nodes = [
-                f"symbol::{n}" for n in names if self.graph.G.has_node(f"symbol::{n}")
+                f"symbol::{n}" for n in names if self.graph.node_exists(f"symbol::{n}")
             ]
         else:
-            stub_nodes = [n for n in list(self.graph.G.nodes()) if n.startswith("symbol::")]
+            stub_nodes = [n for n in list(self.graph.node_ids()) if n.startswith("symbol::")]
 
         for stub in stub_nodes:
             fn_name = stub[len("symbol::"):]
@@ -2460,16 +2460,16 @@ class ASTIndexer:
                 # Unambiguous — redirect edges to the real node
                 file_path, line = locations[0][0], locations[0][1]
                 real_node = f"{file_path}::{fn_name}"
-                if not self.graph.G.has_node(real_node):
+                if not self.graph.node_exists(real_node):
                     self.graph.add_node(real_node, NodeType.FUNCTION,
                                         file=file_path, line=line)
                 # Redirect outgoing edges (CALLS → callers)
-                for successor in list(self.graph.G.successors(stub)):
-                    if not self.graph.G.has_edge(real_node, successor):
+                for successor in list(self.graph.successors(stub)):
+                    if not self.graph.has_edge(real_node, successor):
                         self.graph.copy_edge(stub, successor, real_node, successor)
                 # Redirect incoming edges (CALLED_BY from callers)
-                for predecessor in list(self.graph.G.predecessors(stub)):
-                    if not self.graph.G.has_edge(predecessor, real_node):
+                for predecessor in list(self.graph.predecessors(stub)):
+                    if not self.graph.has_edge(predecessor, real_node):
                         self.graph.copy_edge(predecessor, stub, predecessor, real_node)
                 self.graph.remove_node(stub)
 
@@ -2508,7 +2508,7 @@ class ASTIndexer:
         Must run AFTER _batch_embed_pending() (faiss_index/faiss_meta populated) and
         _resolve_call_stubs() (real symbol nodes exist, not just stubs).
         """
-        if self.graph.G.number_of_nodes() == 0 or self.faiss_index is None or self.faiss_index.ntotal == 0:
+        if self.graph.node_count() == 0 or self.faiss_index is None or self.faiss_index.ntotal == 0:
             return 0
 
         candidates = [
@@ -2524,7 +2524,7 @@ class ASTIndexer:
 
         for fid, meta in candidates:
             node_id = make_node_id(meta["type"], meta["name"], meta["file"])
-            if not self.graph.G.has_node(node_id) or out_degree.get(node_id, 0) >= _SIMILARITY_MAX_PER_NODE:
+            if not self.graph.node_exists(node_id) or out_degree.get(node_id, 0) >= _SIMILARITY_MAX_PER_NODE:
                 continue
             try:
                 vec = self.faiss_index.reconstruct(int(fid)).reshape(1, -1)
@@ -2546,15 +2546,15 @@ class ASTIndexer:
                 if cosine < _SIMILARITY_COSINE_THRESHOLD:
                     continue
                 cand_node_id = make_node_id(cand_meta["type"], cand_meta["name"], cand_meta["file"])
-                if cand_node_id == node_id or not self.graph.G.has_node(cand_node_id):
+                if cand_node_id == node_id or not self.graph.node_exists(cand_node_id):
                     continue
                 if out_degree.get(cand_node_id, 0) >= _SIMILARITY_MAX_PER_NODE:
                     continue
-                if not self.graph.G.has_edge(node_id, cand_node_id):
+                if not self.graph.has_edge(node_id, cand_node_id):
                     self.graph.add_edge(node_id, cand_node_id, EdgeType.SIMILAR_TO, weight=cosine)
                     out_degree[node_id] = out_degree.get(node_id, 0) + 1
                     edges_added += 1
-                if not self.graph.G.has_edge(cand_node_id, node_id):
+                if not self.graph.has_edge(cand_node_id, node_id):
                     self.graph.add_edge(cand_node_id, node_id, EdgeType.SIMILAR_TO, weight=cosine)
                     out_degree[cand_node_id] = out_degree.get(cand_node_id, 0) + 1
                     edges_added += 1
@@ -2611,7 +2611,7 @@ class ASTIndexer:
 
         tagged = 0
         dispatch_node = make_node_id("CONCEPT", "dynamic_dispatch")
-        for node_id, data in list(self.graph.G.nodes(data=True)):
+        for node_id, data in list(self.graph.nodes_with_data()):
             if data.get("type") not in (NodeType.FUNCTION, NodeType.CLASS):
                 continue
             name = node_id.rsplit("::", 1)[-1]

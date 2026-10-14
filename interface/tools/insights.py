@@ -322,13 +322,17 @@ def _render_markdown(model: dict, generated_at: str, updated_at: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def report_path(repo_root: str) -> str:
+    """The ONE place the HTML report lives: ``<repo>/.claude/insights/<slug>-insights.html``."""
+    repo_name = os.path.basename(os.path.abspath(repo_root).rstrip(os.sep))
+    return os.path.join(repo_root, ".claude", "insights", f"{_slugify(repo_name)}-insights.html")
+
+
 def write(html_str: str, repo_root: str) -> str:
     """Write html_str to .claude/insights/<repoName>-insights.html, creating the
     directory if absent. Atomic (tmp + os.replace). Returns the written path.
     """
-    repo_name = os.path.basename(os.path.abspath(repo_root).rstrip(os.sep))
-    slug = _slugify(repo_name)
-    path = os.path.join(repo_root, ".claude", "insights", f"{slug}-insights.html")
+    path = report_path(repo_root)
     _atomic_write(path, html_str)
     return path
 
