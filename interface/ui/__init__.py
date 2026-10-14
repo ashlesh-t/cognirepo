@@ -8,7 +8,8 @@
 
 import importlib.util
 
-UI_INSTALL_HINT = "pip install 'cognirepo[ui]'"
+UI_INSTALL_HINT = ("pip install 'cognirepo[ui]'"
+                   "\n  (installed with pipx? run: pipx inject cognirepo 'cognirepo[ui]')")
 _UI_MODULES = ("fastapi", "uvicorn")
 
 
