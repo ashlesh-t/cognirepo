@@ -194,6 +194,8 @@ _REPO = pathlib.Path(__file__).resolve().parent.parent
 # (file, enclosing function) -> why a bare write is acceptable here. Anything else that
 # truncates a file in place must go through core/config/atomic.py (COGNIREPO-134).
 _ALLOWED: dict[tuple[str, str], str] = {
+    ("core/config/generation.py", "publish"): "writes the mirror-pending marker into the scratch dir that is "
+                                              "fsynced and renamed into place whole",
     ("data/graph/journal.py", "acquire"): "pid sidecar for the writer lease; advisory",
     ("data/graph/journal.py", "append_segment"): "append-only fsynced log, not a rewrite",
     ("intelligence/orchestrator/router.py", "_write_error_log"): "append-only log",

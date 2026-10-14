@@ -3225,6 +3225,7 @@ def _print_help() -> None:
     _row("serve",             "Start MCP stdio server (used by Claude Code)")
     _row("watch",             "Manage background file-watcher daemon")
     _row("metrics",           "Serve Prometheus /metrics endpoint (port 9090)")
+    _row("ui",                "Open the local-only control API + Engram console (127.0.0.1)")
     _row("export-spec",       "Export OpenAI/Cursor tool specs to adapters/")
 
     # ── System ────────────────────────────────────────────────────────────────
@@ -3488,15 +3489,10 @@ def _cmd_update_directives() -> int:
 
 def _cmd_list_mcp() -> None:
     """Print MCP server registrations from all known config locations."""
-    sources = [
-        ("Project .mcp.json",             ".mcp.json",                        "mcpServers"),
-        ("Project .claude/settings.json", ".claude/settings.json",            "mcpServers"),
-        ("Global ~/.claude.json",         os.path.expanduser("~/.claude.json"), "mcpServers"),
-        ("Cursor .cursor/mcp.json",       ".cursor/mcp.json",                 "mcpServers"),
-        ("VS Code .vscode/mcp.json",      ".vscode/mcp.json",                 "servers"),
-    ]
+    from interface.tools.agent_clients import MCP_SOURCES  # pylint: disable=import-outside-toplevel
     found_any = False
-    for label, path, key in sources:
+    for label, path, key in [(lbl, os.path.expanduser(p), k) for lbl, p, k, _client in MCP_SOURCES
+                             if lbl != "Gemini CLI ~/.gemini/settings.json"]:
         if not os.path.exists(path):
             continue
         try:
@@ -4332,6 +4328,23 @@ def _main():
     p_metrics.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     p_metrics.add_argument("--port", type=int, default=9090, help="Port to listen on (default: 9090)")
 
+    # ui — local-only control API + console (COGNIREPO-129)
+    p_ui = sub.add_parser("ui", help="Start the local-only control API and open the Engram console")
+    p_ui.add_argument("--host", default="127.0.0.1",
+                      help="Bind address (default 127.0.0.1; non-loopback is refused without --unsafe-bind)")
+    p_ui.add_argument("--port", type=int, default=None, help="Port (default 8731, or a free port if busy)")
+    p_ui.add_argument("--no-open", action="store_true", default=False, help="Do not open a browser")
+    p_ui.add_argument("--serve", action="store_true", default=False,
+                      help="Run the server in the foreground (used internally and by autostart)")
+    p_ui.add_argument("--stop", action="store_true", default=False, help="Stop the running UI server")
+    p_ui.add_argument("--autostart", choices=("on", "off"), default=None,
+                      help="Enable/disable starting the console at login (systemd --user / launchd / Task Scheduler). "
+                           "Always loopback-only. Opt-in; off by default.")
+    p_ui.add_argument("--unsafe-bind", action="store_true", default=False,
+                      help="DANGEROUS: allow a non-loopback bind address")
+    p_ui.add_argument("--allow-origin", action="append", default=None, metavar="ORIGIN",
+                      help="Extra exact Origin allowed (e.g. http://127.0.0.1:5173). Never a wildcard.")
+
     # list — process / daemon management
     p_list = sub.add_parser("list", help="List MCP servers, orgs, and running daemons")
     p_list.add_argument(
@@ -4429,7 +4442,7 @@ def _main():
 
     # ── init guard: require .cognirepo/config.json for all storage commands ──
     _INIT_EXEMPT = {"init", "setup", "doctor", "migrate-config", "setup-env", "metrics",
-                    "list", "delete", None}
+                    "list", "delete", "ui", None}
     if args.command not in _INIT_EXEMPT:
         import pathlib  # pylint: disable=import-outside-toplevel
         from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
@@ -4475,6 +4488,10 @@ def _main():
         from interface.cli.metrics_server import run_metrics_server  # pylint: disable=import-outside-toplevel
         run_metrics_server(host=args.host, port=args.port)
         sys.exit(0)
+
+    if args.command == "ui":
+        from interface.ui.cli import run_ui  # pylint: disable=import-outside-toplevel
+        sys.exit(run_ui(args))
 
     if args.command == "init":
         # interactive=True runs the wizard; --no-index or --non-interactive skips it

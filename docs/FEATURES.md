@@ -178,6 +178,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | `cognirepo init --non-interactive` | ✅ | Uses all defaults; no prompts |
 | `cognirepo index-repo [path]` | ✅ | AST index + FAISS ingest + graph build |
 | `cognirepo serve` | ✅ | MCP stdio server |
+| `cognirepo ui` | ✅ | Local-only control API (`/api/v1`) + console launcher; `--autostart on\|off`, `--stop`. See [UI_API.md](UI_API.md) |
 | `cognirepo watch` | ✅ | File watcher (foreground or daemon) |
 | `cognirepo watch --ensure-running` | ✅ | Start if heartbeat stale |
 | `cognirepo store-memory <text>` | ✅ | Direct memory storage |
@@ -289,6 +290,7 @@ These were documented here as shipped but no longer exist; they are listed so no
 | MIT license headers | ✅ | All source files have SPDX headers |
 | CI security gates | ✅ | Bandit (HIGH), TruffleHog (--only-verified), Trivy (CRITICAL/HIGH), pip-audit |
 | Secret scanning in CI | ✅ | TruffleHog on full git history |
+| Local control API hardening | ✅ | `interface/ui/security.py`: loopback-only bind (`--unsafe-bind` to override), per-session token (constant-time), exact Host/Origin allowlists, bad-token lockout/backoff, `confirm`-gated allowlisted service control, local audit log (COGNIREPO-129) |
 
 ---
 
@@ -311,7 +313,7 @@ These were documented here as shipped but no longer exist; they are listed so no
 
 ## 15. Test Coverage
 
-136 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+140 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
 for the current test-function count). This table is representative, not exhaustive — see
 `tests/` for the full list. This count is checked by `tests/test_docs_sync.py`, which fails if it drifts
 more than 5 files from the real glob count (a small tolerance, so concurrent PRs that each add
@@ -345,7 +347,7 @@ a test file don't collide on this line).
 |---------|--------|-------|
 | ChromaDB backend (functional) | ⚠️ | Adapter exists but requires manual `pip install chromadb`; untested in CI |
 | Vertex AI adapter | 🔲 | Not in codebase |
-| Web UI / dashboard | 🔲 | No web frontend; CLI + REST only |
+| Web UI / dashboard | ⚠️ | `cognirepo ui` ships the local-only control API and a minimal status page; the full console is the separate optional package `cognirepo-console` (not in this repo) |
 | Automatic API key rotation | 🔲 | Keys loaded from env vars; no rotation logic |
 | Multi-project shared memory | 🔲 | Each `.cognirepo/` is project-scoped; no cross-project retrieval |
 | CogniRepo Cloud sync | 🔲 | All storage is strictly local |
