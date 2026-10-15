@@ -41,6 +41,7 @@ The only token-less responses are the data-free landing page / static console as
 | `GET` | `/api/v1/harness` | Which agent clients (Claude Code, Cursor, VS Code, Gemini CLI) have the CogniRepo MCP server configured — names only, never args/env — plus a fixed-field summary of the shared last context (no query text) |
 | `GET` | `/api/v1/insights` | `{exists, generated_at, bytes}` for the repo's insights report (`.claude/insights/<repo>-insights.html`) |
 | `GET` | `/api/v1/insights/report` | The report HTML, read-only, from that one fixed path (no path/name parameter exists). Sent with `Content-Security-Policy: sandbox; default-src 'none'` so it can sit in an `<iframe sandbox>` (`frame-ancestors 'self'`); `?download=1` sends it as an attachment. `404 no_report` if absent, if the path is a symlink (or under one), or if it exceeds 8 MiB |
+| `GET` | `/api/v1/events` | Live event stream (SSE). See [Event stream](#event-stream) |
 | `GET` | `/api/v1/services` | State of the allowlisted services |
 | `POST` | `/api/v1/services/{name}/start` | Start a service. Body must be `{"confirm": true}` (strict boolean) |
 | `POST` | `/api/v1/services/{name}/stop` | Stop a service. Body must be `{"confirm": true}` |
@@ -55,6 +56,34 @@ maps to fixed code with a fixed argv — nothing from a request reaches a comman
 
 ### Stability
 `/api/v1` is additive-only: fields may be added, never removed or retyped. A breaking change ships as `/api/v2`.
+
+## Event stream
+`GET /api/v1/events` is a `text/event-stream` fed by `<store>/events/events.jsonl` (mode 0600, rotated at 5 MiB with one
+`.1` backup). MCP tool calls, watcher re-indexes and service start/stop append to it; this process only reads it.
+Same auth as every other endpoint (token or cookie, Host/Origin checks, lockout); `Cache-Control: no-store`.
+
+* `id:` is the event `seq` (strictly increasing across processes, survives rotation). `Last-Event-ID` resumes after it
+  (backup file first); without it only new events are sent, or `?replay=N` (≤200) sends the last N first.
+* `?session=<session_id>` and `?types=tool.*,graph.delta` (comma-separated globs) filter server-side.
+* `retry: 3000` is sent first and a `: heartbeat` comment every 15 s. At most 8 concurrent streams (`429 too_many_streams`).
+  A stream is cancelled when the server shuts down.
+
+Event (`data:` JSON): `seq`, `ts` (UTC), `type`, plus per type:
+
+| `type` | extra fields |
+|--------|--------------|
+| `tool.start` | `tool`, `trace_id`, `session_id`, `args_summary` |
+| `tool.end` | `tool`, `trace_id`, `session_id`, `dur_ms`, `result_summary` |
+| `tool.error` | `tool`, `trace_id`, `session_id`, `dur_ms`, `error` (exception class only), `retryable` (store busy) |
+| `tool.shed` | `tool`, `session_id`, `reason` (`circuit_open` \| `congestion`) |
+| `watcher.reindex` | `session_id`, `reindexed[]`, `removed[]`, `error` |
+| `service` | `service`, `action`, `state`, `ok` |
+| `graph.delta`, `prune` | reserved (#209, #213) |
+
+Lists are capped at 50 entries (`*_truncated: true`); summaries at 200 chars; fields named like secrets (`token`,
+`password`, `api_key`, …) are dropped. Writing never blocks or fails the writer (a held lock for >0.25 s drops the event).
+**Privacy:** `args_summary` holds the tool's arguments (e.g. a search query) and free text cannot be scrubbed. Set
+`COGNIREPO_EVENTS_METADATA_ONLY=1` to omit `args_summary`/`result_summary`, or `COGNIREPO_EVENTS=0` to write no events.
 
 ## Security model
 | Threat | Mitigation |

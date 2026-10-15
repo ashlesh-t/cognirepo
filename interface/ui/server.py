@@ -93,7 +93,9 @@ def build(repo_root: str, host: str = "127.0.0.1", port: int | None = None, unsa
     cfg = sec.SecurityConfig(token=token, port=actual_port, extra_origins=tuple(allow_origins))
     audit = AuditLog(get_global_path("ui/audit.log"))
     app = create_app(cfg, repo_root, audit)
-    config = uvicorn.Config(app, log_level="warning", access_log=False, lifespan="on")
+    # timeout_graceful_shutdown: an open SSE stream (/api/v1/events) never finishes by itself, and uvicorn
+    # otherwise waits for every connection — SIGTERM would hang. Streams are cancelled after 2 s.
+    config = uvicorn.Config(app, log_level="warning", access_log=False, lifespan="on", timeout_graceful_shutdown=2)
     return Built(_make_server_class()(config), sock, token, actual_port, host, audit)
 
 
