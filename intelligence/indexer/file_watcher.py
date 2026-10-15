@@ -366,6 +366,10 @@ class RepoFileHandler(FileSystemEventHandler):
             atomic_json_dump(path, record, indent=2, fsync=False)
         except Exception as exc:  # pylint: disable=broad-except
             print(f"[watcher] failed to write last_watcher_reindex.json: {exc}", file=sys.stderr)
+        if reindexed or removed or error:    # live event for the console (#207); best-effort, never raises
+            from core import events  # pylint: disable=import-outside-toplevel
+            events.emit("watcher.reindex", store_dir=str(get_cognirepo_dir_for_repo(self.repo_root)),
+                        session_id=self.session_id, reindexed=reindexed, removed=removed, error=error)
 
     # ── mutate-only helpers (no save/side-effects — used by flush()'s batch) ──
 

@@ -483,6 +483,24 @@ def _annotate_with_symbol(repo_list: list[dict], symbol: str) -> list[dict]:
     return repo_list
 
 
+def _events_summarize(kwargs: dict) -> str:
+    try:
+        from core.events import summarize_args  # pylint: disable=import-outside-toplevel
+        return summarize_args(kwargs)
+    except Exception:  # pylint: disable=broad-except
+        return ""
+
+
+def _emit_tool_event(type_: str, tool_name: str, trace_id: str | None = None, **fields) -> None:
+    """Best-effort live event for the Engram console (#207). Never raises, never blocks a tool call."""
+    try:
+        from core import events  # pylint: disable=import-outside-toplevel
+        sid = (_MCP_SESSION or {}).get("session_id")
+        events.emit(type_, tool=tool_name, trace_id=trace_id, session_id=sid, **fields)
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
 def _traced(tool_name: str, fn, *args, **kwargs):
     """
     Run a tool function with:
@@ -499,6 +517,7 @@ def _traced(tool_name: str, fn, *args, **kwargs):
         get_breaker().check()
     except CircuitOpenError as exc:
         logger.warning("mcp.tool.shed_load tool=%s reason=%s", tool_name, exc)
+        _emit_tool_event("tool.shed", tool_name, reason="circuit_open")
         return {"error": str(exc), "shed": True}
 
     # ── concurrency gate ─────────────────────────────────────────────────────
@@ -511,10 +530,13 @@ def _traced(tool_name: str, fn, *args, **kwargs):
             "Retry in a moment or increase COGNIREPO_CB_MAX_CONCURRENT."
         )
         logger.warning("mcp.tool.congestion tool=%s", tool_name)
+        _emit_tool_event("tool.shed", tool_name, reason="congestion")
         return {"error": msg, "shed": True}
 
     tid = new_trace_id()
     logger.info("mcp.tool.start", extra={"tool": tool_name, "trace_id": tid})
+    _t0 = time.monotonic()
+    _emit_tool_event("tool.start", tool_name, tid, args_summary=_events_summarize(kwargs))
     try:
         result = fn(*args, **kwargs)
         logger.info("mcp.tool.end", extra={"tool": tool_name, "status": "ok"})
@@ -528,6 +550,8 @@ def _traced(tool_name: str, fn, *args, **kwargs):
             if isinstance(result, list) else "done"
         )
         _record_mcp_tool_call(tool_name, str(_query)[:200], _result_summary)
+        _emit_tool_event("tool.end", tool_name, tid, dur_ms=int((time.monotonic() - _t0) * 1000),
+                         result_summary=_result_summary)
         return result
     except LockTimeout as exc:
         # Another process held a store lock longer than we were willing to wait (StoreBusy from
@@ -536,9 +560,13 @@ def _traced(tool_name: str, fn, *args, **kwargs):
         # agent plainly that it can retry, instead of a filelock traceback (COGNIREPO-141).
         logger.warning("mcp.tool.store_busy tool=%s lock=%s", tool_name,
                        getattr(exc, "lock_path", None) or getattr(exc, "lock_file", "?"))
+        _emit_tool_event("tool.error", tool_name, tid, dur_ms=int((time.monotonic() - _t0) * 1000),
+                         error="StoreBusy", retryable=True)
         return {"error": busy_message(exc), "busy": True, "retryable": True, "tool": tool_name}
-    except Exception:
+    except Exception as exc:
         logger.exception("mcp.tool.error", extra={"tool": tool_name})
+        _emit_tool_event("tool.error", tool_name, tid, dur_ms=int((time.monotonic() - _t0) * 1000),
+                         error=type(exc).__name__)    # the class only: a message may carry user data
         raise
     finally:
         _TOOL_SEMAPHORE.release()

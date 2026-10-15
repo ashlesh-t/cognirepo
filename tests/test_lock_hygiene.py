@@ -465,7 +465,10 @@ class TestAnyLockTimeoutIsReportedAsBusy:
         import pathlib
         import re
         root = pathlib.Path(__file__).resolve().parents[1]
-        allowed = {"core/config/lock.py", "data/graph/journal.py"}      # store_lock itself; the lease (JournalBusy)
+        # store_lock itself; the lease (JournalBusy); the event log's leaf lock (#207): emit() runs inside
+        # store_lock sections (watcher flush) and must not nest a second store lock, so it uses its own
+        # lock with a 0.25 s timeout and DROPS the event on contention rather than ever waiting.
+        allowed = {"core/config/lock.py", "data/graph/journal.py", "core/events.py"}
         offenders = []
         for sub in ("core", "data", "intelligence", "interface"):
             for p in (root / sub).rglob("*.py"):
