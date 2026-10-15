@@ -56,7 +56,7 @@ def reset_cache() -> None:
 
 
 def _node(graph, node_id: str) -> dict[str, Any]:
-    data = graph.G.nodes[node_id]
+    data = graph.node_attrs(node_id)
     out: dict[str, Any] = {"id": node_id}
     for key in _NODE_KEYS:
         if key in data:
@@ -89,15 +89,15 @@ def graph_view(node: str | None = None, depth: int = 1, limit: int = 200) -> dic
             result["found"] = False
             return result
         sub = kg.subgraph_around(node, radius=depth, max_nodes=limit, max_edges=limit * 3)
-        ids = [n["node_id"] for n in sub.get("nodes", []) if n.get("node_id") in kg.G]
+        ids = [n["node_id"] for n in sub.get("nodes", []) if kg.node_exists(n.get("node_id"))]
         result["truncated"] = bool(sub.get("truncated", False))
         edge_pairs = [(e.get("source"), e.get("target")) for e in sub.get("edges", [])]
     else:
-        ranked = sorted(kg.G.nodes, key=kg.G.degree, reverse=True)
+        ranked = sorted(kg.node_ids(), key=kg.degree, reverse=True)
         ids = ranked[:limit]
         result["truncated"] = len(ranked) > limit
         keep = set(ids)
-        edge_pairs = [(u, v) for u, v in kg.G.edges(ids) if v in keep][: limit * 3]
+        edge_pairs = [(u, v) for u in ids for v in kg.successors(u) if v in keep][: limit * 3]
     result["nodes"] = [_node(kg, n) for n in ids]
-    result["edges"] = [_edge(u, v, kg.G[u][v]) for u, v in edge_pairs if kg.G.has_edge(u, v)]
+    result["edges"] = [_edge(u, v, kg.edge_data(u, v) or {}) for u, v in edge_pairs if kg.has_edge(u, v)]
     return result
