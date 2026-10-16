@@ -259,28 +259,125 @@ class TestServiceManager:
         finally:
             m.shutdown()
 
+    @staticmethod
+    def _repo(tmp_path, initialised=True):
+        (tmp_path / ".cognirepo").mkdir(exist_ok=True)
+        cfg = tmp_path / ".cognirepo" / "config.json"
+        if initialised:
+            cfg.write_text("{}")
+        else:
+            cfg.unlink(missing_ok=True)
+        return str(tmp_path)
+
+    class _Proc:
+        def __init__(self, rc=0):
+            self._rc = rc
+
+        def poll(self):
+            return self._rc
+
+        def wait(self, timeout=None):
+            return self._rc
+
     def test_watcher_spawns_fixed_argv_only(self, monkeypatch, tmp_path):
         import subprocess
         import sys
 
         from interface.ui import services as S
         seen = {}
-        monkeypatch.setattr(S.ServiceManager, "_watcher_record", lambda self: None)
-        monkeypatch.setattr(S.sys, "platform", "linux")
-        monkeypatch.setattr(subprocess, "Popen", lambda argv, **kw: seen.update(argv=argv, kw=kw))
-        out = S.ServiceManager(str(tmp_path)).start("watcher")
-        assert out["state"] == "starting"
+        records = iter([None, {"pid": 4242}])
+        monkeypatch.setattr(S.ServiceManager, "_watcher_record", lambda self: next(records, {"pid": 4242}))
+        monkeypatch.delenv("COGNIREPO_NO_WATCHER", raising=False)
+
+        def fake_popen(argv, **kw):
+            seen.update(argv=argv, kw=kw)
+            return self._Proc(0)
+        monkeypatch.setattr(subprocess, "Popen", fake_popen)
+        out = S.ServiceManager(self._repo(tmp_path)).start("watcher")
+        assert out["state"] == "running" and out["pid"] == 4242 and out["changed"] is True
         assert seen["argv"] == [sys.executable, "-m", "interface.cli.main", "watch", "--path", str(tmp_path), "--ensure-running"]
         assert seen["kw"].get("shell") is not True and seen["kw"]["start_new_session"] is True
+        assert seen["kw"]["stdout"] is not subprocess.DEVNULL     # output is captured now, not discarded
 
     def test_watcher_start_is_not_gated_to_linux(self, monkeypatch, tmp_path):
         """#148: the watcher runs on macOS/Windows too; the old 501 'Linux only' gate is gone."""
         from interface.ui import services as S
-        monkeypatch.setattr(S.ServiceManager, "_watcher_record", lambda self: None)
+        records = iter([None, {"pid": 7}])
+        monkeypatch.setattr(S.ServiceManager, "_watcher_record", lambda self: next(records, {"pid": 7}))
         monkeypatch.setattr(S.sys, "platform", "win32")
+        monkeypatch.delenv("COGNIREPO_NO_WATCHER", raising=False)
+        with mock.patch.object(S.subprocess, "Popen", return_value=self._Proc(0)) as popen:
+            out = S.ServiceManager(self._repo(tmp_path)).start("watcher")
+        assert out["state"] == "running" and popen.called
+
+    def test_watcher_start_on_uninitialised_repo_is_failed_not_starting(self, monkeypatch, tmp_path):
+        from interface.ui import services as S
+        monkeypatch.setattr(S.ServiceManager, "_watcher_record", lambda self: None)
+        monkeypatch.delenv("COGNIREPO_NO_WATCHER", raising=False)
         with mock.patch.object(S.subprocess, "Popen") as popen:
-            out = S.ServiceManager(str(tmp_path)).start("watcher")
-        assert out["state"] == "starting" and popen.called
+            out = S.ServiceManager(self._repo(tmp_path, initialised=False)).start("watcher")
+        assert out["state"] == "failed" and out["reason"] == "not_initialised" and out["changed"] is False
+        assert not popen.called
+
+    def test_watcher_start_reports_launcher_failure_with_its_output(self, monkeypatch, tmp_path):
+        from interface.ui import services as S
+        monkeypatch.setattr(S.ServiceManager, "_watcher_record", lambda self: None)
+        monkeypatch.delenv("COGNIREPO_NO_WATCHER", raising=False)
+        repo = self._repo(tmp_path)
+
+        def fake_popen(argv, **kw):
+            kw["stdout"].write(b"boom: cannot start\n")
+            return self._Proc(3)
+        with mock.patch.object(S.subprocess, "Popen", side_effect=fake_popen):
+            out = S.ServiceManager(repo).start("watcher")
+        assert out["state"] == "failed" and out["reason"] == "spawn_failed" and "boom" in out["detail"]
+
+    def test_watcher_start_that_never_registers_stays_starting(self, monkeypatch, tmp_path):
+        from interface.ui import services as S
+        monkeypatch.setattr(S.ServiceManager, "_watcher_record", lambda self: None)
+        monkeypatch.setattr(S, "_START_WAIT_SECS", 0.2)
+        monkeypatch.delenv("COGNIREPO_NO_WATCHER", raising=False)
+        with mock.patch.object(S.subprocess, "Popen", return_value=self._Proc(0)):
+            out = S.ServiceManager(self._repo(tmp_path)).start("watcher")
+        assert out["state"] == "starting"
+
+    def test_watcher_start_respects_the_env_kill_switch(self, monkeypatch, tmp_path):
+        from interface.ui import services as S
+        monkeypatch.setattr(S.ServiceManager, "_watcher_record", lambda self: None)
+        monkeypatch.setenv("COGNIREPO_NO_WATCHER", "1")
+        out = S.ServiceManager(self._repo(tmp_path)).start("watcher")
+        assert out["state"] == "failed" and out["reason"] == "disabled_by_env"
+
+    @pytest.mark.parametrize("outcome,state,detail", [("stopped", "stopped", None), ("killed", "stopped", "needed SIGKILL"),
+                                                      ("failed", "failed", None), ("not_found", "stopped", None)])
+    def test_watcher_stop_uses_the_escalating_stop(self, monkeypatch, tmp_path, outcome, state, detail):
+        from interface.cli import daemon
+        from interface.ui import services as S
+        calls = []
+        monkeypatch.setattr(S.ServiceManager, "_watcher_record", lambda self: {"pid": 99} if not calls else None)
+        monkeypatch.setattr(daemon, "stop_watcher_and_wait", lambda pid, **kw: calls.append((pid, kw)) or outcome)
+        out = S.ServiceManager(str(tmp_path)).stop("watcher")
+        assert out["state"] == state and calls[0][0] == "99"
+        assert calls[0][1]["timeout"] == S._STOP_WAIT_SECS       # bounded: a request must not hang for 30 s
+        assert out.get("detail") == detail or (state == "failed" and out["reason"] == "stop_failed")
+
+    def test_watcher_stop_refuses_an_embedded_watcher(self, monkeypatch, tmp_path):
+        from interface.cli import daemon
+        from interface.ui import services as S
+        monkeypatch.setattr(S.ServiceManager, "_watcher_record", lambda self: {"pid": 99})
+        monkeypatch.setattr(daemon, "stop_watcher_and_wait", lambda *a, **k: "embedded")
+        with pytest.raises(S.ServiceError) as ei:
+            S.ServiceManager(str(tmp_path)).stop("watcher")
+        assert ei.value.status == 409 and ei.value.code == "embedded_watcher"
+
+    def test_metrics_start_without_prometheus_client_is_failed(self, monkeypatch, tmp_path):
+        import importlib.util
+
+        from interface.ui import services as S
+        real = importlib.util.find_spec
+        monkeypatch.setattr(importlib.util, "find_spec", lambda n, *a: None if n == "prometheus_client" else real(n, *a))
+        out = S.ServiceManager(str(tmp_path)).start("metrics")
+        assert out["state"] == "failed" and out["reason"] == "dependency_missing"
 
 
 class TestHarness:

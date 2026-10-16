@@ -582,6 +582,17 @@
             ],
             "title": "Changed"
           },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -607,6 +618,17 @@
               }
             ],
             "title": "Port"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           },
           "state": {
             "title": "State",
