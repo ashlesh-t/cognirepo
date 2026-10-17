@@ -27,7 +27,7 @@ dependencies = [
     # Same model (all-MiniLM-L6-v2, dim=384) as before.
     "fastembed>=0.3.6",
     # MCP server
-    "mcp[cli]==1.28.1",
+    "mcp[cli]==1.30.0",
     # HTTP client
     "httpx>=0.27.0",
     # graph + indexer
