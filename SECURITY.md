@@ -64,7 +64,7 @@ When `storage.encrypt: true` in `config.json`:
 - **Algorithm:** [Fernet](https://cryptography.io/en/latest/fernet/) from the `cryptography` library — authenticated symmetric encryption (AES-128-CBC with an HMAC-SHA256 tag). It is **not** AES-256-GCM; earlier versions of this document said so.
 - **Key management:** the key is generated once on `cognirepo init` and stored in the OS keychain via `keyring`. It is never written to disk.
 
-**What is encrypted** (verified against the code, `core/security/encryption.py` and its callers):
+**What is encrypted** (the authoritative list is `core/security/coverage.py`; a test fails if a store path is added without being classified):
 
 | Store | Encrypted |
 |---|---|
@@ -72,18 +72,28 @@ When `storage.encrypt: true` in `config.json`:
 | Behaviour model (`graph/behaviour.json`) | ✓ |
 | Org graph (`~/.cognirepo/org_graph.pkl`) | ✓ |
 | Episodic log (`episodic/`) | ✓ |
-| Local FAISS vector store (`vector_backend: "faiss"` only) | ✓ |
+| Memory **text** of the local FAISS backend (`memory/semantic_metadata.json`, `vector_backend: "faiss"` only) | ✓ |
+| Project learnings (`learnings/learnings.json`) — key = this repo's `project_id` | ✓ |
+| Global learnings (`~/.cognirepo/learnings/`) — own keychain entry `cognirepo-global-learnings`, so every repo can read it | ✓ |
+| Org project memory text (`~/.cognirepo/projects/<org>/<project>/memory/`) — own keychain entry per `<org>/<project>` | ✓ |
 
-**What is NOT encrypted**, even with `storage.encrypt: true`:
+**What is NOT encrypted**, even with `storage.encrypt: true` (`cognirepo doctor` warns about this when encryption is on):
 
 | Store | Contains |
 |---|---|
-| AST index (`index/ast_index.json`, `ast.index`, `ast_metadata.json`, `manifest.json`) | symbol names, file paths and line numbers, docstrings |
-| Chroma vector store (`vector_db/chroma/`) — **the default backend** | the text of stored semantic memories and their embeddings |
-| Learnings and project memory | text you stored |
-| Logs, `hook.log`, `last_context.json` | operational output |
+| Chroma vector store (`vector_db/chroma/`) — **the default backend** | the text of stored semantic memories and their embeddings. Chroma has no encryption hook; use full-disk encryption or `vector_backend: "faiss"` |
+| FAISS vector files (`semantic.index`, `ast.index`, `episodic_vecs.npy`) | embeddings only — no text, but vectors can leak meaning |
+| AST index (`index/ast_index.json`, `ast_metadata.json`, `manifest.json`) | symbol names, paths, line numbers, docstrings. Deliberately left out: it is rebuildable from the source tree stored beside it, and it is read by ~15 call sites plus the checksummed generation pointer |
+| `index/summaries.json`, `doc_ingest.json`, `endpoints.json`, `http_calls.json`, rotated `episodic_archive.json`, `sessions/`, `errors/`, `hook.log`, `last_context.json` | summaries/derived text and operational output |
 
-If your threat model needs these protected, use full-disk encryption (or an encrypted volume) for the project directory and `~/.cognirepo/`. Extending at-rest encryption to the stores above is tracked in a follow-up issue.
+If your threat model needs these protected, use full-disk encryption (or an encrypted volume) for the project directory and `~/.cognirepo/`.
+
+**Reading and recovery rules.**
+- A file that is already ciphertext is always decrypted on read, even if `storage.encrypt` was later turned off — switching the flag never strands data.
+- Plaintext written before the flag was on is read as-is and encrypted on its next save.
+- Ciphertext that cannot be decrypted (no keyring, wrong or lost key) is treated as *locked*, not corrupt: it is never quarantined or overwritten, and writes to that store fail loudly instead.
+- **The key lives only in the OS keychain.** If it is lost (keychain reset, new machine, headless host), encrypted data is unrecoverable. Back the key up, or run `cognirepo encrypt-stores --decrypt` before you move.
+- `cognirepo encrypt-stores [--decrypt] [--dry-run]` migrates learnings and project memory now instead of waiting for the next save. Each file is encrypted, decrypted again and compared before it replaces the original; a file that fails verification or is locked is left untouched.
 
 **To enable:**
 ```bash

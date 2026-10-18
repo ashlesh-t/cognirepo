@@ -20,6 +20,7 @@ from pathlib import Path
 
 from core.config.lock import store_lock
 from core.config.orgs import get_shared_memory_path
+from core.config.safe_read import StoreUnreadableError
 from data.memory.embeddings import encode_with_timeout
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,8 @@ class ProjectMemory:
         os.makedirs(str(idx_path.parent), exist_ok=True)
         os.makedirs(str(meta_path.parent), exist_ok=True)
         # Monkey-patch path helpers for this instance via subclass
-        return _ProjectLocalVectorDB(base=self._base)
+        return _ProjectLocalVectorDB(
+            base=self._base, key_id=f"cognirepo-project-memory:{self._org}/{self._project}")
 
     def store(self, text: str, source_repo: str, importance: float = 0.7) -> None:
         """Embed text and store in shared project index."""
@@ -67,13 +69,14 @@ class ProjectMemory:
 class _ProjectLocalVectorDB:
     """LocalVectorDB variant that stores at a custom base path."""
 
-    def __init__(self, base: Path) -> None:
+    def __init__(self, base: Path, key_id: "str | None" = None) -> None:
         import faiss  # pylint: disable=import-outside-toplevel
         import json  # pylint: disable=import-outside-toplevel
         import os  # pylint: disable=import-outside-toplevel
 
         self._idx_file = str(base / "vector_db" / "semantic.index")
         self._meta_file = str(base / "memory" / "semantic_metadata.json")
+        self._key_id = key_id  # shared by several repos → own keychain entry (#186)
         self.dim = 384
 
         if os.path.exists(self._idx_file):
@@ -84,11 +87,18 @@ class _ProjectLocalVectorDB:
         else:
             self.index = faiss.IndexFlatL2(self.dim)
 
+        self.metadata = []
         if os.path.exists(self._meta_file):
-            with open(self._meta_file, encoding="utf-8") as f:
-                self.metadata = json.load(f)
-        else:
-            self.metadata = []
+            try:
+                self.metadata = self._read_meta()
+            except StoreUnreadableError as exc:  # locked ciphertext: add() raises, never overwrites
+                logger.warning("%s", exc)
+
+    def _read_meta(self) -> list:
+        import json  # pylint: disable=import-outside-toplevel
+        from core.security.store_crypto import decode_store  # pylint: disable=import-outside-toplevel
+        with open(self._meta_file, "rb") as f:
+            return json.loads(decode_store(f.read(), self._meta_file, key_id=self._key_id))
 
     def _reload_locked(self) -> None:
         """Re-read index + metadata from disk. Caller holds store_lock().
@@ -106,10 +116,7 @@ class _ProjectLocalVectorDB:
         else:
             self.index = faiss.IndexFlatL2(self.dim)
         if os.path.exists(self._meta_file):
-            def _read_meta():
-                with open(self._meta_file, encoding="utf-8") as f:
-                    return json.load(f)
-            self.metadata = read_retry(self._meta_file, _read_meta)
+            self.metadata = read_retry(self._meta_file, self._read_meta)
         else:
             self.metadata = []
 
@@ -123,10 +130,12 @@ class _ProjectLocalVectorDB:
             self._reload_locked()  # COGNIREPO-136: append to the CURRENT disk state, not our snapshot
             self.index.add(vec)
             self.metadata.append({"text": text, "importance": importance, "source": source})
-            from core.config.atomic import atomic_json_dump, atomic_path  # pylint: disable=import-outside-toplevel
+            from core.config.atomic import atomic_path, atomic_write  # pylint: disable=import-outside-toplevel
             with atomic_path(self._idx_file) as _tmp:
                 faiss.write_index(self.index, _tmp)
-            atomic_json_dump(self._meta_file, self.metadata, indent=2)
+            from core.security.store_crypto import encode_store  # pylint: disable=import-outside-toplevel
+            atomic_write(self._meta_file, encode_store(
+                json.dumps(self.metadata, indent=2).encode("utf-8"), key_id=self._key_id))
 
     def search(self, vector, k: int = 5, source: str | None = None) -> list[dict]:
         import numpy as np  # pylint: disable=import-outside-toplevel

@@ -43,7 +43,7 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `project_name` | string | auto-detected | Human-readable project name |
-| `storage.encrypt` | bool | `false` | Enable Fernet encryption at rest. Covers the graph, behaviour model, org graph, episodic log and local FAISS store; **not** the AST index or the default Chroma store — see `SECURITY.md` |
+| `storage.encrypt` | bool | `false` | Enable Fernet encryption at rest. Covers the graph, behaviour model, org graph, episodic log, learnings, org project memory and the local FAISS store's text; **not** the AST index, vector files or the default Chroma store — see `SECURITY.md` |
 | `storage.vector_backend` | string | `"chroma"` | Vector backend: `"chroma"` (default; `init` writes it, and it is used when the key is absent) or `"faiss"`. Falls back to faiss only if `chromadb` isn't installed. |
 | `models.QUICK.model` | string | `"local-resolver"` | Zero-API local resolver for trivial queries |
 | `models.STANDARD.model` | string | `"claude-haiku-4-5"` | Model for quick lookups (score ≤4) |
@@ -129,9 +129,9 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 
 When `storage.encrypt: true`:
 
-1. AES-256 GCM key is generated on first `cognirepo init`
+1. A Fernet key (AES-128-CBC + HMAC-SHA256) is generated on first `cognirepo init`
 2. Key is stored in the **OS keychain** (never written to disk)
-3. All data in `vector_db/`, `graph/`, and `index/` is encrypted at rest
+3. The graph, behaviour model, org graph, episodic log, learnings, org project memory and the local FAISS store's memory text are encrypted. The default Chroma store, vector files and the AST index are **not** — see `SECURITY.md#encryption-at-rest` for the full table (`core/security/coverage.py` is the source of truth). `cognirepo encrypt-stores` migrates learnings/project memory on demand
 4. The `cryptography` package is required: `pip install cognirepo[security]`
 
 **Keychain backends by platform:**

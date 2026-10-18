@@ -150,7 +150,22 @@ cognirepo doctor [OPTIONS]
 `doctor` also probes the interpreter behind the `cognirepo` on `PATH` (read-only, in a subprocess): with
 `storage.encrypt: true` it reports missing `keyring`/`cryptography` or an unusable keyring backend there,
 and it warns when that install is a stale copy of the current working tree, printing the exact
-`pipx inject` / `pipx install --force` command.
+`pipx inject` / `pipx install --force` command. With `storage.encrypt: true` it also warns which stores
+encryption does **not** cover (the default Chroma store, vector files, AST index, …; see `SECURITY.md`).
+
+---
+
+## cognirepo encrypt-stores
+
+```
+cognirepo encrypt-stores [--decrypt] [--dry-run]
+```
+
+Encrypts (or, with `--decrypt`, restores to plaintext) project learnings, global learnings and every org
+project-memory metadata file immediately, rather than on each store's next save. Each file is encrypted,
+decrypted again and compared before it replaces the original; a locked or unverifiable file is left
+untouched and reported. Encrypting requires `storage.encrypt: true` (otherwise the next save would undo it).
+Exit code 1 if any file failed or was skipped.
 
 ---
 

@@ -1206,6 +1206,14 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
                 issues += 1
             elif verbose:
                 _ok("Encryption — keyring + cryptography available")
+            from core.security.coverage import unencrypted_stores  # pylint: disable=import-outside-toplevel
+            _gaps = sorted(unencrypted_stores())
+            _warn(
+                f"Encryption does not cover {len(_gaps)} stores: " + ", ".join(_gaps[:4])
+                + (", …" if len(_gaps) > 4 else ""),
+                "The default Chroma memory store is among them — use disk encryption for it. "
+                "Full table: SECURITY.md#encryption-at-rest",
+            )
     except Exception as _exc:  # pylint: disable=broad-except
         logger.debug("doctor: encryption deps check failed: %s", _exc)
 
@@ -2132,6 +2140,25 @@ def _cmd_insights(since: str = "90d") -> None:
     print(f"Insights report written: {result['path']}")
     print(f"  sections: {', '.join(result['sections'])}")
     print(f"  updated: {result['updated_at']}")
+
+
+def _cmd_encrypt_stores(decrypt: bool = False, dry_run: bool = False) -> int:
+    """Verified in-place (de)encryption of learnings + project memory. Exit 1 on any failure."""
+    from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
+    from core.security.migrate import migrate  # pylint: disable=import-outside-toplevel
+    enabled = get_storage_config()[0]
+    if not decrypt and not enabled:
+        print("storage.encrypt is off in .cognirepo/config.json — turn it on first, otherwise the "
+              "next save would write these stores back as plaintext.")
+        return 1
+    if decrypt and enabled:
+        print("note: storage.encrypt is still on, so the next save will re-encrypt these stores.")
+    results = migrate(decrypt=decrypt, dry_run=dry_run)
+    for r in results:
+        print(f"  {r.action:<10} {r.path}" + (f"  ({r.detail})" if r.detail else ""))
+    if not results:
+        print("  nothing to migrate")
+    return 1 if any(r.action in ("failed", "skipped") for r in results) else 0
 
 
 def _cmd_prime(as_json: bool = False) -> None:
@@ -4211,6 +4238,16 @@ def _main():
         help="Output raw JSON instead of human-readable brief.",
     )
 
+    # encrypt-stores — explicit, verified (de)encryption of the JSON stores (#186)
+    p_encstores = sub.add_parser(
+        "encrypt-stores",
+        help="Encrypt (or --decrypt) learnings and project memory now, verifying every file first",
+    )
+    p_encstores.add_argument("--decrypt", action="store_true", default=False,
+                             help="Write the stores back as plaintext (needs the key).")
+    p_encstores.add_argument("--dry-run", action="store_true", default=False,
+                             help="Show what would change without writing.")
+
     # insights — repo-history HTML report (COGNIREPO-300)
     p_insights = sub.add_parser("insights", help="Generate/update the repo insights HTML report")
     p_insights.add_argument("--since", default="90d", help="History window, e.g. 90d (default: 90d)")
@@ -4845,6 +4882,9 @@ def _main():
     if args.command == "prime":
         _cmd_prime(as_json=getattr(args, "json", False))
         return
+
+    if args.command == "encrypt-stores":
+        sys.exit(_cmd_encrypt_stores(decrypt=args.decrypt, dry_run=args.dry_run))
 
     if args.command == "insights":
         _cmd_insights(since=getattr(args, "since", "90d"))
