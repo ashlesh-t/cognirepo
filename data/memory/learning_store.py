@@ -118,8 +118,11 @@ def auto_tag(text: str) -> tuple[Optional[str], Optional[str]]:
 class _LearningBackend:
     """File-based learning store under a given root directory."""
 
-    def __init__(self, root: Path) -> None:
+    _key_id: Optional[str] = None  # class default: keeps __new__-built backends (tests) working
+
+    def __init__(self, root: Path, key_id: Optional[str] = None) -> None:
         self._root = root
+        self._key_id = key_id  # keychain entry; None = this repo's project_id (#186)
         self._root.mkdir(parents=True, exist_ok=True)
 
     def _index_path(self) -> Path:
@@ -134,7 +137,9 @@ class _LearningBackend:
         return store_lock(lock_path=str(self._index_path().parent / "learnings.lock"))
 
     def _read(self) -> list[dict]:
-        return json.loads(self._index_path().read_text(encoding="utf-8"))
+        from core.security.store_crypto import decode_store  # pylint: disable=import-outside-toplevel
+        path = self._index_path()
+        return json.loads(decode_store(path.read_bytes(), str(path), key_id=self._key_id))
 
     def _load(self, *, writer: bool = False) -> list[dict]:
         """Load the learnings. Never returns ``[]`` for an unreadable file (the next store()
@@ -146,8 +151,8 @@ class _LearningBackend:
             return []
         try:
             return read_retry(str(path), self._read)
-        except StoreUnreadableError:
-            if not writer:
+        except StoreUnreadableError as exc:
+            if not writer or exc.locked:  # intact ciphertext is locked, never "corrupt" (#186)
                 raise
 
             def _readable() -> bool:
@@ -169,7 +174,9 @@ class _LearningBackend:
             return []
 
     def _save(self, records: list[dict]) -> None:
-        atomic_write(str(self._index_path()), json.dumps(records, indent=2, ensure_ascii=False))
+        from core.security.store_crypto import encode_store  # pylint: disable=import-outside-toplevel
+        payload = json.dumps(records, indent=2, ensure_ascii=False).encode("utf-8")
+        atomic_write(str(self._index_path()), encode_store(payload, key_id=self._key_id))
 
     def store(self, learning_type: str, text: str, metadata: dict, scope: str) -> str:
         """Persist a learning record; returns its ID.
@@ -367,7 +374,8 @@ class GlobalLearningStore:
             str(Path.home() / ".cognirepo"),
         )
         root = Path(global_dir) / "learnings"
-        self._backend = _LearningBackend(root)
+        # shared by every repo → its own keychain entry, not any one repo's project_id
+        self._backend = _LearningBackend(root, key_id="cognirepo-global-learnings")
 
     def store_learning(
         self,

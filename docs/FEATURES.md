@@ -39,7 +39,7 @@ All tools are registered via `FastMCP` and exposed over stdio transport.
 | Cosine similarity retrieval | ✅ | `data/memory/semantic_memory.py::retrieve()` |
 | Importance score (sentence length heuristic) | ✅ | `semantic_memory.py::compute_importance()` |
 | Persist to disk (`index.faiss` + `metadata.json`) | ✅ | `core/vector_db/local_vector_db.py::save()` |
-| Encryption at rest (AES-256 GCM) | ✅ | `core/security/encryption.py` + keyring; activated by `storage.encrypt: true` |
+| Encryption at rest (Fernet) | ✅ partial | `core/security/encryption.py` + keyring; activated by `storage.encrypt: true`. Coverage table: `core/security/coverage.py` / `SECURITY.md` (default Chroma store and AST index are not covered) |
 | Remove vectors by ID (`remove_ids`) | ✅ | `core/vector_db/local_vector_db.py` via `IndexIDMap2` |
 | StorageAdapter ABC | ✅ | `core/vector_db/adapter.py` |
 | FAISSAdapter | ✅ | `core/vector_db/faiss_adapter.py` |
