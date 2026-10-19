@@ -136,3 +136,27 @@ class ServiceState(BaseModel):
     changed: bool | None = None
     reason: str | None = None     # set when state == "failed": a machine-readable cause
     detail: str | None = None
+
+
+class SessionInfo(BaseModel):
+    id: str
+    client: str | None = None     # MCP clientInfo.name; null until the session's first tool call
+    started: str
+    last_activity: str
+    call_count: int
+    closed_at: str | None = None
+    state: Literal["active", "stale", "closed"]
+
+
+class SessionCall(BaseModel):
+    trace_id: str | None = None
+    tool: str | None = None
+    started: str
+    dur_ms: int | None = None
+    status: Literal["running", "ok", "error", "shed"]
+    args_summary: str | None = None
+    result_summary: str | None = None
+
+
+class SessionDetail(SessionInfo):
+    calls: list[SessionCall]

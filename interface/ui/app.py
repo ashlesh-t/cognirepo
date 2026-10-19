@@ -11,7 +11,7 @@ import os
 import time
 from typing import Any
 
-from fastapi import Body, FastAPI, Header, Query, Request
+from fastapi import Body, FastAPI, Header, Path, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
@@ -193,6 +193,22 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
             after=event_stream.parse_last_event_id(last_event_id), replay=replay, session=session,
             types=events.parse_types(types), counter=stream_counter)
         return StreamingResponse(gen, media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
+
+    @app.get("/api/v1/sessions", response_model=list[m.SessionInfo],
+             summary="MCP sessions seen in the event log, most recently active first")
+    def list_sessions() -> list[dict[str, Any]]:
+        return events.list_sessions(_store_dir(app.state.repo_root))
+
+    @app.get("/api/v1/sessions/{session_id}", response_model=m.SessionDetail, responses={404: {"model": m.ErrorBody}},
+             summary="One session and its last tool calls (oldest first)")
+    def session_detail(session_id: str = Path(max_length=64, pattern=r"^[A-Za-z0-9_-]+$"),
+                       limit: int = Query(default=100, ge=1, le=500)) -> Any:
+        store = _store_dir(app.state.repo_root)
+        calls = events.session_calls(store, session_id, limit)
+        row = next((r for r in events.list_sessions(store, limit=10**6) if r["id"] == session_id), None)
+        if calls is None or row is None:
+            return _deny(404, "unknown_session")
+        return {**row, "calls": calls}
 
     @app.get("/api/v1/services", response_model=list[m.ServiceState], summary="State of the allowlisted services")
     def list_services() -> list[dict[str, Any]]:

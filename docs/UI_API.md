@@ -42,6 +42,8 @@ The only token-less responses are the data-free landing page / static console as
 | `GET` | `/api/v1/insights` | `{exists, generated_at, bytes}` for the repo's insights report (`.claude/insights/<repo>-insights.html`) |
 | `GET` | `/api/v1/insights/report` | The report HTML, read-only, from that one fixed path (no path/name parameter exists). Sent with `Content-Security-Policy: sandbox; default-src 'none'` so it can sit in an `<iframe sandbox>` (`frame-ancestors 'self'`); `?download=1` sends it as an attachment. `404 no_report` if absent, if the path is a symlink (or under one), or if it exceeds 8 MiB |
 | `GET` | `/api/v1/events` | Live event stream (SSE). See [Event stream](#event-stream) |
+| `GET` | `/api/v1/sessions` | MCP sessions (id, client, started, last_activity, call_count, closed_at, state). See [Sessions](#sessions) |
+| `GET` | `/api/v1/sessions/{session_id}?limit=` | One session plus its last tool calls (default 100, max 500). `404 unknown_session` |
 | `GET` | `/api/v1/services` | State of the allowlisted services |
 | `POST` | `/api/v1/services/{name}/start` | Start a service. Body must be `{"confirm": true}` (strict boolean) |
 | `POST` | `/api/v1/services/{name}/stop` | Stop a service. Body must be `{"confirm": true}` |
@@ -81,10 +83,11 @@ Event (`data:` JSON): `seq`, `ts` (UTC), `type`, plus per type:
 
 | `type` | extra fields |
 |--------|--------------|
-| `tool.start` | `tool`, `trace_id`, `session_id`, `args_summary` |
+| `tool.start` | `tool`, `trace_id`, `session_id`, `client`, `args_summary` |
 | `tool.end` | `tool`, `trace_id`, `session_id`, `dur_ms`, `result_summary` |
 | `tool.error` | `tool`, `trace_id`, `session_id`, `dur_ms`, `error` (exception class only), `retryable` (store busy) |
 | `tool.shed` | `tool`, `session_id`, `reason` (`circuit_open` \| `congestion`) |
+| `session.start`, `session.end` | `session_id`, `client`, `pid` (`session.end` is written when `cognirepo serve` exits cleanly; a killed server writes none) |
 | `watcher.reindex` | `session_id`, `reindexed[]`, `removed[]`, `error` |
 | `service` | `service`, `action`, `state`, `ok` |
 | `graph.delta`, `prune` | reserved (#209, #213) |
@@ -93,6 +96,20 @@ Lists are capped at 50 entries (`*_truncated: true`); summaries at 200 chars; fi
 `password`, `api_key`, …) are dropped. Writing never blocks or fails the writer (a held lock for >0.25 s drops the event).
 **Privacy:** `args_summary` holds the tool's arguments (e.g. a search query) and free text cannot be scrubbed. Set
 `COGNIREPO_EVENTS_METADATA_ONLY=1` to omit `args_summary`/`result_summary`, or `COGNIREPO_EVENTS=0` to write no events.
+
+## Sessions
+`GET /api/v1/sessions` and `/api/v1/sessions/{session_id}` are derived from the same event log — no second store, so they
+need no extra writer and share its privacy switches. One session = one `cognirepo serve` process.
+
+* `client` is the MCP `initialize` handshake's `clientInfo.name` (`claude-code`, …). It can only be read while a
+  request is being handled, so it is `null` until the session's first tool call.
+* `state`: `closed` (a `session.end` was seen), `active` (last event ≤ 10 min ago) or `stale` (no `session.end`
+  and quiet longer — idle, or the server was killed).
+* `call_count` counts `tool.start` plus `tool.shed`. In `/sessions/{session_id}`, each call joins `tool.start` to its
+  `tool.end`/`tool.error` by `trace_id`; `status` is `running` | `ok` | `error` | `shed`, and `result_summary` carries the
+  error class or shed reason when there is no result.
+* **Retention:** history is whatever the event log still holds (the live file plus one backup, ~10 MiB); older sessions
+  disappear. With `COGNIREPO_EVENTS_METADATA_ONLY=1` the `args_summary`/`result_summary` fields are absent.
 
 ## Security model
 | Threat | Mitigation |

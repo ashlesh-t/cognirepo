@@ -243,7 +243,8 @@ class TestServices:
         paths = set(svc_client.get("/api/v1/openapi.json", headers=AUTH).json()["paths"])
         assert paths == {"/api/v1/session", "/api/v1/status", "/api/v1/graph", "/api/v1/harness",
                          "/api/v1/services", "/api/v1/services/{name}/start", "/api/v1/services/{name}/stop",
-                         "/api/v1/insights", "/api/v1/insights/report", "/api/v1/events"}
+                         "/api/v1/insights", "/api/v1/insights/report", "/api/v1/events",
+                         "/api/v1/sessions", "/api/v1/sessions/{session_id}"}
 
 
 class TestServiceManager:

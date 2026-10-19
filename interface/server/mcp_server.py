@@ -491,12 +491,48 @@ def _events_summarize(kwargs: dict) -> str:
         return ""
 
 
+_MCP_CLIENT: str | None = None  # MCP initialize clientInfo.name; one client per stdio process
+_SESSION_ENDED = False
+
+
+def _client_name() -> str | None:
+    """The connected client's ``clientInfo.name`` (e.g. ``claude-code``), cached once known.
+
+    Only readable while a request is being handled, so it resolves on the first tool call.
+    """
+    global _MCP_CLIENT  # pylint: disable=global-statement
+    if _MCP_CLIENT is None:
+        try:
+            info = mcp._mcp_server.request_context.session.client_params.clientInfo  # pylint: disable=protected-access
+            _MCP_CLIENT = " ".join(str(info.name).split())[:64] or None
+        except Exception:  # pylint: disable=broad-except
+            pass
+    return _MCP_CLIENT
+
+
 def _emit_tool_event(type_: str, tool_name: str, trace_id: str | None = None, **fields) -> None:
     """Best-effort live event for the Engram console (#207). Never raises, never blocks a tool call."""
     try:
         from core import events  # pylint: disable=import-outside-toplevel
         sid = (_MCP_SESSION or {}).get("session_id")
-        events.emit(type_, tool=tool_name, trace_id=trace_id, session_id=sid, **fields)
+        events.emit(type_, tool=tool_name, trace_id=trace_id, session_id=sid, client=_client_name(), **fields)
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
+def _emit_session_event(type_: str) -> None:
+    """``session.start`` / ``session.end`` for the console's active-vs-closed view (#208). Best-effort."""
+    global _SESSION_ENDED  # pylint: disable=global-statement
+    try:
+        sid = (_MCP_SESSION or {}).get("session_id")
+        if not sid:
+            return
+        if type_ == "session.end":
+            if _SESSION_ENDED:
+                return
+            _SESSION_ENDED = True
+        from core import events  # pylint: disable=import-outside-toplevel
+        events.emit(type_, session_id=sid, client=_MCP_CLIENT, pid=os.getpid())
     except Exception:  # pylint: disable=broad-except
         pass
 
@@ -2484,6 +2520,9 @@ def run_server(project_dir: str | None = None) -> None:
 
     _write_manifest()
     _init_mcp_session()
+    import atexit as _atexit  # pylint: disable=import-outside-toplevel
+    _emit_session_event("session.start")
+    _atexit.register(_emit_session_event, "session.end")  # covers exits that skip the finally below
 
     # Pre-warm embedding model in background — reduces first-query latency from ~6s to ~0s
     import threading as _threading  # pylint: disable=import-outside-toplevel
@@ -2502,7 +2541,10 @@ def run_server(project_dir: str | None = None) -> None:
     except Exception:  # pylint: disable=broad-except
         logger.exception("memory watchdog failed to start")
 
-    mcp.run(transport="stdio")
+    try:
+        mcp.run(transport="stdio")
+    finally:
+        _emit_session_event("session.end")
 
 
 if __name__ == "__main__":

@@ -47,7 +47,14 @@ _LIST_MAX = 50          # nodes / edges / file lists per event: keeps one line w
 _SUMMARY_FIELDS = ("args_summary", "result_summary")
 
 #: every event carries these; the rest is type-specific (see docs/UI_API.md)
-TYPES = ("tool.start", "tool.end", "tool.error", "tool.shed", "watcher.reindex", "graph.delta", "prune", "service")
+TYPES = ("tool.start", "tool.end", "tool.error", "tool.shed", "session.start", "session.end",
+         "watcher.reindex", "graph.delta", "prune", "service")
+
+#: a session with no ``session.end`` is "active" this long after its last event, "stale" afterwards
+#: (a crashed or SIGKILLed server never writes ``session.end``)
+SESSION_ACTIVE_SECS = 600
+_SESSION_LIST_MAX = 100
+_CALLS_MAX = 500
 
 
 def enabled() -> bool:
@@ -262,3 +269,88 @@ class Tailer:
             new, self._offset = self._read_from(self.path, self._offset)
             out.extend(new)
         return out
+
+
+# ── sessions (#208): derived from the event log, no second store ─────────────
+
+def _iter_all(store_dir: str) -> Iterator[dict[str, Any]]:
+    """Every retained event, oldest first (backup file, then the live one)."""
+    path = events_path(store_dir)
+    yield from _iter_file(path + ".1")
+    yield from _iter_file(path)
+
+
+def _parse_ts(ts: str | None) -> float | None:
+    try:
+        return datetime.strptime(str(ts), "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
+def list_sessions(store_dir: str, *, now: float | None = None, limit: int = _SESSION_LIST_MAX) -> list[dict[str, Any]]:
+    """One row per ``session_id`` seen in ``tool.*`` / ``session.*`` events, most recently active first.
+
+    History is bounded by event-log retention (the live file plus one backup, ~10 MiB): older sessions
+    drop out. ``client`` is the MCP ``clientInfo.name`` and may be ``None`` until the session's first
+    tool call. ``state`` is ``closed`` (saw ``session.end``), ``active`` or ``stale``.
+    """
+    by_id: dict[str, dict[str, Any]] = {}
+    for ev in _iter_all(store_dir):
+        sid, typ = ev.get("session_id"), str(ev.get("type", ""))
+        if not sid or not typ.startswith(("tool.", "session.")):
+            continue
+        row = by_id.get(sid)
+        if row is None:
+            row = by_id[sid] = {"id": sid, "client": None, "started": ev["ts"], "last_activity": ev["ts"],
+                                "call_count": 0, "closed_at": None}
+        row["last_activity"] = ev["ts"]
+        if ev.get("client") and not row["client"]:
+            row["client"] = ev["client"]
+        if typ in ("tool.start", "tool.shed"):
+            row["call_count"] += 1
+        elif typ == "session.end":
+            row["closed_at"] = ev["ts"]
+    t_now = time.time() if now is None else now
+    for row in by_id.values():
+        last = _parse_ts(row["last_activity"])
+        row["state"] = ("closed" if row["closed_at"] else
+                        "active" if last is not None and t_now - last <= SESSION_ACTIVE_SECS else "stale")
+    rows = sorted(by_id.values(), key=lambda r: r["last_activity"], reverse=True)
+    return rows[:max(0, limit)]
+
+
+def session_calls(store_dir: str, session_id: str, limit: int = 100) -> list[dict[str, Any]] | None:
+    """The last ``limit`` tool calls of a session, oldest first; ``None`` if the session is unknown.
+
+    A call is one ``tool.start`` joined to its ``tool.end`` / ``tool.error`` by ``trace_id`` (``status``
+    is ``running`` until one arrives); a ``tool.shed`` is a call that never started.
+    """
+    calls: dict[Any, dict[str, Any]] = {}
+    order: list[Any] = []
+    known = False
+    for ev in _iter_all(store_dir):
+        if ev.get("session_id") != session_id:
+            continue
+        known = True
+        typ = str(ev.get("type", ""))
+        if typ == "tool.start":
+            key = ev.get("trace_id") or ("seq", ev["seq"])
+            calls[key] = {"trace_id": ev.get("trace_id"), "tool": ev.get("tool"), "started": ev["ts"],
+                          "dur_ms": None, "status": "running", "args_summary": ev.get("args_summary"),
+                          "result_summary": None}
+            order.append(key)
+        elif typ in ("tool.end", "tool.error"):
+            rec = calls.get(ev.get("trace_id"))
+            if rec is not None:
+                rec["dur_ms"] = ev.get("dur_ms")
+                rec["status"] = "ok" if typ == "tool.end" else "error"
+                rec["result_summary"] = ev.get("result_summary") or ev.get("error")
+        elif typ == "tool.shed":
+            key = ("seq", ev["seq"])
+            calls[key] = {"trace_id": ev.get("trace_id"), "tool": ev.get("tool"), "started": ev["ts"],
+                          "dur_ms": None, "status": "shed", "args_summary": None,
+                          "result_summary": ev.get("reason")}
+            order.append(key)
+    if not known:
+        return None
+    return [calls[k] for k in order][-max(0, min(limit, _CALLS_MAX)):]
