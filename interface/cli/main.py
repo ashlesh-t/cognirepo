@@ -4530,6 +4530,10 @@ def _main():
         from interface.ui.cli import run_ui  # pylint: disable=import-outside-toplevel
         sys.exit(run_ui(args))
 
+    if args.command == "index-repo":
+        from core.config.repo_registry import register_repo  # pylint: disable=import-outside-toplevel
+        register_repo(getattr(args, "path", None) or os.getcwd())  # #210: global repo registry, best-effort
+
     if args.command == "init":
         # interactive=True runs the wizard; --no-index or --non-interactive skips it
         non_interactive = getattr(args, "non_interactive", False)
@@ -4540,6 +4544,8 @@ def _main():
             non_interactive=non_interactive,
             no_graph=getattr(args, "no_graph", False),
         )
+        from core.config.repo_registry import register_repo  # pylint: disable=import-outside-toplevel
+        register_repo(os.getcwd())  # #210: after init, so the store resolves to the new .cognirepo/
         if kg is not None:
             _start_watcher(".", kg, indexer, daemon=True)
 

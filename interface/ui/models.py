@@ -160,3 +160,25 @@ class SessionCall(BaseModel):
 
 class SessionDetail(SessionInfo):
     calls: list[SessionCall]
+
+
+class RepoWatcher(BaseModel):
+    state: Literal["running", "stale", "stopped"]
+    pid: int | None = None
+    heartbeat_age_s: float | None = None
+    last_reindex: dict[str, Any] | None = None
+
+
+class RepoEntry(BaseModel):
+    name: str
+    root: str
+    store: str
+    exists: bool                  # the repo directory is still on disk
+    first_seen: str | None = None
+    last_seen: str | None = None
+    indexed: bool
+    indexed_at: str | None = None
+    git_commit: str | None = None
+    watcher: RepoWatcher
+    hooks_installed: bool
+    auto_index: bool

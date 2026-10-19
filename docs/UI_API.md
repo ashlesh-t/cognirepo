@@ -42,6 +42,7 @@ The only token-less responses are the data-free landing page / static console as
 | `GET` | `/api/v1/insights` | `{exists, generated_at, bytes}` for the repo's insights report (`.claude/insights/<repo>-insights.html`) |
 | `GET` | `/api/v1/insights/report` | The report HTML, read-only, from that one fixed path (no path/name parameter exists). Sent with `Content-Security-Policy: sandbox; default-src 'none'` so it can sit in an `<iframe sandbox>` (`frame-ancestors 'self'`); `?download=1` sends it as an attachment. `404 no_report` if absent, if the path is a symlink (or under one), or if it exceeds 8 MiB |
 | `GET` | `/api/v1/events` | Live event stream (SSE). See [Event stream](#event-stream) |
+| `GET` | `/api/v1/repos` | Every repo in the global registry with index, watcher, hooks and auto-index state. See [Repos](#repos) |
 | `GET` | `/api/v1/sessions` | MCP sessions (id, client, started, last_activity, call_count, closed_at, state). See [Sessions](#sessions) |
 | `GET` | `/api/v1/sessions/{session_id}?limit=` | One session plus its last tool calls (default 100, max 500). `404 unknown_session` |
 | `GET` | `/api/v1/services` | State of the allowlisted services |
@@ -96,6 +97,20 @@ Lists are capped at 50 entries (`*_truncated: true`); summaries at 200 chars; fi
 `password`, `api_key`, …) are dropped. Writing never blocks or fails the writer (a held lock for >0.25 s drops the event).
 **Privacy:** `args_summary` holds the tool's arguments (e.g. a search query) and free text cannot be scrubbed. Set
 `COGNIREPO_EVENTS_METADATA_ONLY=1` to omit `args_summary`/`result_summary`, or `COGNIREPO_EVENTS=0` to write no events.
+
+## Repos
+`GET /api/v1/repos` lists the repos recorded in the global registry `<global dir>/repos.json` (mode 0600; paths and
+timestamps only), most recently seen first, plus the repo this server was started for. `init`, `index-repo` and every
+watcher registration (`watch`, `serve`'s embedded watcher) add or touch an entry — best-effort and throttled to once a
+minute per repo; `COGNIREPO_REPO_REGISTRY=0` turns it off.
+
+Each entry: `name`, `root`, `store`, `exists` (repo directory still on disk), `first_seen`, `last_seen`, `indexed`,
+`indexed_at`, `git_commit`, `watcher` (`state` running\|stale\|stopped, `pid`, `heartbeat_age_s`, `last_reindex`),
+`hooks_installed` (git `post-commit` has a cognirepo block) and `auto_index` (`watch.auto_enabled`, default true).
+
+The listing is strictly read-only: it never creates directories or deletes stale pid files in the repos it lists.
+Repos indexed before this existed appear after their next `init`/`index-repo`/`watch`. There is no `?repo=` selector on
+the other endpoints yet — `cognirepo ui` still serves one repo per server (see #116).
 
 ## Sessions
 `GET /api/v1/sessions` and `/api/v1/sessions/{session_id}` are derived from the same event log — no second store, so they
