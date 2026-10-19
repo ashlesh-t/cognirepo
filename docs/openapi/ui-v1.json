@@ -551,6 +551,97 @@
         "title": "OkBody",
         "type": "object"
       },
+      "RepoEntry": {
+        "properties": {
+          "auto_index": {
+            "title": "Auto Index",
+            "type": "boolean"
+          },
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "first_seen": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Seen"
+          },
+          "git_commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Git Commit"
+          },
+          "hooks_installed": {
+            "title": "Hooks Installed",
+            "type": "boolean"
+          },
+          "indexed": {
+            "title": "Indexed",
+            "type": "boolean"
+          },
+          "indexed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indexed At"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "root": {
+            "title": "Root",
+            "type": "string"
+          },
+          "store": {
+            "title": "Store",
+            "type": "string"
+          },
+          "watcher": {
+            "$ref": "#/components/schemas/RepoWatcher"
+          }
+        },
+        "required": [
+          "name",
+          "root",
+          "store",
+          "exists",
+          "indexed",
+          "watcher",
+          "hooks_installed",
+          "auto_index"
+        ],
+        "title": "RepoEntry",
+        "type": "object"
+      },
       "RepoInfo": {
         "properties": {
           "name": {
@@ -567,6 +658,58 @@
           "name"
         ],
         "title": "RepoInfo",
+        "type": "object"
+      },
+      "RepoWatcher": {
+        "properties": {
+          "heartbeat_age_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat Age S"
+          },
+          "last_reindex": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Reindex"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "stale",
+              "stopped"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "RepoWatcher",
         "type": "object"
       },
       "ServiceState": {
@@ -1286,6 +1429,37 @@
           }
         },
         "summary": "The insights report HTML, read-only, from its one fixed path"
+      }
+    },
+    "/api/v1/repos": {
+      "get": {
+        "operationId": "list_repos_api_v1_repos_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RepoEntry"
+                  },
+                  "title": "Response List Repos Api V1 Repos Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "Repos CogniRepo has been used on (global registry) with index and watcher state"
       }
     },
     "/api/v1/services": {

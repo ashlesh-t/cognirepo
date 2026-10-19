@@ -194,6 +194,12 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
             types=events.parse_types(types), counter=stream_counter)
         return StreamingResponse(gen, media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
 
+    @app.get("/api/v1/repos", response_model=list[m.RepoEntry],
+             summary="Repos CogniRepo has been used on (global registry) with index and watcher state")
+    def list_repos() -> list[dict[str, Any]]:
+        from interface.ui import repos  # pylint: disable=import-outside-toplevel
+        return repos.list_repos(app.state.repo_root)
+
     @app.get("/api/v1/sessions", response_model=list[m.SessionInfo],
              summary="MCP sessions seen in the event log, most recently active first")
     def list_sessions() -> list[dict[str, Any]]:

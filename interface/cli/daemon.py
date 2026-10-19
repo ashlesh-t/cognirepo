@@ -605,6 +605,8 @@ def register_watcher(pid: int, name: str, path: str, log_path: str, kind: str | 
     if kind:
         record["kind"] = kind
     atomic_write(str(_pid_file(pid, path)), json.dumps(record, indent=2), fsync=False)  # status file
+    from core.config.repo_registry import register_repo  # pylint: disable=import-outside-toplevel
+    register_repo(path)  # #210: best-effort, never raises
 
 
 def _is_alive(pid: int) -> bool:
