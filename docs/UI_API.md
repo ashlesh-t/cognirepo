@@ -227,7 +227,7 @@ Event (`data:` JSON): `seq`, `ts` (UTC), `type`, plus per type:
 | `session.client` | `session_id`, `client`, `pid` — written once, when the client's first `tools/list` reveals its name (before any tool call) |
 | `watcher.reindex` | `session_id`, `reindexed[]`, `removed[]`, `error` |
 | `service` | `service`, `action`, `state`, `ok` |
-| `graph.delta` | `graph_seq`, `ops[]` (see [Graph changes](#graph-changes)) or `reset: true`, `op_count` |
+| `graph.delta` | `graph_seq`, `ops[]` (≤ 200 per event), `part` / `parts` (a batch is split across events sharing one `graph_seq`), `op_count` (whole batch) — or `reset: true` with only `op_count`. See [Graph changes](#graph-changes) |
 | `prune` | reserved (#213) |
 
 Lists are capped at 50 entries (`*_truncated: true`); summaries at 200 chars; fields named like secrets (`token`,
@@ -240,7 +240,8 @@ The knowledge graph has a monotonic change counter, `graph_seq` (`<store>/graph/
 not inside — `graph.pkl`, so it survives journal compaction and the API reads it without loading the graph). It is
 exposed as `indexer.graph_seq` in `GET /api/v1/status`: if it has not moved, the graph has not changed. It is bumped
 once per *published batch* of mutations — each journal flush, and each `save()` of ops that were never journaled — and
-every bump emits one `graph.delta` event carrying the same number.
+every bump is described by `graph.delta` events carrying the same number: one event per 200 ops (`part` / `parts`), written
+*before* the counter advances, so a reader never sees a number whose parts are still being appended.
 
 `GET /api/v1/graph/changes?since=<seq>&limit=500` returns `{seq, ops, reset, more}`:
 
@@ -250,11 +251,16 @@ every bump emits one `graph.delta` event carrying the same number.
 * `more: true` means the response stopped at `limit` (whole batches only — one batch can exceed it); call again.
 * `reset: true` means the feed cannot be proven complete — re-fetch `GET /api/v1/graph`, then continue from `seq`. That
   happens when `since` is ahead of the store (it was rebuilt), more than 100 000 batches behind, or any batch in
-  the range is missing: its event was dropped or rotated out of the event log, events are disabled
-  (`COGNIREPO_EVENTS=0`), or the batch was a bulk change (> 200 ops, e.g. an index run) which is published as
-  `reset: true` with only an `op_count`. With `COGNIREPO_EVENTS_METADATA_ONLY=1` node ids are never written to the event
-  log, so every batch is a `reset`.
-* Completeness is checked, not assumed: every number in `(since, seq]` must have exactly one non-reset `graph.delta`.
+  the range is incomplete: an event was dropped or rotated out of the event log, events are disabled
+  (`COGNIREPO_EVENTS=0`), or the batch was larger than 5 000 ops (more than one default journal flush), which is
+  published as `reset: true` with only an `op_count`. Bulk changes up to that size — most index runs, flushed in batches
+  of up to 5 000 ops — **are delivered**, not reset. With `COGNIREPO_EVENTS_METADATA_ONLY=1` node ids are never written
+  to the event log, so every batch is a `reset`.
+* Completeness is checked, not assumed: every number in `(since, seq]` must have all `parts` of its batch, each exactly
+  once and none marked `reset`; a missing or duplicated part answers `reset`. Events without `part`/`parts` (written by
+  older versions) are whole batches.
+* Cost: about 70 bytes per op in the event log, so a 5 000-op batch is ~350 KB across 25 events. That counts against the
+  log's ~10 MiB retention, so a very large index run can push older tool-call history out sooner.
 * The deltas describe what *this writer* changed when it made the change durable; they are not a replay of the journal.
   Poll `status.indexer.graph_seq` (cheap) and call `/graph/changes` only when it moved, or follow `graph.delta` on the
   event stream.
