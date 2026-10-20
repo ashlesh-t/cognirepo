@@ -47,7 +47,7 @@ _LIST_MAX = 50          # nodes / edges / file lists per event: keeps one line w
 _SUMMARY_FIELDS = ("args_summary", "result_summary")
 
 #: every event carries these; the rest is type-specific (see docs/UI_API.md)
-TYPES = ("tool.start", "tool.end", "tool.error", "tool.shed", "session.start", "session.end",
+TYPES = ("tool.start", "tool.end", "tool.error", "tool.shed", "session.start", "session.end", "session.client",
          "watcher.reindex", "graph.delta", "prune", "service")
 
 #: a session with no ``session.end`` is "active" this long after its last event, "stale" afterwards
@@ -55,6 +55,9 @@ TYPES = ("tool.start", "tool.end", "tool.error", "tool.shed", "session.start", "
 SESSION_ACTIVE_SECS = 600
 _SESSION_LIST_MAX = 100
 _CALLS_MAX = 500
+SESSIONS_FILE = "sessions.json"
+_SESSIONS_KEPT = 200
+_PROC_START_TOLERANCE_SECS = 2.0
 
 
 def enabled() -> bool:
@@ -287,13 +290,75 @@ def _parse_ts(ts: str | None) -> float | None:
         return None
 
 
-def list_sessions(store_dir: str, *, now: float | None = None, limit: int = _SESSION_LIST_MAX) -> list[dict[str, Any]]:
-    """One row per ``session_id`` seen in ``tool.*`` / ``session.*`` events, most recently active first.
+def _sessions_path(store_dir: str) -> str:
+    return os.path.join(events_dir(store_dir), SESSIONS_FILE)
 
-    History is bounded by event-log retention (the live file plus one backup, ~10 MiB): older sessions
-    drop out. ``client`` is the MCP ``clientInfo.name`` and may be ``None`` until the session's first
-    tool call. ``state`` is ``closed`` (saw ``session.end``), ``active`` or ``stale``.
+
+def _load_sidecar(store_dir: str) -> dict[str, dict[str, Any]]:
+    try:
+        with open(_sessions_path(store_dir), encoding="utf-8") as fh:
+            rows = json.load(fh)
+        return {r["id"]: r for r in rows if isinstance(r, dict) and isinstance(r.get("id"), str)}
+    except (OSError, ValueError, TypeError, KeyError):
+        return {}
+
+
+def record_session(store_dir: str, session_id: str, **fields: Any) -> None:
+    """Upsert one row of ``events/sessions.json`` (merge: ``None`` values never overwrite).
+
+    Called only when a session starts, learns its client, or ends — never per tool call — so a closed
+    session outlives the event log's rotation. Best-effort and cross-process safe (the events lock);
+    keeps the newest ``_SESSIONS_KEPT`` rows. Never raises.
     """
+    if not enabled() or not session_id:
+        return
+    try:
+        from filelock import FileLock, Timeout  # pylint: disable=import-outside-toplevel
+        os.makedirs(events_dir(store_dir), exist_ok=True)
+        try:
+            with FileLock(os.path.join(events_dir(store_dir), "events.lock"), timeout=_LOCK_WAIT_SECS):
+                rows = _load_sidecar(store_dir)
+                row = rows.setdefault(session_id, {"id": session_id})
+                row.update({k: v for k, v in fields.items() if v is not None})
+                keep = sorted(rows.values(), key=lambda r: str(r.get("started", "")), reverse=True)[:_SESSIONS_KEPT]
+                atomic_write(_sessions_path(store_dir), json.dumps(keep, separators=(",", ":")), fsync=False)
+        except Timeout:
+            pass
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
+def _process_gone(pid: Any, proc_start: Any) -> bool:
+    """True when the process that wrote a session is no longer there (or its pid was reused)."""
+    if not isinstance(pid, int):
+        return False
+    from core.config import procutil  # pylint: disable=import-outside-toplevel
+    if not procutil.pid_alive(pid):
+        return True
+    if isinstance(proc_start, (int, float)):
+        try:
+            import psutil  # pylint: disable=import-outside-toplevel
+        except ImportError:
+            return False
+        try:
+            return abs(psutil.Process(pid).create_time() - float(proc_start)) > _PROC_START_TOLERANCE_SECS
+        except psutil.NoSuchProcess:
+            return True
+        except Exception:  # pylint: disable=broad-except   # AccessDenied etc.: cannot tell, assume alive
+            return False
+    return False
+
+
+def list_sessions(store_dir: str, *, now: float | None = None, limit: int = _SESSION_LIST_MAX) -> list[dict[str, Any]]:
+    """One row per ``session_id`` seen in ``tool.*`` / ``session.*`` events or in ``events/sessions.json``,
+    most recently active first.
+
+    The event log is bounded by retention (live file plus one backup, ~10 MiB), but ``sessions.json``
+    keeps the last 200 sessions' start, client, pid and final call count, so a closed session survives
+    rotation. ``client`` is the MCP ``clientInfo.name`` (known from the first ``tools/list``). ``state`` is
+    ``closed`` (``session.end`` seen, or its process is gone — ``closed_by`` says which), ``active`` or ``stale``.
+    """
+    side = _load_sidecar(store_dir)
     by_id: dict[str, dict[str, Any]] = {}
     for ev in _iter_all(store_dir):
         sid, typ = ev.get("session_id"), str(ev.get("type", ""))
@@ -302,21 +367,44 @@ def list_sessions(store_dir: str, *, now: float | None = None, limit: int = _SES
         row = by_id.get(sid)
         if row is None:
             row = by_id[sid] = {"id": sid, "client": None, "started": ev["ts"], "last_activity": ev["ts"],
-                                "call_count": 0, "closed_at": None, "pid": None}
+                                "call_count": 0, "closed_at": None, "pid": None, "proc_start": None}
         row["last_activity"] = ev["ts"]
         if ev.get("client") and not row["client"]:
             row["client"] = ev["client"]
-        if typ == "session.start" and isinstance(ev.get("pid"), int):
-            row["pid"] = ev["pid"]
+        if typ == "session.start":
+            if isinstance(ev.get("pid"), int):
+                row["pid"] = ev["pid"]
+            if isinstance(ev.get("proc_start"), (int, float)):
+                row["proc_start"] = ev["proc_start"]
         if typ in ("tool.start", "tool.shed"):
             row["call_count"] += 1
         elif typ == "session.end":
             row["closed_at"] = ev["ts"]
+    for sid, srow in side.items():           # fold in what the log no longer (or never) held
+        row = by_id.get(sid)
+        if row is None:
+            row = by_id[sid] = {"id": sid, "client": None, "started": srow.get("started") or srow.get("last_activity") or "",
+                                "last_activity": srow.get("last_activity") or srow.get("started") or "",
+                                "call_count": 0, "closed_at": None, "pid": None, "proc_start": None}
+        if srow.get("started") and srow["started"] < row["started"]:
+            row["started"] = srow["started"]
+        row["client"] = row["client"] or srow.get("client")
+        row["pid"] = row["pid"] if row["pid"] is not None else srow.get("pid")
+        row["proc_start"] = row["proc_start"] if row["proc_start"] is not None else srow.get("proc_start")
+        row["closed_at"] = row["closed_at"] or srow.get("closed_at")
+        if isinstance(srow.get("call_count"), int):
+            row["call_count"] = max(row["call_count"], srow["call_count"])
+        if srow.get("last_activity") and srow["last_activity"] > row["last_activity"]:
+            row["last_activity"] = srow["last_activity"]
     t_now = time.time() if now is None else now
     for row in by_id.values():
         last = _parse_ts(row["last_activity"])
+        row["closed_by"] = "session_end" if row["closed_at"] else None
+        if not row["closed_at"] and _process_gone(row["pid"], row["proc_start"]):
+            row["closed_at"], row["closed_by"] = row["last_activity"], "process_gone"
         row["state"] = ("closed" if row["closed_at"] else
                         "active" if last is not None and t_now - last <= SESSION_ACTIVE_SECS else "stale")
+        row.pop("proc_start", None)
     rows = sorted(by_id.values(), key=lambda r: r["last_activity"], reverse=True)
     return rows[:max(0, limit)]
 
