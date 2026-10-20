@@ -202,15 +202,183 @@ def ensure(autofetch: bool | None = None) -> Outcome:
     return Outcome("fetched", f"installed console {bundle.version}", bundle)
 
 
+def _listed_files(path: str) -> frozenset[str] | None:
+    """File list of an installed manifest, or None if it is unreadable or for another API major.
+    No hashing: the bundle was verified when it was installed or updated."""
+    try:
+        with open(os.path.join(path, MANIFEST), encoding="utf-8") as f:
+            man = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(man, dict) or str(man.get("api_major")) != API_VERSION or not isinstance(man.get("files"), dict):
+        return None
+    return frozenset(k for k in man["files"] if isinstance(k, str))
+
+
 class ManifestStaticFiles(StaticFiles):
-    """Serves only the files ``console.json`` lists — never ``.git/`` or anything else in the tree."""
+    """Serves only the files ``console.json`` lists — never ``.git/`` or anything else in the tree.
+
+    The list is re-read when ``console.json`` changes, so ``cognirepo ui --update`` / ``--rollback`` take
+    effect on a running server without a restart."""
 
     def __init__(self, bundle: Bundle) -> None:
         super().__init__(directory=bundle.path, html=True)
-        self._allowed = bundle.files
+        self._path = bundle.path
+        self._allowed: frozenset[str] | None = bundle.files
+        self._stamp = self._stat()
+
+    def _stat(self) -> tuple[int, int] | None:
+        try:
+            st = os.stat(os.path.join(self._path, MANIFEST))
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size)
 
     async def get_response(self, path: str, scope):  # type: ignore[override]
+        stamp = self._stat()
+        if stamp != self._stamp:
+            self._stamp = stamp
+            self._allowed = _listed_files(self._path)
         rel = path.strip("/")  # Starlette passes "." for the root, which html=True maps to index.html
-        if rel not in ("", ".") and rel not in self._allowed:
+        if self._allowed is None or (rel not in ("", ".") and rel not in self._allowed):
             raise HTTPException(status_code=404)
         return await super().get_response(path, scope)
+
+
+# --- update / rollback (#216) ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class UpdateOutcome:
+    # current | updated | available | incompatible | not-managed | failed | rolled-back | no-previous
+    status: str
+    message: str
+    old: str | None = None
+    new: str | None = None
+
+
+def prev_dir() -> str:
+    return console_dir() + ".prev"
+
+
+def _git(cwd: str, *args: str) -> tuple[int, str]:
+    try:
+        proc = subprocess.run(  # nosec B603 — argv list, no shell; only fetch/rev-parse/show/reset run here
+            ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=CLONE_TIMEOUT_S,
+            env=_git_env(), check=False)
+    except subprocess.TimeoutExpired:
+        return 124, f"git {args[0]} timed out after {CLONE_TIMEOUT_S}s"
+    except OSError as exc:
+        return 127, str(exc)
+    out = (proc.stdout if proc.returncode == 0 else (proc.stderr or proc.stdout)).strip()
+    return proc.returncode, out.splitlines()[-1] if proc.returncode != 0 and out else out
+
+
+def _fetched_manifest(staging: str) -> dict | None:
+    code, text = _git(staging, "show", f"FETCH_HEAD:{MANIFEST}")
+    if code != 0:
+        return None
+    try:
+        man = json.loads(text)
+    except ValueError:
+        return None
+    return man if isinstance(man, dict) else None
+
+
+def _incompatible(man: dict) -> str:
+    from core.config.version import __version__  # pylint: disable=import-outside-toplevel
+    return (f"console {man.get('version', 'unknown')} was built for API major {man.get('api_major')!r}, but "
+            f"cognirepo {__version__} serves API major {API_VERSION!r}. Refusing the update; "
+            f"a console for that API major needs a cognirepo release that serves it.")
+
+
+def _swap(staged: str, dest: str, prev: str) -> None:
+    """dest -> prev, staged -> dest, via renames. A request landing between the two renames sees a 404."""
+    shutil.rmtree(prev, ignore_errors=True)
+    os.rename(dest, prev)
+    try:
+        os.rename(staged, dest)
+    except OSError:
+        os.rename(prev, dest)
+        raise
+
+
+def update(check_only: bool = False) -> UpdateOutcome:
+    """Fetch the latest console build into a staged copy, verify it, and swap it in (keeping the
+    previous build in ``console.prev/``). With ``check_only`` nothing in ``<global>/console/`` changes."""
+    dest = console_dir()
+    if not os.path.isdir(os.path.join(dest, ".git")):
+        return UpdateOutcome("not-managed", "the console is not a git-managed install under "
+                             f"{dest}; run `cognirepo ui` once to install it")
+    if shutil.which("git") is None:
+        return UpdateOutcome("failed", "git is not installed")
+    ref = settings()["ref"]
+    if ref.startswith("-"):
+        return UpdateOutcome("failed", "refusing a console ref that starts with '-'")
+    old, _ = validate(dest)
+    old_v = old.version if old else None
+
+    staging = f"{dest}.new-{os.getpid()}"
+    shutil.rmtree(staging, ignore_errors=True)
+    try:  # every git write below happens in this copy; the live build is never touched until the swap
+        shutil.copytree(dest, staging, symlinks=True)
+        code, msg = _git(staging, "fetch", "--depth", "1", "--quiet", "origin", ref)
+        if code != 0:
+            return UpdateOutcome("failed", f"could not fetch the console update: {msg}", old_v)
+        man = _fetched_manifest(staging)
+        if man is None:
+            return UpdateOutcome("failed", f"the fetched build has no readable {MANIFEST}", old_v)
+        new_v = str(man.get("version", "unknown"))
+        if str(man.get("api_major")) != API_VERSION:
+            return UpdateOutcome("incompatible", _incompatible(man), old_v, new_v)
+        _, head = _git(staging, "rev-parse", "HEAD")
+        _, fetched = _git(staging, "rev-parse", "FETCH_HEAD")
+        if old is not None and head == fetched:
+            return UpdateOutcome("current", f"console {old_v} is already current", old_v, new_v)
+        if check_only:
+            return UpdateOutcome("available", f"console update available: {old_v or 'unusable'} -> {new_v}",
+                                 old_v, new_v)
+        # A depth-1 fetch has no history, so a fast-forward merge is impossible (git refuses it as
+        # "unrelated histories"), and the release branch is rebuilt by CI anyway. The staged tree is
+        # instead checked out exactly as fetched; trust comes from validating it below, not from history.
+        code, msg = _git(staging, "reset", "--hard", "--quiet", "FETCH_HEAD")
+        if code != 0:
+            return UpdateOutcome("failed", f"could not check out the fetched build: {msg}", old_v)
+        bundle, reason = validate(staging)
+        if bundle is None:
+            return UpdateOutcome("failed", f"fetched console was refused: {reason}", old_v, new_v)
+        try:
+            _swap(staging, dest, prev_dir())
+        except OSError as exc:
+            return UpdateOutcome("failed", f"could not swap in the new console: {exc}", old_v, new_v)
+        staging = ""  # moved into place
+        return UpdateOutcome("updated", f"console updated: {old_v or 'unusable'} -> {new_v}", old_v, new_v)
+    except OSError as exc:
+        return UpdateOutcome("failed", f"could not stage the console update: {exc}", old_v)
+    finally:
+        if staging:
+            shutil.rmtree(staging, ignore_errors=True)
+
+
+def rollback() -> UpdateOutcome:
+    """Swap ``console.prev/`` back in. The build being replaced becomes the new ``console.prev/``,
+    so running it twice toggles between the two."""
+    dest, prev = console_dir(), prev_dir()
+    if not os.path.isdir(prev):
+        return UpdateOutcome("no-previous", "there is no previous console build to roll back to")
+    bundle, reason = validate(prev)
+    if bundle is None:
+        return UpdateOutcome("failed", f"the previous console build is unusable: {reason}")
+    cur, _ = validate(dest)
+    spare = f"{dest}.rollback-{os.getpid()}"
+    try:
+        shutil.rmtree(spare, ignore_errors=True)
+        if os.path.isdir(dest):
+            os.rename(dest, spare)
+        os.rename(prev, dest)
+        if os.path.isdir(spare):
+            os.rename(spare, prev)
+    except OSError as exc:
+        return UpdateOutcome("failed", f"rollback failed: {exc}")
+    return UpdateOutcome("rolled-back", f"console rolled back: {cur.version if cur else 'unusable'} -> "
+                         f"{bundle.version}", cur.version if cur else None, bundle.version)

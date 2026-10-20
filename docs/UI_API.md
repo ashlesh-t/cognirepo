@@ -38,6 +38,30 @@ A bundle is **refused** (and the next source is used) if `api_major` differs fro
 absolute, contains `..`, points into `.git/`, or is a symlink. Only files the manifest lists are served — `.git/`
 and any other file in the directory answer 404. Validation runs when the server starts.
 
+### Updating the console (#216)
+Updates are explicit and one-shot — never automatic, no background network calls.
+
+| Command | Does |
+|---|---|
+| `cognirepo ui --update --check` | Fetch and report `old -> new`; nothing in `<global>/console/` changes |
+| `cognirepo ui --update` | Fetch, verify, swap in; the previous build is kept as `<global>/console.prev/` |
+| `cognirepo ui --update --rollback` | Swap `console.prev/` back in (running it again toggles back) |
+
+How an update stays safe: the live directory is copied to `console.new-<pid>/` and **all** git work happens in that copy
+(`git fetch --depth 1 origin <ref>`; only `fetch`, `rev-parse`, `show` and `reset` ever run — no script from the fetched
+tree). The copy's `console.json` must have the server's `api_major` (otherwise the update is refused and the message says
+which API major this cognirepo serves) and the whole tree must pass the sha256 validation; only then are two renames
+done (`console` → `console.prev`, staged → `console`). Any failure — network, git, refused build — removes the
+staging copy and leaves the current build untouched. A request landing exactly between the two renames sees a 404.
+
+Deviation from a literal fast-forward: a depth-1 fetch has no history, so `git merge --ff-only` always fails
+("unrelated histories"), and the release branch is rebuilt by CI. The staged copy is instead reset to the fetched commit;
+the safeguard is the manifest validation above, not git history. Pin a tag/branch with `COGNIREPO_CONSOLE_REF` or
+`ui.console_ref`; the update always fetches from the clone's own `origin` (to change source, delete the directory).
+
+A running server needs no restart: static files are read per request and it re-reads `console.json` when it changes.
+Refresh the page. Without `<global>/console/` as a git clone (e.g. only the pip package), `--update` says so.
+
 Trust model: the hashes detect corruption and local tampering of an installed bundle; they do not authenticate the
 repo, because the manifest comes from the same clone. Trust is therefore in the source URL.
 
