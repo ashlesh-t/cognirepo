@@ -115,7 +115,7 @@ endpoint that reads arbitrary files or executes commands. Remote access is out o
 is missing; opt out with `--no-console-fetch` or `COGNIREPO_CONSOLE_AUTOFETCH=0`). The URL is fixed or comes from your
 own env/config, `ext::` transports are disallowed, nothing from the clone is ever executed, and the bundle is refused
 unless its `console.json` matches this server's API major and every file's sha256. Only manifest-listed files are
-served. The hashes catch corruption and local tampering, not a malicious source repo. See
+served. `cognirepo ui --update` is explicit-only, stages and validates the new build in a copy before an atomic swap, and refuses a build for a different API major. The hashes catch corruption and local tampering, not a malicious source repo. See
 [docs/UI_API.md](docs/UI_API.md#console-install-git-managed-215).
 
 ## Network Surface

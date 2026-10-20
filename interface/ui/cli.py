@@ -123,6 +123,12 @@ def run_ui(args: Any) -> int:
     if getattr(args, "stop", False):
         return _stop()
 
+    if getattr(args, "update", False):
+        return _update_console(args)
+    if getattr(args, "check", False) or getattr(args, "rollback", False):
+        print("cognirepo ui: --check and --rollback are only valid together with --update", file=sys.stderr)
+        return 2
+
     autostart = getattr(args, "autostart", None)
     if autostart:
         from interface.ui import console_autostart as _auto  # pylint: disable=import-outside-toplevel
@@ -166,6 +172,25 @@ def run_ui(args: Any) -> int:
         # No browser (or --no-open): the user needs the tokenised URL. Treat it as a secret.
         print(f"Open this URL in your browser (it contains a session secret; do not share it):\n  {_url(sess, True)}")
     return 0
+
+
+def _update_console(args: Any) -> int:
+    """``cognirepo ui --update [--check | --rollback]`` (#216). Explicit and one-shot: no background fetches."""
+    from interface.ui import console_install  # pylint: disable=import-outside-toplevel
+    check, rollback = bool(getattr(args, "check", False)), bool(getattr(args, "rollback", False))
+    if check and rollback:
+        print("cognirepo ui: --check and --rollback cannot be combined", file=sys.stderr)
+        return 2
+    out = console_install.rollback() if rollback else console_install.update(check_only=check)
+    ok = out.status in ("current", "updated", "available", "rolled-back")
+    print("cognirepo ui: " + out.message, file=sys.stdout if ok else sys.stderr)
+    if out.status in ("updated", "rolled-back"):
+        sess = read_session()
+        if sess and is_listening(sess["port"]):
+            print("The console server is running; refresh the page to load the new build (no restart needed).")
+        print("Undo with:  cognirepo ui --update --rollback" if out.status == "updated" else
+              "Re-apply with:  cognirepo ui --update --rollback")
+    return 0 if ok else 1
 
 
 def _stop() -> int:

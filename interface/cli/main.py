@@ -4379,6 +4379,13 @@ def _main():
                            "Always loopback-only. Opt-in; off by default.")
     p_ui.add_argument("--no-console-fetch", action="store_true", default=False,
                       help="Do not clone the console from git if it is missing (air-gapped use)")
+    p_ui.add_argument("--update", action="store_true", default=False,
+                      help="Fetch the latest console build from git, verify it and swap it in (keeps the previous "
+                           "build for --rollback). Never runs automatically.")
+    p_ui.add_argument("--check", action="store_true", default=False,
+                      help="With --update: only report the available console version")
+    p_ui.add_argument("--rollback", action="store_true", default=False,
+                      help="With --update: restore the previous console build")
     p_ui.add_argument("--unsafe-bind", action="store_true", default=False,
                       help="DANGEROUS: allow a non-loopback bind address")
     p_ui.add_argument("--allow-origin", action="append", default=None, metavar="ORIGIN",

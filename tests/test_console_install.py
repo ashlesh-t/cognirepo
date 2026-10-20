@@ -55,8 +55,8 @@ def make_client(tmp_path):
 
 
 def git(cwd, *args):
-    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *args], cwd=cwd, check=True,
-                   capture_output=True)
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "tag.gpgsign=false",
+                    "-c", "commit.gpgsign=false", *args], cwd=cwd, check=True, capture_output=True)
 
 
 @pytest.fixture
@@ -240,3 +240,198 @@ class TestCli:
         assert ui_cli.console_installed() is False
         ci.ensure()
         assert ui_cli.console_installed() is True
+
+
+def release(src, version, *, api_major=None, orphan=False, extra=None, msg="build"):
+    """Publish a new build on the source repo's `release` branch (CI-style orphan rebuild if asked)."""
+    if orphan:
+        git(src, "checkout", "-q", "--orphan", "tmp")
+        git(src, "rm", "-rqf", "--ignore-unmatch", ".")
+    write_bundle(str(src), api_major=api_major, version=version, extra=extra)
+    git(src, "add", "-A")
+    git(src, "commit", "-q", "-m", msg)
+    if orphan:
+        git(src, "branch", "-M", "release")
+
+
+def served(tmp_path, path="/"):
+    return make_client(tmp_path).get(path)
+
+
+def index_text():
+    with open(os.path.join(ci.console_dir(), "index.html"), encoding="utf-8") as f:
+        return f.read()
+
+
+@pytest.fixture
+def installed(source_repo):
+    assert ci.ensure().status == "fetched"
+    return source_repo
+
+
+class TestUpdate:
+    def test_not_managed(self):
+        assert ci.update().status == "not-managed"
+
+    def test_already_current_is_a_noop(self, installed):
+        out = ci.update()
+        assert out.status == "current" and "already current" in out.message
+        assert not os.path.exists(ci.prev_dir())
+
+    def test_check_reports_without_changing_anything(self, installed):
+        release(installed, "1.1.0", extra={"index.html": b"<html>v2</html>"})
+        before = index_text()
+        out = ci.update(check_only=True)
+        assert out.status == "available" and out.old == "1.0.1" and out.new == "1.1.0"
+        assert index_text() == before and not os.path.exists(ci.prev_dir())
+
+    def test_update_swaps_and_keeps_previous(self, installed):
+        release(installed, "1.1.0", extra={"index.html": b"<html>v2</html>"})
+        out = ci.update()
+        assert out.status == "updated" and (out.old, out.new) == ("1.0.1", "1.1.0")
+        assert "1.0.1 -> 1.1.0" in out.message
+        assert index_text() == "<html>v2</html>"
+        assert ci.validate(ci.prev_dir())[0].version == "1.0.1"
+        assert ci.validate(ci.console_dir())[0].version == "1.1.0"
+        assert not [d for d in os.listdir(ci.get_global_dir()) if ".new-" in d]
+
+    def test_update_survives_orphan_rebuild(self, installed):
+        release(installed, "2.0.0", orphan=True, extra={"index.html": b"<html>orphan</html>"})
+        assert ci.update().status == "updated"
+        assert index_text() == "<html>orphan</html>"
+
+    def test_files_dropped_by_the_new_build_are_gone(self, installed):
+        git(installed, "rm", "-q", "assets/app.js")
+        man = json.loads((installed / ci.MANIFEST).read_text())
+        del man["files"]["assets/app.js"]
+        man["version"] = "1.1.0"
+        (installed / ci.MANIFEST).write_text(json.dumps(man))
+        git(installed, "commit", "-qam", "drop")
+        assert ci.update().status == "updated"
+        assert not os.path.exists(os.path.join(ci.console_dir(), "assets", "app.js"))
+
+    def test_incompatible_api_major_refused_and_untouched(self, installed):
+        release(installed, "3.0.0", api_major=2, extra={"index.html": b"<html>v3</html>"})
+        out = ci.update()
+        assert out.status == "incompatible" and "API major 2" in out.message and "serves API major '1'" in out.message
+        assert index_text() == "<html>engram</html>" and not os.path.exists(ci.prev_dir())
+        assert ci.update(check_only=True).status == "incompatible"
+
+    def test_tampered_remote_refused_and_untouched(self, installed):
+        (installed / "assets" / "app.js").write_text("evil()")
+        git(installed, "commit", "-qam", "tamper")
+        out = ci.update()
+        assert out.status == "failed" and "sha256" in out.message
+        assert ci.validate(ci.console_dir())[0].version == "1.0.1" and not os.path.exists(ci.prev_dir())
+
+    def test_failed_fetch_leaves_current_build_untouched(self, installed):
+        shutil.rmtree(installed)
+        out = ci.update()
+        assert out.status == "failed" and "could not fetch" in out.message
+        assert ci.validate(ci.console_dir())[0].version == "1.0.1"
+        assert not [d for d in os.listdir(ci.get_global_dir()) if ".new-" in d]
+
+    def test_ref_pin_to_a_tag(self, installed, monkeypatch):
+        git(installed, "tag", "v1")
+        release(installed, "1.1.0", extra={"index.html": b"<html>v2</html>"})
+        monkeypatch.setenv("COGNIREPO_CONSOLE_REF", "v1")
+        assert ci.update().status == "current"
+        monkeypatch.setenv("COGNIREPO_CONSOLE_REF", "release")
+        assert ci.update().status == "updated"
+
+    def test_option_like_ref_refused(self, installed, monkeypatch):
+        monkeypatch.setenv("COGNIREPO_CONSOLE_REF", "--upload-pack=x")
+        assert ci.update().status == "failed"
+
+    def test_no_git(self, installed, monkeypatch):
+        monkeypatch.setattr(ci.shutil, "which", lambda *_: None)
+        assert ci.update().status == "failed"
+
+    def test_running_server_picks_up_update_without_restart(self, installed, tmp_path):
+        client = make_client(tmp_path)
+        assert client.get("/").text == "<html>engram</html>"
+        assert client.get("/new.js").status_code == 404
+        release(installed, "1.1.0", extra={"index.html": b"<html>v2</html>", "new.js": b"1"})
+        assert ci.update().status == "updated"
+        assert client.get("/").text == "<html>v2</html>"
+        assert client.get("/new.js").text == "1"
+        assert ci.rollback().status == "rolled-back"
+        assert client.get("/").text == "<html>engram</html>"
+        assert client.get("/new.js").status_code == 404
+
+
+class TestRollback:
+    def test_no_previous(self, installed):
+        assert ci.rollback().status == "no-previous"
+
+    def test_restores_previous_build(self, installed):
+        release(installed, "1.1.0", extra={"index.html": b"<html>v2</html>"})
+        ci.update()
+        out = ci.rollback()
+        assert out.status == "rolled-back" and "1.1.0 -> 1.0.1" in out.message
+        assert index_text() == "<html>engram</html>"
+
+    def test_twice_toggles(self, installed):
+        release(installed, "1.1.0", extra={"index.html": b"<html>v2</html>"})
+        ci.update()
+        ci.rollback()
+        ci.rollback()
+        assert index_text() == "<html>v2</html>"
+        assert not [d for d in os.listdir(ci.get_global_dir()) if ".rollback-" in d]
+
+    def test_corrupt_previous_refused_and_current_kept(self, installed):
+        release(installed, "1.1.0", extra={"index.html": b"<html>v2</html>"})
+        ci.update()
+        with open(os.path.join(ci.prev_dir(), "index.html"), "w", encoding="utf-8") as f:
+            f.write("bad")
+        out = ci.rollback()
+        assert out.status == "failed" and "sha256" in out.message
+        assert index_text() == "<html>v2</html>"
+
+
+class TestUpdateCli:
+    def args(self, **kw):
+        base = dict(update=True, check=False, rollback=False)
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def test_update_prints_versions_and_undo_hint(self, installed, capsys, monkeypatch):
+        monkeypatch.setattr(ui_cli, "read_session", lambda: None)
+        release(installed, "1.1.0", extra={"index.html": b"<html>v2</html>"})
+        assert ui_cli._update_console(self.args()) == 0
+        out = capsys.readouterr().out
+        assert "1.0.1 -> 1.1.0" in out and "--rollback" in out
+
+    def test_running_server_gets_refresh_hint(self, installed, capsys, monkeypatch):
+        monkeypatch.setattr(ui_cli, "read_session", lambda: {"port": 1})
+        monkeypatch.setattr(ui_cli, "is_listening", lambda p: True)
+        release(installed, "1.1.0", extra={"index.html": b"<html>v2</html>"})
+        ui_cli._update_console(self.args())
+        assert "refresh the page" in capsys.readouterr().out
+
+    def test_check_does_not_change(self, installed, capsys):
+        release(installed, "1.1.0", extra={"index.html": b"<html>v2</html>"})
+        assert ui_cli._update_console(self.args(check=True)) == 0
+        assert "1.0.1 -> 1.1.0" in capsys.readouterr().out and index_text() == "<html>engram</html>"
+
+    def test_failure_exit_code(self, capsys):
+        assert ui_cli._update_console(self.args()) == 1
+        assert "not a git-managed install" in capsys.readouterr().err
+
+    def test_check_and_rollback_together_refused(self, capsys):
+        assert ui_cli._update_console(self.args(check=True, rollback=True)) == 2
+
+    def test_check_without_update_refused(self, capsys, monkeypatch):
+        monkeypatch.setattr(ui_cli, "_require_ui_extra", lambda: True)
+        ns = argparse.Namespace(host="127.0.0.1", port=None, no_open=True, serve=False, stop=False,
+                                unsafe_bind=False, allow_origin=None, update=False, check=True, rollback=False)
+        assert ui_cli.run_ui(ns) == 2
+        assert "only valid together with --update" in capsys.readouterr().err
+
+    def test_rollback_via_cli(self, installed, capsys, monkeypatch):
+        monkeypatch.setattr(ui_cli, "read_session", lambda: None)
+        release(installed, "1.1.0", extra={"index.html": b"<html>v2</html>"})
+        ui_cli._update_console(self.args())
+        capsys.readouterr()
+        assert ui_cli._update_console(self.args(rollback=True)) == 0
+        assert "1.1.0 -> 1.0.1" in capsys.readouterr().out
