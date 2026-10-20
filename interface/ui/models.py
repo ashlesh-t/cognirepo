@@ -48,6 +48,7 @@ class IndexerStatus(BaseModel):
     graph_seq: int = 0            # knowledge-graph change counter: compare it to detect any graph change
     graph_base_incomplete: bool = False   # watcher refused its last graph save: run one full index-repo
     auto_index: bool = True               # config watch.auto_enabled (absent = on)
+    store_bytes: dict[str, int] = {}      # bytes per top-level store directory, "_files" (loose files), "total"
 
 
 class UiInfo(BaseModel):
@@ -172,6 +173,18 @@ class SessionInfo(BaseModel):
     call_count: int
     closed_at: str | None = None
     state: Literal["active", "stale", "closed"]
+    pid: int | None = None        # the MCP server process (from session.start); null for older sessions
+
+
+class ProcessInfo(BaseModel):
+    role: Literal["ui", "watcher", "mcp"]
+    pid: int
+    state: str                    # running | stale | stopped (watcher) / active | stale (mcp)
+    rss_bytes: int | None = None
+    threads: int | None = None
+    heartbeat_age_s: float | None = None   # watcher only
+    detail: str | None = None     # mcp: client name
+    session_id: str | None = None # mcp only
 
 
 class SessionCall(BaseModel):

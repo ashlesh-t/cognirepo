@@ -214,6 +214,17 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
         from interface.ui import repos  # pylint: disable=import-outside-toplevel
         return repos.list_repos(app.state.repo_root)
 
+    @app.get("/api/v1/processes", response_model=list[m.ProcessInfo],
+             summary="CogniRepo processes for this repo: this UI server, the watcher, live MCP servers")
+    def list_processes() -> list[dict[str, Any]]:
+        from interface.ui import processes  # pylint: disable=import-outside-toplevel
+        return processes.list_processes(app.state.repo_root, _store_dir(app.state.repo_root))
+
+    @app.get("/api/v1/audit", response_model=list[dict[str, Any]],
+             summary="Tail of the control-API audit log (newest last; never contains the token)")
+    def audit_tail(tail: int = Query(default=100, ge=1, le=500)) -> list[dict[str, Any]]:
+        return audit.tail(tail) if audit else []
+
     @app.get("/api/v1/sessions", response_model=list[m.SessionInfo],
              summary="MCP sessions seen in the event log, most recently active first")
     def list_sessions() -> list[dict[str, Any]]:
@@ -270,7 +281,7 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
 
     @app.post("/api/v1/settings/auto-index", response_model=m.AutoIndexState,
               summary="Persist watch.auto_enabled for this repo (needs confirm=true)",
-              responses={400: {"model": m.ErrorBody}, 409: {"model": m.ErrorBody}, 422: {"model": m.ErrorBody}})
+              responses={400: {"model": m.ErrorBody}, 409: {"model": m.ErrorBody}, 422: {"model": m.ErrorBody, "description": "Invalid request body"}})
     def set_auto_index(body: AutoIndexRequest, request: Request) -> JSONResponse:
         client, origin = _client(request), request.headers.get("origin")
 

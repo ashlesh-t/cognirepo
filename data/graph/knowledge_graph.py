@@ -725,6 +725,8 @@ class KnowledgeGraph:
         self._disk_stamp = self._full_stamp()
         self._disk_path = _graph_file()
         self._publish_deltas()
+        from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
+        _graph_seq.write_stats(str(get_cognirepo_dir()), self.G.number_of_nodes(), self.G.number_of_edges())
         breaker.record_success()
 
     def _compact_journal_locked(self) -> None:

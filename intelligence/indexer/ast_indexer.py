@@ -355,7 +355,8 @@ def _sha256_file(path: str) -> str:
 
 
 def _write_manifest(repo_root: str | None = None, symbol_count: int = 0, file_count: int = 0,
-                    git_commit: str | None = None, *, group_dir: str | None = None) -> None:
+                    git_commit: str | None = None, *, group_dir: str | None = None,
+                    vector_count: int | None = None) -> None:
     """
     Write .cognirepo/index/manifest.json after a successful index run.
 
@@ -392,6 +393,8 @@ def _write_manifest(repo_root: str | None = None, symbol_count: int = 0, file_co
         "source_file_count": file_count,
         "symbol_count": symbol_count,
     }
+    if vector_count is not None:     # vectors in ast.index; exposed as cognirepo_index_vectors (#212)
+        manifest["vector_count"] = vector_count
     try:
         atomic_json_dump(_p("manifest.json", _manifest_file()), manifest, indent=2)
     except OSError as exc:
@@ -3298,7 +3301,8 @@ class ASTIndexer:
                 },
                 finalize=lambda d: _write_manifest(
                     repo_root=repo_root, symbol_count=symbol_count, file_count=file_count,
-                    git_commit=git_commit, group_dir=d),
+                    git_commit=git_commit, group_dir=d,
+                    vector_count=int(self.faiss_index.ntotal) if self.faiss_index is not None else 0),
                 mirror={
                     "ast_index.json": _ast_index_file(),
                     "ast.index": _ast_faiss_file(),

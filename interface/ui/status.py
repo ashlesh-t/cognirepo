@@ -95,6 +95,11 @@ def _graph_base_incomplete(repo_root: str, last_watch: dict | None) -> bool:
     return graph <= record
 
 
+def _store_bytes(repo_root: str) -> dict[str, int]:
+    from core.store_stats import store_sizes  # pylint: disable=import-outside-toplevel
+    return store_sizes(_store_dir(repo_root))
+
+
 def indexer_status(repo_root: str) -> dict[str, Any]:
     idx = os.path.join(_store_dir(repo_root), "index")
     manifest = _read_json(os.path.join(idx, "manifest.json")) or {}
@@ -114,6 +119,7 @@ def indexer_status(repo_root: str) -> dict[str, Any]:
         # complete one: one full `cognirepo index-repo .` fixes it (#211). False until a batch has run.
         "graph_base_incomplete": _graph_base_incomplete(repo_root, last_watch),
         "auto_index": auto_index(_store_dir(repo_root)),
+        "store_bytes": _store_bytes(repo_root),
     }
 
 

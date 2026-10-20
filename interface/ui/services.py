@@ -166,7 +166,7 @@ class ServiceManager:
                 return self._failed("metrics", "dependency_missing", "prometheus_client is not installed")
             from interface.cli.metrics_server import create_metrics_server  # pylint: disable=import-outside-toplevel
             try:
-                server = create_metrics_server("127.0.0.1", self.metrics_port)
+                server = create_metrics_server("127.0.0.1", self.metrics_port, self.repo_root)
             except OSError as exc:
                 raise ServiceError(409, "port_in_use", f"cannot bind 127.0.0.1:{self.metrics_port}: {exc}") from exc
             thread = threading.Thread(target=server.serve_forever, daemon=True, name="cognirepo-ui-metrics")

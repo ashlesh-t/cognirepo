@@ -99,6 +99,8 @@ The only token-less responses are the data-free landing page / static console as
 | `GET` | `/api/v1/repos` | Every repo in the global registry with index, watcher, hooks and auto-index state. See [Repos](#repos) |
 | `GET` | `/api/v1/sessions` | MCP sessions (id, client, started, last_activity, call_count, closed_at, state). See [Sessions](#sessions) |
 | `GET` | `/api/v1/sessions/{session_id}?limit=` | One session plus its last tool calls (default 100, max 500). `404 unknown_session` |
+| `GET` | `/api/v1/processes` | CogniRepo processes for this repo (`ui`, `watcher`, live `mcp` servers) with RSS, threads and watcher heartbeat. See [Processes, audit and metrics](#processes-audit-and-metrics) |
+| `GET` | `/api/v1/audit?tail=` | Last `tail` (1–500, default 100) records of the control-API audit log, newest last |
 | `GET` | `/api/v1/services` | State of the allowlisted services |
 | `POST` | `/api/v1/services/{name}/start` | Start a service. Body must be `{"confirm": true}` (strict boolean) |
 | `POST` | `/api/v1/services/{name}/stop` | Stop a service. Body must be `{"confirm": true}` |
@@ -106,7 +108,7 @@ The only token-less responses are the data-free landing page / static console as
 
 **Service allowlist:** `watcher` (the repo's file-watcher daemon), `index` and `hooks` (see
 [Index and hooks](#index-and-hooks-services)), `insights` (`start` regenerates the report by running `cognirepo insights`; one run at a time, `stop` is `409 not_stoppable`) and `metrics` (in-process Prometheus
-`/metrics` on `127.0.0.1:9090`). Any other name is a `404` before anything else is evaluated. Each service
+`/metrics` on `127.0.0.1:9090`, see [Processes, audit and metrics](#processes-audit-and-metrics)). Any other name is a `404` before anything else is evaluated. Each service
 maps to fixed code with a fixed argv — nothing from a request reaches a command line.
 
 **Honest results:** a service action returns `state: "failed"` with a machine-readable `reason` (and a short `detail`)
@@ -158,6 +160,49 @@ on — does nothing at UI start.
 
 ### Stability
 `/api/v1` is additive-only: fields may be added, never removed or retyped. A breaking change ships as `/api/v2`.
+
+## Processes, audit and metrics
+**`GET /api/v1/processes`** — one row per process: `role` (`ui`, `watcher`, `mcp`), `pid`, `state`, `rss_bytes`, `threads`
+(from `psutil`; `null` when the process is gone or not inspectable), `heartbeat_age_s` (watcher), `detail` (mcp: the client
+name) and `session_id` (mcp). The watcher comes from its registered heartbeat; `mcp` rows are MCP sessions that have not
+ended and whose pid is alive (the pid is in the `session.start` event). `cognirepo serve` processes the event log does
+not know about — older sessions without a pid, or events disabled — are found by a process scan (working directory equal
+to the repo, `serve` command line; cached 5 s; processes the user cannot inspect are skipped) and listed with
+`detail: "discovered by process scan"`. Read-only: it never removes stale pid files.
+
+**`GET /api/v1/audit?tail=`** — the audit log's last records (what the Security model section describes; it never holds
+the token).
+
+**`GET /status` → `indexer.store_bytes`** — bytes per top-level store directory, `_files` (loose files such as config and
+lock), and `total`. Cached for 30 s so a polling console does not re-walk the store.
+
+**Metrics.** The standalone `/metrics` server (`cognirepo metrics`, or the `metrics` service) reads the store, not process
+memory — the MCP server, the watcher and the metrics server are different processes and cannot share in-process counters.
+Every number below is derived on scrape from files each process already writes; there is no multiprocess directory and
+nothing extra on the hot paths. All series carry a `repo` label (the served repo's name).
+
+| Series | Source |
+|---|---|
+| `cognirepo_tool_calls_total{tool,outcome}` (`ok`, `error`, `busy`, `shed`) | `tool.*` events |
+| `cognirepo_tool_call_duration_seconds{tool}` (histogram; shed calls excluded) | `tool.end` / `tool.error` `dur_ms` |
+| `cognirepo_store_busy_total` | `tool.error` with `StoreBusy` |
+| `cognirepo_graph_seq`, `cognirepo_graph_nodes`, `cognirepo_graph_edges` | `graph/graph.seq`, `graph/graph.stats` (written after each graph save) |
+| `cognirepo_index_age_seconds`, `cognirepo_index_files`, `cognirepo_index_symbols`, `cognirepo_index_vectors` | `index/manifest.json` (`vector_count` is written by every index save from now on; older manifests omit it) |
+| `cognirepo_watcher_up`, `cognirepo_watcher_heartbeat_age_seconds` | watcher registry + heartbeat (read-only) |
+| `cognirepo_store_bytes{part}`, `cognirepo_event_seq`, `cognirepo_event_log_age_seconds` | directory sizes, event log (the age is omitted when there are no events; a large value means idle or events disabled) |
+| `cognirepo_events_missed_total` | events that rotated out of the log before they were counted |
+
+The tool-call tallies and a cursor (the last event `seq`) are checkpointed to `<store>/metrics/state.json` after any
+scrape that saw new events (atomic; nothing else writes it). A restarted metrics server resumes from the cursor, so the
+counters are cumulative across restarts and independent of how much of the event log is retained; a fresh store starts
+from the retained log (live file plus one backup, ~10 MiB). If the log rotated past the cursor while nobody was
+scraping, the lost events are counted in `cognirepo_events_missed_total` rather than hidden. A checkpoint that is
+corrupt, from another version, or ahead of the log (the store was wiped) is ignored and counting starts fresh. With
+`COGNIREPO_EVENTS=0` the tool series stay empty; `cognirepo_event_log_age_seconds` tells that apart from an idle repo.
+Gauges whose source file does not exist yet (graph stats before the first save, index age before the first index) are
+omitted rather than reported as 0. The old in-process counters in `core/metrics.py` (`cognirepo_memory_ops_total`, cache
+and breaker gauges) are no longer served here: they were always 0 in this process. Semantic-memory vector counts are not
+exposed (its store has no single save point to record them at).
 
 ## Event stream
 `GET /api/v1/events` is a `text/event-stream` fed by `<store>/events/events.jsonl` (mode 0600, rotated at 5 MiB with one
