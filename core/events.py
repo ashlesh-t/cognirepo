@@ -302,10 +302,12 @@ def list_sessions(store_dir: str, *, now: float | None = None, limit: int = _SES
         row = by_id.get(sid)
         if row is None:
             row = by_id[sid] = {"id": sid, "client": None, "started": ev["ts"], "last_activity": ev["ts"],
-                                "call_count": 0, "closed_at": None}
+                                "call_count": 0, "closed_at": None, "pid": None}
         row["last_activity"] = ev["ts"]
         if ev.get("client") and not row["client"]:
             row["client"] = ev["client"]
+        if typ == "session.start" and isinstance(ev.get("pid"), int):
+            row["pid"] = ev["pid"]
         if typ in ("tool.start", "tool.shed"):
             row["call_count"] += 1
         elif typ == "session.end":

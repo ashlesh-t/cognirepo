@@ -662,6 +662,14 @@
               }
             ],
             "title": "Last Watcher Reindex"
+          },
+          "store_bytes": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "default": {},
+            "title": "Store Bytes",
+            "type": "object"
           }
         },
         "required": [
@@ -787,6 +795,89 @@
           "ok"
         ],
         "title": "OkBody",
+        "type": "object"
+      },
+      "ProcessInfo": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "heartbeat_age_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat Age S"
+          },
+          "pid": {
+            "title": "Pid",
+            "type": "integer"
+          },
+          "role": {
+            "enum": [
+              "ui",
+              "watcher",
+              "mcp"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "rss_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rss Bytes"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "threads": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Threads"
+          }
+        },
+        "required": [
+          "role",
+          "pid",
+          "state"
+        ],
+        "title": "ProcessInfo",
         "type": "object"
       },
       "RepoEntry": {
@@ -1178,6 +1269,17 @@
             "title": "Last Activity",
             "type": "string"
           },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
           "started": {
             "title": "Started",
             "type": "string"
@@ -1238,6 +1340,17 @@
           "last_activity": {
             "title": "Last Activity",
             "type": "string"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
           },
           "started": {
             "title": "Started",
@@ -1381,6 +1494,62 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/audit": {
+      "get": {
+        "operationId": "audit_tail_api_v1_audit_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tail",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Tail",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Audit Tail Api V1 Audit Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "Tail of the control-API audit log (newest last; never contains the token)"
+      }
+    },
     "/api/v1/events": {
       "get": {
         "operationId": "events_stream_api_v1_events_get",
@@ -1753,6 +1922,37 @@
           }
         },
         "summary": "The insights report HTML, read-only, from its one fixed path"
+      }
+    },
+    "/api/v1/processes": {
+      "get": {
+        "operationId": "list_processes_api_v1_processes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProcessInfo"
+                  },
+                  "title": "Response List Processes Api V1 Processes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "CogniRepo processes for this repo: this UI server, the watcher, live MCP servers"
       }
     },
     "/api/v1/repos": {

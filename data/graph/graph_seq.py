@@ -47,6 +47,30 @@ def read(store_dir: str) -> int:
         return 0
 
 
+STATS_FILE = "graph.stats"
+
+
+def write_stats(store_dir: str, nodes: int, edges: int) -> None:
+    """Node/edge counts next to ``graph.seq`` so the metrics collector never has to unpickle the graph (#212).
+    Best-effort; written after a successful ``save()``."""
+    try:
+        from core.config.atomic import atomic_json_dump  # pylint: disable=import-outside-toplevel
+        atomic_json_dump(os.path.join(store_dir, "graph", STATS_FILE), {"nodes": nodes, "edges": edges},
+                         indent=None, fsync=False)
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
+def read_stats(store_dir: str) -> dict[str, int] | None:
+    import json  # pylint: disable=import-outside-toplevel
+    try:
+        with open(os.path.join(store_dir, "graph", STATS_FILE), encoding="utf-8") as fh:
+            data = json.load(fh)
+        return {"nodes": int(data["nodes"]), "edges": int(data["edges"])}
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def bump(store_dir: str) -> int:
     """Increment and persist the counter; return the new value. Caller holds ``store_lock()``."""
     from core.config.atomic import atomic_write  # pylint: disable=import-outside-toplevel

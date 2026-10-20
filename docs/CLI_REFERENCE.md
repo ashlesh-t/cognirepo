@@ -660,7 +660,7 @@ cognirepo setup-env [OPTIONS]
 
 ## cognirepo metrics
 
-Serve Prometheus `/metrics` on a standalone HTTP port — for MCP-only deployments where the MCP server process itself isn't reachable over HTTP.
+Serve Prometheus `/metrics` on a standalone HTTP port for the repo in the current directory — for MCP-only deployments where the MCP server process itself isn't reachable over HTTP. The numbers are derived from the repo's store (event log, graph/index/watcher files, directory sizes), so they reflect every CogniRepo process, not just this one. Series list: [UI_API.md](UI_API.md#processes-audit-and-metrics).
 
 ```bash
 cognirepo metrics [OPTIONS]
