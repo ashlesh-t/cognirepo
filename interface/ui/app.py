@@ -144,6 +144,15 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
         from interface.tools.graph_view import graph_view  # pylint: disable=import-outside-toplevel
         return graph_view(node=node, depth=depth, limit=limit)
 
+    @app.get("/api/v1/graph/changes", response_model=m.GraphChanges, response_model_exclude_none=True,
+             summary="Knowledge-graph change feed since a graph_seq (reset=true: re-fetch /graph)")
+    def graph_changes(
+        since: int = Query(default=0, ge=0, description="the `seq` of the last response (or `indexer.graph_seq` from /status)"),
+        limit: int = Query(default=500, ge=1, le=2000, description="max ops; whole batches only, so a single batch may exceed it"),
+    ) -> dict[str, Any]:
+        from interface.ui import graph_changes as gc  # pylint: disable=import-outside-toplevel
+        return gc.changes(_store_dir(app.state.repo_root), since, limit)
+
     @app.get("/api/v1/harness", response_model=m.HarnessResponse, summary="Agent clients with CogniRepo configured")
     def harness() -> dict[str, Any]:
         """Which agent clients have CogniRepo's MCP server configured (names only, no args/env)."""

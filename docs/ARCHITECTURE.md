@@ -116,6 +116,7 @@ Do not call FAISS or the graph directly from tools — always go through `Hybrid
 | Module | Responsibility |
 |--------|---------------|
 | `data/graph/knowledge_graph.py` | NetworkX DiGraph: FILE, FUNCTION, CLASS, CONCEPT, QUERY, SESSION, USER_ACTION, MEMORY nodes |
+| `data/graph/graph_seq.py` | Graph-wide change counter (`graph/graph.seq`) and delta description; `KnowledgeGraph` publishes a `graph.delta` event per durable batch (#209) |
 | `data/graph/behaviour_tracker.py` | Tracks access frequency per symbol; weights retrieval signals |
 
 Node types (`NodeType` constants in `data/graph/knowledge_graph.py`):

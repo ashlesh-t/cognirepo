@@ -76,6 +76,37 @@
         "title": "ErrorBody",
         "type": "object"
       },
+      "GraphChanges": {
+        "properties": {
+          "more": {
+            "default": false,
+            "title": "More",
+            "type": "boolean"
+          },
+          "ops": {
+            "items": {
+              "$ref": "#/components/schemas/GraphOp"
+            },
+            "title": "Ops",
+            "type": "array"
+          },
+          "reset": {
+            "title": "Reset",
+            "type": "boolean"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "ops",
+          "reset"
+        ],
+        "title": "GraphChanges",
+        "type": "object"
+      },
       "GraphEdge": {
         "properties": {
           "rel": {
@@ -196,6 +227,82 @@
           "id"
         ],
         "title": "GraphNode",
+        "type": "object"
+      },
+      "GraphOp": {
+        "properties": {
+          "dst": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dst"
+          },
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "op": {
+            "enum": [
+              "add_node",
+              "del_node",
+              "update_node",
+              "add_edge",
+              "del_edge",
+              "update_edge"
+            ],
+            "title": "Op",
+            "type": "string"
+          },
+          "rel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rel"
+          },
+          "src": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Src"
+          }
+        },
+        "required": [
+          "op"
+        ],
+        "title": "GraphOp",
         "type": "object"
       },
       "GraphResponse": {
@@ -397,6 +504,11 @@
               }
             ],
             "title": "Git Commit"
+          },
+          "graph_seq": {
+            "default": 0,
+            "title": "Graph Seq",
+            "type": "integer"
           },
           "indexed": {
             "title": "Indexed",
@@ -1314,6 +1426,72 @@
           }
         },
         "summary": "Read-only, bounded knowledge-graph slice"
+      }
+    },
+    "/api/v1/graph/changes": {
+      "get": {
+        "operationId": "graph_changes_api_v1_graph_changes_get",
+        "parameters": [
+          {
+            "description": "the `seq` of the last response (or `indexer.graph_seq` from /status)",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "the `seq` of the last response (or `indexer.graph_seq` from /status)",
+              "minimum": 0,
+              "title": "Since",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "max ops; whole batches only, so a single batch may exceed it",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "description": "max ops; whole batches only, so a single batch may exceed it",
+              "maximum": 2000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphChanges"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "Knowledge-graph change feed since a graph_seq (reset=true: re-fetch /graph)"
       }
     },
     "/api/v1/harness": {

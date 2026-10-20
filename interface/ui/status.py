@@ -71,6 +71,11 @@ def mcp_status() -> dict[str, Any]:
     }
 
 
+def _graph_seq(repo_root: str) -> int:
+    from data.graph import graph_seq  # pylint: disable=import-outside-toplevel
+    return graph_seq.read(_store_dir(repo_root))
+
+
 def indexer_status(repo_root: str) -> dict[str, Any]:
     idx = os.path.join(_store_dir(repo_root), "index")
     manifest = _read_json(os.path.join(idx, "manifest.json")) or {}
@@ -85,6 +90,7 @@ def indexer_status(repo_root: str) -> dict[str, Any]:
         "git_commit": manifest.get("git_commit"),
         "ast_index_bytes": size,
         "last_watcher_reindex": last_watch,
+        "graph_seq": _graph_seq(repo_root),
     }
 
 
