@@ -102,8 +102,10 @@ The only token-less responses are the data-free landing page / static console as
 | `GET` | `/api/v1/services` | State of the allowlisted services |
 | `POST` | `/api/v1/services/{name}/start` | Start a service. Body must be `{"confirm": true}` (strict boolean) |
 | `POST` | `/api/v1/services/{name}/stop` | Stop a service. Body must be `{"confirm": true}` |
+| `POST` | `/api/v1/settings/auto-index` | Persist `watch.auto_enabled` for this repo. Body `{"enabled": bool, "confirm": true}`. See [Index and hooks](#index-and-hooks-services) |
 
-**Service allowlist:** `watcher` (the repo's file-watcher daemon), `insights` (`start` regenerates the report by running `cognirepo insights`; one run at a time, `stop` is `409 not_stoppable`) and `metrics` (in-process Prometheus
+**Service allowlist:** `watcher` (the repo's file-watcher daemon), `index` and `hooks` (see
+[Index and hooks](#index-and-hooks-services)), `insights` (`start` regenerates the report by running `cognirepo insights`; one run at a time, `stop` is `409 not_stoppable`) and `metrics` (in-process Prometheus
 `/metrics` on `127.0.0.1:9090`). Any other name is a `404` before anything else is evaluated. Each service
 maps to fixed code with a fixed argv — nothing from a request reaches a command line.
 
@@ -115,6 +117,35 @@ instead of promising success. Watcher `start`: `not_initialised` (no `.cognirepo
 SIGKILL, bounded to ~11 s): `stopped` (with `detail: "needed SIGKILL"` when escalated) or `failed`/`stop_failed`; a
 watcher embedded in an MCP server is `409 embedded_watcher`. `metrics` start without `prometheus_client` is
 `failed`/`dependency_missing`. The audit log records these as `result: "failed"`.
+
+### Index and hooks services
+The console can run an **incremental** index and manage the git hooks; both use the same `confirm` + allowlist + audit
+model as the other services and the same lock rules as the CLI (writers serialise on the store lock; readers never wait).
+
+| Service | `start` | `stop` | `state` |
+|---|---|---|---|
+| `index` | Runs `cognirepo index-repo --changed-only` (git-reported changes only; fixed argv, one run at a time, output kept in `<store>/watchers/ui-index.log`). A **full re-index is not exposed** | `409 not_stoppable` (a run finishes on its own) | `running` \| `idle` |
+| `hooks` | Runs `cognirepo install-hooks` (idempotent; your own hook content is kept) | Runs `cognirepo uninstall-hooks` | `installed` \| `not_installed`; `failed`/`not_a_git_repo` outside a git repo |
+
+`index` also reports `progress` (`{done, total}` files, while running) and `last_run` (kept in the UI server's memory,
+cleared when a new run starts): `{result, reason, exit_code, retryable, finished_at, duration_s, detail}`.
+- `result: "busy"` / `reason: "store_busy"` / `retryable: true` — another writer holds the store (CLI exit 75, or an
+  indexer holding the graph writer lease). This is not an error; retry in a moment.
+- `result: "failed"` / `reason: "base_incomplete"` — there is no complete base graph, so an incremental run refuses to
+  replace it with a fragment (COGNIREPO-122). Run one full `cognirepo index-repo .`.
+- `result: "failed"` / `reason: "index_failed"` — anything else; `detail` is the tail of the output (for example the
+  repo is not a git repo or has no commits, which `--changed-only` needs).
+
+`GET /status` → `indexer` adds `graph_base_incomplete` (the watcher's latest batch skipped its graph save for the same
+reason; `last_watcher_reindex.graph_skipped` carries the text; false until a batch has run) and `auto_index`
+(`watch.auto_enabled`, default true). `last_watcher_reindex` (`timestamp`, `reindexed[]`, `removed[]`, `error`) is
+there too.
+
+`POST /api/v1/settings/auto-index` writes only `watch.auto_enabled` into `<store>/config.json` (read-modify-write under
+the store lock, atomic replace; every other key is untouched) and answers `{auto_index, changed}`; `409 not_initialised`
+without a `config.json`. When `cognirepo ui` starts and the setting is **explicitly `true`**, it starts the repo's watcher
+(best-effort, off the request path, audited as `auto_index_start`). Absent — the default, which the MCP server treats as
+on — does nothing at UI start.
 
 ### Status codes
 `200` ok · `400` `confirm_required` · `401` missing/invalid token · `403` bad `Host`/`Origin` · `404` unknown service/path ·

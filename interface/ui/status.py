@@ -76,6 +76,11 @@ def _graph_seq(repo_root: str) -> int:
     return graph_seq.read(_store_dir(repo_root))
 
 
+def auto_index(store: str) -> bool:
+    from interface.ui.repos import auto_index as _auto  # pylint: disable=import-outside-toplevel
+    return _auto(store)
+
+
 def indexer_status(repo_root: str) -> dict[str, Any]:
     idx = os.path.join(_store_dir(repo_root), "index")
     manifest = _read_json(os.path.join(idx, "manifest.json")) or {}
@@ -91,6 +96,10 @@ def indexer_status(repo_root: str) -> dict[str, Any]:
         "ast_index_bytes": size,
         "last_watcher_reindex": last_watch,
         "graph_seq": _graph_seq(repo_root),
+        # The watcher refused to save the graph on its latest batch because the base graph is not a
+        # complete one: one full `cognirepo index-repo .` fixes it (#211). False until a batch has run.
+        "graph_base_incomplete": bool((last_watch or {}).get("graph_skipped")),
+        "auto_index": auto_index(_store_dir(repo_root)),
     }
 
 

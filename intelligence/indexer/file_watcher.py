@@ -296,6 +296,7 @@ class RepoFileHandler(FileSystemEventHandler):
         ok, reason = self.graph.incremental_base_status(
             len(getattr(self.indexer, "index_data", {}).get("files", {}))
         )
+        self._graph_skipped = None if ok else reason     # surfaced in last_watcher_reindex.json (#211)
         if not ok:
             if not getattr(self, "_warned_incomplete_base", False):
                 self._warned_incomplete_base = True
@@ -359,6 +360,10 @@ class RepoFileHandler(FileSystemEventHandler):
                 # so a partially-applied batch is visible to `doctor` and to
                 # anyone reading the trail, instead of looking like a success.
                 "error": error,
+                # Why the graph was NOT saved this batch (watcher refuses a base that is not a
+                # complete graph, COGNIREPO-122); None when it was saved. Lets the console say
+                # "run a full index-repo once" instead of the graph silently never updating (#211).
+                "graph_skipped": getattr(self, "_graph_skipped", None),
             }
             path = os.path.join(get_cognirepo_dir_for_repo(self.repo_root), "index", "last_watcher_reindex.json")
             # status trail: atomic replace so readers never see a torn file, but no fsync —
