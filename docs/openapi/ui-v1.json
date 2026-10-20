@@ -1261,6 +1261,21 @@
             ],
             "title": "Closed At"
           },
+          "closed_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "session_end",
+                  "process_gone"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed By"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1332,6 +1347,21 @@
               }
             ],
             "title": "Closed At"
+          },
+          "closed_by": {
+            "anyOf": [
+              {
+                "enum": [
+                  "session_end",
+                  "process_gone"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed By"
           },
           "id": {
             "title": "Id",

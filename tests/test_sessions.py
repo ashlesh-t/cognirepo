@@ -183,3 +183,172 @@ class TestMcpServerSide:
         monkeypatch.setattr(srv, "_MCP_SESSION", None)
         srv._emit_session_event("session.start")
         assert events.read_last(store, 10) == []
+
+
+# ── #208 follow-up: persistence beyond log retention, client at connect, killed servers ──────────────
+
+import json  # noqa: E402
+import os  # noqa: E402
+import subprocess  # noqa: E402
+import sys  # noqa: E402
+
+
+def _dead_pid():
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    return p.pid
+
+
+def _wipe_log(store):
+    d = events.events_dir(store)
+    for name in os.listdir(d):
+        if name.startswith("events.jsonl"):
+            os.remove(os.path.join(d, name))
+
+
+class TestSidecar:
+    def test_closed_session_survives_log_rotation(self, store):
+        events.record_session(store, "a", client="claude-code", pid=os.getpid(), started="2026-01-01T00:00:00.000000Z")
+        events.record_session(store, "a", closed_at="2026-01-01T00:05:00.000000Z",
+                              last_activity="2026-01-01T00:05:00.000000Z", call_count=7)
+        _wipe_log(store)
+        (row,) = events.list_sessions(store)
+        assert row["id"] == "a" and row["client"] == "claude-code" and row["call_count"] == 7
+        assert row["state"] == "closed" and row["closed_by"] == "session_end"
+        assert row["started"] == "2026-01-01T00:00:00.000000Z"
+
+    def test_merge_never_overwrites_with_none(self, store):
+        events.record_session(store, "a", client="claude-code", started="2026-01-01T00:00:00.000000Z")
+        events.record_session(store, "a", client=None, call_count=3)
+        row = json.loads(open(os.path.join(events.events_dir(store), "sessions.json"), encoding="utf-8").read())[0]
+        assert row["client"] == "claude-code" and row["call_count"] == 3
+
+    def test_log_and_sidecar_are_merged_not_duplicated(self, store):
+        events.record_session(store, "a", started="2026-01-01T00:00:00.000000Z", call_count=40,
+                              closed_at="2026-01-01T01:00:00.000000Z")
+        events.emit("session.start", store_dir=store, session_id="a", client="c")
+        _call(store, "a", "lookup_symbol", "t1")
+        rows = events.list_sessions(store)
+        assert len(rows) == 1 and rows[0]["call_count"] == 40          # the larger of log (1) and sidecar (40)
+        assert rows[0]["started"] == "2026-01-01T00:00:00.000000Z"
+
+    def test_only_the_newest_200_rows_are_kept(self, store):
+        for i in range(205):
+            events.record_session(store, f"s{i:03d}", started=f"2026-01-01T00:{i // 60:02d}:{i % 60:02d}.000000Z")
+        rows = json.loads(open(os.path.join(events.events_dir(store), "sessions.json"), encoding="utf-8").read())
+        assert len(rows) == 200 and "s000" not in {r["id"] for r in rows} and "s204" in {r["id"] for r in rows}
+
+    def test_concurrent_writers_lose_no_rows(self, store):
+        code = ("import sys; from core import events; "
+                "events.record_session(sys.argv[1], sys.argv[2], started='2026-01-01T00:00:00.000000Z')")
+        procs = [subprocess.Popen([sys.executable, "-c", code, store, f"p{i}"]) for i in range(8)]
+        for p in procs:
+            assert p.wait() == 0
+        ids = {r["id"] for r in events.list_sessions(store)}
+        assert ids == {f"p{i}" for i in range(8)}
+
+    def test_corrupt_sidecar_is_ignored(self, store):
+        os.makedirs(events.events_dir(store), exist_ok=True)
+        open(os.path.join(events.events_dir(store), "sessions.json"), "w", encoding="utf-8").write("{nope")
+        events.emit("session.start", store_dir=store, session_id="a")
+        assert [r["id"] for r in events.list_sessions(store)] == ["a"]
+
+    def test_disabled_events_write_nothing(self, store, monkeypatch):
+        monkeypatch.setenv("COGNIREPO_EVENTS", "0")
+        events.record_session(store, "a", client="c")
+        assert not os.path.exists(os.path.join(events.events_dir(store), "sessions.json"))
+
+
+class TestKilledServers:
+    def test_dead_pid_session_is_closed_not_stale(self, store):
+        events.emit("session.start", store_dir=store, session_id="k", client="c", pid=_dead_pid())
+        (row,) = events.list_sessions(store, now=time.time() + 3600)       # would have been "stale"
+        assert row["state"] == "closed" and row["closed_by"] == "process_gone"
+        assert row["closed_at"] == row["last_activity"]
+
+    def test_live_pid_with_matching_start_stays_active(self, store):
+        import psutil
+        events.emit("session.start", store_dir=store, session_id="l", client="c", pid=os.getpid(),
+                    proc_start=psutil.Process().create_time())
+        (row,) = events.list_sessions(store)
+        assert row["state"] == "active" and row["closed_by"] is None
+
+    def test_reused_pid_is_not_mistaken_for_the_server(self, store):
+        import psutil
+        events.emit("session.start", store_dir=store, session_id="r", client="c", pid=os.getpid(),
+                    proc_start=psutil.Process().create_time() - 86400)     # a different, older process
+        (row,) = events.list_sessions(store)
+        assert row["state"] == "closed" and row["closed_by"] == "process_gone"
+
+    def test_old_sessions_without_a_pid_keep_the_old_rules(self, store):
+        events.emit("session.start", store_dir=store, session_id="o", client="c")
+        assert events.list_sessions(store, now=time.time() + 3600)[0]["state"] == "stale"
+
+    def test_clean_end_is_session_end(self, store):
+        events.emit("session.start", store_dir=store, session_id="e", pid=_dead_pid())
+        events.emit("session.end", store_dir=store, session_id="e")
+        assert events.list_sessions(store)[0]["closed_by"] == "session_end"
+
+    def test_a_real_killed_process_is_detected(self, store, tmp_path):
+        code = ("import sys, time, psutil; from core import events; "
+                "events.emit('session.start', store_dir=sys.argv[1], session_id='real', client='c', pid=__import__('os').getpid(), "
+                "proc_start=psutil.Process().create_time()); print('up', flush=True); time.sleep(60)")
+        proc = subprocess.Popen([sys.executable, "-c", code, store], stdout=subprocess.PIPE, text=True)
+        try:
+            assert proc.stdout.readline().strip() == "up"
+            assert events.list_sessions(store)[0]["state"] == "active"
+            proc.kill()
+            proc.wait()
+            row = events.list_sessions(store)[0]
+            assert row["state"] == "closed" and row["closed_by"] == "process_gone"
+        finally:
+            proc.kill()
+
+
+class TestClientAtConnect:
+    """Drive the real MCP SDK handshake: the client name must be recorded before any tool call."""
+
+    def test_tools_list_announces_the_client(self, store, monkeypatch):
+        anyio = pytest.importorskip("anyio")
+        mcp_server = pytest.importorskip("interface.server.mcp_server")
+        from mcp.shared.memory import create_connected_server_and_client_session
+        from mcp import types as mtypes
+        monkeypatch.setattr(events, "_default_store", lambda: store)
+        monkeypatch.setattr(mcp_server, "_MCP_SESSION", {"session_id": "sess-1"})
+        monkeypatch.setattr(mcp_server, "_MCP_CLIENT", None)
+        monkeypatch.setattr(mcp_server, "_CLIENT_ANNOUNCED", False)
+        monkeypatch.setattr(mcp_server.mcp._mcp_server, "request_handlers",
+                            dict(mcp_server.mcp._mcp_server.request_handlers))   # undo the hook after the test
+        assert mcp_server._wrap_list_tools_for_client() is True
+        assert mcp_server._wrap_list_tools_for_client() is True      # idempotent: no double wrapping
+
+        async def run():
+            async with create_connected_server_and_client_session(
+                    mcp_server.mcp._mcp_server,
+                    client_info=mtypes.Implementation(name="test-client", version="1")) as client:
+                await client.list_tools()
+
+        anyio.run(run)
+        evs = events.read_since(store, 0)
+        got = [e for e in evs if e["type"] == "session.client"]
+        assert len(got) == 1 and got[0]["client"] == "test-client" and got[0]["session_id"] == "sess-1"
+        (row,) = events.list_sessions(store)
+        assert row["client"] == "test-client" and row["call_count"] == 0     # known with zero tool calls
+
+    def test_unknown_sdk_shape_leaves_behaviour_unchanged(self, monkeypatch):
+        mcp_server = pytest.importorskip("interface.server.mcp_server")
+        monkeypatch.setattr(mcp_server.mcp._mcp_server, "request_handlers", {})
+        assert mcp_server._wrap_list_tools_for_client() is False
+
+    def test_session_start_and_end_populate_the_sidecar(self, store, monkeypatch):
+        mcp_server = pytest.importorskip("interface.server.mcp_server")
+        monkeypatch.setattr(events, "_default_store", lambda: store)
+        monkeypatch.setattr(mcp_server, "_MCP_SESSION", {"session_id": "s9"})
+        monkeypatch.setattr(mcp_server, "_SESSION_ENDED", False)
+        monkeypatch.setattr(mcp_server, "_CALL_COUNT", 5)
+        mcp_server._emit_session_event("session.start")
+        mcp_server._emit_session_event("session.end")
+        _wipe_log(store)
+        (row,) = events.list_sessions(store)
+        assert row["id"] == "s9" and row["call_count"] == 5 and row["closed_by"] == "session_end"
+        assert row["pid"] == os.getpid()

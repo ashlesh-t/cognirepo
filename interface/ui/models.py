@@ -174,6 +174,7 @@ class SessionInfo(BaseModel):
     closed_at: str | None = None
     state: Literal["active", "stale", "closed"]
     pid: int | None = None        # the MCP server process (from session.start); null for older sessions
+    closed_by: Literal["session_end", "process_gone"] | None = None   # why state is "closed"
 
 
 class ProcessInfo(BaseModel):

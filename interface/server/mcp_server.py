@@ -493,6 +493,8 @@ def _events_summarize(kwargs: dict) -> str:
 
 _MCP_CLIENT: str | None = None  # MCP initialize clientInfo.name; one client per stdio process
 _SESSION_ENDED = False
+_CLIENT_ANNOUNCED = False
+_CALL_COUNT = 0                 # tool.start + tool.shed this process emitted: the session's final call_count
 
 
 def _client_name() -> str | None:
@@ -514,7 +516,10 @@ def _emit_tool_event(type_: str, tool_name: str, trace_id: str | None = None, **
     """Best-effort live event for the Engram console (#207). Never raises, never blocks a tool call."""
     try:
         from core import events  # pylint: disable=import-outside-toplevel
+        global _CALL_COUNT  # pylint: disable=global-statement
         sid = (_MCP_SESSION or {}).get("session_id")
+        if type_ in ("tool.start", "tool.shed"):
+            _CALL_COUNT += 1
         events.emit(type_, tool=tool_name, trace_id=trace_id, session_id=sid, client=_client_name(), **fields)
     except Exception:  # pylint: disable=broad-except
         pass
@@ -532,9 +537,63 @@ def _emit_session_event(type_: str) -> None:
                 return
             _SESSION_ENDED = True
         from core import events  # pylint: disable=import-outside-toplevel
-        events.emit(type_, session_id=sid, client=_MCP_CLIENT, pid=os.getpid())
+        fields: dict = {}
+        if type_ == "session.start":
+            try:
+                import psutil  # pylint: disable=import-outside-toplevel
+                fields["proc_start"] = psutil.Process().create_time()   # tells a reused pid from this process
+            except Exception:  # pylint: disable=broad-except
+                pass
+        events.emit(type_, session_id=sid, client=_MCP_CLIENT, pid=os.getpid(), **fields)
+        from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        store = events._default_store()  # pylint: disable=protected-access
+        if type_ == "session.start":
+            events.record_session(store, sid, client=_MCP_CLIENT, pid=os.getpid(), started=now,
+                                  proc_start=fields.get("proc_start"))
+        else:
+            events.record_session(store, sid, client=_MCP_CLIENT, closed_at=now, last_activity=now,
+                                  call_count=_CALL_COUNT)
     except Exception:  # pylint: disable=broad-except
         pass
+
+
+def _announce_client() -> None:
+    """Learn the connected client's name now (at the first ``tools/list``) instead of at the first tool call,
+    and tell the console: a ``session.client`` event plus the sessions sidecar. Idempotent, never raises."""
+    global _CLIENT_ANNOUNCED  # pylint: disable=global-statement
+    try:
+        name = _client_name()
+        sid = (_MCP_SESSION or {}).get("session_id")
+        if _CLIENT_ANNOUNCED or not name or not sid:
+            return
+        _CLIENT_ANNOUNCED = True
+        from core import events  # pylint: disable=import-outside-toplevel
+        events.emit("session.client", session_id=sid, client=name, pid=os.getpid())
+        events.record_session(events._default_store(), sid, client=name)  # pylint: disable=protected-access
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
+def _wrap_list_tools_for_client() -> bool:
+    """Hook ``tools/list`` (sent right after ``initialize``) so the client name is known at connect time.
+    Returns False — leaving behaviour unchanged — if the SDK does not expose the handler this way."""
+    try:
+        from mcp import types as _types  # pylint: disable=import-outside-toplevel
+        handlers = mcp._mcp_server.request_handlers  # pylint: disable=protected-access
+        orig = handlers.get(_types.ListToolsRequest)
+        if orig is None or getattr(orig, "_cognirepo_client_hook", False):
+            return orig is not None
+
+        async def _hooked(req):  # noqa: ANN001, ANN202
+            _announce_client()
+            return await orig(req)
+
+        _hooked._cognirepo_client_hook = True  # type: ignore[attr-defined]
+        handlers[_types.ListToolsRequest] = _hooked
+        return True
+    except Exception:  # pylint: disable=broad-except
+        return False
 
 
 def _traced(tool_name: str, fn, *args, **kwargs):
@@ -2522,6 +2581,7 @@ def run_server(project_dir: str | None = None) -> None:
     _init_mcp_session()
     import atexit as _atexit  # pylint: disable=import-outside-toplevel
     _emit_session_event("session.start")
+    _wrap_list_tools_for_client()
     _atexit.register(_emit_session_event, "session.end")  # covers exits that skip the finally below
 
     # Pre-warm embedding model in background — reduces first-query latency from ~6s to ~0s

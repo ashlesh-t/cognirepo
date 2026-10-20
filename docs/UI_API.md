@@ -223,7 +223,8 @@ Event (`data:` JSON): `seq`, `ts` (UTC), `type`, plus per type:
 | `tool.end` | `tool`, `trace_id`, `session_id`, `dur_ms`, `result_summary` |
 | `tool.error` | `tool`, `trace_id`, `session_id`, `dur_ms`, `error` (exception class only), `retryable` (store busy) |
 | `tool.shed` | `tool`, `session_id`, `reason` (`circuit_open` \| `congestion`) |
-| `session.start`, `session.end` | `session_id`, `client`, `pid` (`session.end` is written when `cognirepo serve` exits cleanly; a killed server writes none) |
+| `session.start`, `session.end` | `session_id`, `client`, `pid`, `proc_start` (`session.start` only: the process creation time, epoch seconds). `session.end` is written when `cognirepo serve` exits cleanly; a killed server writes none |
+| `session.client` | `session_id`, `client`, `pid` — written once, when the client's first `tools/list` reveals its name (before any tool call) |
 | `watcher.reindex` | `session_id`, `reindexed[]`, `removed[]`, `error` |
 | `service` | `service`, `action`, `state`, `ok` |
 | `graph.delta` | `graph_seq`, `ops[]` (see [Graph changes](#graph-changes)) or `reset: true`, `op_count` |
@@ -276,15 +277,24 @@ the other endpoints yet — `cognirepo ui` still serves one repo per server (see
 `GET /api/v1/sessions` and `/api/v1/sessions/{session_id}` are derived from the same event log — no second store, so they
 need no extra writer and share its privacy switches. One session = one `cognirepo serve` process.
 
-* `client` is the MCP `initialize` handshake's `clientInfo.name` (`claude-code`, …). It can only be read while a
-  request is being handled, so it is `null` until the session's first tool call.
-* `state`: `closed` (a `session.end` was seen), `active` (last event ≤ 10 min ago) or `stale` (no `session.end`
-  and quiet longer — idle, or the server was killed).
+* `client` is the MCP `initialize` handshake's `clientInfo.name` (`claude-code`, …). It is only readable while a request
+  is being handled, so the server captures it at the client's first `tools/list` — which clients send right after
+  `initialize` — and records a `session.client` event; it is `null` only in the moments before that (or if the SDK does not
+  expose the handler, in which case it falls back to the first tool call).
+* `state`: `closed` (a `session.end` was seen, **or its process is gone**), `active` (last event ≤ 10 min ago) or `stale`
+  (quiet longer — idle). `closed_by` says why a session is closed: `session_end` or `process_gone`. A killed server is
+  detected from the `pid` and `proc_start` recorded at `session.start`: the pid is dead, or alive with a different
+  creation time (a reused pid), so a SIGKILLed server no longer shows as `stale`. Sessions recorded before pids were
+  kept keep the old rules.
 * `call_count` counts `tool.start` plus `tool.shed`. In `/sessions/{session_id}`, each call joins `tool.start` to its
   `tool.end`/`tool.error` by `trace_id`; `status` is `running` | `ok` | `error` | `shed`, and `result_summary` carries the
   error class or shed reason when there is no result.
-* **Retention:** history is whatever the event log still holds (the live file plus one backup, ~10 MiB); older sessions
-  disappear. With `COGNIREPO_EVENTS_METADATA_ONLY=1` the `args_summary`/`result_summary` fields are absent.
+* **Retention:** the *calls* of a session are whatever the event log still holds (live file plus one backup, ~10 MiB).
+  The sessions themselves outlive that: `<store>/events/sessions.json` keeps the newest 200 sessions' start, client, pid and
+  final `call_count`. It is written only when a session starts, learns its client, or ends — never per tool call — under
+  the events lock, and is merged with the log (the larger `call_count` wins). A session that was killed has no final
+  count, so after rotation its `call_count` is whatever the log still shows. Nothing is written with
+  `COGNIREPO_EVENTS=0`. With `COGNIREPO_EVENTS_METADATA_ONLY=1` the `args_summary`/`result_summary` fields are absent.
 
 ## Security model
 | Threat | Mitigation |
