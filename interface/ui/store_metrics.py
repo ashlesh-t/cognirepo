@@ -12,10 +12,12 @@ already leaves on disk — ``events/events.jsonl`` and a few small files — on 
 ``PROMETHEUS_MULTIPROC_DIR``, no extra writes by the hot paths, nothing to clean up.
 
 * **Tool calls** (``cognirepo_tool_calls_total``, ``cognirepo_tool_call_duration_seconds``,
-  ``cognirepo_store_busy_total``) come from ``tool.*`` events. The collector reads the retained event
-  log on its first scrape and only new events after that, so the counters are monotonic for the life of
-  the metrics server (a restart is an ordinary Prometheus counter reset). The retained window is the live
-  file plus one backup (~10 MiB), so the first scrape may start from a partial history.
+  ``cognirepo_store_busy_total``) come from ``tool.*`` events. The collector keeps running tallies and a
+  cursor (the last event ``seq``) and checkpoints both to ``<store>/metrics/state.json`` after a scrape that
+  saw new events, so the counters are cumulative across metrics-server restarts and no longer depend on
+  how much of the event log is retained. A fresh store starts from the retained log (live file plus one
+  backup, ~10 MiB). If the log rotated past the cursor while nobody scraped, the lost events are counted
+  in ``cognirepo_events_missed_total`` instead of being hidden.
 * **Gauges** come from the store: ``graph/graph.seq`` and ``graph/graph.stats``, ``index/manifest.json``,
   the watcher heartbeat, and directory sizes.
 """
@@ -38,6 +40,7 @@ except ImportError:      # the metrics server answers 501 in this case; nothing 
 BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)
 _TOOL_TYPES = ("tool.end", "tool.error", "tool.shed")
 _BATCH = 1000
+STATE_VERSION = 1
 
 
 def _outcome(ev: dict[str, Any]) -> str:
@@ -60,16 +63,51 @@ class StoreCollector:
         # tool -> [count per bucket (non-cumulative), +Inf count, sum_seconds]
         self._hist: dict[str, list[float]] = {}
         self._busy = 0
+        self._missed = 0
         self._lock = threading.Lock()
+        self._load_state()
+
+    # -- checkpoint ------------------------------------------------------------------------------
+    def _state_path(self) -> str:
+        return os.path.join(self.store, "metrics", "state.json")
+
+    def _load_state(self) -> None:
+        data = _read_json(self._state_path())
+        try:
+            if not data or data.get("version") != STATE_VERSION:
+                return
+            seq = int(data["seq"])
+            if seq > events.last_seq(self.store):    # the store was wiped/recreated: old tallies are not ours
+                return
+            self._calls = {(str(t), str(o)): int(n) for t, o, n in data["calls"]}
+            self._hist = {str(k): [float(x) for x in v] for k, v in data["hist"].items()}
+            self._busy, self._missed, self._seq = int(data["busy"]), int(data["missed"]), seq
+        except (KeyError, TypeError, ValueError):
+            self._calls, self._hist, self._busy, self._missed, self._seq = {}, {}, 0, 0, 0
+
+    def _save_state(self) -> None:
+        try:
+            from core.config.atomic import atomic_json_dump  # pylint: disable=import-outside-toplevel
+            atomic_json_dump(self._state_path(), {
+                "version": STATE_VERSION, "seq": self._seq, "busy": self._busy, "missed": self._missed,
+                "calls": [[t, o, n] for (t, o), n in sorted(self._calls.items())],
+                "hist": self._hist}, indent=None, fsync=False)
+        except Exception:  # pylint: disable=broad-except
+            pass     # a checkpoint is an optimisation; the next scrape retries
 
     # -- events ----------------------------------------------------------------------------------
-    def _ingest(self) -> None:
+    def _ingest(self) -> bool:
+        """Consume new events; True if the cursor moved."""
+        start = self._seq
         while True:
             batch = events.read_since(self.store, self._seq, limit=_BATCH)
             if not batch:
-                return
+                return self._seq != start
             for ev in batch:
-                self._seq = max(self._seq, int(ev.get("seq") or 0))
+                seq = int(ev.get("seq") or 0)
+                if self._seq and seq > self._seq + 1:    # events between the cursor and this one rotated away
+                    self._missed += seq - self._seq - 1
+                self._seq = max(self._seq, seq)
                 if ev.get("type") not in _TOOL_TYPES:
                     continue
                 tool = str(ev.get("tool") or "unknown")
@@ -89,7 +127,7 @@ class StoreCollector:
                         h[len(BUCKETS)] += 1
                     h[len(BUCKETS) + 1] += sec
             if len(batch) < _BATCH:
-                return
+                return self._seq != start
 
     # -- store files -----------------------------------------------------------------------------
     def _gauges(self) -> Iterable[Any]:
@@ -114,7 +152,8 @@ class StoreCollector:
             age.add_metric([r], max(0.0, time.time() - ts))
             yield age
         for key, name, doc in (("source_file_count", "cognirepo_index_files", "Files in the AST index"),
-                               ("symbol_count", "cognirepo_index_symbols", "Symbols in the AST index")):
+                               ("symbol_count", "cognirepo_index_symbols", "Symbols in the AST index"),
+                               ("vector_count", "cognirepo_index_vectors", "Vectors in the AST FAISS index")):
             if isinstance(man.get(key), int):
                 m = GaugeMetricFamily(name, doc, labels=["repo"])
                 m.add_metric([r], man[key])
@@ -131,6 +170,13 @@ class StoreCollector:
         for part, size in sorted(store_sizes(self.store).items()):
             sizes.add_metric([r, part], size)
         yield sizes
+        last = events.read_last(self.store, 1)
+        newest = _parse_iso(last[0].get("ts")) if last else None
+        if newest is not None:
+            la = GaugeMetricFamily("cognirepo_event_log_age_seconds",
+                                   "Seconds since the newest event (large = idle or events disabled)", labels=["repo"])
+            la.add_metric([r], max(0.0, time.time() - newest))
+            yield la
         seq = GaugeMetricFamily("cognirepo_event_seq", "Highest event sequence number seen", labels=["repo"])
         seq.add_metric([r], events.last_seq(self.store))
         yield seq
@@ -140,12 +186,13 @@ class StoreCollector:
             return
         with self._lock:
             try:
-                self._ingest()
+                if self._ingest():
+                    self._save_state()
             except Exception:  # pylint: disable=broad-except
                 pass   # a torn read must not fail the scrape; the next one picks up from self._seq
             calls = dict(self._calls)
             hist = {k: list(v) for k, v in self._hist.items()}
-            busy = self._busy
+            busy, missed = self._busy, self._missed
         c = CounterMetricFamily("cognirepo_tool_calls", "MCP tool calls by outcome", labels=["repo", "tool", "outcome"])
         for (tool, out), n in sorted(calls.items()):
             c.add_metric([self.repo, tool, out], n)
@@ -163,6 +210,9 @@ class StoreCollector:
         b = CounterMetricFamily("cognirepo_store_busy", "Tool calls that gave up waiting for a store lock (retryable)", labels=["repo"])
         b.add_metric([self.repo], busy)
         yield b
+        m = CounterMetricFamily("cognirepo_events_missed", "Events lost to log rotation before they were counted", labels=["repo"])
+        m.add_metric([self.repo], missed)
+        yield m
         yield from self._gauges()
 
 

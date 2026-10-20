@@ -255,3 +255,192 @@ class TestProcesses:
     def test_session_rows_carry_pid(self, store):
         events.emit("session.start", store_dir=store, session_id="p", pid=4242)
         assert events.list_sessions(store)[0]["pid"] == 4242
+
+
+class TestCheckpoint:
+    def state_path(self, store):
+        return os.path.join(store, "metrics", "state.json")
+
+    def test_restart_resumes_counters_without_double_counting(self, tmp_path, store):
+        emit_calls(store)
+        first = scrape(tmp_path)
+        assert os.path.isfile(self.state_path(store))
+        events.emit("tool.end", store_dir=store, tool="lookup_symbol", dur_ms=2)
+        second = scrape(tmp_path)                                  # a brand-new metrics server
+        assert value(first, "cognirepo_tool_calls_total", tool="lookup_symbol", outcome="ok") == 2
+        assert value(second, "cognirepo_tool_calls_total", tool="lookup_symbol", outcome="ok") == 3
+        assert value(second, "cognirepo_store_busy_total") == 1
+        assert value(second, "cognirepo_events_missed_total") == 0
+
+    def test_counts_survive_the_log_being_rotated_away(self, tmp_path, store):
+        emit_calls(store)
+        scrape(tmp_path)
+        edir = events.events_dir(store)
+        for name in os.listdir(edir):
+            if name.startswith("events.jsonl"):
+                os.remove(os.path.join(edir, name))               # retention lost everything
+        events.emit("tool.end", store_dir=store, tool="lookup_symbol", dur_ms=2)
+        body = scrape(tmp_path)
+        assert value(body, "cognirepo_tool_calls_total", tool="lookup_symbol", outcome="ok") == 3
+
+    def test_events_lost_to_rotation_are_counted_not_hidden(self, tmp_path, store):
+        emit_calls(store)                                          # seq 1..6
+        scrape(tmp_path)
+        for i in range(3):                                         # seq 7..9 written, then 7..8 rotate away
+            events.emit("tool.end", store_dir=store, tool="x", dur_ms=1)
+        path = events.events_path(store)
+        lines = open(path, encoding="utf-8").read().splitlines()
+        open(path, "w", encoding="utf-8").write("\n".join(lines[-1:]) + "\n")
+        body = scrape(tmp_path)
+        assert value(body, "cognirepo_events_missed_total") == 2
+
+    def test_recreated_store_discards_stale_tallies(self, tmp_path, store):
+        emit_calls(store)
+        scrape(tmp_path)
+        edir = events.events_dir(store)
+        for name in os.listdir(edir):
+            os.remove(os.path.join(edir, name))                   # store wiped, checkpoint left behind
+        events.emit("tool.end", store_dir=store, tool="fresh", dur_ms=1)
+        body = scrape(tmp_path)
+        assert value(body, "cognirepo_tool_calls_total", tool="lookup_symbol", outcome="ok") is None
+        assert value(body, "cognirepo_tool_calls_total", tool="fresh", outcome="ok") == 1
+
+    @pytest.mark.parametrize("junk", ["{not json", '{"version": 99}', '{"version": 1, "seq": "x"}', "[]"])
+    def test_corrupt_checkpoint_starts_fresh(self, tmp_path, store, junk):
+        emit_calls(store)
+        os.makedirs(os.path.dirname(self.state_path(store)), exist_ok=True)
+        open(self.state_path(store), "w", encoding="utf-8").write(junk)
+        body = scrape(tmp_path)
+        assert value(body, "cognirepo_tool_calls_total", tool="lookup_symbol", outcome="ok") == 2
+
+    def test_no_checkpoint_write_when_nothing_changed(self, tmp_path, store):
+        emit_calls(store)
+        scrape(tmp_path)
+        stamp = os.stat(self.state_path(store)).st_mtime_ns
+        scrape(tmp_path)
+        assert os.stat(self.state_path(store)).st_mtime_ns == stamp
+
+
+class TestEventLogAgeAndVectors:
+    def test_log_age_present_only_with_events(self, tmp_path, store):
+        assert "cognirepo_event_log_age_seconds" not in scrape(tmp_path)
+        events.emit("tool.end", store_dir=store, tool="t", dur_ms=1)
+        assert 0 <= value(scrape(tmp_path), "cognirepo_event_log_age_seconds") < 60
+
+    def test_vector_count_from_manifest(self, tmp_path, store):
+        os.makedirs(os.path.join(store, "index"), exist_ok=True)
+        open(os.path.join(store, "index", "manifest.json"), "w", encoding="utf-8").write(
+            json.dumps({"vector_count": 41, "symbol_count": 40}))
+        assert value(scrape(tmp_path), "cognirepo_index_vectors") == 41
+
+    def test_real_index_save_records_vector_count(self, tmp_path, store):
+        from data.graph.knowledge_graph import KnowledgeGraph
+        from intelligence.indexer.ast_indexer import ASTIndexer
+        src = tmp_path / "m.py"
+        src.write_text("def f():\n    return 1\n")
+        idx = ASTIndexer(graph=KnowledgeGraph())
+        idx._embed_enabled = False
+        idx.index_file("m.py", str(src))
+        idx.save()
+        man = json.loads(open(os.path.join(store, "index", "manifest.json"), encoding="utf-8").read())
+        assert isinstance(man["vector_count"], int) and man["vector_count"] >= 0
+
+
+class TestPrometheusFormat:
+    def test_scrape_parses_and_histograms_are_consistent(self, tmp_path, store):
+        from prometheus_client.parser import text_string_to_metric_families
+        emit_calls(store)
+        fams = {f.name: f for f in text_string_to_metric_families(scrape(tmp_path))}
+        assert fams["cognirepo_tool_calls"].type == "counter"
+        assert fams["cognirepo_tool_call_duration_seconds"].type == "histogram"
+        hist = fams["cognirepo_tool_call_duration_seconds"].samples
+        for tool in ("lookup_symbol", "store_memory"):
+            buckets = [s for s in hist if s.name.endswith("_bucket") and s.labels["tool"] == tool]
+            counts = [s.value for s in buckets]
+            assert counts == sorted(counts), "buckets must be cumulative"
+            total = next(s.value for s in hist if s.name.endswith("_count") and s.labels["tool"] == tool)
+            assert buckets[-1].labels["le"] == "+Inf" and buckets[-1].value == total
+
+    def test_promtool_accepts_the_output_when_installed(self, tmp_path, store):
+        import shutil
+        if shutil.which("promtool") is None:
+            pytest.skip("promtool not installed")
+        emit_calls(store)
+        out = subprocess.run(["promtool", "check", "metrics"], input=scrape(tmp_path), text=True,
+                             capture_output=True, check=False)
+        assert out.returncode == 0, out.stderr
+
+
+class TestRealToolWrapper:
+    def test_traced_calls_show_up_in_the_scrape(self, tmp_path, store, monkeypatch):
+        mcp_server = pytest.importorskip("interface.server.mcp_server")
+        from core.config.lock import LockTimeout
+
+        def ok():
+            return {"ok": True}
+
+        def boom():
+            raise ValueError("x")
+
+        def busy():
+            raise LockTimeout("lock")
+
+        mcp_server._traced("ok_tool", ok)
+        mcp_server._traced("ok_tool", ok)
+        with pytest.raises(ValueError):          # unexpected errors are re-raised after being recorded
+            mcp_server._traced("boom_tool", boom)
+        mcp_server._traced("busy_tool", busy)
+        body = scrape(tmp_path)
+        assert value(body, "cognirepo_tool_calls_total", tool="ok_tool", outcome="ok") == 2
+        assert value(body, "cognirepo_tool_calls_total", tool="boom_tool", outcome="error") == 1
+        assert value(body, "cognirepo_tool_calls_total", tool="busy_tool", outcome="busy") == 1
+        assert value(body, "cognirepo_store_busy_total") == 1
+        assert value(body, "cognirepo_tool_call_duration_seconds_count", tool="ok_tool") == 2
+
+
+class TestProcessScan:
+    def make_serve(self, cwd):
+        script = os.path.join(cwd, "cognirepo")
+        open(script, "w", encoding="utf-8").write("import time\ntime.sleep(60)\n")
+        return subprocess.Popen([sys.executable, script, "serve"], cwd=cwd)
+
+    def test_finds_serve_processes_by_cwd_only(self, tmp_path, store):
+        mine, other = tmp_path / "a", tmp_path / "b"
+        mine.mkdir()
+        other.mkdir()
+        p1, p2 = self.make_serve(str(mine)), self.make_serve(str(other))
+        try:
+            import time
+            time.sleep(0.4)
+            processes._scan_cache.clear()
+            assert processes.discover_serve_pids(str(mine)) == [p1.pid]
+            rows = processes.list_processes(str(mine), store)
+            assert [r["pid"] for r in rows if r["role"] == "mcp"] == [p1.pid]
+            assert next(r for r in rows if r["pid"] == p1.pid)["rss_bytes"] > 0
+        finally:
+            p1.kill()
+            p2.kill()
+
+    def test_event_row_and_scan_do_not_duplicate(self, tmp_path, store):
+        proc = self.make_serve(str(tmp_path))
+        try:
+            import time
+            time.sleep(0.4)
+            processes._scan_cache.clear()
+            events.emit("session.start", store_dir=store, session_id="s", client="claude-code", pid=proc.pid)
+            mcp = [r for r in processes.list_processes(str(tmp_path), store) if r["role"] == "mcp"]
+            assert len(mcp) == 1 and mcp[0]["detail"] == "claude-code"
+        finally:
+            proc.kill()
+
+    def test_scan_is_cached(self, tmp_path, monkeypatch):
+        processes._scan_cache.clear()
+        processes.discover_serve_pids(str(tmp_path))
+        monkeypatch.setattr("psutil.process_iter", lambda *a, **k: pytest.fail("should be cached"))
+        assert processes.discover_serve_pids(str(tmp_path)) == []
+
+    def test_is_serve_matching(self):
+        assert processes._is_serve(["/usr/bin/python", "/home/u/.local/bin/cognirepo", "serve"])
+        assert processes._is_serve(["python", "-m", "interface.cli.main", "serve", "--x"])
+        assert not processes._is_serve(["python", "-m", "interface.cli.main", "ui", "--serve"])
+        assert not processes._is_serve(["vim", "serve"])
