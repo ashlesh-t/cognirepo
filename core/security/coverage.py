@@ -67,6 +67,7 @@ STORE_COVERAGE: dict[str, tuple[str, str]] = {
     "index/last_indexed.json":       (NO_CONTENT, "timestamps"),
     "index":                         (NO_CONTENT, "directory"),
     "graph":                         (NO_CONTENT, "directory"),
+    "graph/graph.seq":               (NO_CONTENT, "graph change counter (a single integer)"),
     "memory":                        (NO_CONTENT, "directory"),
     "episodic":                      (NO_CONTENT, "directory"),
     "bg_tasks":                      (NO_CONTENT, "background-task bookkeeping"),

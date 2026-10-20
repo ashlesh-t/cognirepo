@@ -45,6 +45,7 @@ class IndexerStatus(BaseModel):
     git_commit: str | None = None
     ast_index_bytes: int | None = None
     last_watcher_reindex: dict[str, Any] | None = None
+    graph_seq: int = 0            # knowledge-graph change counter: compare it to detect any graph change
 
 
 class UiInfo(BaseModel):
@@ -182,3 +183,19 @@ class RepoEntry(BaseModel):
     watcher: RepoWatcher
     hooks_installed: bool
     auto_index: bool
+
+
+class GraphOp(BaseModel):
+    op: Literal["add_node", "del_node", "update_node", "add_edge", "del_edge", "update_edge"]
+    id: str | None = None         # node ops
+    kind: str | None = None       # add_node: the node type
+    src: str | None = None        # edge ops
+    dst: str | None = None
+    rel: str | None = None        # add_edge: the relation
+
+
+class GraphChanges(BaseModel):
+    seq: int                      # the graph_seq the returned ops bring a client up to; pass it as `since` next
+    ops: list[GraphOp]
+    reset: bool                   # true: re-fetch GET /api/v1/graph, then continue from `seq`
+    more: bool = False            # true: stopped at `limit`; call again with since=seq

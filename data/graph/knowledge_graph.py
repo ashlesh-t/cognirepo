@@ -43,6 +43,7 @@ import networkx as nx
 
 from core.config.paths import get_path
 from core.config.lock import store_lock
+from data.graph import graph_seq as _graph_seq
 from data.graph import journal as _journal
 
 # Python builtins + common dunder names that must never dominate the concept
@@ -192,6 +193,9 @@ class KnowledgeGraph:
     _disk_stamp: tuple | None = None
     _lease: "_journal.WriterLease | None" = None
     _pending_overflow = False
+    _deltas: tuple = ()          # per-instance list on first use; see _record_delta (#209)
+    _delta_count = 0
+    _delta_overflow = False
 
     def __init__(self) -> None:
         self.G: nx.DiGraph = nx.DiGraph()  # pylint: disable=invalid-name
@@ -510,6 +514,7 @@ class KnowledgeGraph:
         self._pending = []
         self._pending_cost = 0
         self._last_flush = time.monotonic()
+        self._publish_deltas()
 
     def maybe_flush(self) -> None:
         """Flush if enough ops, estimated bytes or time accumulated. Never raises: a
@@ -581,7 +586,10 @@ class KnowledgeGraph:
             raise ValueError(f"unknown graph journal op {kind!r}")
 
     def _do(self, op: tuple) -> None:
+        delta = _graph_seq.delta_for(self.G, op)   # what this op will change; before it is applied
         self._apply(op)
+        if delta is not None:
+            self._record_delta(delta)
         if self._journal_active:
             self._remember(op)
             self._pending_cost += _op_cost(op)
@@ -593,6 +601,39 @@ class KnowledgeGraph:
             self._pending_cost += _op_cost(op)
         else:
             self._pending_overflow = True
+
+    def _record_delta(self, delta: dict) -> None:
+        """Remember a mutation until its batch is published (flush_journal / save). Bounded: past
+        ``MAX_BATCH_OPS`` only the count is kept and the batch is published as ``reset``."""
+        self._delta_count += 1
+        if self._delta_count > _graph_seq.MAX_BATCH_OPS:
+            self._delta_overflow = True
+            self._deltas = []
+            return
+        if not isinstance(self._deltas, list):
+            self._deltas = []
+        self._deltas.append(delta)
+
+    def _publish_deltas(self) -> None:
+        """Bump ``graph_seq`` and emit one ``graph.delta`` event for the batch just made durable.
+        Best-effort: never raises, so it can never fail a flush or a save (#209)."""
+        ops = list(self._deltas) if isinstance(self._deltas, list) else []
+        count, overflow = self._delta_count, self._delta_overflow
+        self._deltas, self._delta_count, self._delta_overflow = [], 0, False
+        if not count:
+            return
+        try:
+            from core import events  # pylint: disable=import-outside-toplevel
+            from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
+            store = str(get_cognirepo_dir())
+            with store_lock():
+                seq = _graph_seq.bump(store)
+            if overflow or events.metadata_only():   # node ids reveal code structure: counts only
+                events.emit("graph.delta", store_dir=store, graph_seq=seq, reset=True, op_count=count)
+            else:
+                events.emit("graph.delta", store_dir=store, graph_seq=seq, ops=ops, op_count=count)
+        except Exception:  # pylint: disable=broad-except
+            pass
 
     def _remember(self, op: tuple) -> None:
         try:
@@ -683,6 +724,7 @@ class KnowledgeGraph:
         self._pending_overflow = False
         self._disk_stamp = self._full_stamp()
         self._disk_path = _graph_file()
+        self._publish_deltas()
         breaker.record_success()
 
     def _compact_journal_locked(self) -> None:
