@@ -686,6 +686,7 @@ cognirepo ui [OPTIONS]
 | `--host HOST` | `127.0.0.1` | Bind address. Non-loopback is refused without `--unsafe-bind` |
 | `--port PORT` | `8731` | Port (a free port is used if the default is busy) |
 | `--no-open` | off | Do not open a browser; print the tokenised URL |
+| `--no-console-fetch` | off | Do not clone the console from git if `<global>/console/` is missing (air-gapped use) |
 | `--stop` | off | Stop the running UI server |
 | `--autostart on\|off` | — | Enable/disable starting at login (systemd `--user` / launchd / Task Scheduler). Opt-in, loopback-only |
 | `--allow-origin ORIGIN` | — | Extra exact `Origin` to allow (repeatable; never a wildcard) |

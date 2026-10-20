@@ -111,6 +111,13 @@ token (constant-time compare, URL fragment → `httpOnly; SameSite=Strict` cooki
 bad-token lockout with backoff, an allowlisted + `confirm`-gated service start/stop, a local audit log, and no
 endpoint that reads arbitrary files or executes commands. Remote access is out of scope.
 
+**Console download.** `cognirepo ui` is the one place CogniRepo runs `git clone` (once, when `~/.cognirepo/console/`
+is missing; opt out with `--no-console-fetch` or `COGNIREPO_CONSOLE_AUTOFETCH=0`). The URL is fixed or comes from your
+own env/config, `ext::` transports are disallowed, nothing from the clone is ever executed, and the bundle is refused
+unless its `console.json` matches this server's API major and every file's sha256. Only manifest-listed files are
+served. The hashes catch corruption and local tampering, not a malicious source repo. See
+[docs/UI_API.md](docs/UI_API.md#console-install-git-managed-215).
+
 ## Network Surface
 
 CogniRepo has **no remote API and no user accounts**. (An earlier REST API with JWT login was removed.) The only authenticated surface is the local control API described above.

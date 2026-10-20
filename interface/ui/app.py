@@ -7,6 +7,7 @@
 """FastAPI app for the local control API (``/api/v1``). Every request passes the guard below."""
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Any
@@ -299,15 +300,31 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
 
     app.openapi = _openapi  # type: ignore[method-assign]
 
-    static = console_dir if console_dir is not None else _console_static_dir()
-    if static:
-        app.mount("/", StaticFiles(directory=static, html=True), name="console")
+    if console_dir is not None:
+        mount = StaticFiles(directory=console_dir, html=True) if console_dir else None
+    else:
+        mount = _console_mount()
+    if mount is not None:
+        app.mount("/", mount, name="console")
     else:
         @app.get("/", response_class=HTMLResponse, include_in_schema=False)
         def landing() -> str:
             return _FALLBACK_PAGE
 
     return app
+
+
+def _console_mount() -> StaticFiles | None:
+    """Console to serve: the git-managed, hash-verified ``<global>/console/`` (#215), else the pip
+    package, else None (landing page). Offline: resolving never runs git."""
+    from interface.ui import console_install  # pylint: disable=import-outside-toplevel
+    bundle, reason = console_install.resolve()
+    if bundle:
+        return console_install.ManifestStaticFiles(bundle)
+    if reason:
+        logging.getLogger(__name__).warning("git-managed console ignored: %s", reason)
+    pip_dir = _console_static_dir()
+    return StaticFiles(directory=pip_dir, html=True) if pip_dir else None
 
 
 def _console_static_dir() -> str | None:
