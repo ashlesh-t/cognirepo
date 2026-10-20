@@ -281,7 +281,7 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
 
     @app.post("/api/v1/settings/auto-index", response_model=m.AutoIndexState,
               summary="Persist watch.auto_enabled for this repo (needs confirm=true)",
-              responses={400: {"model": m.ErrorBody}, 409: {"model": m.ErrorBody}, 422: {"model": m.ErrorBody}})
+              responses={400: {"model": m.ErrorBody}, 409: {"model": m.ErrorBody}, 422: {"model": m.ErrorBody, "description": "Invalid request body"}})
     def set_auto_index(body: AutoIndexRequest, request: Request) -> JSONResponse:
         client, origin = _client(request), request.headers.get("origin")
 
