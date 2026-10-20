@@ -46,6 +46,8 @@ class IndexerStatus(BaseModel):
     ast_index_bytes: int | None = None
     last_watcher_reindex: dict[str, Any] | None = None
     graph_seq: int = 0            # knowledge-graph change counter: compare it to detect any graph change
+    graph_base_incomplete: bool = False   # watcher refused its last graph save: run one full index-repo
+    auto_index: bool = True               # config watch.auto_enabled (absent = on)
 
 
 class UiInfo(BaseModel):
@@ -129,6 +131,22 @@ class HarnessResponse(BaseModel):
     last_context: LastContext | None = None
 
 
+class IndexProgress(BaseModel):
+    done: int
+    total: int
+
+
+class IndexRun(BaseModel):
+    """Outcome of the last ``index`` service run (kept in the UI server's memory)."""
+    result: str                   # ok | busy | failed
+    reason: str | None = None     # store_busy | base_incomplete | index_failed
+    exit_code: int | None = None  # null when the run was started by a previous UI server (not our child)
+    retryable: bool = False       # true for busy: another writer held the store, retry in a moment
+    finished_at: str
+    duration_s: float
+    detail: str | None = None
+
+
 class ServiceState(BaseModel):
     name: str
     state: str
@@ -137,6 +155,13 @@ class ServiceState(BaseModel):
     changed: bool | None = None
     reason: str | None = None     # set when state == "failed": a machine-readable cause
     detail: str | None = None
+    progress: IndexProgress | None = None   # index service while running
+    last_run: IndexRun | None = None        # index service after a run
+
+
+class AutoIndexState(BaseModel):
+    auto_index: bool
+    changed: bool
 
 
 class SessionInfo(BaseModel):

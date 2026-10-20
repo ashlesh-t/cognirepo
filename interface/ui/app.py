@@ -63,6 +63,10 @@ class ConfirmBody(BaseModel):
     confirm: StrictBool = False  # strict: "true" or 1 must not count as an explicit confirm
 
 
+class AutoIndexRequest(ConfirmBody):
+    enabled: StrictBool
+
+
 def _client(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
@@ -263,6 +267,47 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
               responses={400: {"model": m.ErrorBody}, 404: {"model": m.ErrorBody}, 501: {"model": m.ErrorBody}})
     def stop_service(name: str, request: Request, body: ConfirmBody | None = Body(default=None)) -> JSONResponse:
         return _control("stop", name, body, request)
+
+    @app.post("/api/v1/settings/auto-index", response_model=m.AutoIndexState,
+              summary="Persist watch.auto_enabled for this repo (needs confirm=true)",
+              responses={400: {"model": m.ErrorBody}, 409: {"model": m.ErrorBody}, 422: {"model": m.ErrorBody}})
+    def set_auto_index(body: AutoIndexRequest, request: Request) -> JSONResponse:
+        client, origin = _client(request), request.headers.get("origin")
+
+        def _audit(result: str, **extra: Any) -> None:
+            if audit:
+                audit.log("setting_auto_index", enabled=body.enabled, result=result, client=client, origin=origin, **extra)
+
+        if body.confirm is not True:
+            _audit("denied_no_confirm")
+            return _deny(400, "confirm_required")
+        from interface.ui import settings as ui_settings  # pylint: disable=import-outside-toplevel
+        try:
+            changed = ui_settings.set_auto_index(_store_dir(app.state.repo_root), body.enabled)
+        except ui_settings.SettingsError as exc:
+            _audit("error", code=exc.code)
+            return _deny(409, exc.code)
+        _audit("ok", changed=changed)
+        return JSONResponse({"auto_index": body.enabled, "changed": changed})
+
+    @app.on_event("startup")
+    def _auto_index_on_start() -> None:
+        """A repo whose ``watch.auto_enabled`` is explicitly true gets its watcher started with the UI.
+        Absent (the default) does nothing here; best-effort and off the request path."""
+        import threading  # pylint: disable=import-outside-toplevel
+        from interface.ui import settings as ui_settings  # pylint: disable=import-outside-toplevel
+        if not ui_settings.explicit_auto_index(_store_dir(app.state.repo_root)):
+            return
+
+        def _start() -> None:
+            try:
+                result = svc.start("watcher")
+                if audit:
+                    audit.log("auto_index_start", service="watcher", state=result.get("state"))
+            except Exception:  # pylint: disable=broad-except
+                logging.getLogger(__name__).warning("auto-index watcher start failed", exc_info=True)
+
+        threading.Thread(target=_start, daemon=True, name="cognirepo-ui-auto-index").start()
 
     @app.get("/_cognirepo/bootstrap.js", include_in_schema=False)
     def bootstrap_js() -> Response:

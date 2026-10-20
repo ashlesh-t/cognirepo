@@ -1,6 +1,42 @@
 {
   "components": {
     "schemas": {
+      "AutoIndexRequest": {
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "AutoIndexRequest",
+        "type": "object"
+      },
+      "AutoIndexState": {
+        "properties": {
+          "auto_index": {
+            "title": "Auto Index",
+            "type": "boolean"
+          },
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "auto_index",
+          "changed"
+        ],
+        "title": "AutoIndexState",
+        "type": "object"
+      },
       "ConfirmBody": {
         "properties": {
           "confirm": {
@@ -481,6 +517,86 @@
         "title": "HarnessServer",
         "type": "object"
       },
+      "IndexProgress": {
+        "properties": {
+          "done": {
+            "title": "Done",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "done",
+          "total"
+        ],
+        "title": "IndexProgress",
+        "type": "object"
+      },
+      "IndexRun": {
+        "description": "Outcome of the last ``index`` service run (kept in the UI server's memory).",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "duration_s": {
+            "title": "Duration S",
+            "type": "number"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "finished_at": {
+            "title": "Finished At",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "result": {
+            "title": "Result",
+            "type": "string"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "result",
+          "finished_at",
+          "duration_s"
+        ],
+        "title": "IndexRun",
+        "type": "object"
+      },
       "IndexerStatus": {
         "properties": {
           "ast_index_bytes": {
@@ -494,6 +610,11 @@
             ],
             "title": "Ast Index Bytes"
           },
+          "auto_index": {
+            "default": true,
+            "title": "Auto Index",
+            "type": "boolean"
+          },
           "git_commit": {
             "anyOf": [
               {
@@ -504,6 +625,11 @@
               }
             ],
             "title": "Git Commit"
+          },
+          "graph_base_incomplete": {
+            "default": false,
+            "title": "Graph Base Incomplete",
+            "type": "boolean"
           },
           "graph_seq": {
             "default": 0,
@@ -848,6 +974,16 @@
             ],
             "title": "Detail"
           },
+          "last_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IndexRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "name": {
             "title": "Name",
             "type": "string"
@@ -873,6 +1009,16 @@
               }
             ],
             "title": "Port"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IndexProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "reason": {
             "anyOf": [
@@ -2035,6 +2181,73 @@
           }
         },
         "summary": "One session and its last tool calls (oldest first)"
+      }
+    },
+    "/api/v1/settings/auto-index": {
+      "post": {
+        "operationId": "set_auto_index_api_v1_settings_auto_index_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutoIndexRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoIndexState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "Persist watch.auto_enabled for this repo (needs confirm=true)"
       }
     },
     "/api/v1/status": {

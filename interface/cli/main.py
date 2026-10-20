@@ -2376,6 +2376,25 @@ def _remove_lock_file(path: "str | None") -> None:
             pass
 
 
+class _ProgressFile:
+    """Best-effort ``{"done", "total"}`` for ``cognirepo ui``'s index service. Inert unless
+    ``COGNIREPO_PROGRESS_FILE`` names a file; a write failure never affects the run."""
+
+    def __init__(self, path: "str | None", total: int) -> None:
+        self.path, self.total, self._last = path, total, 0.0
+        self.tick(0, force=True)
+
+    def tick(self, done: int, force: bool = False) -> None:
+        if not self.path or (not force and time.monotonic() - self._last < 0.25):
+            return
+        self._last = time.monotonic()
+        try:
+            from core.config.atomic import atomic_json_dump  # pylint: disable=import-outside-toplevel
+            atomic_json_dump(self.path, {"done": done, "total": self.total}, fsync=False)
+        except Exception:  # pylint: disable=broad-except
+            self.path = None
+
+
 def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
     """Re-index *files* and persist everything that changed (COGNIREPO-154).
 
@@ -2406,7 +2425,9 @@ def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
     files = [r for r in files if r not in deleted]
     from intelligence.indexer import tombstones  # pylint: disable=import-outside-toplevel
     tombstones.mark(r for r in deleted if r in indexer.index_data.get("files", {}))
-    for rel in files:
+    progress = _ProgressFile(os.environ.get("COGNIREPO_PROGRESS_FILE"), len(files))   # set by the UI only (#211)
+    for done, rel in enumerate(files):
+        progress.tick(done)
         old = indexer.index_data.get("files", {}).get(rel, {}).get("symbols", [])
         touched |= {s["name"] for s in old}
         try:
@@ -2416,6 +2437,7 @@ def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
             continue
         touched |= {s["name"] for s in (record or {}).get("symbols", [])}
         indexed += 1
+    progress.tick(len(files), force=True)
     purged = indexer.purge_tombstones(root=os.getcwd())   # tombstones past the grace window
     touched |= purged
     if purged:
