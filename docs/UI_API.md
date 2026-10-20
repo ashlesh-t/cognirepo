@@ -18,9 +18,38 @@ cognirepo ui --autostart on   # opt in to starting at login (off by default); `-
 Default port is `8731` (a free port is used if it is busy; an explicit `--port` that is busy is an error).
 The server serves **the repo you launched it from**; a second repo needs `cognirepo ui --stop` first.
 
-The optional **`cognirepo-console`** package provides the web UI. If it is not installed, `cognirepo ui`
-prints how to install it (`pip install cognirepo-console`) and serves the API plus a minimal status page.
-CogniRepo never clones or downloads console code at runtime.
+## Console install (git-managed, #215)
+The web UI is a prebuilt static bundle. The server picks it in this order:
+1. **`<global>/console/`** — a shallow clone of the `release` branch of
+   `https://github.com/ashlesh-t/cognirepo-console`, verified against its `console.json` manifest;
+2. the optional **`cognirepo-console`** pip package (`STATIC_DIR`);
+3. a minimal status page (API only).
+
+If `<global>/console/` is missing, `cognirepo ui` clones it once (plain `git`, argv list, no shell, a
+fixed URL, `GIT_TERMINAL_PROMPT=0`, 120 s timeout, `ext::` transport disallowed) into a staging directory,
+validates it, then renames it into place — a failed or refused fetch leaves nothing behind. This is the
+**only** network call: it happens in the foreground `cognirepo ui` command, never in the server process, at
+login (autostart) or in the background. Once installed it works offline. It needs `git` and network; without
+them `cognirepo ui` prints one line and falls back to 2/3.
+
+`console.json` must contain `{"name": "cognirepo-console", "version", "api_major", "files": {path: sha256}}`.
+A bundle is **refused** (and the next source is used) if `api_major` differs from this server's
+(`status.api_version`), a listed file is missing or its sha256 differs, `index.html` is not listed, or a path is
+absolute, contains `..`, points into `.git/`, or is a symlink. Only files the manifest lists are served — `.git/`
+and any other file in the directory answer 404. Validation runs when the server starts.
+
+Trust model: the hashes detect corruption and local tampering of an installed bundle; they do not authenticate the
+repo, because the manifest comes from the same clone. Trust is therefore in the source URL.
+
+| Setting | Env var | `<global>/config.json` → `ui` | Default |
+|---|---|---|---|
+| Source repo | `COGNIREPO_CONSOLE_REPO` | `console_repo` | the URL above |
+| Branch or tag | `COGNIREPO_CONSOLE_REF` | `console_ref` | `release` |
+| Fetch when missing | `COGNIREPO_CONSOLE_AUTOFETCH=0` | `console_autofetch: false` | on |
+
+`cognirepo ui --no-console-fetch` skips the fetch for one run. The setting is read from the environment or your own
+global config, never from a request. A directory that exists but fails validation is **not** overwritten; the
+message names the reason.
 
 ## Authentication
 1. `cognirepo ui` opens `http://127.0.0.1:PORT/#token=<secret>`. The fragment is never sent to a server.
@@ -181,7 +210,7 @@ scripts). `cognirepo ui --autostart on|off` does it explicitly; both are idempot
 The installed command is `<this python> -m interface.cli.main ui --serve --no-open --host 127.0.0.1` — loopback by
 construction, and independent of whatever `cognirepo` happens to be first on `PATH`.
 
-## Console package contract (`cognirepo-console`)
+## Console package contract (`cognirepo-console` pip package)
 `import cognirepo_console` must expose `STATIC_DIR` (a directory containing `index.html`); the server mounts it at `/`.
 The console must perform the fragment→cookie swap itself (or include `/_cognirepo/bootstrap.js`) and call only the
 endpoints above.

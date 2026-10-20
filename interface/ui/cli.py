@@ -20,18 +20,35 @@ from interface.ui import security as sec
 from interface.ui.session import clear_session, is_listening, read_session
 
 CONSOLE_INSTALL_HINT = (
-    "The Engram console package is not installed, so only the API (and a minimal status page) is served.\n"
+    "The Engram console is not installed, so only the API (and a minimal status page) is served.\n"
     "  Install it with:  pip install cognirepo-console\n"
-    "  (CogniRepo never downloads or clones console code at runtime.)"
+    "  or let `cognirepo ui` clone it with git (needs git and network; see docs/UI_API.md)."
 )
 
 
 def console_installed() -> bool:
+    """True when the server will find a console: the verified git-managed bundle or the pip package."""
+    from interface.ui import console_install  # pylint: disable=import-outside-toplevel
+    if console_install.resolve()[0] is not None:
+        return True
     import importlib.util  # pylint: disable=import-outside-toplevel
     try:
         return importlib.util.find_spec("cognirepo_console") is not None
     except (ImportError, ValueError):
         return False
+
+
+def _ensure_console(args: Any) -> None:
+    """Install the git-managed console before the server starts (so the server finds it). Never fatal."""
+    from interface.ui import console_install  # pylint: disable=import-outside-toplevel
+    if console_install.resolve()[0] is not None:
+        return
+    off = True if getattr(args, "no_console_fetch", False) else None
+    out = console_install.ensure(autofetch=False if off else None)
+    if out.status == "fetched":
+        print(f"cognirepo ui: {out.message} from {console_install.settings()['repo']}")
+    elif out.status in ("failed", "invalid", "no-git"):
+        print(f"cognirepo ui: {out.message}", file=sys.stderr)
 
 
 def _spawn_server(repo_root: str, host: str, port: int | None, unsafe_bind: bool, allow_origins: list[str]) -> None:
@@ -122,6 +139,7 @@ def run_ui(args: Any) -> int:
             return 1
     else:
         clear_session()
+        _ensure_console(args)
         _spawn_server(repo_root, host, port, unsafe, origins)
         sess = _wait_for_session()
         if sess is None:
