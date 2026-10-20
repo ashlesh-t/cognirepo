@@ -604,9 +604,9 @@ class KnowledgeGraph:
 
     def _record_delta(self, delta: dict) -> None:
         """Remember a mutation until its batch is published (flush_journal / save). Bounded: past
-        ``MAX_BATCH_OPS`` only the count is kept and the batch is published as ``reset``."""
+        ``MAX_BATCH_TOTAL`` only the count is kept and the batch is published as ``reset``."""
         self._delta_count += 1
-        if self._delta_count > _graph_seq.MAX_BATCH_OPS:
+        if self._delta_count > _graph_seq.MAX_BATCH_TOTAL:
             self._delta_overflow = True
             self._deltas = []
             return
@@ -627,11 +627,16 @@ class KnowledgeGraph:
             from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
             store = str(get_cognirepo_dir())
             with store_lock():
-                seq = _graph_seq.bump(store)
-            if overflow or events.metadata_only():   # node ids reveal code structure: counts only
-                events.emit("graph.delta", store_dir=store, graph_seq=seq, reset=True, op_count=count)
-            else:
-                events.emit("graph.delta", store_dir=store, graph_seq=seq, ops=ops, op_count=count)
+                seq = _graph_seq.read(store) + 1
+                if overflow or events.metadata_only():   # node ids reveal code structure: counts only
+                    events.emit("graph.delta", store_dir=store, graph_seq=seq, reset=True, op_count=count)
+                else:
+                    step = _graph_seq.MAX_BATCH_OPS
+                    parts = max(1, -(-len(ops) // step))
+                    for i in range(parts):
+                        events.emit("graph.delta", store_dir=store, graph_seq=seq, ops=ops[i * step:(i + 1) * step],
+                                    part=i + 1, parts=parts, op_count=count)
+                _graph_seq.bump(store)     # only now can a reader see this number: all its parts exist
         except Exception:  # pylint: disable=broad-except
             pass
 

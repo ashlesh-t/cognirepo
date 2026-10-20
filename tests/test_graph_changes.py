@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Ashlesha T
 # SPDX-License-Identifier: MIT
 """#209 — graph_seq, graph.delta events and GET /api/v1/graph/changes."""
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -98,13 +100,13 @@ class TestSeqAndEvents:
         assert graph_seq.read(store) == 2                  # already published at flush
         assert [e["graph_seq"] for e in _deltas(store)] == [1, 2]
 
-    def test_bulk_batch_is_published_as_reset(self, store):
+    def test_batch_over_the_total_cap_is_published_as_reset(self, store):
         kg = KnowledgeGraph()
-        for i in range(graph_seq.MAX_BATCH_OPS + 5):
+        for i in range(graph_seq.MAX_BATCH_TOTAL + 5):
             kg.add_node(f"n{i}", "FILE")
         kg.save()
-        ev = _deltas(store)[0]
-        assert ev["reset"] is True and ev["op_count"] == graph_seq.MAX_BATCH_OPS + 5 and "ops" not in ev
+        (ev,) = _deltas(store)
+        assert ev["reset"] is True and ev["op_count"] == graph_seq.MAX_BATCH_TOTAL + 5 and "ops" not in ev
 
     def test_metadata_only_never_writes_node_ids(self, store, monkeypatch):
         monkeypatch.setenv("COGNIREPO_EVENTS_METADATA_ONLY", "1")
@@ -164,9 +166,9 @@ class TestChangesFeed:
         assert r["reset"] is True and r["ops"] == [] and r["seq"] == 2
         assert graph_changes.changes(store, 1, 500)["reset"] is True
 
-    def test_bulk_batch_in_range_forces_reset(self, store):
+    def test_batch_over_the_total_cap_in_range_forces_reset(self, store):
         kg = KnowledgeGraph()
-        for i in range(graph_seq.MAX_BATCH_OPS + 1):
+        for i in range(graph_seq.MAX_BATCH_TOTAL + 1):
             kg.add_node(f"n{i}", "FILE")
         kg.save()
         assert graph_changes.changes(store, 0, 500)["reset"] is True
@@ -209,3 +211,120 @@ class TestApi:
         assert client.get("/api/v1/graph/changes?since=-1", headers=AUTH).status_code == 422
         assert client.get("/api/v1/graph/changes?limit=0", headers=AUTH).status_code == 422
         assert client.get("/api/v1/graph/changes?limit=5000", headers=AUTH).status_code == 422
+
+
+class TestChunkedBatches:
+    """A bulk batch is several graph.delta events sharing one graph_seq (#209 follow-up)."""
+
+    def _bulk(self, n):
+        kg = KnowledgeGraph()
+        for i in range(n):
+            kg.add_node(f"n{i:04d}", "FILE")
+        kg.save()
+        return kg
+
+    def test_450_ops_become_three_parts_of_one_batch(self, store):
+        self._bulk(450)
+        evs = _deltas(store)
+        assert [(e["graph_seq"], e["part"], e["parts"], len(e["ops"])) for e in evs] == [
+            (1, 1, 3, 200), (1, 2, 3, 200), (1, 3, 3, 50)]
+        assert all(e["op_count"] == 450 for e in evs)
+        assert graph_seq.read(store) == 1
+
+    def test_feed_returns_every_op_in_order_without_reset(self, store):
+        self._bulk(450)
+        r = graph_changes.changes(store, 0, 500)
+        assert r["reset"] is False and r["seq"] == 1 and r["more"] is False
+        assert [o["id"] for o in r["ops"]] == [f"n{i:04d}" for i in range(450)]
+
+    def test_a_batch_is_never_split_across_pages(self, store):
+        self._bulk(450)
+        kg = KnowledgeGraph()
+        kg.add_node("late", "FILE")
+        kg.save()
+        r = graph_changes.changes(store, 0, 10)             # limit smaller than the first batch
+        assert r["seq"] == 1 and len(r["ops"]) == 450 and r["more"] is True
+        assert graph_changes.changes(store, 1, 10)["ops"][0]["id"] == "late"
+
+    def test_a_missing_part_forces_reset(self, store):
+        self._bulk(450)
+        path = events.events_path(store)
+        lines = open(path, encoding="utf-8").read().splitlines()
+        keep = [ln for ln in lines if '"part":2' not in ln]
+        open(path, "w", encoding="utf-8").write("\n".join(keep) + "\n")
+        assert graph_changes.changes(store, 0, 500)["reset"] is True
+
+    def test_a_duplicated_part_is_ambiguous_and_resets(self, store):
+        self._bulk(450)
+        path = events.events_path(store)
+        lines = open(path, encoding="utf-8").read().splitlines()
+        open(path, "w", encoding="utf-8").write("\n".join(lines + [lines[0]]) + "\n")
+        assert graph_changes.changes(store, 0, 500)["reset"] is True
+
+    def test_events_without_part_fields_are_still_whole_batches(self, store):
+        events.emit("graph.delta", store_dir=store, graph_seq=1, ops=[{"op": "add_node", "id": "a", "kind": "FILE"}],
+                    op_count=1)
+        os.makedirs(os.path.join(store, "graph"), exist_ok=True)
+        open(graph_seq.seq_path(store), "w", encoding="ascii").write("1")
+        r = graph_changes.changes(store, 0, 500)
+        assert r["reset"] is False and [o["id"] for o in r["ops"]] == ["a"]
+
+    def test_seq_advances_only_after_every_part_is_written(self, store, monkeypatch):
+        seen = []
+        real = events.emit
+
+        def spy(type_, **kw):
+            if type_ == "graph.delta":
+                seen.append(graph_seq.read(store))
+            return real(type_, **kw)
+
+        monkeypatch.setattr(events, "emit", spy)
+        self._bulk(450)
+        assert seen == [0, 0, 0] and graph_seq.read(store) == 1    # a reader never sees 1 with parts missing
+
+    def test_each_event_line_stays_small(self, store):
+        self._bulk(graph_seq.MAX_BATCH_TOTAL)
+        longest = max(len(ln) for ln in open(events.events_path(store), encoding="utf-8"))
+        assert longest < 64 * 1024
+
+    def test_exactly_the_total_cap_is_still_delivered(self, store):
+        self._bulk(graph_seq.MAX_BATCH_TOTAL)
+        r = graph_changes.changes(store, 0, 10_000)
+        assert r["reset"] is False and len(r["ops"]) == graph_seq.MAX_BATCH_TOTAL
+
+    def test_journalled_bulk_load_flushes_into_deliverable_batches(self, store):
+        kg = KnowledgeGraph()
+        kg.begin_journal()
+        for i in range(1200):
+            kg.add_node(f"j{i:04d}", "FILE")
+        kg.flush_journal()
+        kg.save()
+        r = graph_changes.changes(store, 0, 10_000)
+        assert r["reset"] is False and len(r["ops"]) == 1200 and r["seq"] == graph_seq.read(store)
+
+
+class TestRealIndexRun:
+    def test_a_real_index_run_is_delivered_not_reset(self, tmp_path):
+        """End to end through the real CLI: index a small repo and replay the feed onto an empty graph."""
+        import pickle
+        import subprocess
+        import sys
+        repo = tmp_path / "proj"
+        repo.mkdir()
+        for m in range(12):
+            body = "\n".join(f"def f{m}_{k}(x):\n    return f{m}_{(k + 1) % 8}(x)\n" for k in range(8))
+            (repo / f"mod{m}.py").write_text(body)
+        env = {**os.environ, "COGNIREPO_NO_WATCHER": "1", "COGNIREPO_GLOBAL_DIR": str(tmp_path / "g")}
+        for args in (["init", "--no-index", "--non-interactive"], ["index-repo", ".", "--no-embed", "--no-watch"]):
+            out = subprocess.run([sys.executable, "-m", "interface.cli.main", *args], cwd=repo, env=env,
+                                 capture_output=True, text=True, timeout=240, check=False)
+            assert out.returncode == 0, out.stderr
+        store = str(repo / ".cognirepo")
+        seq = graph_seq.read(store)
+        assert seq >= 1
+        feed = graph_changes.changes(store, 0, 1_000_000)
+        assert feed["reset"] is False and feed["seq"] == seq and feed["ops"]
+        added = {o["id"] for o in feed["ops"] if o["op"] == "add_node"}
+        with open(os.path.join(store, "graph", "graph.pkl"), "rb") as fh:
+            nodes = set(pickle.load(fh).nodes)
+        assert len(nodes) > 50 and nodes <= added, "every node on disk must have been announced by the feed"

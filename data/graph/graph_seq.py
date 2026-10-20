@@ -15,8 +15,11 @@ paired with a ``graph.delta`` event carrying the same number, so a consumer can 
 from one with holes (events are best-effort and rotate): it asks for ``since=N`` and gets either the
 contiguous batches ``N+1…current`` or ``reset: true``.
 
-A batch bigger than ``MAX_BATCH_OPS`` (a bulk index) is published as ``reset: true`` with only an
-``op_count`` — a client re-fetching the graph is cheaper than a megabyte event.
+A batch is published as one ``graph.delta`` event per ``MAX_BATCH_OPS`` ops (``part`` / ``parts``, all sharing
+the batch's ``graph_seq``), up to ``MAX_BATCH_TOTAL`` ops. Bigger than that (a bulk index) is published as
+``reset: true`` with only an ``op_count`` — a client re-fetching the graph is cheaper than megabytes of events.
+The sequence number is advanced only after every part is written, so a reader never sees a number whose
+parts are still being appended.
 
 Delta ops (``del_node`` implies removal of the node's incident edges):
   add_node {id, kind}              add_edge {src, dst, rel}
@@ -30,7 +33,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
-MAX_BATCH_OPS = 200
+MAX_BATCH_OPS = 200       # ops per event (one "part")
+MAX_BATCH_TOTAL = 5000    # ops per batch before it is published as a bare reset (= one default journal flush)
 SEQ_FILE = "graph.seq"
 
 
