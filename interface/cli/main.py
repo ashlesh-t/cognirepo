@@ -2426,8 +2426,8 @@ def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
     from intelligence.indexer import tombstones  # pylint: disable=import-outside-toplevel
     tombstones.mark(r for r in deleted if r in indexer.index_data.get("files", {}))
     progress = _ProgressFile(os.environ.get("COGNIREPO_PROGRESS_FILE"), len(files))   # set by the UI only (#211)
-    for rel in files:
-        progress.tick(indexed)
+    for done, rel in enumerate(files):
+        progress.tick(done)
         old = indexer.index_data.get("files", {}).get(rel, {}).get("symbols", [])
         touched |= {s["name"] for s in old}
         try:
@@ -2437,6 +2437,7 @@ def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
             continue
         touched |= {s["name"] for s in (record or {}).get("symbols", [])}
         indexed += 1
+    progress.tick(len(files), force=True)
     purged = indexer.purge_tombstones(root=os.getcwd())   # tombstones past the grace window
     touched |= purged
     if purged:

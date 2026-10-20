@@ -127,8 +127,12 @@ model as the other services and the same lock rules as the CLI (writers serialis
 | `index` | Runs `cognirepo index-repo --changed-only` (git-reported changes only; fixed argv, one run at a time, output kept in `<store>/watchers/ui-index.log`). A **full re-index is not exposed** | `409 not_stoppable` (a run finishes on its own) | `running` \| `idle` |
 | `hooks` | Runs `cognirepo install-hooks` (idempotent; your own hook content is kept) | Runs `cognirepo uninstall-hooks` | `installed` \| `not_installed`; `failed`/`not_a_git_repo` outside a git repo |
 
-`index` also reports `progress` (`{done, total}` files, while running) and `last_run` (kept in the UI server's memory,
-cleared when a new run starts): `{result, reason, exit_code, retryable, finished_at, duration_s, detail}`.
+`index` also reports `progress` (`{done, total}` files processed, while running) and `last_run`
+(`{result, reason, exit_code, retryable, finished_at, duration_s, detail}`, cleared when a new run starts). Run state is
+file-backed (`<store>/watchers/ui-index-run.json` while live, `ui-index-last.json` after), so it survives a UI-server
+restart: a run started by the previous server is still reported `running` (and a second one is not started), and its
+result is classified from the run's log when it ends (`exit_code` is then `null`). A run record older than 6 h is treated
+as dead, which guards against a reused pid.
 - `result: "busy"` / `reason: "store_busy"` / `retryable: true` — another writer holds the store (CLI exit 75, or an
   indexer holding the graph writer lease). This is not an error; retry in a moment.
 - `result: "failed"` / `reason: "base_incomplete"` — there is no complete base graph, so an incremental run refuses to
@@ -137,7 +141,8 @@ cleared when a new run starts): `{result, reason, exit_code, retryable, finished
   repo is not a git repo or has no commits, which `--changed-only` needs).
 
 `GET /status` → `indexer` adds `graph_base_incomplete` (the watcher's latest batch skipped its graph save for the same
-reason; `last_watcher_reindex.graph_skipped` carries the text; false until a batch has run) and `auto_index`
+reason; `last_watcher_reindex.graph_skipped` carries the text; false until a batch has run, and cleared again once a
+graph is written after that batch, e.g. by a full `index-repo`) and `auto_index`
 (`watch.auto_enabled`, default true). `last_watcher_reindex` (`timestamp`, `reindexed[]`, `removed[]`, `error`) is
 there too.
 

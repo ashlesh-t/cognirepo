@@ -554,8 +554,15 @@
             "type": "number"
           },
           "exit_code": {
-            "title": "Exit Code",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
           },
           "finished_at": {
             "title": "Finished At",
@@ -584,7 +591,6 @@
         },
         "required": [
           "result",
-          "exit_code",
           "finished_at",
           "duration_s"
         ],

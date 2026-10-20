@@ -22,6 +22,7 @@ from interface.ui.audit import AuditLog
 from interface.ui.services import ServiceError, ServiceManager
 from interface.ui.status import indexer_status
 
+_REAL_POPEN = subprocess.Popen     # the `popen` fixture replaces subprocess.Popen
 PORT = 8765
 TOKEN = "test-token-abcdefghijklmnopqrstuvwxyz0123456789"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -337,3 +338,133 @@ class TestProgressFile:
         pf = _ProgressFile(str(tmp_path / "file" / "p.json"), 2)     # a parent that is a regular file
         pf.tick(1, force=True)
         assert pf.path is None
+
+
+class TestRunStateSurvivesRestart:
+    def test_last_run_outlives_the_server(self, repo, popen):
+        mgr = ServiceManager(str(repo))
+        popen["next"] = FakeProc(output="Re-indexed 2 changed file(s): a.py")
+        mgr.start("index")
+        mgr._index_proc.rc = 0
+        assert mgr.status("index")["last_run"]["result"] == "ok"
+        fresh = ServiceManager(str(repo))                      # UI server restarted
+        st = fresh.status("index")
+        assert st["state"] == "idle" and st["last_run"]["result"] == "ok"
+
+    def test_run_started_by_a_previous_server_is_still_running(self, repo, popen):
+        mgr = ServiceManager(str(repo))
+        mgr.start("index")
+        fresh = ServiceManager(str(repo))
+        # the old server's child, which is alive: point the record at this very process
+        run = repo / ".cognirepo" / "watchers" / "ui-index-run.json"
+        run.write_text(json.dumps({"pid": os.getpid(), "started_epoch": __import__("time").time()}))
+        assert fresh.status("index")["state"] == "running"
+        assert fresh.start("index")["changed"] is False
+        assert len(popen["calls"]) == 1                        # no second indexer spawned
+
+    def test_finished_orphan_run_is_classified_from_its_log(self, repo, popen):
+        ServiceManager(str(repo)).start("index")
+        dead = _REAL_POPEN([sys.executable, "-c", "pass"])
+        dead.wait()
+        (repo / ".cognirepo" / "watchers" / "ui-index-run.json").write_text(
+            json.dumps({"pid": dead.pid, "started_epoch": __import__("time").time() - 5}))
+        (repo / ".cognirepo" / "watchers" / "ui-index.log").write_text("Re-indexed 2 changed file(s): a.py\n")
+        last = ServiceManager(str(repo)).status("index")["last_run"]
+        assert last["result"] == "ok" and last["exit_code"] is None
+
+    def test_orphan_with_busy_log_is_busy(self, repo, popen):
+        ServiceManager(str(repo)).start("index")
+        dead = _REAL_POPEN([sys.executable, "-c", "pass"])
+        dead.wait()
+        (repo / ".cognirepo" / "watchers" / "ui-index-run.json").write_text(
+            json.dumps({"pid": dead.pid, "started_epoch": __import__("time").time()}))
+        (repo / ".cognirepo" / "watchers" / "ui-index.log").write_text("✗ indexing is already running (pid 9)\n")
+        assert ServiceManager(str(repo)).status("index")["last_run"]["retryable"] is True
+
+    def test_ancient_record_is_not_trusted_even_if_the_pid_is_alive(self, repo, popen):
+        ServiceManager(str(repo)).start("index")
+        (repo / ".cognirepo" / "watchers" / "ui-index-run.json").write_text(
+            json.dumps({"pid": os.getpid(), "started_epoch": __import__("time").time() - 7 * 3600}))
+        st = ServiceManager(str(repo)).status("index")
+        assert st["state"] == "idle" and st["last_run"] is not None
+
+
+class TestBaseFlagSupersededByFullIndex:
+    def test_graph_written_after_the_record_clears_the_flag(self, repo):
+        idx, graph = repo / ".cognirepo" / "index", repo / ".cognirepo" / "graph"
+        idx.mkdir(parents=True, exist_ok=True)
+        graph.mkdir(parents=True, exist_ok=True)
+        rec = idx / "last_watcher_reindex.json"
+        rec.write_text(json.dumps({"graph_skipped": "no graph on disk"}))
+        assert indexer_status(str(repo))["graph_base_incomplete"] is True       # no graph at all
+        pkl = graph / "graph.pkl"
+        pkl.write_bytes(b"x")
+        os.utime(rec, (1000, 1000))
+        os.utime(pkl, (2000, 2000))                                             # full index ran afterwards
+        assert indexer_status(str(repo))["graph_base_incomplete"] is False
+        os.utime(pkl, (500, 500))                                               # graph older than the skip
+        assert indexer_status(str(repo))["graph_base_incomplete"] is True
+
+
+class TestWatcherAlreadyRunning:
+    def test_start_with_a_live_watcher_spawns_nothing(self, repo, monkeypatch):
+        mgr = ServiceManager(str(repo))
+        monkeypatch.setattr(mgr, "_watcher_record", lambda: {"pid": 1234})
+        monkeypatch.setattr(mgr, "_spawn_watcher", lambda: pytest.fail("a second watcher must not start"))
+        out = mgr.start("watcher")
+        assert out["state"] == "running" and out["changed"] is False and out["pid"] == 1234
+
+
+def _cli(repo, *args, env_extra=None):
+    env = {**os.environ, "COGNIREPO_NO_WATCHER": "1", "COGNIREPO_GLOBAL_DIR": str(repo / ".g")}
+    env.update(env_extra or {})
+    return subprocess.run([sys.executable, "-m", "interface.cli.main", *args], cwd=repo, env=env,
+                          capture_output=True, text=True, timeout=240, check=False)
+
+
+class TestRealRuns:
+    def test_incremental_run_succeeds_with_progress(self, repo, monkeypatch):
+        """Real CLI end to end: complete base graph, then the UI index service over a changed file."""
+        import time
+        monkeypatch.setenv("COGNIREPO_NO_WATCHER", "1")
+        monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(repo / ".g"))
+        (repo / "a.py").write_text("def f():\n    return 1\n")
+        subprocess.run(["git", "add", "a.py"], cwd=repo, check=True)
+        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false",
+                        "commit", "-qm", "x"], cwd=repo, check=True)
+        assert _cli(repo, "index-repo", ".", "--no-embed", "--no-watch").returncode == 0
+        (repo / "a.py").write_text("def f():\n    return 2\n")
+        mgr = ServiceManager(str(repo))
+        assert mgr.start("index")["state"] == "running"
+        deadline = time.monotonic() + 120
+        while mgr.status("index")["state"] == "running" and time.monotonic() < deadline:
+            time.sleep(0.1)
+        st = mgr.status("index")
+        assert st["last_run"]["result"] == "ok" and st["last_run"]["exit_code"] == 0, st
+        progress = json.loads((repo / ".cognirepo" / "watchers" / "ui-index-progress.json").read_text())
+        assert progress == {"done": 1, "total": 1}
+        assert mgr.status("index")["last_run"]["result"] == "ok"
+        assert ServiceManager(str(repo)).status("index")["last_run"]["result"] == "ok"   # after a "restart"
+
+
+class TestRealWatcherOnUiStart:
+    def test_ui_start_launches_one_real_watcher_and_not_a_second(self, repo, monkeypatch):
+        import time
+        monkeypatch.delenv("COGNIREPO_NO_WATCHER", raising=False)
+        monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(repo / ".g"))
+        (repo / "a.py").write_text("x = 1\n")
+        ui_settings.set_auto_index(str(repo / ".cognirepo"), True)
+        mgr = ServiceManager(str(repo))
+        cfg = sec.SecurityConfig(token=TOKEN, port=PORT)
+        try:
+            with TestClient(create_app(cfg, str(repo), None, services=mgr), base_url=f"http://127.0.0.1:{PORT}"):
+                deadline = time.monotonic() + 30
+                while mgr.status("watcher")["state"] != "running" and time.monotonic() < deadline:
+                    time.sleep(0.2)
+                first = mgr.status("watcher")
+                assert first["state"] == "running" and first["pid"]
+                again = mgr.start("watcher")                       # a second start must find the first
+                assert again["changed"] is False and again["pid"] == first["pid"]
+        finally:
+            mgr.stop("watcher")
+        assert mgr.status("watcher")["state"] == "stopped"

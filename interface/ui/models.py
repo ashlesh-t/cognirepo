@@ -140,7 +140,7 @@ class IndexRun(BaseModel):
     """Outcome of the last ``index`` service run (kept in the UI server's memory)."""
     result: str                   # ok | busy | failed
     reason: str | None = None     # store_busy | base_incomplete | index_failed
-    exit_code: int
+    exit_code: int | None = None  # null when the run was started by a previous UI server (not our child)
     retryable: bool = False       # true for busy: another writer held the store, retry in a moment
     finished_at: str
     duration_s: float

@@ -23,6 +23,7 @@ import time
 from typing import Any
 
 from core.config import procutil
+from core.config.atomic import atomic_json_dump
 
 ALLOWED: tuple[str, ...] = ("watcher", "metrics", "insights", "index", "hooks")
 
@@ -30,6 +31,7 @@ _START_WAIT_SECS = 2.0
 _STOP_WAIT_SECS = 8.0
 _KILL_WAIT_SECS = 3.0
 _HOOKS_TIMEOUT_SECS = 30.0
+_INDEX_MAX_AGE_SECS = 6 * 3600     # a recorded run older than this is treated as dead (pid reuse guard)
 _EX_TEMPFAIL = 75      # `store busy` exit code of the CLI (see interface/cli/main.py)
 
 
@@ -53,7 +55,6 @@ class ServiceManager:
         self._metrics_thread: threading.Thread | None = None
         self._insights_proc: subprocess.Popen | None = None
         self._index_proc: subprocess.Popen | None = None
-        self._index_started = 0.0
         self._index_last: dict[str, Any] | None = None
         self._lock = threading.Lock()
 
@@ -232,19 +233,46 @@ class ServiceManager:
         except (OSError, ValueError, KeyError, TypeError):
             return None
 
-    def _index_settle(self) -> None:
-        """Record the result of a finished run (once). Callers hold ``self._lock``."""
+    # Run state is file-backed so a restarted UI server still knows about a run it did not start and
+    # keeps the last result: ``ui-index-run.json`` while a run is live, ``ui-index-last.json`` after.
+    def _index_file(self, name: str) -> str:
+        return os.path.join(self._store(), "watchers", name)
+
+    @staticmethod
+    def _read_json_file(path: str) -> dict | None:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+            return data if isinstance(data, dict) else None
+        except (OSError, ValueError):
+            return None
+
+    def _index_live(self) -> dict | None:
+        """The run record if a run is still alive (ours or inherited from a previous UI server)."""
+        rec = self._read_json_file(self._index_file("ui-index-run.json"))
+        if not rec:
+            return None
         proc = self._index_proc
-        rc = proc.poll() if proc is not None else None
-        if proc is None or rc is None:
+        if proc is not None and proc.pid == rec.get("pid"):
+            return rec if proc.poll() is None else None
+        pid = rec.get("pid")
+        fresh = time.time() - float(rec.get("started_epoch", 0)) < _INDEX_MAX_AGE_SECS   # guards pid reuse
+        return rec if isinstance(pid, int) and fresh and procutil.pid_alive(pid) else None
+
+    def _index_settle(self) -> None:
+        """If a recorded run has ended, classify it and persist the result (once). Callers hold the lock."""
+        rec = self._read_json_file(self._index_file("ui-index-run.json"))
+        if not rec or self._index_live() is not None:
             return
-        tail = self._index_tail(3)
+        proc = self._index_proc
+        rc = proc.poll() if proc is not None and proc.pid == rec.get("pid") else None   # None: not our child
         try:
             with open(self._index_log_path(), encoding="utf-8", errors="replace") as fh:
                 full = fh.read()
         except OSError:
             full = ""
-        if rc == 0:
+        finished_ok = rc == 0 or (rc is None and ("Re-indexed" in full or "No changed files" in full))
+        if finished_ok:
             result, reason = "ok", None
         elif rc == _EX_TEMPFAIL or "already running" in full or "writer lease" in full:
             result, reason = "busy", "store_busy"       # another writer holds the store: retry, not an error
@@ -253,37 +281,46 @@ class ServiceManager:
         else:
             result, reason = "failed", "index_failed"
         self._index_last = {
-            "result": result, "reason": reason, "exit_code": rc,
-            "retryable": result == "busy",
+            "result": result, "reason": reason, "exit_code": rc, "retryable": result == "busy",
             "finished_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "duration_s": round(time.monotonic() - self._index_started, 1),
-            "detail": tail or None,
+            "duration_s": round(max(0.0, time.time() - float(rec.get("started_epoch", time.time()))), 1),
+            "detail": self._index_tail(3) or None,
         }
+        try:
+            atomic_json_dump(self._index_file("ui-index-last.json"), self._index_last, fsync=False)
+        except OSError:
+            pass
+        try:
+            os.remove(self._index_file("ui-index-run.json"))
+        except OSError:
+            pass
         self._index_proc = None
 
-    def _index_running(self) -> bool:
+    def _index_view(self) -> dict[str, Any]:
         self._index_settle()
-        return self._index_proc is not None
+        running = self._index_live() is not None
+        last = self._index_last or (None if running else self._read_json_file(self._index_file("ui-index-last.json")))
+        return {"name": "index", "state": "running" if running else "idle",
+                "progress": self._index_progress() if running else None,
+                "last_run": dict(last) if last else None}
 
     def _index_status(self) -> dict[str, Any]:
         with self._lock:
-            running = self._index_running()
-            last = dict(self._index_last) if self._index_last else None
-        return {"name": "index", "state": "running" if running else "idle",
-                "progress": self._index_progress() if running else None, "last_run": last}
+            return self._index_view()
 
     def _index_start(self) -> dict[str, Any]:
         """Incremental re-index of what git reports as changed — fixed argv, nothing from the request
         reaches it. A full re-index is deliberately not exposed here."""
         with self._lock:
-            if self._index_running():
-                return {**self._index_status_unlocked(), "changed": False}
+            self._index_settle()
+            if self._index_live() is not None:
+                return {**self._index_view(), "changed": False}
             if not self._initialised():
                 return self._failed("index", "not_initialised", "no .cognirepo/ for this repo; run `cognirepo init`")
             argv = [sys.executable, "-m", "interface.cli.main", "index-repo", "--changed-only"]
             log_path = self._index_log_path()
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
-            for stale in (self._index_progress_path(),):
+            for stale in (self._index_progress_path(), self._index_file("ui-index-last.json")):
                 try:
                     os.remove(stale)
                 except OSError:
@@ -297,15 +334,10 @@ class ServiceManager:
                     )
             except OSError as exc:
                 return self._failed("index", "spawn_failed", str(exc)[:300])
-            self._index_started = time.monotonic()
             self._index_last = None
-            return {**self._index_status_unlocked(), "changed": True}
-
-    def _index_status_unlocked(self) -> dict[str, Any]:
-        running = self._index_proc is not None and self._index_proc.poll() is None
-        last = dict(self._index_last) if self._index_last else None
-        return {"name": "index", "state": "running" if running else "idle",
-                "progress": self._index_progress() if running else None, "last_run": last}
+            atomic_json_dump(self._index_file("ui-index-run.json"),
+                             {"pid": self._index_proc.pid, "started_epoch": time.time()}, fsync=False)
+            return {**self._index_view(), "changed": True}
 
     # ── hooks (install / uninstall the git hooks) ────────────────────────────
     def _hooks_status(self) -> dict[str, Any]:
