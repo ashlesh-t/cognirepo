@@ -8,7 +8,10 @@ COPY pyproject.toml README.md* ./
 
 # Install all dependencies (setuptools finds no packages yet — that's fine; deps still resolve).
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir ".[dev,security]"
+    pip install --no-cache-dir ".[dev,security]" && \
+    # fastembed declares pillow<13, but pillow<13 has HIGH/CRITICAL CVEs (fixed in 13.0.0); CogniRepo only
+    # uses fastembed's text embedding. Drop this once fastembed lifts the cap.
+    pip install --no-cache-dir --no-deps "pillow>=13.0.0"
 
 # Copy source and link the editable install without re-downloading deps.
 COPY . .

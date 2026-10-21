@@ -1635,6 +1635,25 @@
             }
           },
           {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
+          },
+          {
             "in": "header",
             "name": "last-event-id",
             "required": false,
@@ -1737,6 +1756,25 @@
               "title": "Limit",
               "type": "integer"
             }
+          },
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
           }
         ],
         "responses": {
@@ -1803,6 +1841,25 @@
               "title": "Limit",
               "type": "integer"
             }
+          },
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
           }
         ],
         "responses": {
@@ -1843,6 +1900,27 @@
       "get": {
         "description": "Which agent clients have CogniRepo's MCP server configured (names only, no args/env).",
         "operationId": "harness_api_v1_harness_get",
+        "parameters": [
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -1860,6 +1938,16 @@
           "403": {
             "description": "Host or Origin header not allowed"
           },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
           "429": {
             "description": "Locked out after repeated bad tokens (see Retry-After)"
           }
@@ -1870,6 +1958,27 @@
     "/api/v1/insights": {
       "get": {
         "operationId": "insights_info_api_v1_insights_get",
+        "parameters": [
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -1886,6 +1995,16 @@
           },
           "403": {
             "description": "Host or Origin header not allowed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "429": {
             "description": "Locked out after repeated bad tokens (see Retry-After)"
@@ -1907,6 +2026,25 @@
               "default": false,
               "title": "Download",
               "type": "boolean"
+            }
+          },
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
             }
           }
         ],
@@ -1957,6 +2095,27 @@
     "/api/v1/processes": {
       "get": {
         "operationId": "list_processes_api_v1_processes_get",
+        "parameters": [
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -1977,6 +2136,16 @@
           },
           "403": {
             "description": "Host or Origin header not allowed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "429": {
             "description": "Locked out after repeated bad tokens (see Retry-After)"
@@ -2019,6 +2188,27 @@
     "/api/v1/services": {
       "get": {
         "operationId": "list_services_api_v1_services_get",
+        "parameters": [
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -2040,6 +2230,16 @@
           "403": {
             "description": "Host or Origin header not allowed"
           },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
           "429": {
             "description": "Locked out after repeated bad tokens (see Retry-After)"
           }
@@ -2058,6 +2258,25 @@
             "schema": {
               "title": "Name",
               "type": "string"
+            }
+          },
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
             }
           }
         ],
@@ -2163,6 +2382,25 @@
             "schema": {
               "title": "Name",
               "type": "string"
+            }
+          },
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
             }
           }
         ],
@@ -2313,6 +2551,27 @@
     "/api/v1/sessions": {
       "get": {
         "operationId": "list_sessions_api_v1_sessions_get",
+        "parameters": [
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -2333,6 +2592,16 @@
           },
           "403": {
             "description": "Host or Origin header not allowed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "429": {
             "description": "Locked out after repeated bad tokens (see Retry-After)"
@@ -2366,6 +2635,25 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
             }
           }
         ],
@@ -2416,6 +2704,27 @@
     "/api/v1/settings/auto-index": {
       "post": {
         "operationId": "set_auto_index_api_v1_settings_auto_index_post",
+        "parameters": [
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -2483,6 +2792,27 @@
     "/api/v1/status": {
       "get": {
         "operationId": "status_api_v1_status_get",
+        "parameters": [
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -2499,6 +2829,16 @@
           },
           "403": {
             "description": "Host or Origin header not allowed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           },
           "429": {
             "description": "Locked out after repeated bad tokens (see Retry-After)"

@@ -267,17 +267,32 @@ every bump is described by `graph.delta` events carrying the same number: one ev
 
 ## Repos
 `GET /api/v1/repos` lists the repos recorded in the global registry `<global dir>/repos.json` (mode 0600; paths and
-timestamps only), most recently seen first, plus the repo this server was started for. `init`, `index-repo` and every
-watcher registration (`watch`, `serve`'s embedded watcher) add or touch an entry — best-effort and throttled to once a
-minute per repo; `COGNIREPO_REPO_REGISTRY=0` turns it off.
+timestamps only), most recently seen first, plus initialised repos linked to an org or project (`orgs.json`, read-only)
+and the repo this server was started for. Entries are added or touched — best-effort, throttled to once a minute per
+repo, and only for initialised repos — by `init`, `index-repo`, every watcher registration, **and by `cognirepo serve`,
+`ui`, `doctor` and `prime`**, so a repo an agent merely uses shows up. `COGNIREPO_REPO_REGISTRY=0` turns it off.
+Repos that never ran any of those can be added explicitly: `cognirepo repos add <path>`, or
+`cognirepo repos scan --root DIR [--depth 3] [--dry-run]` (opt-in; looks for `.cognirepo/config.json`, skips hidden and
+junk directories, does not follow symlinks, visits at most 20 000 directories). Nothing scans by default.
 
 Each entry: `name`, `root`, `store`, `exists` (repo directory still on disk), `first_seen`, `last_seen`, `indexed`,
 `indexed_at`, `git_commit`, `watcher` (`state` running\|stale\|stopped, `pid`, `heartbeat_age_s`, `last_reindex`),
 `hooks_installed` (git `post-commit` has a cognirepo block) and `auto_index` (`watch.auto_enabled`, default true).
 
 The listing is strictly read-only: it never creates directories or deletes stale pid files in the repos it lists.
-Repos indexed before this existed appear after their next `init`/`index-repo`/`watch`. There is no `?repo=` selector on
-the other endpoints yet — `cognirepo ui` still serves one repo per server (see #116).
+
+### Reading another repo: `?repo=`
+`status`, `graph`, `graph/changes`, `harness`, `insights`, `insights/report`, `events`, `processes`, `sessions` and
+`sessions/{id}` accept `repo=<path or name>` (a name is the repo directory's name from `/repos`). It is resolved **only**
+against the registry, org links and the served repo — a request can never name an arbitrary filesystem path, so
+`?repo=/etc` is just `404 unknown_repo`. Errors: `404 unknown_repo`, `409 ambiguous_repo` (two repos share a name — use
+the path), `404 repo_missing` (directory gone), `404 repo_not_initialised` (no store). Omitted = the served repo, as before.
+
+Everything that acts or reports live state stays bound to the served repo: `services` (list, start, stop) and
+`settings/auto-index` answer `409 not_served_repo` for any other repo, and the attempt is audited
+(`..._denied_repo`). For another repo, `status.daemon` is read without touching its pid files, `processes` omits the `ui`
+row (this server is not that repo's), and `graph` keeps at most two graphs in memory (the served one plus one more,
+dropped after 2 minutes idle). Reading another repo's store uses the same token and the same trust as reading the served one.
 
 ## Sessions
 `GET /api/v1/sessions` and `/api/v1/sessions/{session_id}` are derived from the same event log — no second store, so they

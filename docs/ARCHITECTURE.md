@@ -212,6 +212,7 @@ Key modules:
 - `interface/ui/console_install.py` — git-managed console under `<global>/console/`: `resolve()` (offline), `ensure()` (the only `git clone`), `validate()` (manifest + sha256), `ManifestStaticFiles`, `update()` / `rollback()` (staged copy → atomic swap, `console.prev/`) (#215, #216)
 - `interface/ui/settings.py` — the single `config.json` write the control API makes (`watch.auto_enabled`, under the store lock); `services.py` also hosts the `index` (incremental `--changed-only`) and `hooks` services (#211)
 - `interface/ui/store_metrics.py` — Prometheus collector deriving `/metrics` from the store (events, graph/index/watcher files); `interface/ui/processes.py` — `GET /processes` rows; `core/store_stats.py` — cached store size accounting (#212)
+- `interface/ui/repo_select.py` — resolves `?repo=` against the registry/org links/served repo only (never a filesystem path); `core/config/repo_registry.py` also holds org-link merge, `scan`, `resolve` (#210)
 - `interface/cli/seed.py` — seed behaviour graph from git history
 
 ---

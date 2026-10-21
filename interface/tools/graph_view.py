@@ -26,32 +26,47 @@ _IDLE_TTL_S = 120.0
 _NODE_KEYS = ("type", "file", "line", "unresolved", "ambiguous", "dispatch")
 _EDGE_KEYS = ("rel", "weight")
 
+_MAX_CACHED = 2          # graphs held at once (the served repo plus one other): each can be large
 _lock = threading.Lock()
-_cache: dict[str, Any] = {"kg": None, "used": 0.0}
+_cache: dict[str, dict[str, Any]] = {}     # store dir ("" = the served repo) -> {"kg", "used"}
 
 
-def _graph():
-    """Lazily load the graph; drop it after an idle TTL so the UI process stays light."""
+def _graph(store: str | None = None):
+    """Lazily load a repo's graph; drop it after an idle TTL so the UI process stays light.
+
+    ``store`` is another repo's ``.cognirepo`` directory (selected via ``?repo=``). The graph file path is
+    resolved through a ContextVar, so loading and reloading happen inside that repo's context; reads after
+    that only touch the in-memory graph."""
     from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+    from core.config.paths import _CTX_DIR  # pylint: disable=import-outside-toplevel
+    key = store or ""
     now = time.monotonic()
     with _lock:
-        kg = _cache["kg"]
-        if kg is not None and now - _cache["used"] > _IDLE_TTL_S:
-            _cache["kg"] = kg = None
+        for k in [k for k, v in _cache.items() if now - v["used"] > _IDLE_TTL_S]:
+            del _cache[k]
             gc.collect()
-        if kg is None:
-            kg = KnowledgeGraph()
-            _cache["kg"] = kg
-        else:
-            kg.reload_if_changed()
-        _cache["used"] = now
-        return kg
+        entry = _cache.get(key)
+        token = _CTX_DIR.set(store) if store else None
+        try:
+            if entry is None:
+                entry = _cache[key] = {"kg": KnowledgeGraph(), "used": now}
+                while len(_cache) > _MAX_CACHED:
+                    oldest = min((k for k in _cache if k != key), key=lambda k: _cache[k]["used"])
+                    del _cache[oldest]
+                    gc.collect()
+            else:
+                entry["kg"].reload_if_changed()
+        finally:
+            if token is not None:
+                _CTX_DIR.reset(token)
+        entry["used"] = now
+        return entry["kg"]
 
 
 def reset_cache() -> None:
-    """Drop the cached graph (tests, and after the idle TTL)."""
+    """Drop every cached graph (tests, and after the idle TTL)."""
     with _lock:
-        _cache["kg"] = None
+        _cache.clear()
     gc.collect()
 
 
@@ -72,15 +87,18 @@ def _edge(u: str, v: str, data: dict) -> dict[str, Any]:
     return out
 
 
-def graph_view(node: str | None = None, depth: int = 1, limit: int = 200) -> dict[str, Any]:
+def graph_view(node: str | None = None, depth: int = 1, limit: int = 200,
+               store: str | None = None) -> dict[str, Any]:
     """Bounded slice of the knowledge graph.
 
     ``node`` given: neighbourhood within ``depth`` hops (<= 3), at most ``limit`` nodes.
     ``node`` omitted: overview = the ``limit`` highest-degree nodes and edges among them.
+    ``store``: another repo's ``.cognirepo`` directory (the control API resolves it from the registry);
+    omitted = the repo this process is serving.
     """
     depth = max(0, min(int(depth), MAX_DEPTH))
     limit = max(1, min(int(limit), MAX_LIMIT))
-    kg = _graph()
+    kg = _graph(store)
     stats = kg.stats()
     result: dict[str, Any] = {"stats": stats, "root": node, "found": True, "truncated": False,
                               "nodes": [], "edges": []}

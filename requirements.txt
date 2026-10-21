@@ -6,7 +6,7 @@ attrs==26.1.0
 bandit==1.9.4
 bcrypt==5.0.0
 build==1.4.4
-certifi==2026.2.25
+certifi==2026.10.19
 cffi==2.0.0
 charset-normalizer==3.4.6
 chromadb==1.5.9
@@ -81,7 +81,7 @@ orjson==3.11.8
 overrides==7.7.0
 packaging==26.0
 passlib==1.7.4
-pillow==12.3.0
+pillow==13.0.0
 pluggy==1.6.0
 prometheus_client==0.25.0
 proto-plus==1.27.2

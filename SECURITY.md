@@ -152,6 +152,18 @@ The following patterns are watched by TruffleHog:
 - `config.json` containing API keys
 - Private keys or certificates
 
+### Pillow and the `fastembed` cap
+Pillow versions before 13.0.0 carry HIGH/CRITICAL CVEs (image-decoding denial of service, among others), but every
+released `fastembed` declares `pillow<13`, so `pip install cognirepo` resolves to Pillow 12.x. The risk is limited:
+Pillow is there only for `fastembed`'s image-embedding feature, and CogniRepo uses `fastembed.TextEmbedding` alone — it
+never opens, decodes or embeds an image, so none of the vulnerable decoders are reachable from CogniRepo.
+
+Our own environments are nonetheless on the fixed version: `requirements.txt` pins `pillow==13.0.0`, and CI, the security
+audit and the Docker image run `pip install --no-deps "pillow>=13.0.0"` after installing the package. We checked that
+`fastembed` 0.8.0 imports and embeds text correctly under Pillow 13 (its only Pillow calls are `Image.open`, `fromarray`,
+`new` and `Resampling`). To get the fix in your own install: `pip install --no-deps "pillow>=13.0.0"` (pip will print a
+dependency warning that can be ignored). Those steps can be removed once `fastembed` lifts the cap.
+
 ---
 
 ## Known Non-Issues

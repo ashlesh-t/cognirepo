@@ -21,6 +21,7 @@ from pydantic import BaseModel, StrictBool
 from core import events
 from interface.ui import security as sec
 from interface.ui import event_stream
+from interface.ui import repo_select
 from interface.ui import models as m
 from interface.ui.audit import AuditLog
 from interface.ui.services import ServiceError, ServiceManager
@@ -118,6 +119,26 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
         response.headers["Cache-Control"] = "no-store"
         return response
 
+    def _sel(repo: str | None) -> tuple[str, str, bool]:
+        """(root, store, is_served) for ``?repo=``; raises RepoSelectError."""
+        root, store = repo_select.select(repo, app.state.repo_root)
+        return root, store, root == os.path.abspath(app.state.repo_root)
+
+    @app.exception_handler(repo_select.RepoSelectError)
+    async def _repo_error(_request: Request, exc: repo_select.RepoSelectError) -> JSONResponse:
+        return _deny(exc.status, exc.code)
+
+    def _served_or_deny(repo: str | None, request: Request, what: str) -> JSONResponse | None:
+        """Writes and live service state exist only for the served repo; audited like any other denial."""
+        try:
+            repo_select.require_served(repo, app.state.repo_root)
+        except repo_select.RepoSelectError as exc:
+            if audit:
+                audit.log(f"{what}_denied_repo", repo=str(repo)[:200], result=exc.code, client=_client(request),
+                          origin=request.headers.get("origin"))
+            return _deny(exc.status, exc.code)
+        return None
+
     @app.post("/api/v1/session", response_model=m.OkBody, responses={401: {"model": m.ErrorBody}, 429: {"model": m.ErrorBody}})
     async def session(body: SessionBody, request: Request) -> JSONResponse:
         """Swap the one-time URL-fragment token for an httpOnly SameSite=Strict cookie."""
@@ -135,8 +156,9 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
         return resp
 
     @app.get("/api/v1/status", response_model=m.StatusResponse, summary="Daemon, MCP, indexer status and version")
-    async def status(request: Request) -> dict[str, Any]:
-        return collect_status(app.state.repo_root, app.state.started_at, os.getpid())
+    async def status(request: Request, repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> dict[str, Any]:
+        root, _store, served = _sel(repo)
+        return collect_status(root, app.state.started_at, os.getpid(), served=served)
 
     @app.get("/api/v1/graph", response_model=m.GraphResponse, response_model_exclude_none=True,
              summary="Read-only, bounded knowledge-graph slice")
@@ -144,37 +166,40 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
         node: str | None = Query(default=None, max_length=512),
         depth: int = Query(default=1, ge=0, le=3),
         limit: int = Query(default=200, ge=1, le=2000),
+        repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC),
     ) -> dict[str, Any]:
         """Read-only, bounded knowledge-graph slice (never the whole graph)."""
         from interface.tools.graph_view import graph_view  # pylint: disable=import-outside-toplevel
-        return graph_view(node=node, depth=depth, limit=limit)
+        _root, store, served = _sel(repo)
+        return graph_view(node=node, depth=depth, limit=limit, store=None if served else store)
 
     @app.get("/api/v1/graph/changes", response_model=m.GraphChanges, response_model_exclude_none=True,
              summary="Knowledge-graph change feed since a graph_seq (reset=true: re-fetch /graph)")
     def graph_changes(
         since: int = Query(default=0, ge=0, description="the `seq` of the last response (or `indexer.graph_seq` from /status)"),
         limit: int = Query(default=500, ge=1, le=2000, description="max ops; whole batches only, so a single batch may exceed it"),
+        repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC),
     ) -> dict[str, Any]:
         from interface.ui import graph_changes as gc  # pylint: disable=import-outside-toplevel
-        return gc.changes(_store_dir(app.state.repo_root), since, limit)
+        return gc.changes(_sel(repo)[1], since, limit)
 
     @app.get("/api/v1/harness", response_model=m.HarnessResponse, summary="Agent clients with CogniRepo configured")
-    def harness() -> dict[str, Any]:
+    def harness(repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> dict[str, Any]:
         """Which agent clients have CogniRepo's MCP server configured (names only, no args/env)."""
         from interface.tools.agent_clients import agent_clients  # pylint: disable=import-outside-toplevel
-        return agent_clients(app.state.repo_root)
+        return agent_clients(_sel(repo)[0])
 
     @app.get("/api/v1/insights", response_model=m.InsightsInfo, summary="Whether the insights report exists, and when it was generated")
-    def insights_info() -> dict[str, Any]:
+    def insights_info(repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> dict[str, Any]:
         from interface.ui import insights_view  # pylint: disable=import-outside-toplevel
-        return insights_view.info(app.state.repo_root)
+        return insights_view.info(_sel(repo)[0])
 
     @app.get("/api/v1/insights/report", response_class=HTMLResponse, responses={404: {"model": m.ErrorBody}},
              summary="The insights report HTML, read-only, from its one fixed path")
-    def insights_report(download: bool = Query(default=False)) -> Response:
+    def insights_report(download: bool = Query(default=False), repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> Response:
         """Never takes a path. Served sandboxed (no scripts, no network, no forms); ``?download=1`` sends it as an attachment."""
         from interface.ui import insights_view  # pylint: disable=import-outside-toplevel
-        path = insights_view.safe_report_file(app.state.repo_root)
+        path = insights_view.safe_report_file(_sel(repo)[0])
         if path is None:
             return _deny(404, "no_report")
         with open(path, "rb") as fh:
@@ -199,11 +224,12 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
     async def events_stream(request: Request, session: str | None = Query(default=None, max_length=64),
                             types: str | None = Query(default=None, max_length=200, description="comma-separated globs, e.g. `tool.*,graph.delta`"),
                             replay: int = Query(default=0, ge=0, le=200, description="send the last N events first (ignored with Last-Event-ID)"),
-                            last_event_id: str | None = Header(default=None)) -> Response:
+                            last_event_id: str | None = Header(default=None),
+                            repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> Response:
         if stream_counter["n"] >= event_stream.MAX_STREAMS:
             return _deny(429, "too_many_streams")
         gen = event_stream.stream(
-            request.is_disconnected, _store_dir(app.state.repo_root),
+            request.is_disconnected, _sel(repo)[1],
             after=event_stream.parse_last_event_id(last_event_id), replay=replay, session=session,
             types=events.parse_types(types), counter=stream_counter)
         return StreamingResponse(gen, media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
@@ -216,9 +242,10 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
 
     @app.get("/api/v1/processes", response_model=list[m.ProcessInfo],
              summary="CogniRepo processes for this repo: this UI server, the watcher, live MCP servers")
-    def list_processes() -> list[dict[str, Any]]:
+    def list_processes(repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> list[dict[str, Any]]:
         from interface.ui import processes  # pylint: disable=import-outside-toplevel
-        return processes.list_processes(app.state.repo_root, _store_dir(app.state.repo_root))
+        root, store, served = _sel(repo)
+        return processes.list_processes(root, store, include_ui=served)
 
     @app.get("/api/v1/audit", response_model=list[dict[str, Any]],
              summary="Tail of the control-API audit log (newest last; never contains the token)")
@@ -227,14 +254,14 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
 
     @app.get("/api/v1/sessions", response_model=list[m.SessionInfo],
              summary="MCP sessions seen in the event log, most recently active first")
-    def list_sessions() -> list[dict[str, Any]]:
-        return events.list_sessions(_store_dir(app.state.repo_root))
+    def list_sessions(repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> list[dict[str, Any]]:
+        return events.list_sessions(_sel(repo)[1])
 
     @app.get("/api/v1/sessions/{session_id}", response_model=m.SessionDetail, responses={404: {"model": m.ErrorBody}},
              summary="One session and its last tool calls (oldest first)")
     def session_detail(session_id: str = Path(max_length=64, pattern=r"^[A-Za-z0-9_-]+$"),
-                       limit: int = Query(default=100, ge=1, le=500)) -> Any:
-        store = _store_dir(app.state.repo_root)
+                       limit: int = Query(default=100, ge=1, le=500), repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> Any:
+        store = _sel(repo)[1]
         calls = events.session_calls(store, session_id, limit)
         row = next((r for r in events.list_sessions(store, limit=10**6) if r["id"] == session_id), None)
         if calls is None or row is None:
@@ -242,8 +269,9 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
         return {**row, "calls": calls}
 
     @app.get("/api/v1/services", response_model=list[m.ServiceState], summary="State of the allowlisted services")
-    def list_services() -> list[dict[str, Any]]:
-        return svc.status()
+    def list_services(request: Request, repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> Any:
+        denied = _served_or_deny(repo, request, "services")
+        return denied if denied is not None else svc.status()
 
     def _control(action: str, name: str, body: ConfirmBody | None, request: Request) -> JSONResponse:
         client = _client(request)
@@ -271,19 +299,24 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
 
     @app.post("/api/v1/services/{name}/start", response_model=m.ServiceState, summary="Start an allowlisted service (needs confirm=true)",
               responses={400: {"model": m.ErrorBody}, 404: {"model": m.ErrorBody}, 409: {"model": m.ErrorBody}, 501: {"model": m.ErrorBody}})
-    def start_service(name: str, request: Request, body: ConfirmBody | None = Body(default=None)) -> JSONResponse:
-        return _control("start", name, body, request)
+    def start_service(name: str, request: Request, body: ConfirmBody | None = Body(default=None),
+                      repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> JSONResponse:
+        return _served_or_deny(repo, request, "service_start") or _control("start", name, body, request)
 
     @app.post("/api/v1/services/{name}/stop", response_model=m.ServiceState, summary="Stop an allowlisted service (needs confirm=true)",
               responses={400: {"model": m.ErrorBody}, 404: {"model": m.ErrorBody}, 501: {"model": m.ErrorBody}})
-    def stop_service(name: str, request: Request, body: ConfirmBody | None = Body(default=None)) -> JSONResponse:
-        return _control("stop", name, body, request)
+    def stop_service(name: str, request: Request, body: ConfirmBody | None = Body(default=None),
+                     repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> JSONResponse:
+        return _served_or_deny(repo, request, "service_stop") or _control("stop", name, body, request)
 
     @app.post("/api/v1/settings/auto-index", response_model=m.AutoIndexState,
               summary="Persist watch.auto_enabled for this repo (needs confirm=true)",
               responses={400: {"model": m.ErrorBody}, 409: {"model": m.ErrorBody}, 422: {"model": m.ErrorBody, "description": "Invalid request body"}})
-    def set_auto_index(body: AutoIndexRequest, request: Request) -> JSONResponse:
+    def set_auto_index(body: AutoIndexRequest, request: Request, repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> JSONResponse:
         client, origin = _client(request), request.headers.get("origin")
+        denied = _served_or_deny(repo, request, "setting_auto_index")
+        if denied is not None:
+            return denied
 
         def _audit(result: str, **extra: Any) -> None:
             if audit:
