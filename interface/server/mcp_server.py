@@ -2576,6 +2576,11 @@ def run_server(project_dir: str | None = None) -> None:
             _start_watcher_bg(project_dir or os.getcwd())
     except Exception:  # pylint: disable=broad-except
         pass  # watcher is best-effort — never block server startup
+    try:  # so `GET /api/v1/repos` lists every repo an agent actually uses (#210); never blocks startup
+        from core.config.repo_registry import register_if_initialised  # pylint: disable=import-outside-toplevel
+        register_if_initialised(project_dir or os.getcwd())
+    except Exception:  # pylint: disable=broad-except
+        pass
 
     _write_manifest()
     _init_mcp_session()

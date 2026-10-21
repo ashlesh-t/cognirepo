@@ -698,6 +698,27 @@ cognirepo ui [OPTIONS]
 
 ---
 
+## cognirepo repos
+
+Manage the registry behind `GET /api/v1/repos` (the repos the control API / console can show). See [UI_API.md](UI_API.md#repos).
+
+```bash
+cognirepo repos list                              # registered + org-linked repos, most recently used first
+cognirepo repos add PATH                          # register one initialised repo
+cognirepo repos scan --root DIR [--depth 3] [--dry-run]   # find initialised repos under DIR and register them
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `list` | Print each known repo, whether it came from the registry or an org link, and when it was last used |
+| `add PATH` | Register `PATH`; fails if it is not a directory or has no `.cognirepo/config.json` |
+| `scan --root DIR` | Opt-in search for `.cognirepo/config.json` up to `--depth` (default 3) levels down; `--dry-run` only lists. Skips hidden/junk directories and symlinks; nothing scans by default |
+
+`init`, `index-repo`, `watch`, `serve`, `ui`, `doctor` and `prime` register the current repo automatically (best-effort;
+`COGNIREPO_REPO_REGISTRY=0` disables it).
+
+---
+
 ## cognirepo list
 
 List MCP servers, organizations, and running watcher daemons.

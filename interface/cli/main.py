@@ -3275,6 +3275,7 @@ def _print_help() -> None:
     _row("watch",             "Manage background file-watcher daemon")
     _row("metrics",           "Serve Prometheus /metrics endpoint (port 9090)")
     _row("ui",                "Open the local-only control API + Engram console (127.0.0.1)")
+    _row("repos",             "List / add / scan the repos the console can show")
     _row("export-spec",       "Export OpenAI/Cursor tool specs to adapters/")
 
     # ── System ────────────────────────────────────────────────────────────────
@@ -3409,6 +3410,43 @@ def _hook_block(event: str = "post-commit") -> str:
         "fi\n"
         + _HOOK_SENTINEL_END + "\n"
     )
+
+
+def _cmd_repos(args) -> int:
+    """``cognirepo repos list|add|scan`` — manage the registry behind ``GET /api/v1/repos`` (#210)."""
+    from core.config import repo_registry  # pylint: disable=import-outside-toplevel
+    cmd = getattr(args, "repos_command", None) or "list"
+    if cmd == "list":
+        rows = repo_registry.known_repos()
+        if not rows:
+            print("No repos registered yet. Run `cognirepo init` in a repo, or `cognirepo repos scan --root DIR`.")
+        for row in rows:
+            print(f"{row['path']}\t{'org' if row.get('source') == 'org' else 'registered'}\t{row.get('last_seen', '-')}")
+        return 0
+    if cmd == "add":
+        path = os.path.abspath(args.path)
+        if not os.path.isdir(path):
+            print(f"repos add: not a directory: {path}", file=sys.stderr)
+            return 1
+        if not repo_registry.is_initialised(path):
+            print(f"repos add: {path} has no CogniRepo store (run `cognirepo init` there first).", file=sys.stderr)
+            return 1
+        repo_registry.register_repo(path)
+        print(f"registered {path}")
+        return 0
+    if cmd == "scan":
+        root = os.path.abspath(args.root)
+        if not os.path.isdir(root):
+            print(f"repos scan: not a directory: {root}", file=sys.stderr)
+            return 1
+        found = repo_registry.scan(root, depth=max(0, min(int(args.depth), 8)))
+        for path in found:
+            if not args.dry_run:
+                repo_registry.register_repo(path)
+            print(("would register " if args.dry_run else "registered ") + path)
+        print(f"{len(found)} repo(s) found under {root}")
+        return 0
+    return 2
 
 
 def _cmd_install_hooks() -> int:
@@ -4387,6 +4425,18 @@ def _main():
     p_metrics.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     p_metrics.add_argument("--port", type=int, default=9090, help="Port to listen on (default: 9090)")
 
+    # repos — the global registry behind GET /api/v1/repos (#210)
+    p_repos = sub.add_parser("repos", help="List, add or scan the repos the control API / console can show")
+    repos_sub = p_repos.add_subparsers(dest="repos_command")
+    repos_sub.add_parser("list", help="Registered repos (and org-linked ones), most recently used first")
+    p_repos_add = repos_sub.add_parser("add", help="Register one initialised repo")
+    p_repos_add.add_argument("path", help="Repo root (must contain .cognirepo/config.json)")
+    p_repos_scan = repos_sub.add_parser(
+        "scan", help="Find initialised repos under a directory and register them (opt-in; nothing scans by default)")
+    p_repos_scan.add_argument("--root", required=True, help="Directory to search under")
+    p_repos_scan.add_argument("--depth", type=int, default=3, help="How many levels down to look (default 3)")
+    p_repos_scan.add_argument("--dry-run", action="store_true", default=False, help="Only list what would be registered")
+
     # ui — local-only control API + console (COGNIREPO-129)
     p_ui = sub.add_parser("ui", help="Start the local-only control API and open the Engram console")
     p_ui.add_argument("--host", default="127.0.0.1",
@@ -4510,7 +4560,7 @@ def _main():
 
     # ── init guard: require .cognirepo/config.json for all storage commands ──
     _INIT_EXEMPT = {"init", "setup", "doctor", "migrate-config", "setup-env", "metrics",
-                    "list", "delete", "ui", None}
+                    "list", "delete", "ui", "repos", None}
     if args.command not in _INIT_EXEMPT:
         import pathlib  # pylint: disable=import-outside-toplevel
         from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
@@ -4558,6 +4608,8 @@ def _main():
         sys.exit(0)
 
     if args.command == "ui":
+        from core.config.repo_registry import register_if_initialised  # pylint: disable=import-outside-toplevel
+        register_if_initialised(os.getcwd())  # #210: best-effort; an uninitialised directory is not recorded
         from interface.ui.cli import run_ui  # pylint: disable=import-outside-toplevel
         sys.exit(run_ui(args))
 
@@ -4907,6 +4959,13 @@ def _main():
 
     if args.command == "coverage":
         sys.exit(_cmd_coverage())
+
+    if args.command in ("doctor", "prime"):
+        from core.config.repo_registry import register_if_initialised  # pylint: disable=import-outside-toplevel
+        register_if_initialised(os.getcwd())  # #210: best-effort registry entry for repos that are merely used
+
+    if args.command == "repos":
+        sys.exit(_cmd_repos(args))
 
     if args.command == "doctor":
         if getattr(args, "resources", False):

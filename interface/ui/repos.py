@@ -111,9 +111,10 @@ def describe(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_repos(current_root: str | None = None) -> list[dict[str, Any]]:
-    """Registered repos (most recently seen first); the repo this server was started for is included
-    even if it was never registered, so the console is never empty on a working install."""
-    rows = repo_registry.load()[:_MAX_REPOS]
+    """Registered repos (most recently seen first) plus initialised repos linked to an org; the repo this
+    server was started for is included even if it was never registered, so the console is never empty on a
+    working install."""
+    rows = repo_registry.known_repos()[:_MAX_REPOS]
     if current_root:
         cur = os.path.abspath(current_root)
         if all(r["path"] != cur for r in rows):

@@ -57,6 +57,14 @@ def daemon_status(repo_root: str) -> dict[str, Any]:
     }
 
 
+def readonly_daemon_status(repo_root: str) -> dict[str, Any]:
+    """Like ``daemon_status`` but writes nothing (the daemon helpers delete stale pid files) — used for repos
+    other than the one this server serves."""
+    from interface.ui import repos  # pylint: disable=import-outside-toplevel
+    w = repos.watcher_state(repo_root, _store_dir(repo_root))
+    return {"state": w["state"], "pid": w["pid"], "name": None, "heartbeat_age_s": w["heartbeat_age_s"]}
+
+
 def mcp_status() -> dict[str, Any]:
     """Tool inventory from the shipped manifest. (The MCP server is a stdio child of each
     agent client, so there is no single process to ping.)"""
@@ -123,13 +131,13 @@ def indexer_status(repo_root: str) -> dict[str, Any]:
     }
 
 
-def collect_status(repo_root: str, started_at: str, pid: int) -> dict[str, Any]:
+def collect_status(repo_root: str, started_at: str, pid: int, *, served: bool = True) -> dict[str, Any]:
     from core.config.version import __version__  # pylint: disable=import-outside-toplevel
     return {
         "api_version": API_VERSION,
         "version": __version__,
         "repo": {"root": repo_root, "name": os.path.basename(repo_root.rstrip(os.sep))},
-        "daemon": daemon_status(repo_root),
+        "daemon": daemon_status(repo_root) if served else readonly_daemon_status(repo_root),
         "mcp": mcp_status(),
         "indexer": indexer_status(repo_root),
         "ui": {"pid": pid, "started_at": started_at},

@@ -74,9 +74,10 @@ def discover_serve_pids(repo_root: str) -> list[int]:
     return list(found)
 
 
-def list_processes(repo_root: str, store: str) -> list[dict[str, Any]]:
+def list_processes(repo_root: str, store: str, include_ui: bool = True) -> list[dict[str, Any]]:
+    """``include_ui=False`` for a repo this UI server is not serving (the server is not *its* process)."""
     from interface.ui import repos  # pylint: disable=import-outside-toplevel
-    rows = [_row("ui", os.getpid(), "running", detail="control API")]
+    rows = [_row("ui", os.getpid(), "running", detail="control API")] if include_ui else []
     watcher = repos.watcher_state(repo_root, store)
     if watcher["state"] != "stopped" and isinstance(watcher.get("pid"), int):
         rows.append(_row("watcher", watcher["pid"], watcher["state"], heartbeat_age_s=watcher["heartbeat_age_s"]))
