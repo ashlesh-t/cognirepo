@@ -44,7 +44,12 @@ jobs:
           key: fastembed-all-MiniLM-L6-v2-${{ runner.os }}-${{ matrix.python-version }}
 
       - name: Install package + dev extras
-        run: pip install -e ".[dev,languages,security]"
+        run: |
+          pip install -e ".[dev,languages,security]"
+          # fastembed declares pillow<13, but pillow<13 has HIGH/CRITICAL CVEs (fixed in 13.0.0) and
+          # CogniRepo only uses fastembed's text embedding. Test on the fixed pillow so the suite
+          # covers it; drop this once fastembed lifts the cap.
+          pip install --no-deps "pillow>=13.0.0"
         timeout-minutes: 15
 
       - name: Pre-warm embedding model
