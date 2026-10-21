@@ -2197,7 +2197,8 @@ class ASTIndexer:
                 pass
 
         # embed + add to FAISS (skipped when embed=False / --no-embed / config/data ext)
-        embed_enabled = getattr(self, "_embed_enabled", True) and ext not in _NO_EMBED_EXTS
+        embed_enabled = (getattr(self, "_embed_enabled", True) and ext not in _NO_EMBED_EXTS
+                         and not getattr(self, "_embed_broken", False))
 
         # Pre-read source lines once per file for body-snippet enrichment
         _src_lines: list[str] = []
@@ -2239,14 +2240,27 @@ class ASTIndexer:
                     # Defer encoding — accumulate for batch encode in index_repo
                     self._pending_embeds.append((embed_text, meta, sym))  # type: ignore[attr-defined]
                 else:
-                    vec = next(iter(self.model.embed([embed_text]))).astype("float32")
-                    faiss_id = len(self.faiss_meta)
-                    self.faiss_index.add_with_ids(
-                        np.array([vec], dtype="float32"),
-                        np.array([faiss_id], dtype=np.int64),
-                    )
-                    self.faiss_meta.append(meta)
-                    sym["faiss_id"] = faiss_id
+                    # Embedding is an enhancement: when it cannot run (fastembed missing, model not
+                    # downloadable, OOM) the file must still get its AST and graph update. Letting the
+                    # error escape here left the file with NO graph nodes — they were removed above and
+                    # never re-added — and an incremental run then saved that loss. The symbol keeps
+                    # faiss_id -1, exactly as with --no-embed; stop trying for this indexer so a slow
+                    # failure (model download timeout) is paid once, not per symbol.
+                    try:
+                        vec = next(iter(self.model.embed([embed_text]))).astype("float32")
+                        faiss_id = len(self.faiss_meta)
+                        self.faiss_index.add_with_ids(
+                            np.array([vec], dtype="float32"),
+                            np.array([faiss_id], dtype=np.int64),
+                        )
+                        self.faiss_meta.append(meta)
+                        sym["faiss_id"] = faiss_id
+                    except Exception as exc:  # pylint: disable=broad-except
+                        self._embed_broken = True  # pylint: disable=attribute-defined-outside-init
+                        embed_enabled = False
+                        log.warning("embedding unavailable (%s: %s): indexing without vectors for %s; "
+                                    "the AST index and graph are still updated", type(exc).__name__,
+                                    str(exc)[:120], rel_path)
 
             # knowledge graph — full population weight-filtered for large repos to prevent OOM
             # (lite-graph mode, see skip_graph=None handling above): rich attrs (weight,

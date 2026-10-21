@@ -313,7 +313,7 @@ These were documented here as shipped but no longer exist; they are listed so no
 
 ## 15. Test Coverage
 
-146 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+152 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
 for the current test-function count). This table is representative, not exhaustive — see
 `tests/` for the full list. This count is checked by `tests/test_docs_sync.py`, which fails if it drifts
 more than 5 files from the real glob count (a small tolerance, so concurrent PRs that each add

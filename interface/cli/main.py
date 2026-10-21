@@ -2408,7 +2408,9 @@ def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
          ``indexer.save()`` below writes the full index, not just these files);
       2. ``indexer.save()`` — AST index + FAISS + manifest under ``store_lock``;
       3. ``kg.save()``.
-    Returns the number of files indexed.
+    Returns ``(indexed, failed)``: the number of files indexed, and ``(path, reason)`` for each file whose
+    indexing raised. A failure never aborts the batch (the rest is still saved), but it is no longer
+    silent: the callers report it and exit non-zero.
     """
     from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
     from intelligence.indexer.ast_indexer import ASTIndexer  # pylint: disable=import-outside-toplevel
@@ -2418,6 +2420,7 @@ def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
     # Without this index_file() embeds inline and loads the model on every run.
     indexer._embed_enabled = embed  # pylint: disable=protected-access
     indexed = 0
+    failed: list[tuple[str, str]] = []
     touched: set[str] = set()
     # A listed path that is gone from disk is a deletion (COGNIREPO-169): hide it at once,
     # purge it once the grace window passes (a delete+create "atomic save" never gets purged).
@@ -2433,7 +2436,8 @@ def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
         try:
             record = indexer.index_file(rel, os.path.abspath(rel))
         except Exception as exc:  # pylint: disable=broad-except
-            log.debug("index-repo %s: skip %s: %s", mode, rel, exc)
+            log.warning("index-repo %s: could not index %s: %s", mode, rel, exc)
+            failed.append((rel, f"{type(exc).__name__}: {str(exc)[:120]}"))
             continue
         touched |= {s["name"] for s in (record or {}).get("symbols", [])}
         indexed += 1
@@ -2455,7 +2459,19 @@ def _incremental_index(files: "list[str]", mode: str, embed: bool) -> int:
     indexer.save()
     kg.save()
     indexer.finish_tombstones()
-    return indexed
+    return indexed, failed
+
+
+def _report_incremental_failures(failed: "list[tuple[str, str]]") -> int:
+    """Print why files were not indexed; returns the process exit code (1 if any failed, else 0)."""
+    if not failed:
+        return 0
+    print(f"  ✗ {len(failed)} file(s) could not be indexed:", file=sys.stderr)
+    for rel, reason in failed[:10]:
+        print(f"    {rel}: {reason}", file=sys.stderr)
+    if len(failed) > 10:
+        print(f"    … and {len(failed) - 10} more", file=sys.stderr)
+    return 1
 
 
 def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier: "int | str | None" = None):
@@ -4780,21 +4796,29 @@ def _main():
                 if os.path.splitext(f)[1] in _supported_exts and not os.path.exists(f)
             ]
             if _changed or _deleted:
-                _indexed = _incremental_index(_changed + _deleted, "--changed-only", embed=not args.no_embed)
+                _indexed, _failed = _incremental_index(_changed + _deleted, "--changed-only", embed=not args.no_embed)
                 print(f"Re-indexed {_indexed} changed file(s): {', '.join(_changed[:5])}"
                       + (" …" if len(_changed) > 5 else ""))
             else:
+                _failed = []
                 print("No changed files detected.")
-            _write_last_indexed_sha(os.path.abspath(getattr(args, "path", ".")))
+            _rc = _report_incremental_failures(_failed)
+            if _rc == 0:    # a run that dropped files must not record this commit as fully indexed
+                _write_last_indexed_sha(os.path.abspath(getattr(args, "path", ".")))
             _remove_lock_file(_remove_lock)
+            if _rc:
+                sys.exit(_rc)
             return
 
         # ── selective reindex (--files) ──────────────────────────────────────
         if getattr(args, "files", None):
             # Paths that no longer exist are deletions: _incremental_index tombstones them (#169).
             _files = [f for f in args.files if not os.path.isdir(os.path.abspath(f))]
-            _indexed = _incremental_index(_files, "--files", embed=not args.no_embed)
+            _indexed, _failed = _incremental_index(_files, "--files", embed=not args.no_embed)
             print(f"Re-indexed {_indexed} file(s).")
+            _rc = _report_incremental_failures(_failed)
+            if _rc:
+                sys.exit(_rc)
             return
         # ── full repo walk ────────────────────────────────────────────────────
         try:
