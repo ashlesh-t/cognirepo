@@ -106,3 +106,24 @@ class TestCliSurvivesALegacyConsoleEncoding:
                              check=False)
         assert out.returncode == 0, out.stderr.decode("utf-8", "replace")
         assert b"Enable: set storage.encrypt" in out.stdout
+
+
+class TestPeakRssWithoutTheResourceModule:
+    def test_helper_returns_kilobytes(self):
+        from interface.cli import main as cli
+        kb = cli._peak_rss_kb()
+        assert 1_000 < kb < 64_000_000            # between 1 MB and 64 GB, in KB
+
+    def test_falls_back_when_resource_is_missing(self, monkeypatch):
+        """`import resource` raised ModuleNotFoundError on Windows and aborted every full index-repo."""
+        import builtins
+        from interface.cli import main as cli
+        real_import = builtins.__import__
+
+        def no_resource(name, *a, **k):
+            if name == "resource":
+                raise ImportError("No module named 'resource'")
+            return real_import(name, *a, **k)
+
+        monkeypatch.setattr(builtins, "__import__", no_resource)
+        assert cli._peak_rss_kb() > 1_000          # psutil path

@@ -2474,9 +2474,25 @@ def _report_incremental_failures(failed: "list[tuple[str, str]]") -> int:
     return 1
 
 
+def _peak_rss_kb() -> int:
+    """This process's peak resident set in KB, or 0 if it cannot be read. ``resource`` is POSIX-only (importing
+    it aborted every full ``index-repo`` on Windows); ``ru_maxrss`` is KB on Linux and bytes on macOS."""
+    try:
+        import resource  # pylint: disable=import-outside-toplevel
+        peak = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        return peak // 1024 if sys.platform == "darwin" else peak
+    except ImportError:
+        pass
+    try:
+        import psutil  # pylint: disable=import-outside-toplevel
+        mem = psutil.Process().memory_info()
+        return int(getattr(mem, "peak_wset", mem.rss)) // 1024        # Windows exposes the true peak
+    except Exception:  # pylint: disable=broad-except
+        return 0
+
+
 def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier: "int | str | None" = None):
     """Index a repository directly. Exits with code 1 if *path* does not exist."""
-    import resource  # pylint: disable=import-outside-toplevel
     # Raise CB limit before indexing so graph.pkl save doesn't OOM on large repos.
     # User env overrides still work (setdefault only writes when unset).
     os.environ.setdefault("COGNIREPO_CB_RSS_LIMIT_MB", "4000")
@@ -2493,7 +2509,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
     kg = KnowledgeGraph()
     indexer = ASTIndexer(graph=kg, progress_factory=TaskProgress)
 
-    rss_before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    rss_before = _peak_rss_kb()
     t0 = time.time()
     from data.graph.journal import JournalBusy  # pylint: disable=import-outside-toplevel
     try:
@@ -2507,7 +2523,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
     from intelligence.indexer import tombstones as _tomb  # pylint: disable=import-outside-toplevel
     _tomb.clear([p for p in _tomb.load() if p not in indexer.index_data.get("files", {})])
     elapsed = time.time() - t0
-    rss_after = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    rss_after = _peak_rss_kb()
 
     # Free large in-memory objects (FAISS index, AST dicts, pending embeds) before
     # serializing the graph — reduces RSS by ~400–700 MB on large repos.
@@ -2670,10 +2686,7 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
         except Exception:  # pylint: disable=broad-except
             pass
 
-    # ru_maxrss is in KB on Linux, bytes on macOS
-    import platform  # pylint: disable=import-outside-toplevel
-    _rss_scale = 1024 if platform.system() == "Darwin" else 1
-    peak_rss_mb = (rss_after - rss_before) / _rss_scale / 1024
+    peak_rss_mb = (rss_after - rss_before) / 1024     # _peak_rss_kb() is in KB on every platform
     peak_rss_mb = max(0, round(peak_rss_mb, 1))
 
     try:
