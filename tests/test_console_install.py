@@ -325,7 +325,7 @@ class TestUpdate:
         assert ci.validate(ci.console_dir())[0].version == "1.0.1" and not os.path.exists(ci.prev_dir())
 
     def test_failed_fetch_leaves_current_build_untouched(self, installed):
-        shutil.rmtree(installed)
+        ci._rmtree(str(installed))      # a git checkout's read-only objects defeat plain shutil.rmtree on Windows
         out = ci.update()
         assert out.status == "failed" and "could not fetch" in out.message
         assert ci.validate(ci.console_dir())[0].version == "1.0.1"

@@ -36,7 +36,8 @@ class TestRegistry:
         assert repo_registry.register_repo(a) is True
         rows = repo_registry.load()
         assert [r["path"] for r in rows] == [a] and rows[0]["store"].endswith(".cognirepo")
-        assert oct(os.stat(repo_registry.registry_path()).st_mode & 0o777) == "0o600"
+        if os.name != "nt":   # Windows has no POSIX permission bits
+            assert oct(os.stat(repo_registry.registry_path()).st_mode & 0o777) == "0o600"
 
     def test_touch_is_throttled_but_new_store_updates(self, tmp_path):
         a = _repo(tmp_path, "a")

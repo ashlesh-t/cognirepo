@@ -113,3 +113,37 @@ jobs:
           name: coverage-report
           path: coverage.xml
           retention-days: 14
+
+  # Informational only (continue-on-error): shows what breaks on Windows in the code that is most
+  # path-, process- and rename-heavy (console install/update, control API, sessions, metrics, registry).
+  # It never blocks a merge; read its log, and fix or xfail what it finds.
+  windows:
+    name: Windows (informational) — Python 3.12
+    runs-on: windows-latest
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package + dev extras
+        shell: bash
+        run: |
+          pip install -e ".[dev,languages,security]"
+          pip install --no-deps "pillow>=13.0.0"
+
+      - name: Run the Windows-sensitive tests
+        shell: bash
+        run: |
+          python -m pytest -q --tb=short --timeout=60 -o addopts="" \
+            tests/test_console_install.py tests/test_ui_app.py tests/test_ui_cli.py tests/test_ui_extra.py \
+            tests/test_ui_security.py tests/test_ui_insights.py tests/test_ui_index_hooks.py \
+            tests/test_store_metrics.py tests/test_repo_registry.py tests/test_repo_selector.py \
+            tests/test_sessions.py tests/test_graph_changes.py
+        env:
+          COGNIREPO_DIR: .cognirepo

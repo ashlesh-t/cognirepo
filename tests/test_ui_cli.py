@@ -83,7 +83,8 @@ class TestSpawnReuseStop:
 
     def test_session_file_is_0600(self):
         ui_session.write_session("T", "127.0.0.1", 1, 1, "x")
-        assert oct(os.stat(ui_session.session_path()).st_mode & 0o777) == "0o600"
+        if os.name != "nt":   # Windows has no POSIX permission bits
+            assert oct(os.stat(ui_session.session_path()).st_mode & 0o777) == "0o600"
 
     def test_spawn_uses_fixed_argv_and_detaches(self, monkeypatch, tmp_path):
         import subprocess
@@ -93,7 +94,8 @@ class TestSpawnReuseStop:
         ui_cli._spawn_server(str(tmp_path), "127.0.0.1", 8888, False, ["http://127.0.0.1:5173"])
         assert seen["argv"] == [sys.executable, "-m", "interface.cli.main", "ui", "--serve", "--no-open",
                                 "--host", "127.0.0.1", "--port", "8888", "--allow-origin", "http://127.0.0.1:5173"]
-        assert seen["kw"].get("shell") is not True and seen["kw"]["start_new_session"] is True
+        assert seen["kw"].get("shell") is not True
+        assert seen["kw"].get("start_new_session") is True or seen["kw"].get("creationflags")   # POSIX | Windows
 
 
 @pytest.fixture

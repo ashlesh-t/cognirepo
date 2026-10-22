@@ -368,7 +368,7 @@ class TestRunStateSurvivesRestart:
         dead.wait()
         (repo / ".cognirepo" / "watchers" / "ui-index-run.json").write_text(
             json.dumps({"pid": dead.pid, "started_epoch": __import__("time").time() - 5}))
-        (repo / ".cognirepo" / "watchers" / "ui-index.log").write_text("Re-indexed 2 changed file(s): a.py\n")
+        (repo / ".cognirepo" / "watchers" / "ui-index.log").write_text("Re-indexed 2 changed file(s): a.py\n", encoding="utf-8")
         last = ServiceManager(str(repo)).status("index")["last_run"]
         assert last["result"] == "ok" and last["exit_code"] is None
 
@@ -378,7 +378,7 @@ class TestRunStateSurvivesRestart:
         dead.wait()
         (repo / ".cognirepo" / "watchers" / "ui-index-run.json").write_text(
             json.dumps({"pid": dead.pid, "started_epoch": __import__("time").time()}))
-        (repo / ".cognirepo" / "watchers" / "ui-index.log").write_text("✗ indexing is already running (pid 9)\n")
+        (repo / ".cognirepo" / "watchers" / "ui-index.log").write_text("✗ indexing is already running (pid 9)\n", encoding="utf-8")
         assert ServiceManager(str(repo)).status("index")["last_run"]["retryable"] is True
 
     def test_ancient_record_is_not_trusted_even_if_the_pid_is_alive(self, repo, popen):
@@ -445,6 +445,62 @@ class TestRealRuns:
         assert progress == {"done": 1, "total": 1}
         assert mgr.status("index")["last_run"]["result"] == "ok"
         assert ServiceManager(str(repo)).status("index")["last_run"]["result"] == "ok"   # after a "restart"
+
+
+class TestRealIndexRace:
+    """Two writers on one store (the UI service and/or the CLI) must serialise, never corrupt (#211)."""
+
+    def _prepare(self, repo, monkeypatch, files=6):
+        monkeypatch.setenv("COGNIREPO_NO_WATCHER", "1")
+        monkeypatch.setenv("COGNIREPO_GLOBAL_DIR", str(repo / ".g"))
+        for i in range(files):
+            (repo / f"m{i}.py").write_text(f"def f{i}():\n    return {i}\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false",
+                        "commit", "-qm", "x"], cwd=repo, check=True)
+        assert _cli(repo, "index-repo", ".", "--no-embed", "--no-watch").returncode == 0
+        for i in range(files):
+            (repo / f"m{i}.py").write_text(f"def f{i}():\n    return {i + 100}\n")
+
+    @staticmethod
+    def _graph_is_intact(repo):
+        import pickle
+        with open(repo / ".cognirepo" / "graph" / "graph.pkl", "rb") as fh:
+            nodes = pickle.load(fh).number_of_nodes()
+        assert nodes > 0
+        return nodes
+
+    def test_two_cli_runs_at_once_serialise_and_leave_an_intact_graph(self, repo, monkeypatch):
+        self._prepare(repo, monkeypatch)
+        before = self._graph_is_intact(repo)
+        env = {**os.environ, "COGNIREPO_NO_WATCHER": "1", "COGNIREPO_GLOBAL_DIR": str(repo / ".g")}
+        argv = [sys.executable, "-m", "interface.cli.main", "index-repo", "--changed-only"]
+        procs = [subprocess.Popen(argv, cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  text=True) for _ in range(2)]
+        outs = [(p.communicate(timeout=240)[0], p.returncode) for p in procs]
+        codes = [rc for _, rc in outs]
+        assert 0 in codes, outs                                    # at least one finished its work
+        for text, rc in outs:
+            assert rc in (0, 75) or "already running" in text, (rc, text)   # the other: done, or told "busy"
+        assert self._graph_is_intact(repo) >= before
+
+    def test_service_run_alongside_a_cli_run_is_ok_or_busy_never_failed(self, repo, monkeypatch):
+        import time
+        self._prepare(repo, monkeypatch)
+        env = {**os.environ, "COGNIREPO_NO_WATCHER": "1", "COGNIREPO_GLOBAL_DIR": str(repo / ".g")}
+        cli = subprocess.Popen([sys.executable, "-m", "interface.cli.main", "index-repo", "--changed-only"],
+                               cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        mgr = ServiceManager(str(repo))
+        assert mgr.start("index")["state"] == "running"
+        deadline = time.monotonic() + 180
+        while mgr.status("index")["state"] == "running" and time.monotonic() < deadline:
+            time.sleep(0.1)
+        cli.communicate(timeout=240)
+        last = mgr.status("index")["last_run"]
+        assert last["result"] in ("ok", "busy"), last              # busy is retryable, not an error
+        if last["result"] == "busy":
+            assert last["retryable"] is True and last["reason"] == "store_busy"
+        self._graph_is_intact(repo)
 
 
 class TestRealWatcherOnUiStart:

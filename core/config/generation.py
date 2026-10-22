@@ -63,7 +63,9 @@ def same_file(a: str, b: str) -> bool:
 
 
 def _fsync_file(path: str) -> None:
-    fd = os.open(path, os.O_RDONLY)
+    # Windows' FlushFileBuffers needs a handle opened for writing: fsync on a read-only descriptor fails with
+    # EBADF there, which made every index save raise. POSIX is happy with either, so open read/write everywhere.
+    fd = os.open(path, os.O_RDWR | getattr(os, "O_BINARY", 0))
     try:
         os.fsync(fd)
     finally:
