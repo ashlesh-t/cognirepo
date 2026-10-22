@@ -56,6 +56,8 @@ cognirepo index-repo [PATH] [OPTIONS]
 | `--tier {1,2,all}` | auto | `1`: high-weight files only (fast bootstrap, the rest is queued); `2`: resume the queued background pass; `all`: full index regardless of size |
 | `--remove-lock LOCK_PATH` | — | Delete the file at `LOCK_PATH` after indexing (used by the background reindex to release its lock) |
 
+**Failures are reported, not swallowed.** If indexing a file raises during `--files` / `--changed-only`, the rest of the batch is still saved, the failed files are listed on stderr and the command exits `1` (`--changed-only` then does not record the commit as indexed). If the embedding model cannot run (`fastembed` missing, model not downloadable, out of memory) the file is still indexed — AST and graph are updated and its symbols simply have no vector, as with `--no-embed` — and one warning is logged. (Before this, such a failure removed the file's graph nodes and saved the loss while printing `Re-indexed 0 changed file(s)`.)
+
 `cognirepo install-hooks` writes a post-commit hook that runs `index-repo --files <changed> --no-watch --no-embed`. Its extension filter is generated from `language_registry` (every mapped extension). The hook logs to `.cognirepo/hook.log` (rotated at 256 KiB) and records its last outcome in `.cognirepo/hook.last` (`ts`/`exit`/`files`); `doctor` and `get_session_brief` report a failed run. Re-run `install-hooks` after upgrading — it replaces an outdated cognirepo block in place and leaves your own hook lines alone.
 
 ---
