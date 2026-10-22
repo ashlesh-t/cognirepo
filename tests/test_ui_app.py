@@ -105,7 +105,8 @@ class TestHeadersAndAudit:
         client.post("/api/v1/session", json={"token": "bad"})
         raw = open(audit.path, encoding="utf-8").read()
         assert TOKEN not in raw and "session_created" in raw and "session_denied" in raw
-        assert oct(os.stat(audit.path).st_mode & 0o777) == "0o600"
+        if os.name != "nt":   # Windows has no POSIX permission bits
+            assert oct(os.stat(audit.path).st_mode & 0o777) == "0o600"
 
     def test_audit_drops_secret_fields_and_rotates(self, tmp_path):
         log = AuditLog(str(tmp_path / "a.log"), max_bytes=200)
@@ -298,7 +299,8 @@ class TestServiceManager:
         out = S.ServiceManager(self._repo(tmp_path)).start("watcher")
         assert out["state"] == "running" and out["pid"] == 4242 and out["changed"] is True
         assert seen["argv"] == [sys.executable, "-m", "interface.cli.main", "watch", "--path", str(tmp_path), "--ensure-running"]
-        assert seen["kw"].get("shell") is not True and seen["kw"]["start_new_session"] is True
+        assert seen["kw"].get("shell") is not True
+        assert seen["kw"].get("start_new_session") is True or seen["kw"].get("creationflags")   # POSIX | Windows
         assert seen["kw"]["stdout"] is not subprocess.DEVNULL     # output is captured now, not discarded
 
     def test_watcher_start_is_not_gated_to_linux(self, monkeypatch, tmp_path):
@@ -401,6 +403,7 @@ class TestHarness:
     def test_last_context_has_fixed_fields_only(self, client, tmp_path, monkeypatch):
         home = tmp_path / "home"
         monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))      # Path.home() reads this on Windows
         repo = os.path.basename(str(tmp_path))
         d = home / ".cognirepo" / repo
         d.mkdir(parents=True)

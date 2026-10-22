@@ -27,7 +27,9 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess  # nosec B404 — fixed argv, no shell
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,6 +46,24 @@ CLONE_TIMEOUT_S = 120
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 # Transports git may use for the clone. Notably absent: ``ext::`` (runs a command).
 _ALLOWED_PROTOCOLS = "https:file:ssh"
+
+
+def _rmtree(path: str) -> None:
+    """Remove a directory tree, best effort. A git checkout has read-only object files, which
+    ``shutil.rmtree`` cannot delete on Windows (and would leave behind, breaking the next rename)."""
+    def _clear_readonly_and_retry(func, target, _exc):  # noqa: ANN001
+        try:
+            os.chmod(target, stat.S_IWRITE)
+            func(target)
+        except OSError:
+            pass
+    try:
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(path, onexc=_clear_readonly_and_retry)
+        else:
+            shutil.rmtree(path, onerror=_clear_readonly_and_retry)
+    except OSError:
+        pass
 
 
 def console_dir() -> str:
@@ -178,20 +198,20 @@ def ensure(autofetch: bool | None = None) -> Outcome:
 
     dest = console_dir()
     staging = f"{dest}.tmp-{os.getpid()}"
-    shutil.rmtree(staging, ignore_errors=True)
+    _rmtree(staging)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     err = _clone(cfg["repo"], cfg["ref"], staging)
     if err:
-        shutil.rmtree(staging, ignore_errors=True)
+        _rmtree(staging)
         return Outcome("failed", f"could not fetch the console: {err}")
     bundle, reason = validate(staging)
     if bundle is None:
-        shutil.rmtree(staging, ignore_errors=True)
+        _rmtree(staging)
         return Outcome("invalid", f"fetched console was refused: {reason}")
     try:
         os.rename(staging, dest)
     except OSError as exc:  # lost a race with another `cognirepo ui`, or a read-only home
-        shutil.rmtree(staging, ignore_errors=True)
+        _rmtree(staging)
         bundle, reason = resolve()
         if bundle:
             return Outcome("ready", f"console {bundle.version}", bundle)
@@ -239,7 +259,9 @@ class ManifestStaticFiles(StaticFiles):
         if stamp != self._stamp:
             self._stamp = stamp
             self._allowed = _listed_files(self._path)
-        rel = path.strip("/")  # Starlette passes "." for the root, which html=True maps to index.html
+        # Starlette passes "." for the root (html=True maps it to index.html) and OS separators on Windows,
+        # while the manifest keys are always "/"-separated.
+        rel = path.replace("\\", "/").strip("/")
         if self._allowed is None or (rel not in ("", ".") and rel not in self._allowed):
             raise HTTPException(status_code=404)
         return await super().get_response(path, scope)
@@ -294,7 +316,7 @@ def _incompatible(man: dict) -> str:
 
 def _swap(staged: str, dest: str, prev: str) -> None:
     """dest -> prev, staged -> dest, via renames. A request landing between the two renames sees a 404."""
-    shutil.rmtree(prev, ignore_errors=True)
+    _rmtree(prev)
     os.rename(dest, prev)
     try:
         os.rename(staged, dest)
@@ -319,7 +341,7 @@ def update(check_only: bool = False) -> UpdateOutcome:
     old_v = old.version if old else None
 
     staging = f"{dest}.new-{os.getpid()}"
-    shutil.rmtree(staging, ignore_errors=True)
+    _rmtree(staging)
     try:  # every git write below happens in this copy; the live build is never touched until the swap
         shutil.copytree(dest, staging, symlinks=True)
         code, msg = _git(staging, "fetch", "--depth", "1", "--quiet", "origin", ref)
@@ -357,7 +379,7 @@ def update(check_only: bool = False) -> UpdateOutcome:
         return UpdateOutcome("failed", f"could not stage the console update: {exc}", old_v)
     finally:
         if staging:
-            shutil.rmtree(staging, ignore_errors=True)
+            _rmtree(staging)
 
 
 def rollback() -> UpdateOutcome:
@@ -372,7 +394,7 @@ def rollback() -> UpdateOutcome:
     cur, _ = validate(dest)
     spare = f"{dest}.rollback-{os.getpid()}"
     try:
-        shutil.rmtree(spare, ignore_errors=True)
+        _rmtree(spare)
         if os.path.isdir(dest):
             os.rename(dest, spare)
         os.rename(prev, dest)

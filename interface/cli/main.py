@@ -3831,6 +3831,14 @@ def main():
     # pylint: disable=too-many-locals, too-many-branches, too-many-statements
     # pylint: disable=too-many-return-statements
     # pylint: disable=import-outside-toplevel
+    # A legacy console code page (Windows cp1252, a piped stdout) cannot encode the arrows and check marks the
+    # CLI prints, and the resulting UnicodeEncodeError aborted `init` and `index-repo`. Substitute instead of
+    # crashing; UTF-8 terminals are unaffected. (Reconfiguring only the error handler leaves JSON-RPC alone.)
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
     try:
         _main()
     except KeyboardInterrupt:

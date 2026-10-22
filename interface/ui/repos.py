@@ -24,17 +24,9 @@ _MAX_REPOS = 200
 
 
 def _alive(pid: Any) -> bool:
-    if not isinstance(pid, int) or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True      # exists, owned by someone else
-    except OSError:
-        return False
-    return True
+    """Liveness without signals: ``os.kill(pid, 0)`` does not probe on Windows (see ``core.config.procutil``)."""
+    from core.config import procutil  # pylint: disable=import-outside-toplevel
+    return isinstance(pid, int) and procutil.pid_alive(pid)
 
 
 def watcher_state(repo_root: str, store: str) -> dict[str, Any]:

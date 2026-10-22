@@ -368,7 +368,7 @@ class TestRunStateSurvivesRestart:
         dead.wait()
         (repo / ".cognirepo" / "watchers" / "ui-index-run.json").write_text(
             json.dumps({"pid": dead.pid, "started_epoch": __import__("time").time() - 5}))
-        (repo / ".cognirepo" / "watchers" / "ui-index.log").write_text("Re-indexed 2 changed file(s): a.py\n")
+        (repo / ".cognirepo" / "watchers" / "ui-index.log").write_text("Re-indexed 2 changed file(s): a.py\n", encoding="utf-8")
         last = ServiceManager(str(repo)).status("index")["last_run"]
         assert last["result"] == "ok" and last["exit_code"] is None
 
@@ -378,7 +378,7 @@ class TestRunStateSurvivesRestart:
         dead.wait()
         (repo / ".cognirepo" / "watchers" / "ui-index-run.json").write_text(
             json.dumps({"pid": dead.pid, "started_epoch": __import__("time").time()}))
-        (repo / ".cognirepo" / "watchers" / "ui-index.log").write_text("✗ indexing is already running (pid 9)\n")
+        (repo / ".cognirepo" / "watchers" / "ui-index.log").write_text("✗ indexing is already running (pid 9)\n", encoding="utf-8")
         assert ServiceManager(str(repo)).status("index")["last_run"]["retryable"] is True
 
     def test_ancient_record_is_not_trusted_even_if_the_pid_is_alive(self, repo, popen):
