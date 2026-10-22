@@ -62,6 +62,7 @@ class SessionBody(BaseModel):
 
 class ConfirmBody(BaseModel):
     confirm: StrictBool = False  # strict: "true" or 1 must not count as an explicit confirm
+    dry_run: StrictBool = False  # `prune` only: report what would be pruned, change nothing
 
 
 class AutoIndexRequest(ConfirmBody):
@@ -287,8 +288,12 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
         if body is None or body.confirm is not True:
             _audit("denied_no_confirm")
             return _deny(400, "confirm_required")
+        dry = bool(body.dry_run) and action == "start"
+        if dry and name != "prune":
+            _audit("denied_dry_run_unsupported")
+            return _deny(400, "dry_run_unsupported")
         try:
-            result = svc.start(name) if action == "start" else svc.stop(name)
+            result = (svc.start(name, dry_run=True) if dry else svc.start(name)) if action == "start" else svc.stop(name)
         except ServiceError as exc:
             _audit("error", code=exc.code)
             return _deny(exc.status, exc.code)

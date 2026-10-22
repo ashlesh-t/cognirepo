@@ -4165,6 +4165,8 @@ def _main():
     p_prune.add_argument("--archive", action="store_true")
     p_prune.add_argument("--threshold", type=float, default=None)
     p_prune.add_argument("--verbose", action="store_true")
+    p_prune.add_argument("--json", action="store_true",
+                         help="Print the summary as one JSON line (the last line of output); used by the console")
 
     # seed
     p_seed = sub.add_parser("seed", help="Seed behaviour tracker and learning store from git log")
@@ -4901,19 +4903,25 @@ def _main():
 
     if args.command == "prune":
         from ops.cron.prune_memory import prune  # pylint: disable=import-outside-toplevel
-        from ops.cron.prune_memory import DEFAULT_THRESHOLD  # pylint: disable=import-outside-toplevel
-        threshold = args.threshold if args.threshold is not None else DEFAULT_THRESHOLD
+        from ops.cron.prune_memory import AGGRESSIVE_THRESHOLD, DEFAULT_THRESHOLD  # pylint: disable=import-outside-toplevel
+        # Pick the threshold first. `--aggressive` used to run a full default-threshold prune and then a second
+        # aggressive one, so the milder pass had already deleted memories before the user's choice applied.
+        if args.threshold is not None:
+            threshold = args.threshold
+        else:
+            threshold = AGGRESSIVE_THRESHOLD if args.aggressive else DEFAULT_THRESHOLD
         result = prune(
             threshold=threshold,
             dry_run=args.dry_run,
             archive=args.archive,
             verbose=args.verbose or args.dry_run,
         )
-        if args.aggressive and args.threshold is None:
-            from ops.cron.prune_memory import AGGRESSIVE_THRESHOLD  # pylint: disable=import-outside-toplevel
-            result = prune(threshold=AGGRESSIVE_THRESHOLD, dry_run=args.dry_run,
-                           archive=args.archive, verbose=args.verbose or args.dry_run)
-        _print_results(result)
+        if args.json:
+            print(json.dumps(result, separators=(",", ":")))
+        else:
+            _print_results(result)
+        if result.get("status") == "error":
+            sys.exit(1)
         return
 
     if args.command == "seed":

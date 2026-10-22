@@ -147,4 +147,4 @@ class TestRegenerate:
 
     def test_listed_with_the_other_services(self, client):
         names = [s["name"] for s in client.get("/api/v1/services", headers=AUTH).json()]
-        assert names == ["watcher", "metrics", "insights", "index", "hooks"]
+        assert names == ["watcher", "metrics", "insights", "index", "hooks", "prune"]

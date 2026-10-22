@@ -73,6 +73,7 @@ When `storage.encrypt: true` in `config.json`:
 | Org graph (`~/.cognirepo/org_graph.pkl`) | ✓ |
 | Episodic log (`episodic/`) | ✓ |
 | Memory **text** of the local FAISS backend (`memory/semantic_metadata.json`, `vector_backend: "faiss"` only) | ✓ |
+| Pruned memories (`archive/pruned_*.json`, written by `cognirepo prune --archive`, the console and scheduled prunes) | ✓ |
 | Project learnings (`learnings/learnings.json`) — key = this repo's `project_id` | ✓ |
 | Global learnings (`~/.cognirepo/learnings/`) — own keychain entry `cognirepo-global-learnings`, so every repo can read it | ✓ |
 | Org project memory text (`~/.cognirepo/projects/<org>/<project>/memory/`) — own keychain entry per `<org>/<project>` | ✓ |

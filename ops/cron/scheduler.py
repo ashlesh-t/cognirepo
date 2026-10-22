@@ -16,6 +16,16 @@ Reads the schedule from:
   3. Default: 24 h
 
 The scheduler refuses to run a prune if the circuit breaker is OPEN.
+
+Safe by construction (it is an unattended deleter):
+
+* **One run per interval across processes.** Every MCP server may start the scheduler; a run is taken only
+  under a non-blocking ``prune.lock`` and only if ``prune_state.json`` says the last run is older than the
+  interval, so N servers do not prune N times.
+* **Due, not "24 h from now".** The first run is scheduled for when the last one was due (at least 60 s
+  after start), so short-lived sessions still prune; a fresh install waits one full interval.
+* **Archives by default.** Pruned entries go to ``archive/`` (encrypted when encryption is on) unless
+  ``prune.archive`` is false in ``config.json``.
 """
 from __future__ import annotations
 
@@ -31,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_EVERY_HOURS = 24
 _SCHEDULE_FILE_NAME = "prune_schedule.json"
+_FIRST_RUN_MIN_DELAY_SECS = 60.0     # never prune in the first minute of a server's life
 
 
 def _schedule_interval_hours() -> int:
@@ -99,12 +110,12 @@ class BackgroundScheduler:
         self._stopped = False
         self._next_run: float = 0.0
 
-    def start(self) -> None:
-        """Schedule the first run after one interval."""
+    def start(self, first_delay: float | None = None) -> None:
+        """Schedule the first run after ``first_delay`` seconds (default: one interval)."""
         with self._lock:
             if self._stopped:
                 return
-            self._next_run = time.monotonic() + self._interval
+            self._next_run = time.monotonic() + (self._interval if first_delay is None else max(0.0, first_delay))
             self._schedule_next()
         logger.info(
             "[Scheduler:%s] started — interval %.1f h",
@@ -165,11 +176,49 @@ _AUTO_PRUNE_SCHEDULER: BackgroundScheduler | None = None
 _CLEANUP_SCHEDULER: BackgroundScheduler | None = None
 
 
+def _prune_config() -> dict:
+    try:
+        from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
+        with open(get_path("config.json"), encoding="utf-8") as f:
+            cfg = json.load(f).get("prune", {})
+        return cfg if isinstance(cfg, dict) else {}
+    except Exception:  # pylint: disable=broad-except
+        return {}
+
+
+def _seconds_until_due(interval_sec: float, now: float | None = None) -> float:
+    """0 if a scheduled prune is due (never ran, or the last run is older than the interval)."""
+    from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+    from ops.cron.prune_memory import read_state  # pylint: disable=import-outside-toplevel
+    at = (read_state().get("last_run") or {}).get("at")
+    try:
+        last = datetime.strptime(str(at), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return 0.0
+    return max(0.0, last + interval_sec - (time.time() if now is None else now))
+
+
 def _run_auto_prune() -> None:
-    """Thin wrapper that calls the prune function."""
-    from ops.cron.prune_memory import prune  # pylint: disable=import-outside-toplevel
-    result = prune(verbose=False)
-    logger.info("[auto-prune] result: %s", result)
+    """One scheduled prune: at most one per interval across processes, archiving, never blocking."""
+    from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
+    from ops.cron.prune_memory import DEFAULT_THRESHOLD, prune  # pylint: disable=import-outside-toplevel
+    try:
+        from filelock import FileLock, Timeout  # pylint: disable=import-outside-toplevel
+    except ImportError:
+        return
+    cfg = _prune_config()
+    interval_sec = _schedule_interval_hours() * 3600
+    lock = FileLock(get_path("prune.lock"), timeout=0)       # another process is pruning right now -> skip
+    try:
+        with lock:
+            if _seconds_until_due(interval_sec) > 0:        # another process pruned within this interval
+                logger.debug("[auto-prune] not due yet — skipping")
+                return
+            result = prune(threshold=float(cfg.get("threshold", DEFAULT_THRESHOLD)), dry_run=False,
+                           archive=bool(cfg.get("archive", True)), verbose=False)
+            logger.info("[auto-prune] result: %s", {k: v for k, v in result.items() if k != "preview"})
+    except Timeout:
+        logger.debug("[auto-prune] another process holds prune.lock — skipping")
 
 
 def _run_cleanup_suppressed() -> None:
@@ -201,7 +250,7 @@ def start_auto_prune_scheduler() -> BackgroundScheduler | None:
         interval_sec=interval_sec,
         name="auto-prune",
     )
-    scheduler.start()
+    scheduler.start(first_delay=max(_FIRST_RUN_MIN_DELAY_SECS, _seconds_until_due(interval_sec)))
     _AUTO_PRUNE_SCHEDULER = scheduler
 
     # Cleanup suppressed entries runs on the same interval as auto-prune
@@ -211,7 +260,7 @@ def start_auto_prune_scheduler() -> BackgroundScheduler | None:
             interval_sec=interval_sec,
             name="cleanup-suppressed",
         )
-        cleanup_sched.start()
+        cleanup_sched.start(first_delay=max(_FIRST_RUN_MIN_DELAY_SECS, _seconds_until_due(interval_sec)))
         _CLEANUP_SCHEDULER = cleanup_sched
         logger.info("[Scheduler] cleanup-suppressed started, interval=%sh", hours)
 

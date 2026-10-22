@@ -22,27 +22,15 @@ def test_rebuild_writes_to_configured_path(tmp_path, monkeypatch):
     Setup includes one high-importance entry (kept) and one zero-importance
     entry (pruned) so that the FAISS rebuild actually executes.
     """
-    from core.config.paths import set_cognirepo_dir, get_path
+    from core.config.paths import set_cognirepo_dir
     set_cognirepo_dir(str(tmp_path / ".cognirepo"))
 
-    # ── seed semantic_metadata.json: one kept, one pruned ──────────────────
-    meta_path = get_path("memory/semantic_metadata.json")
-    entries = [
-        {
-            "text": "important memory that should be kept",
-            "importance": 1.0,
-            "faiss_row": 0,
-            "timestamp": "2099-01-01T00:00:00Z",
-        },
-        {
-            "text": "stale memory that should be pruned",
-            "importance": 0.0,
-            "faiss_row": 1,
-            "timestamp": "2000-01-01T00:00:00Z",
-        },
-    ]
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(entries, f)
+    # ── seed a real semantic store: one kept, one pruned (prune copies the vectors out of the index) ──
+    import numpy as np
+    from core.vector_db.local_vector_db import LocalVectorDB
+    db = LocalVectorDB(dim=8)
+    db.add(np.ones(8, dtype="float32"), "important memory that should be kept", 1.0)
+    db.add(np.zeros(8, dtype="float32"), "stale memory that should be pruned", 0.0)
 
     import importlib
     from ops.cron import prune_memory
