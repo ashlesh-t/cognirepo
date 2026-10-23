@@ -148,6 +148,14 @@ class IndexRun(BaseModel):
     detail: str | None = None
 
 
+class PruneAuto(BaseModel):
+    """Scheduled prune settings (``prune.*`` in config.json); the scheduler is opt-in."""
+    enabled: bool
+    every_hours: int
+    archive: bool                 # scheduled runs archive instead of deleting (default true)
+    next_due_in_s: int | None = None
+
+
 class ServiceState(BaseModel):
     name: str
     state: str
@@ -157,7 +165,12 @@ class ServiceState(BaseModel):
     reason: str | None = None     # set when state == "failed": a machine-readable cause
     detail: str | None = None
     progress: IndexProgress | None = None   # index service while running
-    last_run: IndexRun | None = None        # index service after a run
+    last_run: IndexRun | None = None        # index / prune service after a run
+    summary: dict[str, Any] | None = None   # prune: counts of the last run, or (dry run) what would be pruned
+    auto: PruneAuto | None = None           # prune: the scheduled-run settings
+    dry_run_fresh: bool | None = None       # prune: a real run is allowed (a dry run completed < 30 min ago)
+    dry_run: bool | None = None             # true when this response is a dry-run report
+    retryable: bool | None = None
 
 
 class AutoIndexState(BaseModel):

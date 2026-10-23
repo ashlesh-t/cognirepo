@@ -35,6 +35,7 @@ STORE_COVERAGE: dict[str, tuple[str, str]] = {
     "episodic/episodic.json":        (ENCRYPTED, "episodic log"),
     "memory/semantic_metadata.json": (ENCRYPTED, "memory text (local FAISS backend only)"),
     "learnings":                     (ENCRYPTED, "project learnings (global learnings use their own key)"),
+    "archive":                       (ENCRYPTED, "pruned memory records (`cognirepo prune --archive`); encrypted when storage.encrypt is on"),
     # ── NOT encrypted ────────────────────────────────────────────────────────
     "vector_db/chroma":              (NOT_ENCRYPTED, "DEFAULT backend: memory text + embeddings; Chroma has no encryption hook — use disk encryption"),
     "vector_db/semantic.index":      (NOT_ENCRYPTED, _EMBED),
@@ -55,7 +56,6 @@ STORE_COVERAGE: dict[str, tuple[str, str]] = {
     "sessions":                      (NOT_ENCRYPTED, "session snapshots / last context"),
     "errors":                        (NOT_ENCRYPTED, "recorded error log"),
     "docs":                          (NOT_ENCRYPTED, "generated documentation"),
-    "archive":                       (NOT_ENCRYPTED, "archived/pruned records"),
     "stdlib":                        (NOT_ENCRYPTED, "cached stdlib symbol data (public)"),
     # ── nothing sensitive ────────────────────────────────────────────────────
     "config.json":                   (NO_CONTENT, "settings (no secrets — keys live in the OS keychain)"),
@@ -68,6 +68,8 @@ STORE_COVERAGE: dict[str, tuple[str, str]] = {
     "index":                         (NO_CONTENT, "directory"),
     "graph":                         (NO_CONTENT, "directory"),
     "graph/graph.seq":               (NO_CONTENT, "graph change counter (a single integer)"),
+    "prune_state.json":              (NO_CONTENT, "when prune last ran and its counts (no memory text)"),
+    "prune.lock":                    (NO_CONTENT, "lock file"),
     "memory":                        (NO_CONTENT, "directory"),
     "episodic":                      (NO_CONTENT, "directory"),
     "bg_tasks":                      (NO_CONTENT, "background-task bookkeeping"),

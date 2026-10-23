@@ -25,13 +25,14 @@ from typing import Any
 from core.config import procutil
 from core.config.atomic import atomic_json_dump
 
-ALLOWED: tuple[str, ...] = ("watcher", "metrics", "insights", "index", "hooks")
+ALLOWED: tuple[str, ...] = ("watcher", "metrics", "insights", "index", "hooks", "prune")
 
 _START_WAIT_SECS = 2.0
 _STOP_WAIT_SECS = 8.0
 _KILL_WAIT_SECS = 3.0
 _HOOKS_TIMEOUT_SECS = 30.0
 _INDEX_MAX_AGE_SECS = 6 * 3600     # a recorded run older than this is treated as dead (pid reuse guard)
+_PRUNE_DRY_RUN_TIMEOUT_SECS = 120.0
 _EX_TEMPFAIL = 75      # `store busy` exit code of the CLI (see interface/cli/main.py)
 
 
@@ -56,6 +57,7 @@ class ServiceManager:
         self._insights_proc: subprocess.Popen | None = None
         self._index_proc: subprocess.Popen | None = None
         self._index_last: dict[str, Any] | None = None
+        self._prune_job: Any = None
         self._lock = threading.Lock()
 
     # ── watcher ──────────────────────────────────────────────────────────────
@@ -363,6 +365,105 @@ class ServiceManager:
             return self._failed("hooks", f"{verb.replace('-', '_')}_failed", lines[-1][:300] if lines else "")
         return {**self._hooks_status(), "changed": True}
 
+    # ── prune (dry run first, then a confirmed archiving run) ────────────────
+    @staticmethod
+    def _classify_prune(rc: int | None, text: str) -> tuple[str, str | None, Any]:
+        """(result, reason, summary) from a finished ``cognirepo prune --json`` run."""
+        summary = None
+        for line in reversed([ln for ln in text.splitlines() if ln.strip()]):
+            if line.lstrip().startswith("{"):
+                try:
+                    summary = json.loads(line)
+                except ValueError:
+                    pass
+                break
+        if isinstance(summary, dict):
+            summary = {k: v for k, v in summary.items() if k != "preview"}      # memory text never goes to disk
+        if rc == _EX_TEMPFAIL or "store is busy" in text:
+            return "busy", "store_busy", summary                              # retryable, not an error
+        if isinstance(summary, dict) and summary.get("skipped"):
+            return "busy", "memory_pressure", summary
+        if rc == 0 and isinstance(summary, dict) and summary.get("status") != "error":
+            return "ok", None, summary
+        return "failed", "prune_failed", summary
+
+    def _prune_dir(self) -> str:
+        return os.path.join(self._store(), "watchers")
+
+    def _prune_jobs(self):
+        if self._prune_job is None:
+            from interface.ui.jobs import FileJob  # pylint: disable=import-outside-toplevel
+            self._prune_job = FileJob("prune", self._prune_dir(), self._classify_prune)
+        return self._prune_job
+
+    def _prune_auto(self) -> dict[str, Any]:
+        """The scheduled-prune settings (read-only): the console shows whether and when it will run."""
+        from ops.cron import scheduler  # pylint: disable=import-outside-toplevel
+        cfg = scheduler._prune_config()  # pylint: disable=protected-access
+        hours = scheduler._schedule_interval_hours()  # pylint: disable=protected-access
+        enabled = scheduler._auto_prune_enabled()  # pylint: disable=protected-access
+        return {"enabled": enabled, "every_hours": hours, "archive": bool(cfg.get("archive", True)),
+                "next_due_in_s": int(scheduler._seconds_until_due(hours * 3600)) if enabled else None}  # pylint: disable=protected-access
+
+    def _prune_status(self) -> dict[str, Any]:
+        from ops.cron import prune_memory  # pylint: disable=import-outside-toplevel
+        with self._lock:
+            view = self._prune_jobs().view()
+        state = prune_memory.read_state()
+        counts = state.get("last_dry_run") or {}
+        return {"name": "prune", "state": view["state"], "last_run": view["last_run"], "summary": view["summary"],
+                "auto": self._prune_auto(), "dry_run_fresh": prune_memory.dry_run_is_fresh(),
+                "detail": (f"last dry run would prune {counts.get('pruned')} of {counts.get('total')}"
+                           if "pruned" in counts else None)}
+
+    def _prune_start(self, dry_run: bool = False) -> dict[str, Any]:
+        """``dry_run``: run ``cognirepo prune --dry-run --json`` and return what WOULD be pruned (the clipped memory
+        text is kept in this response only, never written to disk). Otherwise start a detached, **archiving**
+        run — and only if a dry run completed in the last 30 minutes (``409 dry_run_required``)."""
+        from ops.cron import prune_memory  # pylint: disable=import-outside-toplevel
+        if not self._initialised():
+            return self._failed("prune", "not_initialised", "no .cognirepo/ for this repo; run `cognirepo init`")
+        base = [sys.executable, "-m", "interface.cli.main", "prune", "--json"]
+        if dry_run:
+            try:
+                proc = subprocess.run(  # nosec B603 — fixed argv, no shell
+                    base + ["--dry-run"], cwd=self.repo_root, capture_output=True, text=True,
+                    timeout=_PRUNE_DRY_RUN_TIMEOUT_SECS, check=False, stdin=subprocess.DEVNULL)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return self._failed("prune", "spawn_failed", str(exc)[:300])
+            result, reason, _ = self._classify_prune(proc.returncode, proc.stdout + proc.stderr)
+            full = None
+            for line in reversed([ln for ln in proc.stdout.splitlines() if ln.strip()]):
+                if line.lstrip().startswith("{"):
+                    try:
+                        full = json.loads(line)
+                    except ValueError:
+                        pass
+                    break
+            if result != "ok" or not isinstance(full, dict):
+                return {**self._failed("prune", reason or "prune_failed", (proc.stderr or proc.stdout).strip()[-300:]),
+                        "retryable": result == "busy"}
+            return {**self._prune_status(), "summary": full, "changed": False, "dry_run": True}
+        with self._lock:
+            job = self._prune_jobs()
+            job.settle()
+            if job.live() is not None:
+                return {**self._prune_status_unlocked(job), "changed": False}
+            if not prune_memory.dry_run_is_fresh():
+                raise ServiceError(409, "dry_run_required",
+                                   "run a dry run first (start with dry_run: true); it is valid for 30 minutes")
+            try:
+                job.start(base + ["--archive"], self.repo_root)
+            except OSError as exc:
+                return self._failed("prune", "spawn_failed", str(exc)[:300])
+            return {**self._prune_status_unlocked(job), "changed": True}
+
+    def _prune_status_unlocked(self, job) -> dict[str, Any]:
+        from ops.cron import prune_memory  # pylint: disable=import-outside-toplevel
+        view = job.view()
+        return {"name": "prune", "state": view["state"], "last_run": view["last_run"], "summary": view["summary"],
+                "auto": self._prune_auto(), "dry_run_fresh": prune_memory.dry_run_is_fresh()}
+
     # ── public API ───────────────────────────────────────────────────────────
     def status(self, name: str | None = None) -> Any:
         if name is None:
@@ -370,17 +471,21 @@ class ServiceManager:
         self._check(name)
         return {"watcher": self._watcher_status, "metrics": self._metrics_status,
                 "insights": self._insights_status, "index": self._index_status,
-                "hooks": self._hooks_status}[name]()
+                "hooks": self._hooks_status, "prune": self._prune_status}[name]()
 
-    def start(self, name: str) -> dict[str, Any]:
+    def start(self, name: str, dry_run: bool = False) -> dict[str, Any]:
         self._check(name)
+        if name == "prune":
+            return self._prune_start(dry_run=dry_run)
+        if dry_run:
+            raise ServiceError(400, "dry_run_unsupported", f"{name} has no dry run")
         return {"watcher": self._watcher_start, "metrics": self._metrics_start,
                 "insights": self._insights_start, "index": self._index_start,
                 "hooks": lambda: self._hooks_run("install-hooks")}[name]()
 
     def stop(self, name: str) -> dict[str, Any]:
         self._check(name)
-        if name in ("insights", "index"):
+        if name in ("insights", "index", "prune"):
             raise ServiceError(409, "not_stoppable", "a run finishes on its own")
         if name == "hooks":
             return self._hooks_run("uninstall-hooks")

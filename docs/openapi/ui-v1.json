@@ -8,6 +8,11 @@
             "title": "Confirm",
             "type": "boolean"
           },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
           "enabled": {
             "title": "Enabled",
             "type": "boolean"
@@ -42,6 +47,11 @@
           "confirm": {
             "default": false,
             "title": "Confirm",
+            "type": "boolean"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
             "type": "boolean"
           }
         },
@@ -880,6 +890,41 @@
         "title": "ProcessInfo",
         "type": "object"
       },
+      "PruneAuto": {
+        "description": "Scheduled prune settings (``prune.*`` in config.json); the scheduler is opt-in.",
+        "properties": {
+          "archive": {
+            "title": "Archive",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "every_hours": {
+            "title": "Every Hours",
+            "type": "integer"
+          },
+          "next_due_in_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Due In S"
+          }
+        },
+        "required": [
+          "enabled",
+          "every_hours",
+          "archive"
+        ],
+        "title": "PruneAuto",
+        "type": "object"
+      },
       "RepoEntry": {
         "properties": {
           "auto_index": {
@@ -1043,6 +1088,16 @@
       },
       "ServiceState": {
         "properties": {
+          "auto": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PruneAuto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "changed": {
             "anyOf": [
               {
@@ -1064,6 +1119,28 @@
               }
             ],
             "title": "Detail"
+          },
+          "dry_run": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dry Run"
+          },
+          "dry_run_fresh": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dry Run Fresh"
           },
           "last_run": {
             "anyOf": [
@@ -1122,9 +1199,32 @@
             ],
             "title": "Reason"
           },
+          "retryable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retryable"
+          },
           "state": {
             "title": "State",
             "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
           }
         },
         "required": [

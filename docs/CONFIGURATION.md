@@ -62,6 +62,10 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 | `indexing.writer_wait_secs` | float | `0` | A second `index-repo` while another one holds the graph writer lease (`graph/graph.journal.writer`) refuses immediately with the owner's pid (`0`), or queues behind it for up to this many seconds (COGNIREPO-137). |
 | `indexing.delete_grace_secs` | float | `60` | A file deleted in a commit is hidden from retrieval at once and purged (vectors, graph, index records) after this many seconds, on the next hook run, watcher flush or `index-repo`. A file that reappears inside the window is simply kept. `0` purges immediately (COGNIREPO-169). |
 | `indexing.graph_journal_flush_secs` | float | `30` | Also flush when this many seconds passed since the last flush. |
+| `prune.auto_enabled` | bool | `false` | Run `prune` automatically from `cognirepo serve` (see [UI_API.md](UI_API.md#prune-service)). Off by default: it deletes memories |
+| `prune.every_hours` | int | `24` | Interval between scheduled prunes (also read from `prune_schedule.json`). One run per interval across processes |
+| `prune.archive` | bool | `true` | Scheduled runs move pruned memories to `archive/` (encrypted when `storage.encrypt` is on) instead of deleting them |
+| `prune.threshold` | float | `0.15` | Score below which a scheduled run prunes a memory. Memories carry no timestamp, so the score is their importance |
 | `behaviour.max_query_history` | int | `2000` | Query-history entries kept in `graph/behaviour.json` (newest kept). Only recent windows (5–20 min) are ever read; what queries taught retrieval is stored in `symbol_weights`, which is never pruned. |
 | `behaviour.max_sessions` | int | `50` | Watcher sessions kept in the session registry (newest kept). |
 | `behaviour.max_files_per_session` | int | `200` | Files remembered per session; also bounds the co-edit fan-out. |

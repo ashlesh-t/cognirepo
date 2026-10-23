@@ -252,6 +252,11 @@ cognirepo prune [OPTIONS]
 | `--aggressive` | `False` | Use a lower threshold (0.05) |
 | `--threshold FLOAT` | `0.15` | Prune memories whose score (importance × recency decay) is below this value. `--aggressive` is the same as `--threshold 0.05` |
 | `--verbose` | `False` | List every memory considered (implied by `--dry-run`) |
+| `--json` | `False` | Print the summary as one JSON line (the last line of output); the console parses it. A dry run's summary includes a `preview` of what would be pruned |
+
+The memory store is read, scored and rewritten under one store lock, copying vectors from the existing FAISS index (no
+embedding model needed), so concurrent `store_memory` calls are not lost. It works with `storage.encrypt` on, and archives are
+encrypted too. `--aggressive` runs once at threshold 0.05 (it used to run a default-threshold prune first). Exit `75` = store busy.
 
 ---
 

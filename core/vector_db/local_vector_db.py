@@ -79,6 +79,53 @@ def publish_semantic(index, meta_bytes: bytes, *, keep_index: bool = False) -> N
     )
 
 
+def _read_meta_file_once(path: str) -> list:
+    """Parse one ``semantic_metadata.json`` file: decrypt when encryption is on, fall back to plaintext for a file
+    written before the setting, and raise ``StoreUnreadableError(locked=True)`` for ciphertext we cannot open."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
+    encrypt, project_id = get_storage_config()
+    if encrypt:
+        from core.security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
+        try:
+            raw = decrypt_bytes(raw, get_or_create_key(project_id))
+        except Exception:  # pylint: disable=broad-except
+            # The file may have been written unencrypted by a process that resolved the wrong config
+            # context — try plaintext below before discarding (it gets encrypted on next save).
+            # Genuinely corrupt/wrong-key content still fails the JSON parse below.
+            import logging  # pylint: disable=import-outside-toplevel
+            logging.getLogger(__name__).warning(
+                "semantic_metadata.json could not be decrypted — attempting "
+                "plaintext load (file may predate the encryption setting)."
+            )
+    try:
+        return json.loads(raw)
+    except ValueError:
+        if looks_encrypted(raw):
+            # intact ciphertext we cannot decrypt: locked, never "corrupt"
+            raise StoreUnreadableError(path, "encrypted and cannot be decrypted", locked=True)
+        raise
+
+
+def read_semantic_metadata(path: "str | None" = None) -> list:
+    """The semantic-memory metadata of the current generation, decrypted. Side-effect free and retried on a
+    concurrent publish; raises ``StoreUnreadableError`` if it stays unreadable. Row ``i`` is FAISS row ``i``."""
+    path = path or _read_paths()[1]
+    return read_retry(path, lambda: _read_meta_file_once(path))
+
+
+def encode_semantic_metadata(entries: list) -> bytes:
+    """Serialise metadata for ``publish_semantic``: JSON, encrypted when ``storage.encrypt`` is on."""
+    content = json.dumps(entries, indent=2).encode()
+    from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
+    encrypt, project_id = get_storage_config()
+    if encrypt:
+        from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
+        content = encrypt_bytes(content, get_or_create_key(project_id))
+    return content
+
+
 class LocalVectorDB(VectorStorageAdapter):
     """
     Local vector database using FAISS for storing and searching semantic embeddings.
@@ -234,34 +281,7 @@ class LocalVectorDB(VectorStorageAdapter):
     # ── metadata persistence (with optional encryption) ───────────────────────
 
     def _read_meta_once(self, path: "str | None" = None) -> list:
-        path = path or _read_paths()[1]
-        with open(path, "rb") as f:
-            raw = f.read()
-        from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
-        encrypt, project_id = get_storage_config()
-        if encrypt:
-            from core.security.encryption import get_or_create_key, decrypt_bytes  # pylint: disable=import-outside-toplevel
-            try:
-                raw = decrypt_bytes(raw, get_or_create_key(project_id))
-            except Exception:  # pylint: disable=broad-except
-                # The file may have been written unencrypted by a process
-                # that resolved the wrong config context — try plaintext
-                # below before discarding (it gets encrypted on next save).
-                # Genuinely corrupt/wrong-key content still fails the JSON
-                # parse below and is backed up there.
-                import logging  # pylint: disable=import-outside-toplevel
-                logging.getLogger(__name__).warning(
-                    "semantic_metadata.json could not be decrypted — attempting "
-                    "plaintext load (file may predate the encryption setting)."
-                )
-        try:
-            return json.loads(raw)
-        except ValueError:
-            if looks_encrypted(raw):
-                # intact ciphertext we cannot decrypt: locked, never "corrupt"
-                raise StoreUnreadableError(path, "encrypted and cannot be decrypted",
-                                           locked=True)
-            raise
+        return _read_meta_file_once(path or _read_paths()[1])
 
     def _load_meta(self, path: "str | None" = None) -> list:
         """Read the metadata. Side-effect free: never renames or rewrites the file; raises
@@ -314,12 +334,7 @@ class LocalVectorDB(VectorStorageAdapter):
         generation. Metadata-only calls link the existing index file rather than rewriting it."""
         with store_lock():  # re-entrant: also called from inside save() / the row mutators
             self._ensure_writable()
-            from core.security import get_storage_config  # pylint: disable=import-outside-toplevel
-            encrypt, project_id = get_storage_config()
-            content = json.dumps(self.metadata, indent=2).encode()
-            if encrypt:
-                from core.security.encryption import get_or_create_key, encrypt_bytes  # pylint: disable=import-outside-toplevel
-                content = encrypt_bytes(content, get_or_create_key(project_id))
+            content = encode_semantic_metadata(self.metadata)
             publish_semantic(self.index, content, keep_index=not write_index)
             self._synced_stamp = self._disk_stamp()
 

@@ -201,6 +201,7 @@ _ALLOWED: dict[tuple[str, str], str] = {
     ("intelligence/orchestrator/router.py", "_write_error_log"): "append-only log",
     ("interface/cli/main.py", "_log_error_to_file"): "append-only error log",
     ("interface/tools/benchmark.py", "_save_to_history"): "append-only jsonl history",
+    ("interface/ui/jobs.py", "start"): "stdout/stderr capture handed to the job child; a per-run log, not a store",
     ("interface/ui/services.py", "_index_start"): "stdout/stderr capture handed to the index child; a per-run log, not a store",
     ("interface/ui/services.py", "_spawn_watcher"): "stdout/stderr capture handed to the launcher child; a per-attempt log, not a store",
     ("interface/cli/daemon.py", "spawn_detached_watcher"): "append-mode log handed to the child as its stdout/stderr",

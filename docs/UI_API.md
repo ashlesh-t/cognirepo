@@ -107,7 +107,7 @@ The only token-less responses are the data-free landing page / static console as
 | `POST` | `/api/v1/settings/auto-index` | Persist `watch.auto_enabled` for this repo. Body `{"enabled": bool, "confirm": true}`. See [Index and hooks](#index-and-hooks-services) |
 
 **Service allowlist:** `watcher` (the repo's file-watcher daemon), `index` and `hooks` (see
-[Index and hooks](#index-and-hooks-services)), `insights` (`start` regenerates the report by running `cognirepo insights`; one run at a time, `stop` is `409 not_stoppable`) and `metrics` (in-process Prometheus
+[Index and hooks](#index-and-hooks-services)), `prune` (see [Prune](#prune-service)), `insights` (`start` regenerates the report by running `cognirepo insights`; one run at a time, `stop` is `409 not_stoppable`) and `metrics` (in-process Prometheus
 `/metrics` on `127.0.0.1:9090`, see [Processes, audit and metrics](#processes-audit-and-metrics)). Any other name is a `404` before anything else is evaluated. Each service
 maps to fixed code with a fixed argv — nothing from a request reaches a command line.
 
@@ -153,6 +153,31 @@ the store lock, atomic replace; every other key is untouched) and answers `{auto
 without a `config.json`. When `cognirepo ui` starts and the setting is **explicitly `true`**, it starts the repo's watcher
 (best-effort, off the request path, audited as `auto_index_start`). Absent — the default, which the MCP server treats as
 on — does nothing at UI start.
+
+### Prune service
+`prune` removes low-importance semantic memories and orphan graph nodes — it deletes data, so the console must do it in
+two steps:
+
+1. `POST /services/prune/start` with `{"confirm": true, "dry_run": true}` runs `cognirepo prune --dry-run` and **returns
+   what would be pruned** in `summary`: `total`, `kept`, `pruned`, `graph_stats.orphans_removed` and a `preview` of the
+   lowest-scoring memories (`text` clipped to 80 characters, `score`, `age_days`; at most 50, `preview_truncated`).
+   Nothing is changed. The preview text lives only in this response — it is never written to disk, the run log or the
+   event. (`dry_run` on any other service is `400 dry_run_unsupported`.)
+2. `POST /services/prune/start` with `{"confirm": true}` starts a detached run — **always archiving** (`archive/pruned_<ts>.json`,
+   encrypted when `storage.encrypt` is on) — and only if a dry run completed within the last 30 minutes; otherwise
+   `409 dry_run_required`. Progress is `state: running | idle`; `last_run` (`result` ok \| busy \| failed, `reason`,
+   `retryable`, …) and `summary` (counts) survive a UI restart. A store held by another writer is `busy` / `store_busy`
+   (retryable), memory pressure is `busy` / `memory_pressure`, anything else `failed` / `prune_failed`. `stop` is `409 not_stoppable`.
+
+The state also carries `dry_run_fresh` (a real run is currently allowed) and `auto`: `{enabled, every_hours, archive,
+next_due_in_s}` — the scheduled-prune settings below.
+
+**Scheduled prune** is opt-in (`prune.auto_enabled`, default off; see CONFIGURATION.md) and runs inside `cognirepo serve`.
+It is built so that it cannot do harm unattended: a non-blocking `prune.lock` plus the last-run time in `prune_state.json`
+allow **one run per interval across all servers**; it is scheduled for when it is *due* (at least 60 s after start), so
+short sessions still prune and a restart does not reset the clock; and it **archives by default** (`prune.archive: false`
+opts out). The store is read, scored and rewritten under one store-lock hold, with vectors copied out of the existing
+FAISS index — a memory stored concurrently is no longer lost, and no embedding model is needed.
 
 ### Status codes
 `200` ok · `400` `confirm_required` · `401` missing/invalid token · `403` bad `Host`/`Origin` · `404` unknown service/path ·
@@ -228,7 +253,7 @@ Event (`data:` JSON): `seq`, `ts` (UTC), `type`, plus per type:
 | `watcher.reindex` | `session_id`, `reindexed[]`, `removed[]`, `error` |
 | `service` | `service`, `action`, `state`, `ok` |
 | `graph.delta` | `graph_seq`, `ops[]` (≤ 200 per event), `part` / `parts` (a batch is split across events sharing one `graph_seq`), `op_count` (whole batch) — or `reset: true` with only `op_count`. See [Graph changes](#graph-changes) |
-| `prune` | reserved (#213) |
+| `prune` | `dry_run`, `total`, `kept`, `pruned`, `orphans_removed`, `archived`, `dur_ms` — counts only, never memory text. Emitted by every `cognirepo prune` (CLI, scheduled or console). The graph nodes it removes also appear as `graph.delta` events |
 
 Lists are capped at 50 entries (`*_truncated: true`); summaries at 200 chars; fields named like secrets (`token`,
 `password`, `api_key`, …) are dropped. Writing never blocks or fails the writer (a held lock for >0.25 s drops the event).
