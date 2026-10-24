@@ -1,6 +1,6 @@
 # ADR 003 — Per-user daemon (`cognirepod`): measured case, shape, phasing
 
-- **Status:** Proposed (tracked in #116; #117 depends on it)
+- **Status:** Accepted, amended by the implementation (tracked in #116; #117 depends on it) — see "Amendment" at the end
 - **Related:** ADR 001 (single writer), ADR 002 (SQLite graph), #117 (bounded queue), #146/#148 (watcher),
   #129 (control API), `docs/RESOURCES.md`
 
@@ -121,3 +121,29 @@ Cheap wins to schedule alongside (not blocked on any of the above): lazy-import 
 2. Auto-spawn by the first client (convenient) vs. explicit `cognirepo daemon start` / autostart service
    (predictable). Recommendation: auto-spawn only when `daemon.enabled` is true.
 3. Windows named-pipe parity in the first release, or Linux/macOS first.
+
+## Amendment (implementation of #116): supervisor + per-repo workers
+
+**What changed from the decision above.** §3 proposed one daemon process holding an LRU of `RepoContext` objects. On
+reading the code for the implementation, that needs far more than "the path layer is request-scoped": about ten module-level
+caches (the shared retriever, the hybrid-retrieval cache, the circuit breaker, the learning store, the paths override, ...)
+and 38 tools assume one repo per process, so several repos in one process would share state they must not. The
+implementation therefore keeps the *shape* (a per-user daemon, thin stdio proxies, one loaded copy of a repo shared by all
+its agents) and changes the *holder*:
+
+- `cognirepod` is a **supervisor**. It owns `daemon.sock` and starts **one worker process per active repo** (the existing
+  server code with its repo fixed). Clients get the worker's socket from the supervisor and talk to it directly.
+- Sessions in a shared worker are per connection (`ClientSession` in a ContextVar), so ids, client names and call counts
+  stay per agent.
+- §4 (single writer): inside a worker the single repo owner is the worker process; the bounded write queue (#117) is built
+  on that. Cross-process writers still use `store_lock()`.
+- The embedder is shared by the agents of a repo, **not across repos** (a trade-off against the in-process LRU).
+- Phasing (§ Delivery plan) collapses: `RepoContext` is not needed; steps 2-3 (skeleton, proxy) land together, behind
+  `daemon.enabled` (default false). Windows is not covered (no `AF_UNIX` guarantee); `serve` runs in-process there.
+
+**Measured** (`scripts/measure_serve_footprint.py --daemon`, this repo's 190 MB store, 5 sessions, `fastembed` absent so
+no model in either mode): in-process 1,726 MB RSS / 1,526 MB PSS; daemon 783 MB / 642 MB once the worker has trimmed
+(1,346 MB / 1,205 MB at the peak, right after the calls). The ~3.0 GB → ~1.0 GB estimate in the Consequences section was
+for a run with the model loaded; the model's share is the part this measurement could not include. Also found: the footprint
+script ran whatever `cognirepo` was first on PATH, which silently measured an older install — it now runs this checkout.
+Operation and limits: `docs/DAEMON.md`.

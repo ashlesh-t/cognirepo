@@ -710,6 +710,24 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         if verbose:
             print(f"  ○  Index manifest — skipped ({exc})")
 
+    # ── Check 4b: optional per-user daemon (#116) ─────────────────────────────
+    try:
+        from interface.daemon import client as _dc, paths as _dp
+        if _dp.setting("enabled") and not _dp.SUPPORTED:
+            _warn("Daemon — daemon.enabled is set but this platform has no Unix sockets; serving in-process")
+        elif _dp.enabled() or _dc.status() is not None:
+            _dst = _dc.status()
+            if _dst is None:
+                _ok("Daemon — enabled · not running yet (the first `cognirepo serve` starts it)")
+            else:
+                _ok(f"Daemon — cognirepod {_dst['version']} · pid {_dst['pid']} · {len(_dst['workers'])} repo worker(s)")
+                if _dst["version"] != _ver:
+                    _warn(f"Daemon — running {_dst['version']} but this CLI is {_ver}",
+                          "Run: cognirepo daemon restart")
+    except Exception as exc:  # pylint: disable=broad-except
+        if verbose:
+            print(f"  ○  Daemon — skipped ({exc})")
+
     # ── Check 4c: Working-tree staleness (uncommitted edits) ─────────────────
     # Shares _check_working_tree_dirty with `verify-index` (COGNIREPO-D11) so
     # doctor surfaces the same finding instead of missing it entirely.
@@ -3305,6 +3323,7 @@ def _print_help() -> None:
     _row("metrics",           "Serve Prometheus /metrics endpoint (port 9090)")
     _row("ui",                "Open the local-only control API + Engram console (127.0.0.1)")
     _row("repos",             "List / add / scan the repos the console can show")
+    _row("daemon",            "Manage the optional per-user daemon (cognirepod)")
     _row("export-spec",       "Export OpenAI/Cursor tool specs to adapters/")
 
     # ── System ────────────────────────────────────────────────────────────────
@@ -4464,6 +4483,15 @@ def _main():
     p_metrics.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     p_metrics.add_argument("--port", type=int, default=9090, help="Port to listen on (default: 9090)")
 
+    # daemon — the optional per-user daemon (#116)
+    p_daemon = sub.add_parser("daemon", help="Manage the optional per-user daemon (cognirepod)")
+    daemon_sub = p_daemon.add_subparsers(dest="daemon_command")
+    daemon_sub.add_parser("start", help="Start the daemon now (otherwise the first `serve` starts it)")
+    daemon_sub.add_parser("stop", help="Stop the daemon and its repo workers")
+    daemon_sub.add_parser("restart", help="Stop, then start the daemon")
+    p_daemon_status = daemon_sub.add_parser("status", help="Show the daemon and its repo workers")
+    p_daemon_status.add_argument("--json", action="store_true", default=False, help="Machine-readable output")
+
     # repos — the global registry behind GET /api/v1/repos (#210)
     p_repos = sub.add_parser("repos", help="List, add or scan the repos the control API / console can show")
     repos_sub = p_repos.add_subparsers(dest="repos_command")
@@ -4599,7 +4627,7 @@ def _main():
 
     # ── init guard: require .cognirepo/config.json for all storage commands ──
     _INIT_EXEMPT = {"init", "setup", "doctor", "migrate-config", "setup-env", "metrics",
-                    "list", "delete", "ui", "repos", None}
+                    "list", "delete", "ui", "repos", "daemon", None}
     if args.command not in _INIT_EXEMPT:
         import pathlib  # pylint: disable=import-outside-toplevel
         from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
@@ -4763,6 +4791,14 @@ def _main():
         sys.exit(0)
 
     if args.command == "serve":
+        # Opt-in daemon (#116): when `daemon.enabled`, serve through the repo worker with a thin proxy (no tool
+        # modules imported here). Any failure BEFORE stdio is taken over falls through to the in-process server.
+        try:
+            from interface.daemon.proxy import run_proxy  # pylint: disable=import-outside-toplevel
+            if run_proxy(getattr(args, "project_dir", None)):
+                return
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"cognirepo serve: daemon unavailable ({exc}); serving in-process", file=sys.stderr)
         try:
             from interface.server.mcp_server import run_server  # pylint: disable=import-outside-toplevel
         except ImportError as exc:
@@ -5019,6 +5055,10 @@ def _main():
 
     if args.command == "repos":
         sys.exit(_cmd_repos(args))
+
+    if args.command == "daemon":
+        from interface.daemon.cli import run as _daemon_run  # pylint: disable=import-outside-toplevel
+        sys.exit(_daemon_run(args))
 
     if args.command == "doctor":
         if getattr(args, "resources", False):

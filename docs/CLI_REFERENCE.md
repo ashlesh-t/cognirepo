@@ -705,6 +705,28 @@ cognirepo ui [OPTIONS]
 
 ---
 
+## cognirepo daemon
+
+Manage the optional per-user daemon, `cognirepod` (#116). Off by default; see [DAEMON.md](DAEMON.md).
+
+```bash
+cognirepo daemon start            # start it now (otherwise the first `serve` starts it, if enabled)
+cognirepo daemon status [--json]  # supervisor + one row per repo worker
+cognirepo daemon stop             # stop the supervisor and every worker
+cognirepo daemon restart
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `start` | Start the supervisor if it is not running (replaces one of an older version). Exit `2` on a platform without Unix sockets |
+| `status` | Version, pid, memory, and per repo worker: pid, connected agents, calls, memory, idle time. `--json` prints the raw status (`{"running": false}` when it is not running) |
+| `stop` | Stop the supervisor; it stops its workers |
+| `restart` | `stop`, then `start` |
+
+Agents only use the daemon when `daemon.enabled` is on (`COGNIREPO_DAEMON=1` or `daemon.enabled` in `~/.cognirepo/config.json`); `cognirepo serve` then becomes a thin proxy and falls back to the normal in-process server on any problem.
+
+---
+
 ## cognirepo repos
 
 Manage the registry behind `GET /api/v1/repos` (the repos the control API / console can show). See [UI_API.md](UI_API.md#repos).

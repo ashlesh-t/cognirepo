@@ -39,6 +39,7 @@ from data.memory.learning_store import get_learning_store
 from data.memory.embeddings import evict_model
 from interface.server.learning_middleware import intercept_after_store, intercept_after_episode
 from interface.server.idle_manager import get_idle_manager
+from interface.server import client_session as _cs_mod
 
 _CONFLICT_OVERLAP_THRESHOLD = 0.35  # word-overlap ratio that triggers conflict warning
 
@@ -82,16 +83,22 @@ def _init_mcp_session() -> None:
 def _record_mcp_tool_call(tool_name: str, query_summary: str, result_summary: str) -> None:
     """Append a tool call as an exchange to the MCP session (best-effort)."""
     global _MCP_SESSION  # pylint: disable=global-statement
-    if _MCP_SESSION is None:
+    cs = _cs_mod.CURRENT.get()
+    if (cs.mcp_session if cs is not None else _MCP_SESSION) is None:
         return
     try:
         from intelligence.orchestrator.session import append_exchange  # pylint: disable=import-outside-toplevel
         with _SESSION_LOCK:
-            _MCP_SESSION = append_exchange(
-                _MCP_SESSION,
-                user_msg=f"[tool:{tool_name}] {query_summary}"[:500],
-                assistant_msg=result_summary[:500],
-            )
+            if cs is not None:        # a shared worker: this client's own log, not the process-wide one
+                cs.mcp_session = append_exchange(
+                    cs.mcp_session, user_msg=f"[tool:{tool_name}] {query_summary}"[:500],
+                    assistant_msg=result_summary[:500])
+            else:
+                _MCP_SESSION = append_exchange(
+                    _MCP_SESSION,
+                    user_msg=f"[tool:{tool_name}] {query_summary}"[:500],
+                    assistant_msg=result_summary[:500],
+                )
     except Exception as exc:  # pylint: disable=broad-except
         logger.debug("MCP session append failed (non-fatal): %s", exc)
 
@@ -503,6 +510,9 @@ def _client_name() -> str | None:
     Only readable while a request is being handled, so it resolves on the first tool call.
     """
     global _MCP_CLIENT  # pylint: disable=global-statement
+    cs = _cs_mod.CURRENT.get()
+    if cs is not None:
+        return cs.client
     if _MCP_CLIENT is None:
         try:
             info = mcp._mcp_server.request_context.session.client_params.clientInfo  # pylint: disable=protected-access
@@ -517,9 +527,14 @@ def _emit_tool_event(type_: str, tool_name: str, trace_id: str | None = None, **
     try:
         from core import events  # pylint: disable=import-outside-toplevel
         global _CALL_COUNT  # pylint: disable=global-statement
-        sid = (_MCP_SESSION or {}).get("session_id")
+        cs = _cs_mod.CURRENT.get()
+        sid = cs.session_id if cs is not None else (_MCP_SESSION or {}).get("session_id")
         if type_ in ("tool.start", "tool.shed"):
-            _CALL_COUNT += 1
+            if cs is not None:
+                with cs.lock:
+                    cs.call_count += 1
+            else:
+                _CALL_COUNT += 1
         events.emit(type_, tool=tool_name, trace_id=trace_id, session_id=sid, client=_client_name(), **fields)
     except Exception:  # pylint: disable=broad-except
         pass
@@ -529,13 +544,19 @@ def _emit_session_event(type_: str) -> None:
     """``session.start`` / ``session.end`` for the console's active-vs-closed view (#208). Best-effort."""
     global _SESSION_ENDED  # pylint: disable=global-statement
     try:
-        sid = (_MCP_SESSION or {}).get("session_id")
+        cs = _cs_mod.CURRENT.get()
+        sid = cs.session_id if cs is not None else (_MCP_SESSION or {}).get("session_id")
         if not sid:
             return
+        client = cs.client if cs is not None else _MCP_CLIENT
+        calls = cs.call_count if cs is not None else _CALL_COUNT
         if type_ == "session.end":
-            if _SESSION_ENDED:
+            if (cs.ended if cs is not None else _SESSION_ENDED):
                 return
-            _SESSION_ENDED = True
+            if cs is not None:
+                cs.ended = True
+            else:
+                _SESSION_ENDED = True
         from core import events  # pylint: disable=import-outside-toplevel
         fields: dict = {}
         if type_ == "session.start":
@@ -544,16 +565,16 @@ def _emit_session_event(type_: str) -> None:
                 fields["proc_start"] = psutil.Process().create_time()   # tells a reused pid from this process
             except Exception:  # pylint: disable=broad-except
                 pass
-        events.emit(type_, session_id=sid, client=_MCP_CLIENT, pid=os.getpid(), **fields)
+        events.emit(type_, session_id=sid, client=client, pid=os.getpid(), **fields)
         from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         store = events._default_store()  # pylint: disable=protected-access
         if type_ == "session.start":
-            events.record_session(store, sid, client=_MCP_CLIENT, pid=os.getpid(), started=now,
+            events.record_session(store, sid, client=client, pid=os.getpid(), started=now,
                                   proc_start=fields.get("proc_start"))
         else:
-            events.record_session(store, sid, client=_MCP_CLIENT, closed_at=now, last_activity=now,
-                                  call_count=_CALL_COUNT)
+            events.record_session(store, sid, client=client, closed_at=now, last_activity=now,
+                                  call_count=calls)
     except Exception:  # pylint: disable=broad-except
         pass
 
@@ -563,11 +584,15 @@ def _announce_client() -> None:
     and tell the console: a ``session.client`` event plus the sessions sidecar. Idempotent, never raises."""
     global _CLIENT_ANNOUNCED  # pylint: disable=global-statement
     try:
+        cs = _cs_mod.CURRENT.get()
         name = _client_name()
-        sid = (_MCP_SESSION or {}).get("session_id")
-        if _CLIENT_ANNOUNCED or not name or not sid:
+        sid = cs.session_id if cs is not None else (_MCP_SESSION or {}).get("session_id")
+        if (cs.announced if cs is not None else _CLIENT_ANNOUNCED) or not name or not sid:
             return
-        _CLIENT_ANNOUNCED = True
+        if cs is not None:
+            cs.announced = True
+        else:
+            _CLIENT_ANNOUNCED = True
         from core import events  # pylint: disable=import-outside-toplevel
         events.emit("session.client", session_id=sid, client=name, pid=os.getpid())
         events.record_session(events._default_store(), sid, client=name)  # pylint: disable=protected-access
@@ -2530,23 +2555,10 @@ _REGISTERED_TOOLS: set[str] = {
 }
 
 
-def run_server(project_dir: str | None = None) -> None:
-    """
-    Entry point called by the CLI — writes manifest then starts stdio MCP server.
-
-    Parameters
-    ----------
-    project_dir
-        Lock this server instance to a specific project directory.
-        When provided, all tools will read/write storage inside *project_dir*.
-        When None, defaults to the current working directory (or global storage).
-
-    Project isolation
-    -----------------
-    Each project should run its own cognirepo MCP server instance.
-    Storage defaults to ``~/.cognirepo/storage/<project_hash>/`` to ensure
-    isolation between projects even when started without flags.
-    """
+def _prepare_runtime(project_dir: str | None = None) -> None:
+    """Everything a server process needs before it can serve a repo: ``.env``, the repo's storage directory, the
+    lease-based watcher, the opt-in prune scheduler, the repo registry entry and the tool manifest. Shared by
+    ``run_server`` (one stdio client) and the daemon's repo worker (many clients)."""
     from dotenv import load_dotenv, find_dotenv  # pylint: disable=import-outside-toplevel
     # usecwd=True: resolve .env from the project directory, not this source file
     load_dotenv(find_dotenv(usecwd=True))
@@ -2588,14 +2600,13 @@ def run_server(project_dir: str | None = None) -> None:
         pass
 
     _write_manifest()
-    _init_mcp_session()
-    import atexit as _atexit  # pylint: disable=import-outside-toplevel
-    _emit_session_event("session.start")
-    _wrap_list_tools_for_client()
-    _atexit.register(_emit_session_event, "session.end")  # covers exits that skip the finally below
+
+
+def _start_background_services() -> None:
+    """Embedding-model pre-warm and the memory watchdog (#98). Best-effort; shared by server and worker."""
+    import threading as _threading  # pylint: disable=import-outside-toplevel
 
     # Pre-warm embedding model in background — reduces first-query latency from ~6s to ~0s
-    import threading as _threading  # pylint: disable=import-outside-toplevel
     def _prewarm():
         try:
             from data.memory.embeddings import encode_with_timeout  # pylint: disable=import-outside-toplevel
@@ -2610,6 +2621,32 @@ def run_server(project_dir: str | None = None) -> None:
         start_memory_watchdog([_idle.force_evict])
     except Exception:  # pylint: disable=broad-except
         logger.exception("memory watchdog failed to start")
+
+
+def run_server(project_dir: str | None = None) -> None:
+    """
+    Entry point called by the CLI — writes manifest then starts stdio MCP server.
+
+    Parameters
+    ----------
+    project_dir
+        Lock this server instance to a specific project directory.
+        When provided, all tools will read/write storage inside *project_dir*.
+        When None, defaults to the current working directory (or global storage).
+
+    Project isolation
+    -----------------
+    Each project should run its own cognirepo MCP server instance.
+    Storage defaults to ``~/.cognirepo/storage/<project_hash>/`` to ensure
+    isolation between projects even when started without flags.
+    """
+    _prepare_runtime(project_dir)
+    _init_mcp_session()
+    import atexit as _atexit  # pylint: disable=import-outside-toplevel
+    _emit_session_event("session.start")
+    _wrap_list_tools_for_client()
+    _atexit.register(_emit_session_event, "session.end")  # covers exits that skip the finally below
+    _start_background_services()
 
     try:
         mcp.run(transport="stdio")

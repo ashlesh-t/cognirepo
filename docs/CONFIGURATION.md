@@ -62,6 +62,12 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 | `indexing.writer_wait_secs` | float | `0` | A second `index-repo` while another one holds the graph writer lease (`graph/graph.journal.writer`) refuses immediately with the owner's pid (`0`), or queues behind it for up to this many seconds (COGNIREPO-137). |
 | `indexing.delete_grace_secs` | float | `60` | A file deleted in a commit is hidden from retrieval at once and purged (vectors, graph, index records) after this many seconds, on the next hook run, watcher flush or `index-repo`. A file that reappears inside the window is simply kept. `0` purges immediately (COGNIREPO-169). |
 | `indexing.graph_journal_flush_secs` | float | `30` | Also flush when this many seconds passed since the last flush. |
+| `daemon.enabled` | bool | `false` | **Global** setting (`~/.cognirepo/config.json` → `daemon`, or env `COGNIREPO_DAEMON=1`): `cognirepo serve` becomes a thin proxy to the per-user daemon. POSIX only; ignored (with a `doctor` note) elsewhere. See [DAEMON.md](DAEMON.md) |
+| `daemon.idle_exit_secs` | int | `900` | The supervisor exits after this long with no workers and no clients |
+| `daemon.worker_idle_secs` | int | `600` | A repo worker exits after this long with no connected agent |
+| `daemon.max_workers` | int | `4` | Repo workers kept at once; an idle one is replaced, one with connected agents is never evicted (the new repo falls back in-process) |
+| `daemon.worker_concurrency` | int | `2` | Tool calls a worker runs in parallel (an in-process `serve` runs one at a time) |
+| `daemon.connect_timeout_secs` / `request_timeout_secs` / `spawn_timeout_secs` | float | `3` / `120` / `60` | Client-side limits; a daemon that exceeds them is treated as absent |
 | `prune.auto_enabled` | bool | `false` | Run `prune` automatically from `cognirepo serve` (see [UI_API.md](UI_API.md#prune-service)). Off by default: it deletes memories |
 | `prune.every_hours` | int | `24` | Interval between scheduled prunes (also read from `prune_schedule.json`). One run per interval across processes |
 | `prune.archive` | bool | `true` | Scheduled runs move pruned memories to `archive/` (encrypted when `storage.encrypt` is on) instead of deleting them |
