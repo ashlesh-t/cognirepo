@@ -18,6 +18,12 @@ reindex/remove; a flush persists all of a batch's mutations with a single
 indexer.save() + graph.save() instead of one pair per event. debounce_ms: 0
 processes every event synchronously and individually (pre-debounce behavior).
 
+Events go through a bounded, coalescing FIFO (``watch_queue.WatchQueue``, #117) drained by ONE consumer thread
+in batches of at most ``indexing.batch_max`` files: ``indexing.queue_max`` caps the queue (a full queue never blocks
+the event thread — it marks an overflow and a catch-up scan reconciles the tree once the queue drains), and
+``indexing.max_latency_ms`` makes a constant stream of edits still flush. Queue state is written to
+``<store>/index/watch_queue.json`` for the control API and the metrics endpoint.
+
 NOTE: Do NOT start from `cognirepo index-repo`. The watcher is a daemon
 thread and belongs to the `cognirepo serve` or `cognirepo watch` lifecycle.
 """
@@ -45,6 +51,9 @@ from watchdog.observers import Observer
 from core.config.atomic import atomic_json_dump
 from core.config.paths import get_cognirepo_dir_for_repo
 from intelligence.indexer.language_registry import is_supported
+from intelligence.indexer.watch_queue import (
+    DEFAULT_BATCH_MAX, DEFAULT_MAX_LATENCY_MS, DEFAULT_MAXSIZE, STATUS_FILE as _STATUS_FILE, WatchQueue,
+)
 
 if TYPE_CHECKING:
     from data.graph.behaviour_tracker import BehaviourTracker
@@ -52,6 +61,8 @@ if TYPE_CHECKING:
     from intelligence.indexer.ast_indexer import ASTIndexer
 
 _DEFAULT_DEBOUNCE_MS = 500
+_STATUS_MIN_INTERVAL_SECS = 1.0
+_MAX_CATCHUP_PASSES = 10
 
 # Dead + dangling ast_metadata.json/faiss_meta records to accumulate before a
 # debounced flush pays for compact_faiss()'s full index rebuild. compact_faiss()
@@ -81,28 +92,57 @@ class RepoFileHandler(FileSystemEventHandler):
         self.graph = graph
         self.behaviour = behaviour
         self.session_id = session_id
-        self.debounce_ms = debounce_ms if debounce_ms is not None else self._load_debounce_ms()
+        cfg = self._load_indexing_cfg()
+        self.debounce_ms = debounce_ms if debounce_ms is not None else self._cfg_int(cfg, "debounce_ms", _DEFAULT_DEBOUNCE_MS)
+        self.batch_max = max(1, self._cfg_int(cfg, "batch_max", DEFAULT_BATCH_MAX))
+        self.max_latency_ms = max(1, self._cfg_int(cfg, "max_latency_ms", DEFAULT_MAX_LATENCY_MS))
 
         self._lock = threading.Lock()
-        self._pending: dict[str, str] = {}  # abs_path -> "reindex" | "remove"
-        self._timer: threading.Timer | None = None
-        # Serializes the *body* of flush(). self._lock only guards _pending /
-        # _timer and is released before the expensive index+save section, so
+        self._cv = threading.Condition(self._lock)
+        # abs_path -> "reindex" | "remove": bounded, coalescing, FIFO; drained by one consumer thread (#117)
+        self._wq = WatchQueue(self._cfg_int(cfg, "queue_max", DEFAULT_MAXSIZE))
+        self._consumer: threading.Thread | None = None
+        self._overflow_logged = False
+        self._last_event = 0.0
+        self._status_at = 0.0
+        # Serializes the *body* of flush(). self._lock only guards the consumer thread / condition and is
+        # never held across the expensive index+save section, so
         # two Timer threads could previously run that section concurrently and
         # mutate shared indexer.index_data / graph.G unsynchronized.
         # See COGNIREPO-D15 and the note in flush().
         self._flush_lock = threading.RLock()
 
-    def _load_debounce_ms(self) -> int:
-        """Read indexing.debounce_ms from this repo's config.json (default 500)."""
+    def _load_indexing_cfg(self) -> dict:
+        """The ``indexing`` section of this repo's config.json ({} if absent or unreadable)."""
         try:
             cfg_path = os.path.join(get_cognirepo_dir_for_repo(self.repo_root), "config.json")
             if os.path.exists(cfg_path):
                 with open(cfg_path, encoding="utf-8") as f:
-                    return int(json.load(f).get("indexing", {}).get("debounce_ms", _DEFAULT_DEBOUNCE_MS))
+                    section = json.load(f).get("indexing", {})
+                return section if isinstance(section, dict) else {}
         except (OSError, ValueError, json.JSONDecodeError):
             pass
-        return _DEFAULT_DEBOUNCE_MS
+        return {}
+
+    @staticmethod
+    def _cfg_int(cfg: dict, key: str, default: int) -> int:
+        try:
+            return int(cfg.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _load_debounce_ms(self) -> int:
+        """Read indexing.debounce_ms from this repo's config.json (default 500)."""
+        return self._cfg_int(self._load_indexing_cfg(), "debounce_ms", _DEFAULT_DEBOUNCE_MS)
+
+    @property
+    def _pending(self) -> dict[str, str]:
+        """Snapshot of the queued paths (path -> action). Assigning replaces the queue's contents."""
+        return self._wq.snapshot()
+
+    @_pending.setter
+    def _pending(self, items: dict[str, str]) -> None:
+        self._wq.replace(items)
 
     # ── watchdog callbacks ────────────────────────────────────────────────────
 
@@ -144,13 +184,37 @@ class RepoFileHandler(FileSystemEventHandler):
                 else:
                     self._remove(abs_path)
             return
-        with self._lock:
-            self._pending[abs_path] = action  # last action for a path wins; dedupes bursts
-            if self._timer is not None:
-                self._timer.cancel()
-            self._timer = threading.Timer(self.debounce_ms / 1000.0, self.flush)
-            self._timer.daemon = True
-            self._timer.start()
+        outcome = self._wq.put(action, abs_path)      # coalesces by path; never blocks the event thread
+        if outcome == "overflow" and not self._overflow_logged:      # once per episode, not once per event
+            self._overflow_logged = True
+            log.warning("watcher queue full (%d paths): further new paths are not queued; a catch-up scan will "
+                        "reconcile them once it drains", self._wq.maxsize)
+        with self._cv:
+            self._last_event = time.monotonic()
+            if self._consumer is None or not self._consumer.is_alive():
+                self._consumer = threading.Thread(target=self._consume, name="cognirepo-watch-consumer", daemon=True)
+                self._consumer.start()
+            self._cv.notify_all()
+
+    def _consume(self) -> None:
+        """The single consumer: wait for a quiet ``debounce_ms`` (or ``max_latency_ms`` of continuous churn), then
+        drain. Exits as soon as the queue is empty — nothing idles between bursts, no thread per event."""
+        debounce, latency = self.debounce_ms / 1000.0, self.max_latency_ms / 1000.0
+        while True:
+            with self._cv:
+                while True:
+                    if len(self._wq) == 0 and not self._wq.overflowed:
+                        self._consumer = None
+                        return
+                    quiet = time.monotonic() - self._last_event
+                    age = self._wq.oldest_age()
+                    if quiet >= debounce or age >= latency:
+                        break
+                    self._cv.wait(timeout=max(0.01, min(debounce - quiet, latency - age) if age else debounce - quiet))
+            try:
+                self.flush()
+            except Exception as exc:  # pylint: disable=broad-except
+                print(f"[watcher] flush failed: {exc}", file=sys.stderr)
 
     def flush(self) -> None:
         """
@@ -171,16 +235,48 @@ class RepoFileHandler(FileSystemEventHandler):
             self._flush_locked()
 
     def _flush_locked(self) -> None:
-        """flush() body — callers must hold self._flush_lock."""
-        with self._lock:
-            pending = self._pending
-            self._pending = {}
-            if self._timer is not None:
-                self._timer.cancel()
-                self._timer = None
-        if not pending:
-            return
+        """flush() body — callers must hold self._flush_lock. Drains the queue in batches of at most
+        ``batch_max`` paths; if the queue overflowed meanwhile, reconciles with a catch-up scan and drains again."""
+        passes = 0
+        while True:
+            while True:
+                batch = self._wq.take_batch(self.batch_max)
+                if not batch:
+                    break
+                started = time.monotonic()
+                self._process_batch(dict(batch))
+                self._wq.record_batch(len(batch), (time.monotonic() - started) * 1000)
+                self._publish_status()
+            if not self._wq.take_overflow():
+                break
+            self._overflow_logged = False
+            passes += 1
+            if passes > _MAX_CATCHUP_PASSES:
+                log.warning("watcher queue kept overflowing; stopping reconciliation after %d passes", passes - 1)
+                break
+            if catch_up(self) == 0:
+                log.warning("watcher queue overflowed and the catch-up scan found nothing to do (not a git "
+                            "repo?); some changes may be missed until the next index-repo")
+                break
+        self._publish_status(force=True)
 
+    def _publish_status(self, force: bool = False) -> None:
+        """Write the queue's state to ``<store>/index/watch_queue.json`` (best effort, throttled)."""
+        now = time.monotonic()
+        if not force and now - self._status_at < _STATUS_MIN_INTERVAL_SECS:
+            return
+        self._status_at = now
+        try:
+            from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+            doc = {**self._wq.describe(), "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                   "pid": os.getpid(), "batch_max": self.batch_max, "debounce_ms": self.debounce_ms}
+            atomic_json_dump(os.path.join(get_cognirepo_dir_for_repo(self.repo_root), "index", _STATUS_FILE),
+                             doc, indent=None, fsync=False)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+    def _process_batch(self, pending: dict[str, str]) -> None:
+        """Index, remove and persist one batch (the old flush body). Callers hold self._flush_lock."""
         any_reindexed = False
         reindexed_rel_paths: list[str] = []
         removed_rel_paths: list[str] = []

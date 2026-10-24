@@ -166,6 +166,26 @@ class StoreCollector:
             age = GaugeMetricFamily("cognirepo_watcher_heartbeat_age_seconds", "Seconds since the watcher heartbeat", labels=["repo"])
             age.add_metric([r], hb["heartbeat_age_s"])
             yield age
+        wq = _watch_queue(self.store)
+        if wq is not None:
+            for name, doc, key in (
+                    ("cognirepo_watcher_queue_depth", "Paths waiting in the file watcher's queue", "depth"),
+                    ("cognirepo_watcher_queue_oldest_age_seconds", "How long the oldest queued path has waited",
+                     "oldest_age_s"),
+                    ("cognirepo_watcher_queue_capacity", "The watcher queue's capacity (indexing.queue_max)", "max")):
+                if isinstance(wq.get(key), (int, float)):
+                    g = GaugeMetricFamily(name, doc, labels=["repo"])
+                    g.add_metric([r], wq[key])
+                    yield g
+            for name, doc, key in (
+                    ("cognirepo_watcher_queue_overflows", "Times the watcher queue filled up (a catch-up scan followed)",
+                     "overflows"),
+                    ("cognirepo_watcher_queue_dropped", "Paths that did not fit in the watcher queue", "dropped"),
+                    ("cognirepo_watcher_batches", "Batches the watcher has indexed", "batches")):
+                if isinstance(wq.get(key), (int, float)):
+                    c = CounterMetricFamily(name, doc, labels=["repo"])
+                    c.add_metric([r], wq[key])
+                    yield c
         sizes = GaugeMetricFamily("cognirepo_store_bytes", "Bytes used by a part of the store", labels=["repo", "part"])
         for part, size in sorted(store_sizes(self.store).items()):
             sizes.add_metric([r, part], size)
@@ -232,6 +252,11 @@ def _parse_iso(value: Any) -> float | None:
     except ValueError:
         return None
     return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp()
+
+
+def _watch_queue(store: str) -> dict[str, Any] | None:
+    from intelligence.indexer.watch_queue import read_status  # pylint: disable=import-outside-toplevel
+    return read_status(store)
 
 
 def _watcher(repo_root: str, store: str) -> dict[str, Any]:

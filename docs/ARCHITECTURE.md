@@ -150,7 +150,8 @@ See `docs/architecture/graph.md` for the full schema with query examples.
 | Module | Responsibility |
 |--------|---------------|
 | `intelligence/indexer/ast_indexer.py` | Multi-language AST parser + symbol extractor + FAISS ingestion |
-| `intelligence/indexer/file_watcher.py` | Watchdog-based hot reload — indexes on file change, prunes on delete |
+| `intelligence/indexer/file_watcher.py` | Watchdog-based hot reload — indexes on file change, prunes on delete; events go through a bounded queue drained by one consumer thread (#117) |
+| `intelligence/indexer/watch_queue.py` | `WatchQueue`: the bounded, coalescing FIFO between the watcher's event thread and its indexing consumer; `read_status()` for `index/watch_queue.json` (#117) |
 | `core/config/generation.py` | `GenerationStore` — publishes a multi-file store as one immutable generation behind an atomic `CURRENT` pointer |
 
 **On-disk consistency.** `ast_index.json`, `ast.index`, `ast_metadata.json` and `manifest.json` are

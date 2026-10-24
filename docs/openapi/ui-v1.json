@@ -680,6 +680,18 @@
             "default": {},
             "title": "Store Bytes",
             "type": "object"
+          },
+          "watch_queue": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watch Queue"
           }
         },
         "required": [
