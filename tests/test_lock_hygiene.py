@@ -468,7 +468,11 @@ class TestAnyLockTimeoutIsReportedAsBusy:
         # store_lock itself; the lease (JournalBusy); the event log's leaf lock (#207): emit() runs inside
         # store_lock sections (watcher flush) and must not nest a second store lock, so it uses its own
         # lock with a 0.25 s timeout and DROPS the event on contention rather than ever waiting.
-        allowed = {"core/config/lock.py", "data/graph/journal.py", "core/events.py"}
+        # The daemon's two locks are process-lifecycle locks in the run directory, not store locks: the supervisor
+        # holds `daemon.lock` for its whole life (liveness = lock held), and clients take `start.lock` once to
+        # start it. store_lock's hold-time warnings and re-entrancy bookkeeping do not apply to either (#116).
+        allowed = {"core/config/lock.py", "data/graph/journal.py", "core/events.py",
+                   "interface/daemon/supervisor.py", "interface/daemon/client.py"}
         offenders = []
         for sub in ("core", "data", "intelligence", "interface"):
             for p in (root / sub).rglob("*.py"):

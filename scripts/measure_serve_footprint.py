@@ -9,6 +9,10 @@ so the PSS *sum* is the honest total) at three moments: idle after connect, afte
 and after the idle-eviction TTL. Linux only (/proc).
 
     python scripts/measure_serve_footprint.py --repo /path/to/indexed/repo -n 3 [--evict-wait 0]
+    python scripts/measure_serve_footprint.py --repo /path/to/indexed/repo -n 3 --daemon   # the proxies + supervisor + worker
+
+With ``--daemon`` the sessions are thin proxies to the per-user daemon (#116); the totals then include the
+supervisor and the repo worker, so the two modes are directly comparable.
 """
 from __future__ import annotations
 
@@ -16,7 +20,6 @@ import argparse
 import asyncio
 import json
 import os
-import shutil
 import sys
 from contextlib import AsyncExitStack
 
@@ -55,18 +58,30 @@ def _tree_pids(root: int) -> list[int]:
     return out
 
 
-async def run(repo: str, n: int, evict_wait: float) -> dict:
+def _daemon_pids() -> list[int]:
+    """Supervisor + repo workers of the daemon this run started (empty when it is not running)."""
+    try:
+        from interface.daemon import client
+        st = client.status() or {}
+    except Exception:  # pylint: disable=broad-except
+        return []
+    return [st["pid"]] + [w["pid"] for w in st.get("workers", []) if w.get("alive")] if st else []
+
+
+async def run(repo: str, n: int, evict_wait: float, daemon: bool = False, settle: float = 6.0) -> dict:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
-    exe = shutil.which("cognirepo")
+    # Run the code of THIS checkout, not whatever `cognirepo` is first on PATH (an older install would silently
+    # measure the wrong thing — the daemon mode in particular does not exist there).
     params = StdioServerParameters(
-        command=exe or sys.executable,
-        args=["serve", "--project-dir", repo] if exe else ["-m", "interface.cli.main", "serve", "--project-dir", repo],
+        command=sys.executable,
+        args=["-m", "interface.cli.main", "serve", "--project-dir", repo],
         cwd=repo,
-        env={**os.environ, "COGNIREPO_NO_WATCHER": "1"},   # measure the sessions, not the watcher
+        env={**os.environ, "COGNIREPO_NO_WATCHER": "1",    # measure the sessions, not the watcher
+             "COGNIREPO_DAEMON": "1" if daemon else "0"},
     )
-    report: dict = {"repo": repo, "sessions": n}
+    report: dict = {"repo": repo, "sessions": n, "mode": "daemon" if daemon else "in-process"}
     async with AsyncExitStack() as stack:
         sessions = []
         for _ in range(n):
@@ -75,16 +90,21 @@ async def run(repo: str, n: int, evict_wait: float) -> dict:
             await sess.initialize()
             sessions.append(sess)
         await asyncio.sleep(2)
-        children = _children_of_self()
-        report["after_connect"] = sample(children)
+
+        def everyone() -> list[int]:
+            return sorted(set(_children_of_self()) | set(_daemon_pids()))
+
+        report["after_connect"] = sample(everyone())
         for sess in sessions:
             await sess.call_tool("get_session_brief", {})
             for q in QUERIES:
                 await sess.call_tool("context_pack", {"query": q})
-        report["after_tool_calls"] = sample(children)
+        report["after_tool_calls"] = sample(everyone())
+        await asyncio.sleep(settle)       # a worker trims freed memory once it has been quiet for a few seconds
+        report["after_settle"] = sample(everyone())
         if evict_wait:
             await asyncio.sleep(evict_wait)
-            report["after_idle_eviction"] = sample(children)
+            report["after_idle_eviction"] = sample(everyone())
     return report
 
 
@@ -98,11 +118,20 @@ def main() -> int:
     ap.add_argument("-n", type=int, default=3, help="concurrent serve sessions (default 3)")
     ap.add_argument("--evict-wait", type=float, default=0,
                     help="seconds to wait, then sample again (set > idle_ttl_seconds, default 600, to see eviction)")
+    ap.add_argument("--daemon", action="store_true", help="serve through the per-user daemon (thin proxies)")
     args = ap.parse_args()
     if not sys.platform.startswith("linux"):
         print("Linux only (needs /proc)", file=sys.stderr)
         return 2
-    print(json.dumps(asyncio.run(run(os.path.abspath(args.repo), args.n, args.evict_wait)), indent=2))
+    try:
+        print(json.dumps(asyncio.run(run(os.path.abspath(args.repo), args.n, args.evict_wait, args.daemon)), indent=2))
+    finally:
+        if args.daemon:
+            try:
+                from interface.daemon import client
+                client.stop()
+            except Exception:  # pylint: disable=broad-except
+                pass
     return 0
 
 

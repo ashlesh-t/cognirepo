@@ -46,7 +46,7 @@ jobs:
           # setuptools is pulled in as the build backend (pyproject.toml requires >=61.0, a loose
           # floor) — pin it to a CVE-fixed version explicitly, since `pip install .` alone won't
           # upgrade an already-present vulnerable setuptools from the base image.
-          pip install --upgrade pip "setuptools>=83.0.0" --quiet
+          pip install --upgrade pip "setuptools>=84.1.0" --quiet
           pip install . --quiet
           # Pillow (a fastembed dependency CogniRepo never uses for images) has HIGH/CRITICAL CVEs fixed
           # only in 13.0.0, but every fastembed release declares pillow<13, so `pip install .` can
