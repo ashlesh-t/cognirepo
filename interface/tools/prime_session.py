@@ -68,7 +68,8 @@ def _detect_blind_spots(index_health: dict) -> list[str]:
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         import os as _os  # pylint: disable=import-outside-toplevel
         kg = KnowledgeGraph()
-        pkl_path = get_path("graph/graph.pkl")
+        from data.graph.backend import graph_store_path  # pylint: disable=import-outside-toplevel
+        pkl_path = graph_store_path()
         pkl_exists = _os.path.exists(pkl_path)
         if kg.node_count() == 0:
             if pkl_exists:

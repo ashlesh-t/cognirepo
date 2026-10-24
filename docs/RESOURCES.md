@@ -42,7 +42,7 @@ process per repo that is not a `serve` session is worth a look in `doctor --reso
 | Directory | What | Grows with |
 |---|---|---|
 | `index/` | `ast_index.json`, `ast.index` (FAISS), `ast_metadata.json`, `manifest.json` | symbols in the repo |
-| `graph/` | `graph.pkl`, `graph.journal` (only during `index-repo`), `behaviour.json` | graph size; behaviour is capped |
+| `graph/` | `graph.pkl`, `graph.journal` (only during `index-repo`), `behaviour.json`; with `storage.graph_backend: sqlite`, `graph.sqlite` (+ WAL, shrunk back to ≤ 8 MiB after checkpoints) instead of the first two | graph size; behaviour is capped. The SQLite backend keeps memory flat in graph size (pages are read on demand) — see the measurements in [ADR 002](adr/002-sqlite-graph-store.md) |
 | `vector_db/` | Chroma store (semantic memory) | memories stored |
 | `memory/`, `episodic/`, `learnings/`, `sessions/` | small JSON stores | usage, with caps (e.g. `episodic_max_events`) |
 | `watchers/` | registry, heartbeat, lease, logs | tiny (one log file per watcher start) |

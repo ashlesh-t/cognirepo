@@ -97,8 +97,11 @@ def _graph_base_incomplete(repo_root: str, last_watch: dict | None) -> bool:
     store = _store_dir(repo_root)
     try:
         record = os.path.getmtime(os.path.join(store, "index", "last_watcher_reindex.json"))
-        graph = os.path.getmtime(os.path.join(store, "graph", "graph.pkl"))
-    except OSError:
+        # the pickle backend's file, or the SQLite database and its WAL (commits land in the WAL first)
+        graph = max(os.path.getmtime(p) for p in (
+            os.path.join(store, "graph", name) for name in ("graph.pkl", "graph.sqlite", "graph.sqlite-wal"))
+            if os.path.exists(p))
+    except (OSError, ValueError):
         return True            # no graph on disk (or no record): still incomplete
     return graph <= record
 

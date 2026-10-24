@@ -12,7 +12,8 @@ from data.graph.knowledge_graph import EdgeType, KnowledgeGraph, NodeType
 _REPO = pathlib.Path(__file__).resolve().parent.parent
 _ROOTS = ("core", "data", "intelligence", "interface", "ops")
 #: files that own a networkx graph and may touch `.G` directly
-_OWNERS = {"data/graph/knowledge_graph.py", "data/graph/org_graph.py"}
+_OWNERS = {"data/graph/knowledge_graph.py", "data/graph/org_graph.py",
+           "data/graph/sqlite_graph.py", "data/graph/sqlite_import.py"}   # the SQLite backend never has a .G; the importer reads a pickle
 #: variable names that hold the *org* graph (a different class with its own `.G`)
 _ORG_NAMES = {"og", "_og", "_og3", "org", "org_graph", "graph_org"}
 
