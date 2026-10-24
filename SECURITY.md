@@ -165,6 +165,13 @@ audit and the Docker image run `pip install --no-deps "pillow>=13.0.0"` after in
 `new` and `Resampling`). To get the fix in your own install: `pip install --no-deps "pillow>=13.0.0"` (pip will print a
 dependency warning that can be ignored). Those steps can be removed once `fastembed` lifts the cap.
 
+### `filelock` 4.x
+`requirements.txt` pins `filelock==4.2.4` (earlier 3.x releases have CVE-2026-112907/-112913/-112940, fixed in 4.2.1).
+`pyproject.toml` keeps `filelock>=3.12` so a project that another dependency holds on 3.x can still install CogniRepo;
+a fresh install resolves to the fixed 4.x. CogniRepo's own locks live in directories only the current user can write
+(`.cognirepo/`, the daemon run directory is `0700`), which is the situation the advisory's attack needs the attacker to
+be able to influence. The whole lock-heavy test set (store lock, journal, events, registry, daemon) passes on 4.2.4.
+
 ---
 
 ## Known Non-Issues

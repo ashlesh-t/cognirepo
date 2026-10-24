@@ -833,6 +833,9 @@ class TestFallback:
         daemon_env["pids"].add(old_pid)
         os.kill(old_pid, signal.SIGKILL)
         assert wait_until(lambda: not alive(old_pid), 10)
+        from interface.daemon.proxy import peer_closed
+        # the process is gone; wait for the kernel to deliver the EOF on our end (CI kernels lag a little)
+        assert wait_until(lambda: peer_closed(link._link.sock), 10)
         res = link.call("tools.call", {"name": "lookup_symbol", "arguments": {"name": "hello_world"}})
         assert res["content"]
         daemon_env["pids"].add(link._link.info["pid"])
