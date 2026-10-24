@@ -248,6 +248,30 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
         root, store, served = _sel(repo)
         return processes.list_processes(root, store, include_ui=served)
 
+    @app.get("/api/v1/daemon", response_model=m.CognirepodStatus,
+             summary="The optional per-user daemon (cognirepod): supervisor and one worker per active repo")
+    def daemon_status() -> dict[str, Any]:
+        from interface.ui import daemon_view  # pylint: disable=import-outside-toplevel
+        return daemon_view.daemon_state(app.state.repo_root)
+
+    @app.get("/api/v1/queue", response_model=m.QueueState, response_model_exclude_none=True,
+             summary="The file watcher's queue (depth, oldest wait, overflows) for a repo")
+    def watch_queue(repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> dict[str, Any]:
+        from intelligence.indexer.watch_queue import read_status  # pylint: disable=import-outside-toplevel
+        doc = read_status(_sel(repo)[1])
+        return {"running": False} if doc is None else {"running": True, **doc}
+
+    @app.get("/api/v1/journal", response_model=list[dict[str, Any]],
+             summary="Recent graph, prune, re-index and service events, oldest first (a bounded slice of the event log)")
+    def journal(
+        tail: int = Query(default=100, ge=1, le=500),
+        types: str | None = Query(default=None, max_length=200,
+                                  description="comma-separated globs; default `graph.delta,prune,watcher.reindex,service`"),
+        repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC),
+    ) -> list[dict[str, Any]]:
+        wanted = events.parse_types(types) or ("graph.delta", "prune", "watcher.reindex", "service")
+        return events.read_matching(_sel(repo)[1], wanted, tail)
+
     @app.get("/api/v1/audit", response_model=list[dict[str, Any]],
              summary="Tail of the control-API audit log (newest last; never contains the token)")
     def audit_tail(tail: int = Query(default=100, ge=1, le=500)) -> list[dict[str, Any]]:

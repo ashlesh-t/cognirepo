@@ -42,6 +42,103 @@
         "title": "AutoIndexState",
         "type": "object"
       },
+      "CognirepodStatus": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "max_workers": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Workers"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "rss_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rss Bytes"
+          },
+          "running": {
+            "title": "Running",
+            "type": "boolean"
+          },
+          "socket": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Socket"
+          },
+          "started": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started"
+          },
+          "supported": {
+            "title": "Supported",
+            "type": "boolean"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "workers": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DaemonWorker"
+            },
+            "title": "Workers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "supported",
+          "enabled",
+          "running"
+        ],
+        "title": "CognirepodStatus",
+        "type": "object"
+      },
       "ConfirmBody": {
         "properties": {
           "confirm": {
@@ -107,6 +204,94 @@
           "state"
         ],
         "title": "DaemonStatus",
+        "type": "object"
+      },
+      "DaemonWorker": {
+        "properties": {
+          "alive": {
+            "title": "Alive",
+            "type": "boolean"
+          },
+          "calls": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calls"
+          },
+          "clients": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clients"
+          },
+          "idle_secs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idle Secs"
+          },
+          "pid": {
+            "title": "Pid",
+            "type": "integer"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "rss_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rss Bytes"
+          },
+          "served": {
+            "default": false,
+            "title": "Served",
+            "type": "boolean"
+          },
+          "started": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started"
+          },
+          "unresponsive": {
+            "default": false,
+            "title": "Unresponsive",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "repo",
+          "pid",
+          "alive"
+        ],
+        "title": "DaemonWorker",
         "type": "object"
       },
       "ErrorBody": {
@@ -937,11 +1122,285 @@
         "title": "PruneAuto",
         "type": "object"
       },
+      "QueueState": {
+        "description": "The file watcher's queue for the selected repo (``running: false`` when no watcher is running).",
+        "properties": {
+          "batch_max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Max"
+          },
+          "batches": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batches"
+          },
+          "coalesced": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coalesced"
+          },
+          "debounce_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Debounce Ms"
+          },
+          "depth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Depth"
+          },
+          "dropped": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dropped"
+          },
+          "enqueued": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enqueued"
+          },
+          "files": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          },
+          "last_batch": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Batch"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "max_depth": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Depth"
+          },
+          "oldest_age_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Age S"
+          },
+          "overflows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overflows"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "running": {
+            "title": "Running",
+            "type": "boolean"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "running"
+        ],
+        "title": "QueueState",
+        "type": "object"
+      },
+      "RepoDaemon": {
+        "description": "The daemon repo worker serving this repo (null when the daemon is not running or not serving it).",
+        "properties": {
+          "alive": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alive"
+          },
+          "calls": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calls"
+          },
+          "clients": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clients"
+          },
+          "idle_secs": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idle Secs"
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "rss_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rss Bytes"
+          },
+          "unresponsive": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unresponsive"
+          }
+        },
+        "title": "RepoDaemon",
+        "type": "object"
+      },
       "RepoEntry": {
         "properties": {
           "auto_index": {
             "title": "Auto Index",
             "type": "boolean"
+          },
+          "daemon": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RepoDaemon"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "exists": {
             "title": "Exists",
@@ -1692,6 +2151,33 @@
         "summary": "Tail of the control-API audit log (newest last; never contains the token)"
       }
     },
+    "/api/v1/daemon": {
+      "get": {
+        "operationId": "daemon_status_api_v1_daemon_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CognirepodStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "The optional per-user daemon (cognirepod): supervisor and one worker per active repo"
+      }
+    },
     "/api/v1/events": {
       "get": {
         "operationId": "events_stream_api_v1_events_get",
@@ -2204,6 +2690,100 @@
         "summary": "The insights report HTML, read-only, from its one fixed path"
       }
     },
+    "/api/v1/journal": {
+      "get": {
+        "operationId": "journal_api_v1_journal_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tail",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Tail",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "comma-separated globs; default `graph.delta,prune,watcher.reindex,service`",
+            "in": "query",
+            "name": "types",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "comma-separated globs; default `graph.delta,prune,watcher.reindex,service`",
+              "title": "Types"
+            }
+          },
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "title": "Response Journal Api V1 Journal Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "Recent graph, prune, re-index and service events, oldest first (a bounded slice of the event log)"
+      }
+    },
     "/api/v1/processes": {
       "get": {
         "operationId": "list_processes_api_v1_processes_get",
@@ -2264,6 +2844,64 @@
           }
         },
         "summary": "CogniRepo processes for this repo: this UI server, the watcher, live MCP servers"
+      }
+    },
+    "/api/v1/queue": {
+      "get": {
+        "operationId": "watch_queue_api_v1_queue_get",
+        "parameters": [
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "The file watcher's queue (depth, oldest wait, overflows) for a repo"
       }
     },
     "/api/v1/repos": {

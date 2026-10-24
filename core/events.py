@@ -207,6 +207,18 @@ def read_since(store_dir: str, after_seq: int, limit: int = 1000) -> list[dict[s
     return out
 
 
+def read_matching(store_dir: str, types: tuple[str, ...] = (), limit: int = 100,
+                  session: str | None = None) -> list[dict[str, Any]]:
+    """The last ``limit`` events matching ``types`` (glob list, empty = all) and ``session``, oldest first.
+    Reads the retained log (live file + one backup), so it is bounded by event-log retention."""
+    from collections import deque  # pylint: disable=import-outside-toplevel
+    out: "deque[dict[str, Any]]" = deque(maxlen=max(1, limit))
+    for ev in _iter_all(store_dir):
+        if matches(ev, session, types):
+            out.append(ev)
+    return list(out)
+
+
 def read_last(store_dir: str, n: int) -> list[dict[str, Any]]:
     """The last ``n`` events (for ``?replay=``)."""
     path = events_path(store_dir)

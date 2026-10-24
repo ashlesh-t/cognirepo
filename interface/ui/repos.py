@@ -77,7 +77,7 @@ def auto_index(store: str) -> bool:
     return bool(watch.get("auto_enabled", True)) if isinstance(watch, dict) else True
 
 
-def describe(row: dict[str, Any]) -> dict[str, Any]:
+def describe(row: dict[str, Any], workers: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     root = row["path"]
     exists = os.path.isdir(root)
     if exists:   # resolve afresh: the store may have moved (hashed global dir -> local .cognirepo/)
@@ -92,7 +92,11 @@ def describe(row: dict[str, Any]) -> dict[str, Any]:
         "indexed": False, "indexed_at": None, "git_commit": None,
         "watcher": {"state": "stopped", "pid": None, "heartbeat_age_s": None, "last_reindex": None},
         "hooks_installed": False, "auto_index": True,
+        "daemon": None,
     }
+    worker = (workers or {}).get(root)
+    if worker is not None:       # a daemon repo worker is serving this repo (#116)
+        out["daemon"] = {k: worker.get(k) for k in ("pid", "alive", "unresponsive", "clients", "calls", "rss_bytes", "idle_secs")}
     if exists and store_exists:
         idx = indexer_status(root)
         out.update(indexed=idx["indexed"], indexed_at=idx["indexed_at"], git_commit=idx["git_commit"],
@@ -114,4 +118,6 @@ def list_repos(current_root: str | None = None) -> list[dict[str, Any]]:
             store = get_cognirepo_dir_for_repo(cur)
             if os.path.isdir(store):
                 rows.append({"path": cur, "store": store})
-    return [describe(r) for r in rows]
+    from interface.ui import daemon_view  # pylint: disable=import-outside-toplevel
+    workers = daemon_view.workers_by_repo()           # one local round trip for the whole list
+    return [describe(r, workers) for r in rows]
