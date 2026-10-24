@@ -44,6 +44,7 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 |-------|------|---------|-------------|
 | `project_name` | string | auto-detected | Human-readable project name |
 | `storage.encrypt` | bool | `false` | Enable Fernet encryption at rest. Covers the graph, behaviour model, org graph, episodic log, learnings, org project memory and the local FAISS store's text; **not** the AST index, vector files or the default Chroma store — see `SECURITY.md` |
+| `storage.graph_backend` | string | `"networkx"` | Knowledge-graph store: `"networkx"` (default: `graph/graph.pkl` loaded whole into each process) or `"sqlite"` (opt-in: `graph/graph.sqlite`, WAL, read on demand — see [ADR 002](adr/002-sqlite-graph-store.md)). The first open with `sqlite` imports an existing `graph.pkl` in one transaction and leaves the pickle untouched, so switching back is just the flag. **`storage.encrypt: true` always uses `networkx`** (the SQLite file is not encrypted); `cognirepo doctor` reports when that overrides your choice. `COGNIREPO_GRAPH_BACKEND` overrides the file (tests, one-off runs). |
 | `storage.vector_backend` | string | `"chroma"` | Vector backend: `"chroma"` (default; `init` writes it, and it is used when the key is absent) or `"faiss"`. Falls back to faiss only if `chromadb` isn't installed. |
 | `models.QUICK.model` | string | `"local-resolver"` | Zero-API local resolver for trivial queries |
 | `models.STANDARD.model` | string | `"claude-haiku-4-5"` | Model for quick lookups (score ≤4) |
@@ -128,6 +129,9 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
                                (encrypted per segment when storage.encrypt is on)
     graph.journal.writer    ← OS lock file: the single-writer lease held by a running index-repo
     graph.journal.writer.pid← pid of the lease holder (for the "already running" message)
+    graph.sqlite            ← only with storage.graph_backend = "sqlite": the graph as nodes/edges tables
+                               (plus graph.sqlite-wal / -shm while open). Replaces graph.pkl and the journal;
+                               an index run still takes graph.journal.writer.
   index/                    ← AST symbol index
     ast_index.json          ← full AST index + reverse_index dict (ast_indexer.py)
     ast_metadata.json       ← parallel FAISS metadata for AST vectors

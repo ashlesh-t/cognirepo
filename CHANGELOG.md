@@ -9,6 +9,18 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Added
+- **Knowledge graph on SQLite, opt-in (#115, ADR 002 steps 2-3).** `storage.graph_backend: "sqlite"` stores the
+  graph in `graph/graph.sqlite` (WAL) instead of a pickle that every process loads whole: reads are indexed
+  queries with a small adjacency cache, writes are transactions (no journal, no rebase), and searches
+  (`shortest_path`, `hop_distance`, `subgraph_around`) are bounded BFS instead of materialising the graph.
+  `KnowledgeGraph()` returns the configured backend, so no caller changed; the first open imports an existing
+  `graph.pkl` in one transaction and leaves it in place (switching back is the flag). **Default is unchanged
+  (`networkx`), and `storage.encrypt: true` always keeps the encrypted pickle backend** because the SQLite file is not
+  encrypted (#186); `cognirepo doctor` reports the backend and says when encryption overrides the choice.
+  The index-run writer lease, the `graph.delta`/`graph_seq` feed and `graph.stats` behave as before. New
+  facade methods `graph_attr`, `count_nodes_of_type`, `isolated_node_ids`, `top_degree_ids`. Not done here:
+  `behaviour.json` on the same database, flipping the default, SQLite encryption. `scripts/bench_graph_backends.py`
+  measures both backends; results are in ADR 002.
 - **Knowledge-graph read facade (#115, ADR 002 step 1).** `KnowledgeGraph` gains `node_count`, `edge_count`,
   `has_edge`, `node_ids`, `nodes_with_data`, `edges_with_data`, `node_attrs`, `successors`, `predecessors`,
   `edge_data`, `degree`, `in_degrees`, `path_between` and `undirected_snapshot`, and every caller outside

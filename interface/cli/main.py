@@ -605,9 +605,18 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         _kg = KnowledgeGraph()
         _nodes = _kg.node_count()
         _edges = _kg.edge_count()
-        _ok(f"Knowledge graph — {_nodes:,} nodes · {_edges:,} edges")
+        from data.graph import backend as _gb  # pylint: disable=import-outside-toplevel
+        _res = _gb.resolve()
+        _how = ""
+        if _res.backend == _gb.SQLITE:
+            _sq = get_path("graph/graph.sqlite")
+            _how = f" [sqlite, {(os.path.getsize(_sq) if os.path.exists(_sq) else 0) / 1e6:.1f} MB]"
+        _ok(f"Knowledge graph — {_nodes:,} nodes · {_edges:,} edges{_how}")
+        if _res.note:
+            _warn(f"Graph backend — {_res.requested!r} requested but {_res.backend!r} in use: {_res.note}",
+                  "Set storage.encrypt to false to use the SQLite graph, or leave it as is")
         if verbose:
-            _gpath = get_path("graph/graph.pkl")
+            _gpath = get_path("graph/graph.sqlite" if _res.backend == _gb.SQLITE else "graph/graph.pkl")
             print(f"       {os.path.abspath(_gpath)}")
 
         # ── Check 3a: Knowledge graph integrity (COGNIREPO-201) ────────────────
@@ -1142,7 +1151,9 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     # can be restored, which are merely locked, and which are really corrupt.
     try:
         from data.graph import quarantine as _gq  # pylint: disable=import-outside-toplevel
-        _items = _gq.list_quarantined()
+        from data.graph import backend as _gb2  # pylint: disable=import-outside-toplevel
+        # graph.pkl quarantines concern the pickle backend only; the SQLite graph has its own .corrupt-* handling
+        _items = _gq.list_quarantined() if _gb2.resolve().backend == _gb2.NETWORKX else []
         if _items:
             _rec = [q for q in _items if q.status == "recoverable"]
             _locked = [q for q in _items if q.status == "locked"]
@@ -2574,21 +2585,29 @@ def _direct_index(path, embed: bool = True, skip_graph: bool | None = None, tier
         return False
 
     if not _save_graph():
-        from data.graph.knowledge_graph import journal_file_exists  # pylint: disable=import-outside-toplevel
-        _journal_note = (
-            "Graph data up to the last journal flush is preserved in "
-            ".cognirepo/graph/graph.journal and is replayed automatically on the next "
-            "load (anything after the last flush, or after a journal error, is not); "
-            if journal_file_exists()
-            else "No graph journal exists, so graph data from this run was not preserved; "
-        )
-        print(
-            "  ⚠  Knowledge graph not saved to graph.pkl (memory limit hit, retried once). "
-            + _journal_note
-            + "AST index and embeddings are intact. "
-            "Re-run with --no-graph to disable graph, or set "
-            "COGNIREPO_CB_RSS_LIMIT_MB=6000 to raise the memory limit."
-        )
+        from data.graph import backend as _gb3  # pylint: disable=import-outside-toplevel
+        if _gb3.resolve().backend == _gb3.SQLITE:
+            print(
+                "  ⚠  Knowledge graph could not be committed to graph.sqlite. Batches committed "
+                "during this run are kept; anything after the last commit is not. AST index and "
+                "embeddings are intact. Re-run `cognirepo index-repo .` once the database is free."
+            )
+        else:
+            from data.graph.knowledge_graph import journal_file_exists  # pylint: disable=import-outside-toplevel
+            _journal_note = (
+                "Graph data up to the last journal flush is preserved in "
+                ".cognirepo/graph/graph.journal and is replayed automatically on the next "
+                "load (anything after the last flush, or after a journal error, is not); "
+                if journal_file_exists()
+                else "No graph journal exists, so graph data from this run was not preserved; "
+            )
+            print(
+                "  ⚠  Knowledge graph not saved to graph.pkl (memory limit hit, retried once). "
+                + _journal_note
+                + "AST index and embeddings are intact. "
+                "Re-run with --no-graph to disable graph, or set "
+                "COGNIREPO_CB_RSS_LIMIT_MB=6000 to raise the memory limit."
+            )
 
     # ── Stage 2: file-summary vectors (summarizer → FAISS) ───────────────────
     if embed:

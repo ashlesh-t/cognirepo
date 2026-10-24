@@ -100,3 +100,31 @@ rule was introduced no existing code path nested two locks.
   a regression in a `save()` shows up in the logs instead of as other processes timing out.
 - What still runs under `cognirepo.lock` by design: the graph pickle + fsync, `faiss.write_index`, and
   the checksums of the three files just written (they must describe exactly those files).
+
+## SQLite backend (`storage.graph_backend: sqlite`, #115)
+
+Everything above describes the default pickle backend. With `sqlite` the rules collapse onto what the
+database already guarantees (`data/graph/sqlite_graph.py`):
+
+| Pickle backend | SQLite backend |
+|---|---|
+| each process holds the whole graph; `save()` rewrites it | a connection; reads are indexed queries, adjacency lists are cached (LRU, 10 000) |
+| `_pending` + rebase onto newer disk state | no stale copy exists, so nothing to rebase: ops are applied to the database inside one write transaction (`BEGIN IMMEDIATE`) |
+| `graph.journal` makes a long run resumable | committed batches are durable; a killed run resumes from them and SQLite discards the open transaction |
+| `save()` = pickle + fsync under `store_lock` | `save()` = `COMMIT` (+ a passive WAL checkpoint); readers never block on it (WAL snapshots) |
+| `reload_if_changed()` compares file stamps | compares `PRAGMA data_version`: true when another process committed |
+| `remove_node_if_degree_at_most` re-checked on rebase | evaluated inside the write transaction, so a node another writer just connected is kept |
+
+Unchanged on purpose: the index-run **writer lease** (`graph.journal.writer`, `JournalBusy` for the second
+indexer — it also guards the AST index and FAISS), the `graph.delta` / `graph_seq` change feed (one batch per
+commit), and `graph.stats` (written by `save()`).
+
+Things to know:
+* A transaction nobody saves is committed after 5 s without activity (and after 60 s of continuous activity
+  outside an index run), so a forgotten `save()` can never hold the write lock against other processes. The
+  pickle backend would simply have lost those changes; here they are kept.
+* Only one process writes at a time (`busy_timeout` 30 s); readers are never blocked.
+* `synchronous=NORMAL`: a power cut can lose the last commits, never corrupt the file. The graph is derived
+  data (ADR 001 class 2), so the cost is re-indexing a few files.
+* A database SQLite cannot open is moved to `graph.sqlite.corrupt-<ts>` (with its WAL files) and an empty
+  graph is started, as for `graph.pkl`.

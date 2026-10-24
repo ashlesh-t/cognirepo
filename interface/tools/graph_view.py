@@ -111,9 +111,9 @@ def graph_view(node: str | None = None, depth: int = 1, limit: int = 200,
         result["truncated"] = bool(sub.get("truncated", False))
         edge_pairs = [(e.get("source"), e.get("target")) for e in sub.get("edges", [])]
     else:
-        ranked = sorted(kg.node_ids(), key=kg.degree, reverse=True)
-        ids = ranked[:limit]
-        result["truncated"] = len(ranked) > limit
+        ids = kg.top_degree_ids(limit + 1)
+        result["truncated"] = len(ids) > limit
+        ids = ids[:limit]
         keep = set(ids)
         edge_pairs = [(u, v) for u in ids for v in kg.successors(u) if v in keep][: limit * 3]
     result["nodes"] = [_node(kg, n) for n in ids]

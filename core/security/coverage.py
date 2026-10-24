@@ -37,6 +37,7 @@ STORE_COVERAGE: dict[str, tuple[str, str]] = {
     "learnings":                     (ENCRYPTED, "project learnings (global learnings use their own key)"),
     "archive":                       (ENCRYPTED, "pruned memory records (`cognirepo prune --archive`); encrypted when storage.encrypt is on"),
     # ── NOT encrypted ────────────────────────────────────────────────────────
+    "graph/graph.sqlite":            (NOT_ENCRYPTED, "knowledge graph, opt-in SQLite backend — storage.encrypt forces the encrypted pickle backend instead (#186)"),
     "vector_db/chroma":              (NOT_ENCRYPTED, "DEFAULT backend: memory text + embeddings; Chroma has no encryption hook — use disk encryption"),
     "vector_db/semantic.index":      (NOT_ENCRYPTED, _EMBED),
     "vector_db/semantic.gen":        (NOT_ENCRYPTED, _EMBED),

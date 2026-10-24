@@ -116,6 +116,7 @@ Do not call FAISS or the graph directly from tools — always go through `Hybrid
 | Module | Responsibility |
 |--------|---------------|
 | `data/graph/knowledge_graph.py` | NetworkX DiGraph: FILE, FUNCTION, CLASS, CONCEPT, QUERY, SESSION, USER_ACTION, MEMORY nodes |
+| `data/graph/backend.py`, `sqlite_graph.py`, `sqlite_import.py` | Opt-in SQLite (WAL) backend for the same `KnowledgeGraph` API: `storage.graph_backend: sqlite` makes `KnowledgeGraph()` return `SqliteGraph` (indexed queries, transactions instead of journal + rebase, bounded path searches); first open imports `graph.pkl`; `storage.encrypt` forces the pickle backend (ADR 002, #115) |
 | `data/graph/graph_seq.py` | Graph-wide change counter (`graph/graph.seq`) and delta description; `KnowledgeGraph` publishes a `graph.delta` event per durable batch (#209) |
 | `data/graph/behaviour_tracker.py` | Tracks access frequency per symbol; weights retrieval signals |
 

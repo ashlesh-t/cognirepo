@@ -59,8 +59,9 @@ def _archive_dir() -> str:
     return get_path("archive")
 
 def _graph_pkl() -> str:
-    from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
-    return get_path("graph/graph.pkl")
+    """The graph's file under the active backend (graph.pkl, or graph.sqlite when that backend is on)."""
+    from data.graph.backend import graph_store_path  # pylint: disable=import-outside-toplevel
+    return graph_store_path()
 
 # Keep module-level names for backward compat (point at legacy hardcoded values only as fallback)
 ARCHIVE_DIR = ".cognirepo/archive"
@@ -162,7 +163,7 @@ def _prune_graph(dry_run: bool) -> dict[str, int]:
     try:
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
         kg = KnowledgeGraph()
-        orphans = [n for n in kg.node_ids() if kg.degree(n) == 0]
+        orphans = kg.isolated_node_ids()
         stats["orphans_removed"] = len(orphans)
         if not dry_run and orphans:
             for _nid in orphans:
