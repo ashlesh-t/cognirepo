@@ -103,6 +103,9 @@ def dumps(attrs: dict) -> str:
     return json.dumps(attrs, default=_json_default, separators=(",", ":"), ensure_ascii=False)
 
 
+# Bandit B608 ("SQL built from strings") is suppressed on the f-string queries below: the only things
+# interpolated are fixed fragments of this module (_NO_EDGES, the src/dst column names) and strings of
+# "?" placeholders; every value, including every node id, is bound as a parameter.
 _DEGREE_SQL = ("SELECT (SELECT COUNT(*) FROM edges WHERE src=?1) + (SELECT COUNT(*) FROM edges WHERE dst=?1) "
                "WHERE EXISTS (SELECT 1 FROM nodes WHERE id=?1)")
 #: ids per ``IN (...)`` query; well under SQLite's variable limit
@@ -642,7 +645,7 @@ class SqliteGraph(KnowledgeGraph):  # pylint: disable=too-many-public-methods
     _NO_EDGES = ("NOT EXISTS (SELECT 1 FROM edges e WHERE e.src = n.id OR e.dst = n.id)")
 
     def isolated_node_ids(self) -> list[str]:
-        return [r[0] for r in self._all(f"SELECT n.id FROM nodes n WHERE {self._NO_EDGES} ORDER BY n.rowid")]
+        return [r[0] for r in self._all(f"SELECT n.id FROM nodes n WHERE {self._NO_EDGES} ORDER BY n.rowid")]  # nosec B608
 
     def top_degree_ids(self, limit: int) -> list[str]:
         return [r[0] for r in self._all(
@@ -654,7 +657,7 @@ class SqliteGraph(KnowledgeGraph):  # pylint: disable=too-many-public-methods
 
     def orphan_stubs(self) -> list[str]:
         return [r[0] for r in self._all(
-            f"SELECT n.id FROM nodes n WHERE substr(n.id, 1, 8) = 'symbol::' AND n.type = ? AND {self._NO_EDGES} "
+            f"SELECT n.id FROM nodes n WHERE substr(n.id, 1, 8) = 'symbol::' AND n.type = ? AND {self._NO_EDGES} "  # nosec B608
             "ORDER BY n.rowid", (NodeType.CONCEPT,))]
 
     # ── batched reads (one query per _CHUNK ids instead of one per id) ─────────
@@ -678,7 +681,7 @@ class SqliteGraph(KnowledgeGraph):  # pylint: disable=too-many-public-methods
                 chunk = missing[i:i + _CHUNK]
                 found: dict[str, list[str]] = {n: [] for n in chunk}
                 for k, v in self._all(
-                        f"SELECT {key}, {val} FROM edges WHERE {key} IN ({','.join('?' * len(chunk))}) "
+                        f"SELECT {key}, {val} FROM edges WHERE {key} IN ({','.join('?' * len(chunk))}) "  # nosec B608
                         "ORDER BY rowid", chunk):
                     found[k].append(v)
                 for node, lst in found.items():
@@ -694,7 +697,7 @@ class SqliteGraph(KnowledgeGraph):  # pylint: disable=too-many-public-methods
         for i in range(0, len(ids), _CHUNK):
             chunk = ids[i:i + _CHUNK]
             for node, deg in self._all(
-                    "SELECT n.id, (SELECT COUNT(*) FROM edges WHERE src = n.id) "
+                    "SELECT n.id, (SELECT COUNT(*) FROM edges WHERE src = n.id) "  # nosec B608
                     "+ (SELECT COUNT(*) FROM edges WHERE dst = n.id) FROM nodes n "
                     f"WHERE n.id IN ({','.join('?' * len(chunk))})", chunk):
                 out[node] = deg
@@ -706,7 +709,7 @@ class SqliteGraph(KnowledgeGraph):  # pylint: disable=too-many-public-methods
         for i in range(0, len(ids), _CHUNK):
             chunk = ids[i:i + _CHUNK]
             for node, ntype, attrs in self._all(
-                    f"SELECT id, type, attrs FROM nodes WHERE id IN ({','.join('?' * len(chunk))})", chunk):
+                    f"SELECT id, type, attrs FROM nodes WHERE id IN ({','.join('?' * len(chunk))})", chunk):  # nosec B608
                 out[node] = self._node_dict(ntype, attrs)
         return out
 
@@ -811,7 +814,7 @@ class SqliteGraph(KnowledgeGraph):  # pylint: disable=too-many-public-methods
         for i in range(0, len(members), _CHUNK):
             chunk = members[i:i + _CHUNK]
             for u, v, rel, weight, attrs in self._all(
-                    "SELECT src, dst, rel, weight, attrs FROM edges "
+                    "SELECT src, dst, rel, weight, attrs FROM edges "  # nosec B608
                     f"WHERE src IN ({','.join('?' * len(chunk))})", chunk):
                 if v not in visited:
                     continue
@@ -831,7 +834,7 @@ class SqliteGraph(KnowledgeGraph):  # pylint: disable=too-many-public-methods
 
     def integrity_report(self, repo_root: str) -> dict:
         orphans = [r[0] for r in self._all(
-            f"SELECT n.id FROM nodes n WHERE n.type IN ('FILE','FUNCTION','CLASS') AND {self._NO_EDGES} "
+            f"SELECT n.id FROM nodes n WHERE n.type IN ('FILE','FUNCTION','CLASS') AND {self._NO_EDGES} "  # nosec B608
             "ORDER BY n.rowid")]
         rels = [r[0] for r in self._all(
             "SELECT id FROM nodes WHERE type='FILE' "
