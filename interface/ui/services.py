@@ -25,7 +25,7 @@ from typing import Any
 from core.config import procutil
 from core.config.atomic import atomic_json_dump
 
-ALLOWED: tuple[str, ...] = ("watcher", "metrics", "insights", "index", "hooks", "prune")
+ALLOWED: tuple[str, ...] = ("watcher", "metrics", "insights", "index", "hooks", "prune", "daemon")
 
 _START_WAIT_SECS = 2.0
 _STOP_WAIT_SECS = 8.0
@@ -464,6 +464,41 @@ class ServiceManager:
         return {"name": "prune", "state": view["state"], "last_run": view["last_run"], "summary": view["summary"],
                 "auto": self._prune_auto(), "dry_run_fresh": prune_memory.dry_run_is_fresh()}
 
+    # ── daemon (the optional per-user cognirepod, #116) ──────────────────────
+    def _daemon_status(self) -> dict[str, Any]:
+        from interface.ui import daemon_view  # pylint: disable=import-outside-toplevel
+        st = daemon_view.daemon_state(self.repo_root)
+        if not st["supported"]:
+            return {"name": "daemon", "state": "unsupported", "pid": None,
+                    "detail": "needs Unix domain sockets (not available on this platform)"}
+        return {"name": "daemon", "state": "running" if st["running"] else "stopped", "pid": st["pid"],
+                "detail": f"{len(st['workers'])} repo worker(s)" if st["running"] else
+                          ("enabled; starts with the first `cognirepo serve`" if st["enabled"] else "off (opt-in)")}
+
+    def _daemon_start(self) -> dict[str, Any]:
+        """Start the supervisor (it starts repo workers on demand). Agents only use it while ``daemon.enabled``."""
+        from interface.daemon import client  # pylint: disable=import-outside-toplevel
+        before = self._daemon_status()
+        if before["state"] == "unsupported":
+            return self._failed("daemon", "unsupported", before["detail"])
+        if before["state"] == "running":
+            return {**before, "changed": False}
+        try:
+            client.ensure_supervisor()
+        except client.DaemonUnavailable as exc:
+            return self._failed("daemon", "start_failed", str(exc)[:300])
+        return {**self._daemon_status(), "changed": True}
+
+    def _daemon_stop(self) -> dict[str, Any]:
+        """Stop the supervisor AND every repo worker: connected agents lose their shared worker (their proxies
+        reconnect to a fresh one on the next call while the daemon is enabled, or fall back in-process)."""
+        from interface.daemon import client  # pylint: disable=import-outside-toplevel
+        before = self._daemon_status()
+        if before["state"] == "unsupported":
+            return self._failed("daemon", "unsupported", before["detail"])
+        stopped = client.stop()
+        return {**self._daemon_status(), "changed": stopped}
+
     # ── public API ───────────────────────────────────────────────────────────
     def status(self, name: str | None = None) -> Any:
         if name is None:
@@ -471,7 +506,8 @@ class ServiceManager:
         self._check(name)
         return {"watcher": self._watcher_status, "metrics": self._metrics_status,
                 "insights": self._insights_status, "index": self._index_status,
-                "hooks": self._hooks_status, "prune": self._prune_status}[name]()
+                "hooks": self._hooks_status, "prune": self._prune_status,
+                "daemon": self._daemon_status}[name]()
 
     def start(self, name: str, dry_run: bool = False) -> dict[str, Any]:
         self._check(name)
@@ -481,7 +517,7 @@ class ServiceManager:
             raise ServiceError(400, "dry_run_unsupported", f"{name} has no dry run")
         return {"watcher": self._watcher_start, "metrics": self._metrics_start,
                 "insights": self._insights_start, "index": self._index_start,
-                "hooks": lambda: self._hooks_run("install-hooks")}[name]()
+                "hooks": lambda: self._hooks_run("install-hooks"), "daemon": self._daemon_start}[name]()
 
     def stop(self, name: str) -> dict[str, Any]:
         self._check(name)
@@ -489,6 +525,8 @@ class ServiceManager:
             raise ServiceError(409, "not_stoppable", "a run finishes on its own")
         if name == "hooks":
             return self._hooks_run("uninstall-hooks")
+        if name == "daemon":
+            return self._daemon_stop()
         return self._watcher_stop() if name == "watcher" else self._metrics_stop()
 
     def shutdown(self) -> None:

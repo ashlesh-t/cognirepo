@@ -100,6 +100,9 @@ The only token-less responses are the data-free landing page / static console as
 | `GET` | `/api/v1/sessions` | MCP sessions (id, client, started, last_activity, call_count, closed_at, state). See [Sessions](#sessions) |
 | `GET` | `/api/v1/sessions/{session_id}?limit=` | One session plus its last tool calls (default 100, max 500). `404 unknown_session` |
 | `GET` | `/api/v1/processes` | CogniRepo processes for this repo (`ui`, `watcher`, live `mcp` servers) with RSS, threads and watcher heartbeat. See [Processes, audit and metrics](#processes-audit-and-metrics) |
+| `GET` | `/api/v1/daemon` | The optional per-user daemon: supervisor and its repo workers. See [Daemon, queue and journal](#daemon-queue-and-journal) |
+| `GET` | `/api/v1/queue?repo=` | The file watcher's queue for a repo (`running: false` when no watcher is running) |
+| `GET` | `/api/v1/journal?tail=&types=&repo=` | Recent graph, prune, re-index and service events, oldest first |
 | `GET` | `/api/v1/audit?tail=` | Last `tail` (1–500, default 100) records of the control-API audit log, newest last |
 | `GET` | `/api/v1/services` | State of the allowlisted services |
 | `POST` | `/api/v1/services/{name}/start` | Start a service. Body must be `{"confirm": true}` (strict boolean) |
@@ -107,7 +110,8 @@ The only token-less responses are the data-free landing page / static console as
 | `POST` | `/api/v1/settings/auto-index` | Persist `watch.auto_enabled` for this repo. Body `{"enabled": bool, "confirm": true}`. See [Index and hooks](#index-and-hooks-services) |
 
 **Service allowlist:** `watcher` (the repo's file-watcher daemon), `index` and `hooks` (see
-[Index and hooks](#index-and-hooks-services)), `prune` (see [Prune](#prune-service)), `insights` (`start` regenerates the report by running `cognirepo insights`; one run at a time, `stop` is `409 not_stoppable`) and `metrics` (in-process Prometheus
+[Index and hooks](#index-and-hooks-services)), `prune` (see [Prune](#prune-service)), `daemon` (start/stop the
+per-user daemon, see below), `insights` (`start` regenerates the report by running `cognirepo insights`; one run at a time, `stop` is `409 not_stoppable`) and `metrics` (in-process Prometheus
 `/metrics` on `127.0.0.1:9090`, see [Processes, audit and metrics](#processes-audit-and-metrics)). Any other name is a `404` before anything else is evaluated. Each service
 maps to fixed code with a fixed argv — nothing from a request reaches a command line.
 
@@ -187,6 +191,31 @@ batch, at most once a second otherwise) — `null` when no watcher is running (a
 was followed by a catch-up scan), `batches`, `files` (processed so far), `last_batch` (`files`, `ms`), `max_depth`,
 `batch_max`, `debounce_ms`, `pid`, `updated_at`. The same numbers are Prometheus series: `cognirepo_watcher_queue_depth`,
 `..._oldest_age_seconds`, `..._capacity`, and the counters `..._overflows_total`, `..._dropped_total`, `cognirepo_watcher_batches_total`.
+
+### Daemon, queue and journal
+These three endpoints are what the console's Daemon, Queue and Live views read; all are read-only and token-gated.
+
+**`GET /api/v1/daemon`** — `supported` (this platform has Unix sockets; false on Windows), `enabled` (`daemon.enabled` /
+`COGNIREPO_DAEMON`), `running`, and when running: `version`, `pid`, `rss_bytes`, `socket`, `max_workers`, `started` and
+`workers[]` — one per active repo: `repo`, `pid`, `alive`, `unresponsive`, `clients` (connected agent sessions), `calls`,
+`rss_bytes`, `idle_secs`, `started`, `served` (the repo this UI server was started for). It only *asks* a running
+supervisor (1.5 s timeout) — it never starts the daemon, and a wedged or absent one answers `running: false` fast.
+`GET /api/v1/repos` entries carry the same worker as `daemon` (null when the daemon is not running or not serving that repo).
+
+**`daemon` service** — `POST /api/v1/services/daemon/start` starts the supervisor (workers start on demand when agents
+connect); `/stop` stops it **and every repo worker**, which drops all agents' shared workers (their proxies reconnect to a
+fresh one on the next call while the daemon is enabled, or fall back to in-process). Both need `confirm: true` and are
+audited. On a platform without Unix sockets the state is `unsupported` and `start` answers `failed` / `unsupported`.
+
+**`GET /api/v1/queue?repo=`** — the watcher's queue as `status.indexer.watch_queue` (see [Watcher queue](#watcher-queue)) with a
+`running` flag: `{"running": false}` when no watcher runs for that repo, else `{"running": true, depth, max, oldest_age_s,
+overflows, dropped, batches, files, last_batch, ...}`. Cheap enough to poll (one small file read).
+
+**`GET /api/v1/journal?tail=&types=&repo=`** — the last `tail` (1–500, default 100) events of the selected repo's log whose type
+matches `types` (comma-separated globs; default `graph.delta,prune,watcher.reindex,service`), oldest first, in the event
+schema below. It is a bounded slice of the event log (live file + one backup), not a durable audit trail. With
+`COGNIREPO_EVENTS_METADATA_ONLY=1` graph deltas are `reset` markers without node ids, as everywhere else; with
+`COGNIREPO_EVENTS=0` the list is empty. Follow the same events live with `GET /api/v1/events`.
 
 ### Status codes
 `200` ok · `400` `confirm_required` · `401` missing/invalid token · `403` bad `Host`/`Origin` · `404` unknown service/path ·

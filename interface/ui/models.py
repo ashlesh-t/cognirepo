@@ -223,6 +223,17 @@ class RepoWatcher(BaseModel):
     last_reindex: dict[str, Any] | None = None
 
 
+class RepoDaemon(BaseModel):
+    """The daemon repo worker serving this repo (null when the daemon is not running or not serving it)."""
+    pid: int | None = None
+    alive: bool | None = None
+    unresponsive: bool | None = None
+    clients: int | None = None      # connected agent sessions
+    calls: int | None = None
+    rss_bytes: int | None = None
+    idle_secs: float | None = None
+
+
 class RepoEntry(BaseModel):
     name: str
     root: str
@@ -236,6 +247,7 @@ class RepoEntry(BaseModel):
     watcher: RepoWatcher
     hooks_installed: bool
     auto_index: bool
+    daemon: RepoDaemon | None = None
 
 
 class GraphOp(BaseModel):
@@ -252,3 +264,49 @@ class GraphChanges(BaseModel):
     ops: list[GraphOp]
     reset: bool                   # true: re-fetch GET /api/v1/graph, then continue from `seq`
     more: bool = False            # true: stopped at `limit`; call again with since=seq
+
+
+class DaemonWorker(BaseModel):
+    repo: str
+    pid: int
+    alive: bool
+    unresponsive: bool = False
+    clients: int | None = None
+    calls: int | None = None
+    rss_bytes: int | None = None
+    idle_secs: float | None = None
+    started: float | None = None
+    served: bool = False            # the repo this UI server was started for
+
+
+class CognirepodStatus(BaseModel):
+    supported: bool                 # this platform has Unix sockets (POSIX); false on Windows
+    enabled: bool                   # daemon.enabled / COGNIREPO_DAEMON
+    running: bool
+    version: str | None = None
+    pid: int | None = None
+    rss_bytes: int | None = None
+    socket: str | None = None
+    max_workers: int | None = None
+    started: float | None = None
+    workers: list[DaemonWorker] = []
+
+
+class QueueState(BaseModel):
+    """The file watcher's queue for the selected repo (``running: false`` when no watcher is running)."""
+    running: bool
+    depth: int | None = None
+    max: int | None = None
+    oldest_age_s: float | None = None
+    enqueued: int | None = None
+    coalesced: int | None = None
+    dropped: int | None = None
+    overflows: int | None = None
+    batches: int | None = None
+    files: int | None = None
+    max_depth: int | None = None
+    last_batch: dict[str, Any] | None = None
+    batch_max: int | None = None
+    debounce_ms: int | None = None
+    pid: int | None = None
+    updated_at: str | None = None

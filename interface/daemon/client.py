@@ -190,12 +190,12 @@ class WorkerLink:
             self.sock = None
 
 
-def status() -> dict[str, Any] | None:
+def status(timeout: float = 5.0) -> dict[str, Any] | None:
     """The supervisor's ``status`` (workers included), or ``None`` if it is not running. Never starts anything."""
     if not paths.SUPPORTED:
         return None
     try:
-        return rpc(paths.supervisor_socket(), "status", timeout=5.0)
+        return rpc(paths.supervisor_socket(), "status", timeout=timeout)
     except (OSError, protocol.ProtocolError, protocol.RpcError, paths.RunDirError):
         return None
 
