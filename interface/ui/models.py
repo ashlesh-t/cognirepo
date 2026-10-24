@@ -49,6 +49,7 @@ class IndexerStatus(BaseModel):
     graph_base_incomplete: bool = False   # watcher refused its last graph save: run one full index-repo
     auto_index: bool = True               # config watch.auto_enabled (absent = on)
     store_bytes: dict[str, int] = {}      # bytes per top-level store directory, "_files" (loose files), "total"
+    watch_queue: dict[str, Any] | None = None   # watcher queue state (depth, max, oldest_age_s, overflows, ...); null if no watcher
 
 
 class UiInfo(BaseModel):

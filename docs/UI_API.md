@@ -145,7 +145,7 @@ as dead, which guards against a reused pid.
 `GET /status` → `indexer` adds `graph_base_incomplete` (the watcher's latest batch skipped its graph save for the same
 reason; `last_watcher_reindex.graph_skipped` carries the text; false until a batch has run, and cleared again once a
 graph is written after that batch, e.g. by a full `index-repo`) and `auto_index`
-(`watch.auto_enabled`, default true). `last_watcher_reindex` (`timestamp`, `reindexed[]`, `removed[]`, `error`) is
+(`watch.auto_enabled`, default true), and `watch_queue` (below). `last_watcher_reindex` (`timestamp`, `reindexed[]`, `removed[]`, `error`) is
 there too.
 
 `POST /api/v1/settings/auto-index` writes only `watch.auto_enabled` into `<store>/config.json` (read-modify-write under
@@ -178,6 +178,15 @@ allow **one run per interval across all servers**; it is scheduled for when it i
 short sessions still prune and a restart does not reset the clock; and it **archives by default** (`prune.archive: false`
 opts out). The store is read, scored and rewritten under one store-lock hold, with vectors copied out of the existing
 FAISS index — a memory stored concurrently is no longer lost, and no embedding model is needed.
+
+### Watcher queue
+`status.indexer.watch_queue` is the file watcher's queue as it last published it (`<store>/index/watch_queue.json`, written after each
+batch, at most once a second otherwise) — `null` when no watcher is running (a dead watcher's numbers are not reported):
+`depth` and `max` (capacity, `indexing.queue_max`), `oldest_age_s` (how long the oldest queued path has waited),
+`enqueued`, `coalesced`, `dropped` and `overflows` (paths that did not fit, and how many times the queue filled up — each one
+was followed by a catch-up scan), `batches`, `files` (processed so far), `last_batch` (`files`, `ms`), `max_depth`,
+`batch_max`, `debounce_ms`, `pid`, `updated_at`. The same numbers are Prometheus series: `cognirepo_watcher_queue_depth`,
+`..._oldest_age_seconds`, `..._capacity`, and the counters `..._overflows_total`, `..._dropped_total`, `cognirepo_watcher_batches_total`.
 
 ### Status codes
 `200` ok · `400` `confirm_required` · `401` missing/invalid token · `403` bad `Host`/`Origin` · `404` unknown service/path ·

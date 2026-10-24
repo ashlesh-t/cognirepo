@@ -103,6 +103,12 @@ def _graph_base_incomplete(repo_root: str, last_watch: dict | None) -> bool:
     return graph <= record
 
 
+def _watch_queue(repo_root: str) -> dict[str, Any] | None:
+    """The file watcher's queue (depth, oldest wait, overflows, last batch), or None when no watcher is running."""
+    from intelligence.indexer.watch_queue import read_status  # pylint: disable=import-outside-toplevel
+    return read_status(_store_dir(repo_root))
+
+
 def _store_bytes(repo_root: str) -> dict[str, int]:
     from core.store_stats import store_sizes  # pylint: disable=import-outside-toplevel
     return store_sizes(_store_dir(repo_root))
@@ -128,6 +134,7 @@ def indexer_status(repo_root: str) -> dict[str, Any]:
         "graph_base_incomplete": _graph_base_incomplete(repo_root, last_watch),
         "auto_index": auto_index(_store_dir(repo_root)),
         "store_bytes": _store_bytes(repo_root),
+        "watch_queue": _watch_queue(repo_root),
     }
 
 

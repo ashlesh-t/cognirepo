@@ -65,6 +65,7 @@ STORE_COVERAGE: dict[str, tuple[str, str]] = {
     "index/tombstones.json":         (NO_CONTENT, "deleted-file markers"),
     "index/reindex.lock":            (NO_CONTENT, "lock file"),
     "index/last_indexed.json":       (NO_CONTENT, "timestamps"),
+    "index/watch_queue.json":        (NO_CONTENT, "file-watcher queue counters (no paths)"),
     "index":                         (NO_CONTENT, "directory"),
     "graph":                         (NO_CONTENT, "directory"),
     "graph/graph.seq":               (NO_CONTENT, "graph change counter (a single integer)"),
