@@ -531,3 +531,92 @@ class TestRealCliOnSqlite:
         g = KnowledgeGraph()
         assert g._one("PRAGMA integrity_check")[0] == "ok"
         assert g.node_count() > 0
+
+
+class TestReviewFixes:
+    def test_only_real_corruption_quarantines(self, use, monkeypatch):
+        use("sqlite")
+        KnowledgeGraph().save()
+        path = _store() / "graph" / "graph.sqlite"
+        real = sg.sqlite3.connect
+
+        def unreadable(*a, **k):
+            raise sg.sqlite3.OperationalError("unable to open database file")
+        monkeypatch.setattr(sg.sqlite3, "connect", unreadable)
+        with pytest.raises(sg.sqlite3.OperationalError, match="unable to open"):
+            KnowledgeGraph()
+        monkeypatch.setattr(sg.sqlite3, "connect", real)
+        assert path.exists() and not list(path.parent.glob("graph.sqlite.corrupt-*"))
+
+    def test_a_busy_writer_is_waited_for_not_failed(self, use, monkeypatch):
+        import sqlite3
+        import threading
+        monkeypatch.setattr(sg, "BUSY_TIMEOUT_SECS", 0.05)       # each attempt gives up fast ...
+        use("sqlite")
+        KnowledgeGraph().save()
+        holder = sqlite3.connect(str(_store() / "graph" / "graph.sqlite"), isolation_level=None,
+                                 check_same_thread=False)
+        holder.execute("BEGIN IMMEDIATE")                         # ... while another process holds the lock
+        threading.Timer(0.6, lambda: holder.execute("COMMIT")).start()
+        g = KnowledgeGraph()
+        g.add_node("n", NodeType.CONCEPT)                         # retried until the lock is free
+        g.save()
+        assert g.node_exists("n")
+        holder.close()
+
+    def test_lock_wait_gives_up_eventually(self, use, monkeypatch):
+        import sqlite3
+        monkeypatch.setattr(sg, "BUSY_TIMEOUT_SECS", 0.05)
+        monkeypatch.setattr(sg, "LOCK_WAIT_SECS", 0.3)
+        use("sqlite")
+        KnowledgeGraph().save()
+        holder = sqlite3.connect(str(_store() / "graph" / "graph.sqlite"), isolation_level=None)
+        holder.execute("BEGIN IMMEDIATE")
+        g = KnowledgeGraph()
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            g.add_node("n", NodeType.CONCEPT)
+        holder.execute("COMMIT")
+        holder.close()
+
+    def test_a_write_keeps_the_cached_lists_it_did_not_touch(self, use):
+        use("sqlite")
+        g = KnowledgeGraph()
+        g.add_edge("a", "b", EdgeType.CALLS)
+        g.add_edge("x", "y", EdgeType.CALLS)
+        assert g.successors("a") == ["b"] and g.successors("x") == ["y"]
+        g.add_edge("a", "c", EdgeType.CALLS)
+        assert "x" in g._adj[True] and "a" not in g._adj[True]    # only a's list was dropped
+        assert g.successors("a") == ["b", "c"]
+        g.set_node_attrs("x", note=1)                              # attribute-only ops drop nothing
+        assert "x" in g._adj[True]
+        g.remove_node("b")                                         # drops b's neighbours' lists too
+        assert g.successors("a") == ["c"] and g.predecessors("c") == ["a"]
+
+    def test_empty_pickle_is_recorded_so_it_is_not_reread(self, use, monkeypatch):
+        use("networkx")
+        KnowledgeGraph().save()                                    # an empty pickle
+        use("sqlite")
+        g = KnowledgeGraph()
+        assert json.loads(g._one("SELECT value FROM meta WHERE key='import_state'")[0])["nodes"] == 0
+        g.close()
+        import data.graph.sqlite_import as si
+        monkeypatch.setattr(si, "_PickleReader", lambda: pytest.fail("re-read the empty pickle"))
+        KnowledgeGraph()
+
+    def test_doctor_note_when_the_other_backends_file_is_newer(self, use):
+        use("networkx")
+        g = KnowledgeGraph()
+        g.add_node("n", NodeType.CONCEPT)
+        g.save()
+        use("sqlite")
+        KnowledgeGraph().close()                                   # imports; both files now exist
+        assert gb.switch_note() == ""
+        pkl = _store() / "graph" / "graph.pkl"
+        future = time.time() + 120
+        os.utime(pkl, (future, future))                            # the pickle was written after the database
+        assert "graph.pkl is newer than graph.sqlite" in gb.switch_note()
+        use("networkx")
+        assert gb.switch_note() == ""                              # the pickle IS the newest, and in use
+        db = _store() / "graph" / "graph.sqlite"
+        os.utime(db, (future + 120, future + 120))
+        assert "graph.sqlite is newer than graph.pkl" in gb.switch_note()

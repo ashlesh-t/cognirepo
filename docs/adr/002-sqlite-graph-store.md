@@ -136,6 +136,10 @@ Where the implementation departs from, or settles, what is written above:
   flush of an index run (at most every 5 s, so other writers wait seconds, not for the whole run), after 5 s of
   inactivity, and after 60 s of continuous activity outside an index run. A forgotten `save()` therefore cannot hold
   the write lock against other processes (the pickle backend would have lost those changes; this one keeps them).
+* **Locking.** A writer that finds the database locked retries for up to 150 s in total (30 s per attempt), longer
+  than the longest transaction (60 s) another process may legitimately hold, instead of failing.
+* **Switching back and forth is not synced.** The pickle is imported once and kept as a fallback, so changes made
+  under one backend are not visible to the other; `doctor` warns when both files exist and the unused one is newer.
 * **Searches are bounded**: `shortest_path` / `hop_distance` / the undirected view are bidirectional BFS capped at
   16 hops and 20 000 visited nodes, `subgraph_around` batches its queries. Beyond the cap the answer is "not
   connected", which retrieval already treats as "far away".

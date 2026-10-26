@@ -53,8 +53,14 @@ def import_if_needed(graph: "SqliteGraph") -> dict[str, Any] | None:
     if graph.node_count() or graph._one("SELECT 1 FROM meta WHERE key='import_state'"):  # pylint: disable=protected-access
         return None
     reader = _PickleReader()
-    if getattr(reader, "_locked", False) or reader.node_count() == 0:
-        return None            # unreadable (e.g. encrypted) or empty: nothing worth importing
+    if getattr(reader, "_locked", False):
+        return None            # unreadable (e.g. encrypted): leave it for a run that can read it
+    if reader.node_count() == 0:
+        # An empty pickle has nothing to import; say so, or every start would unpickle it again to find out.
+        # pylint: disable=protected-access
+        graph._db().execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('import_state', ?)",
+                            (json.dumps({"source": "graph.pkl", "nodes": 0, "edges": 0, "seconds": 0}),))
+        return None
     return _import(graph, reader)
 
 

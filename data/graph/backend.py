@@ -77,6 +77,31 @@ def graph_store_path() -> str:
     return get_path("graph/graph.sqlite" if resolve().backend == SQLITE else "graph/graph.pkl")
 
 
+def switch_note() -> str:
+    """Why the graph in use may be out of date relative to the other backend's file, or "".
+
+    The pickle is imported into SQLite once and kept as the fallback, but nothing syncs them afterwards: if
+    both files exist and the one NOT in use was written more recently, the changes made under the other
+    backend are invisible to this one."""
+    from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
+    pkl, db = get_path("graph/graph.pkl"), get_path("graph/graph.sqlite")
+
+    def mtime(*paths: str) -> float:
+        return max((os.path.getmtime(p) for p in paths if os.path.exists(p)), default=0.0)
+
+    if not (os.path.exists(pkl) and os.path.exists(db)):
+        return ""
+    t_pkl, t_db = mtime(pkl), mtime(db, db + "-wal")
+    if resolve().backend == SQLITE and t_pkl > t_db + 1:
+        return ("graph.pkl is newer than graph.sqlite: changes made while the networkx backend was in use are "
+                "not in the SQLite graph (the pickle is imported only once). Re-run `cognirepo index-repo .`, or "
+                "delete graph.sqlite to import the pickle again")
+    if resolve().backend == NETWORKX and t_db > t_pkl + 1:
+        return ("graph.sqlite is newer than graph.pkl: changes made while the SQLite backend was in use are not "
+                "in the pickle graph. Re-run `cognirepo index-repo .` to rebuild it")
+    return ""
+
+
 def graph_class() -> type:
     """The ``KnowledgeGraph`` subclass to instantiate (the base class itself for networkx)."""
     if resolve().backend == SQLITE:

@@ -61,6 +61,10 @@ IDLE_COMMIT_SECS = 5.0
 #: … and, outside an index run, after this long even under continuous activity, so it never starves other writers
 TX_MAX_SECS = 60.0
 BUSY_TIMEOUT_SECS = 30.0
+#: ``BEGIN IMMEDIATE`` is retried on "database is locked" for this long in total (each attempt already waits
+#: BUSY_TIMEOUT_SECS), which is longer than the longest transaction another process may legitimately hold
+#: (TX_MAX_SECS), so a busy writer is waited for rather than failed
+LOCK_WAIT_SECS = 150.0
 #: an index run's open transaction is committed at least this often, so other writers (the watcher, MCP tools)
 #: wait seconds for the write lock, not for the length of the run; the configured flush interval is a ceiling
 MAX_FLUSH_SECS = 5.0
@@ -126,6 +130,12 @@ class _Seen:  # pylint: disable=too-few-public-methods
 
     def degree(self, _node: str) -> int:
         return self._pre if isinstance(self._pre, int) else 0
+
+
+def _is_corruption(exc: sqlite3.DatabaseError) -> bool:
+    """Only a database SQLite itself calls broken is moved aside; an I/O, permission or lock error is not."""
+    text = str(exc).lower()
+    return "malformed" in text or "not a database" in text
 
 
 def _file_of(attrs: dict) -> str | None:
@@ -197,8 +207,8 @@ class SqliteGraph(KnowledgeGraph):  # pylint: disable=too-many-public-methods
         try:
             self._connect()
         except sqlite3.DatabaseError as exc:
-            if "locked" in str(exc) or "busy" in str(exc):
-                raise
+            if not _is_corruption(exc):
+                raise       # locked, unreadable, read-only, disk error...: the file may be perfectly healthy
             self._quarantine(exc)
             self._connect()
         from data.graph.sqlite_import import import_if_needed  # pylint: disable=import-outside-toplevel
@@ -293,7 +303,17 @@ class SqliteGraph(KnowledgeGraph):  # pylint: disable=too-many-public-methods
     def _begin(self) -> None:
         if self._in_tx:
             return
-        self._db().execute("BEGIN IMMEDIATE")
+        started = time.monotonic()
+        while True:
+            try:
+                self._db().execute("BEGIN IMMEDIATE")
+                break
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc) and "busy" not in str(exc):
+                    raise
+                if time.monotonic() - started > LOCK_WAIT_SECS:
+                    raise
+                time.sleep(0.05)
         self._in_tx = True
         self._tx_started = time.monotonic()
         if not self._journal_active:
@@ -463,9 +483,7 @@ class SqliteGraph(KnowledgeGraph):  # pylint: disable=too-many-public-methods
 
     def _write(self, op: tuple, pre: Any) -> None:  # pylint: disable=too-many-branches
         kind = op[0]
-        for cache in self._adj.values():
-            if cache:
-                cache.clear()
+        self._invalidate(op, pre)
         conn = self._db()
         if kind == "n":
             _, nid, ntype, attrs = op
@@ -497,6 +515,24 @@ class SqliteGraph(KnowledgeGraph):  # pylint: disable=too-many-public-methods
                 self._delete_node(op[1])
         else:
             raise ValueError(f"unknown graph op {kind!r}")
+
+    def _invalidate(self, op: tuple, pre: Any) -> None:
+        """Forget only the cached adjacency lists this op changes (attribute-only ops change none)."""
+        kind = op[0]
+        out, inc = self._adj[True], self._adj[False]
+        if kind in ("e", "re"):
+            if kind == "re" and pre is None:
+                return
+            out.pop(op[1], None)
+            inc.pop(op[2], None)
+        elif kind in ("rn", "rnd") and pre is not None:
+            nid = op[1]
+            for pred in self._adjacent(nid, False):
+                out.pop(pred, None)
+            for succ in self._adjacent(nid, True):
+                inc.pop(succ, None)
+            out.pop(nid, None)
+            inc.pop(nid, None)
 
     def _merge_node(self, nid: str, old_attrs: str, attrs: dict) -> None:
         merged = json.loads(old_attrs)

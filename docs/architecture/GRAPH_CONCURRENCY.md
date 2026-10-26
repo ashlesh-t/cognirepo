@@ -123,7 +123,12 @@ Things to know:
 * A transaction nobody saves is committed after 5 s without activity (and after 60 s of continuous activity
   outside an index run), so a forgotten `save()` can never hold the write lock against other processes. The
   pickle backend would simply have lost those changes; here they are kept.
-* Only one process writes at a time (`busy_timeout` 30 s); readers are never blocked.
+* Only one process writes at a time; readers are never blocked. A writer that finds the database locked retries
+  (30 s per attempt, 150 s in total, longer than any transaction another process may hold) before failing.
+* Only a database SQLite itself reports as malformed / not a database is quarantined; lock, permission or I/O
+  errors are raised and the file is left alone.
+* Switching `storage.graph_backend` back and forth does not sync the two files (the pickle is imported once);
+  `doctor` warns when the unused backend's file is newer.
 * `synchronous=NORMAL`: a power cut can lose the last commits, never corrupt the file. The graph is derived
   data (ADR 001 class 2), so the cost is re-indexing a few files.
 * A database SQLite cannot open is moved to `graph.sqlite.corrupt-<ts>` (with its WAL files) and an empty

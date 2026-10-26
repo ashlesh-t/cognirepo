@@ -615,6 +615,9 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         if _res.note:
             _warn(f"Graph backend — {_res.requested!r} requested but {_res.backend!r} in use: {_res.note}",
                   "Set storage.encrypt to false to use the SQLite graph, or leave it as is")
+        _stale = _gb.switch_note()
+        if _stale:
+            _warn(f"Graph backend — {_stale}")
         if verbose:
             _gpath = get_path("graph/graph.sqlite" if _res.backend == _gb.SQLITE else "graph/graph.pkl")
             print(f"       {os.path.abspath(_gpath)}")
