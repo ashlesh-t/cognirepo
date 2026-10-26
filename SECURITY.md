@@ -69,6 +69,7 @@ When `storage.encrypt: true` in `config.json`:
 | Store | Encrypted |
 |---|---|
 | Knowledge graph (`graph/graph.pkl`) and its journal | ✓ |
+| Knowledge graph, opt-in SQLite backend (`graph/graph.sqlite`) | ✗ — `storage.encrypt: true` keeps the encrypted pickle backend instead; `doctor` says so (#186) |
 | Behaviour model (`graph/behaviour.json`) | ✓ |
 | Org graph (`~/.cognirepo/org_graph.pkl`) | ✓ |
 | Episodic log (`episodic/`) | ✓ |
@@ -178,7 +179,9 @@ be able to influence. The whole lock-heavy test set (store lock, journal, events
 
 - **Pickle deserialization** (`graph.pkl`): The graph file is loaded with `pickle.load`.
   This is intentional — the file is local, user-controlled, and protected by the
-  `.cognirepo/.gitignore`. The `# nosec B301` annotation is correct.
+  `.cognirepo/.gitignore`. The `# nosec B301` annotation is correct. (With the opt-in
+  SQLite graph backend nothing is unpickled for the graph; its attributes are JSON. The
+  one-time import of an existing `graph.pkl` still unpickles that file, as before.)
 - **Subprocess with list args** (`cognirepo seed`): Uses `subprocess.run` with a list
   argument (not a shell string), which is not injectable. The `# nosec B603` annotation
   is correct.

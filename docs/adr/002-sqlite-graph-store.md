@@ -1,6 +1,7 @@
 # ADR 002 — Knowledge graph on SQLite (WAL): scope, facade, migration
 
-- **Status:** Proposed (tracked in #115; follows ADR 001 step 6)
+- **Status:** Accepted. Steps 1-3 are implemented as an **opt-in** backend (`storage.graph_backend: sqlite`);
+  the default is still `networkx`. See "As built" below. (Tracked in #115; follows ADR 001 step 6.)
 - **Related:** ADR 001 (storage consistency), #109 (graph journal), #116 (per-user daemon),
   #186 (encryption coverage), `docs/architecture/GRAPH_CONCURRENCY.md`
 
@@ -111,16 +112,82 @@ Writes already funnel through `KnowledgeGraph` primitives (`add_node`, `add_edge
 - Risk: query latency regression on very hot paths (`who_calls` fan-out). Mitigated by the adjacency
   LRU and measured in the benchmark PR before the default flips.
 
+## As built (#115)
+
+Where the implementation departs from, or settles, what is written above:
+
+* **No separate `GraphStore` class hierarchy.** After step 1 `KnowledgeGraph` *is* the interface: a read facade,
+  seven mutation primitives and a handful of persistence entry points (`save`, `load`, `reload_if_changed`,
+  `begin_journal` / `end_journal` / `flush_journal` / `maybe_flush`). Moving ~700 lines of journal and rebase
+  code into a `NetworkXStore` would have been churn with regression risk for no behavioural gain, so
+  `SqliteGraph` **subclasses** `KnowledgeGraph` and overrides those entry points, and `KnowledgeGraph()` returns the
+  configured backend (`data/graph/backend.py`, dispatch in `__new__`), so none of the ~50 construction sites
+  changed. The interface is pinned by a conformance suite instead (`tests/test_graph_backends.py`): one scenario
+  through the public surface on both backends, every read compared, plus a guard that no method which reads
+  `self.G` is inherited by the SQLite class. If a third backend ever appears, extracting the interface is mechanical.
+* **Schema.** As §3, with `type`, `rel` and `weight` nullable (networkx creates attribute-less endpoints on
+  `add_edge` and allows unlabeled edges; older graphs have them), graph attributes (`complete`) in `meta` as
+  `ga:<key>`, and rows read back in insertion order (`ORDER BY rowid`, edges grouped by source) so results match
+  networkx's iteration order. Attribute values are JSON: tuples come back as lists, sets as sorted lists.
+* **Import is one transaction** (stronger than "write `meta.complete` last"): other processes see no graph until it
+  commits, a kill leaves nothing behind, and `meta.import_state` makes it idempotent. It only runs into an empty
+  database, never over rows written since. `graph.pkl` and the journal are read, never modified.
+* **Transactions.** A write transaction starts lazily at the first mutation and is committed by `save()`, by each
+  flush of an index run (at most every 5 s, so other writers wait seconds, not for the whole run), after 5 s of
+  inactivity, and after 60 s of continuous activity outside an index run. A forgotten `save()` therefore cannot hold
+  the write lock against other processes (the pickle backend would have lost those changes; this one keeps them).
+* **Locking.** A writer that finds the database locked retries for up to 150 s in total (30 s per attempt), longer
+  than the longest transaction (60 s) another process may legitimately hold, instead of failing.
+* **Switching back and forth is not synced.** The pickle is imported once and kept as a fallback, so changes made
+  under one backend are not visible to the other; `doctor` warns when both files exist and the unused one is newer.
+* **Searches are bounded**: `shortest_path` / `hop_distance` / the undirected view are bidirectional BFS capped at
+  16 hops and 20 000 visited nodes, `subgraph_around` batches its queries. Beyond the cap the answer is "not
+  connected", which retrieval already treats as "far away".
+* **Open questions settled.** (1) `synchronous=NORMAL` accepted: the graph is class-2 data. (2) The adjacency LRU
+  is 10 000 lists per direction, per connection (not shared; with the daemon (#116) there is one graph per repo
+  worker anyway). (3) Encryption: `storage.encrypt: true` forces `networkx` and `doctor` says so; SQLite stays
+  non-default until #186.
+* **Unchanged on purpose:** the index-run writer lease (`JournalBusy`), the `graph.delta` / `graph_seq` change feed
+  (one batch per commit, #209), `graph.stats`, the control API. `OrgGraph` is a separate class and untouched.
+
+### Measurements
+
+`scripts/bench_graph_backends.py --nodes 100000 --degree 6`: a synthetic code graph (105 000 nodes, 1.28 M edges:
+symbols with locality-biased calls and a few hubs), each backend measured in its own process on an otherwise idle
+machine (Linux, Python 3.14). "Open" is a fresh process, which is what every `serve` and CLI call is.
+
+| | networkx (`graph.pkl`) | sqlite (`graph.sqlite`) |
+|---|---|---|
+| build + save (s) | 6.4 | 11.5 |
+| build peak RSS (MB) | 510 | 63 |
+| disk (MB) | 63 | 255 |
+| open (s) | 0.58 | 0.00 |
+| RSS after open (MB) | 459 | 54 |
+| RSS after 2 000 `successors` + 300 `subgraph_around` + 200 `hop_distance` (MB) | 459 | 92 |
+| `successors` p50 / p95 (ms) | 0.002 / 0.003 | 0.009 / 0.013 |
+| `subgraph_around(r=2)` p50 / p95 (ms) | 0.57 / 0.70 | 3.8 / 5.2 |
+| `hop_distance` p50 / p95 (ms) | 0.10 / 0.25 | 1.2 / 3.3 |
+
+Reading it: memory per process stops scaling with the graph (about 5x less here; the 10 000-symbol run below
+shows a much smaller gap),
+opening is free, and a query costs microseconds to a few milliseconds instead of sub-millisecond. The price is
+**disk (about 4x: node ids are repeated in the edge table and its two indexes; interning ids as integers
+should cut that substantially, at the cost of a join on every read — not tried)** and a slower bulk build. A 10 000-symbol graph
+shows the same shape (RSS 83 vs 70 MB, `subgraph_around` 0.5 vs 3.7 ms). The graph is synthetic; real repositories
+differ in degree distribution, so trust the shape, not the numbers.
+
+**Not measured:** concurrent writers under contention, a repository with millions of edges, Windows/macOS file
+locking, a cold disk cache. **Flipping the default is deliberately not part of this change**; it needs a release of
+soak time and a decision on integer ids and encryption (#186).
+
 ## Delivery plan (separate PRs, each independently reviewable)
 
-1. **Facade** — `KnowledgeGraph` read methods + migrate call sites; `.G` becomes private. No behaviour
-   change. *(Unblocks everything; can merge alone.)*
-2. **`GraphStore` interface** + `NetworkXStore` extraction; conformance test suite that both backends
-   must pass (same fixtures, same expected results).
-3. **`SqliteStore`** + importer + `storage.graph_backend` flag + `doctor` checks. Default stays `networkx`.
-4. **Benchmarks and soak**: RSS vs graph size, `who_calls` / `context_pack` latency, kill-9 mid-index
-   resume. Flip the default only if no regression.
-5. **Behaviour data** (`behaviour.json`) on the same DB — separate, smaller PR (ADR 001 Class 1 order).
+1. **Facade** — done (#205). `KnowledgeGraph` read methods + migrate call sites; `.G` is private.
+2. **Interface + conformance suite** — done (#115): the facade is the interface (see "As built"); the suite both
+   backends must pass is `tests/test_graph_backends.py`.
+3. **`SqliteGraph`** + importer + `storage.graph_backend` flag + `doctor` checks — done (#115). Default stays `networkx`.
+4. **Benchmarks and soak** — benchmark and kill-9 mid-index resume done (#115); soak and flipping the default are open.
+5. **Behaviour data** (`behaviour.json`) on the same DB — open: separate, smaller PR (ADR 001 Class 1 order).
 
 ## Open questions (need a decision before PR 3)
 

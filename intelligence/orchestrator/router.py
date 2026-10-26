@@ -502,7 +502,8 @@ def _who_calls(func_name: str, _bundle) -> str | None:
     try:
         from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
 
-        if not os.path.exists(".cognirepo/graph/graph.pkl"):
+        from data.graph.backend import graph_store_path  # pylint: disable=import-outside-toplevel
+        if not os.path.exists(graph_store_path()):
             return None
 
         kg = KnowledgeGraph()

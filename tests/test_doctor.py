@@ -342,6 +342,27 @@ class TestDoctorGraphQuarantine:
         assert code == 0
 
 
+class TestDoctorGraphBackend:
+    """#115: doctor names the SQLite backend and says when encryption overrides the choice."""
+
+    def test_pickle_backend_adds_nothing(self, capsys, monkeypatch):
+        _run_doctor(capsys, monkeypatch)
+        assert "[sqlite" not in capsys.readouterr().out
+
+    def test_sqlite_backend_is_named(self, capsys, monkeypatch):
+        monkeypatch.setenv("COGNIREPO_GRAPH_BACKEND", "sqlite")
+        _run_doctor(capsys, monkeypatch)
+        out = capsys.readouterr().out
+        assert "Knowledge graph —" in out and "[sqlite," in out
+
+    def test_encryption_overriding_sqlite_is_reported(self, capsys, monkeypatch):
+        monkeypatch.setenv("COGNIREPO_GRAPH_BACKEND", "sqlite")
+        monkeypatch.setattr("core.security.get_storage_config", lambda: (True, "p"))
+        _run_doctor(capsys, monkeypatch)
+        out = capsys.readouterr().out
+        assert "'sqlite' requested but 'networkx' in use" in out and "storage.encrypt is on" in out
+
+
 class TestDoctorGraphIntegrity:
     """COGNIREPO-201 AC2: doctor flags a seeded dangling node; clean fresh index reports 0/0."""
 

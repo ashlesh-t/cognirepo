@@ -197,6 +197,21 @@ class KnowledgeGraph:
     _delta_count = 0
     _delta_overflow = False
 
+    def __new__(cls, *args: Any, **kwargs: Any):
+        # ``KnowledgeGraph()`` hands back the backend the repo is configured for (#115): the
+        # in-memory networkx graph by default, or ``SqliteGraph`` (a subclass) when
+        # ``storage.graph_backend`` is ``sqlite``. ~50 call sites construct it by name, so the
+        # choice lives here instead of at each of them. Subclasses are never redirected.
+        if cls is KnowledgeGraph:
+            from data.graph.backend import graph_class  # pylint: disable=import-outside-toplevel
+            target = graph_class()
+            # Only a real subclass of *this* class: tests (and a reloaded module) can leave two copies of
+            # it alive, and an instance of the other copy would skip __init__.
+            if issubclass(target, cls):
+                cls = target
+        # object.__new__, not super(): zero-argument super() rejects a ``cls`` from an older copy of this class.
+        return object.__new__(cls)
+
     def __init__(self) -> None:
         self.G: nx.DiGraph = nx.DiGraph()  # pylint: disable=invalid-name
         # (mtime_ns, size) of graph.pkl as of the last _load()/save(), plus the
@@ -819,14 +834,14 @@ class KnowledgeGraph:
         """
         if self._locked:
             return False, "the graph on disk is encrypted and cannot be decrypted here"
-        if self.G.graph.get(self.COMPLETE_KEY):
+        if self.graph_attr(self.COMPLETE_KEY):
             return True, ""
-        if self.G.number_of_nodes() == 0:
+        if self.node_count() == 0:
             return False, ("there is no graph on disk (missing, quarantined, never built, "
                            "or disabled for this repo)")
         if not indexed_files:
             return False, "the graph is not marked complete and there is no AST index to verify it against"
-        file_nodes = sum(1 for _n, d in self.G.nodes(data=True) if d.get("type") == NodeType.FILE)
+        file_nodes = self.count_nodes_of_type(NodeType.FILE)
         if file_nodes * 2 < indexed_files:
             return False, (f"the graph covers {file_nodes} files but the AST index has "
                            f"{indexed_files} — it looks like a fragment, not a full graph")
@@ -834,7 +849,8 @@ class KnowledgeGraph:
 
     def remove_node_edges(self, node_id: str) -> None:
         """Remove all edges incident to node_id (but keep the node)."""
-        edges = list(self.G.in_edges(node_id)) + list(self.G.out_edges(node_id))
+        edges = ([(p, node_id) for p in self.predecessors(node_id)]
+                 + [(node_id, c) for c in self.successors(node_id)])
         for src, dst in edges:
             self.remove_edge(src, dst)
 
@@ -867,25 +883,25 @@ class KnowledgeGraph:
         # outside reference (COGNIREPO-128): a symbol's own DEFINED_IN edge to its FILE node,
         # or a call to another symbol of the same file, must not make us keep a stub.
         going = set(file_nodes)
-        if self.G.has_node(file_path):
+        if self.node_exists(file_path):
             going.add(file_path)
         # Stubs that point at nodes we are removing may lose their last edge; remember them.
         maybe_orphaned = {
-            nbr for nid in going if self.G.has_node(nid)
-            for nbr in (*self.G.predecessors(nid), *self.G.successors(nid))
+            nbr for nid in going if self.node_exists(nid)
+            for nbr in (*self.predecessors(nid), *self.successors(nid))
             if nbr not in going and self._is_stub(nbr)
         }
         for nid in file_nodes:
-            if self.G.has_node(nid):
+            if self.node_exists(nid):
                 self._redirect_edges_to_stub(nid, going)
                 self.remove_node(nid)
                 removed.append(nid)
         # FILE node's node_id == rel_path (see make_node_id("FILE", name) → name)
-        if self.G.has_node(file_path):
+        if self.node_exists(file_path):
             self.remove_node(file_path)
             removed.append(file_path)
         for stub in maybe_orphaned:
-            if self.G.has_node(stub) and self.G.degree(stub) == 0:
+            if self.node_exists(stub) and self.degree(stub) == 0:
                 self.remove_node(stub)
         return removed
 
@@ -893,7 +909,7 @@ class KnowledgeGraph:
         """True for an unresolved ``symbol::<name>`` CONCEPT stub."""
         return (
             node_id.startswith("symbol::")
-            and self.G.nodes.get(node_id, {}).get("type") == NodeType.CONCEPT
+            and self.node_attrs(node_id).get("type") == NodeType.CONCEPT
         )
 
     def orphan_stubs(self) -> list[str]:
@@ -926,12 +942,12 @@ class KnowledgeGraph:
         the symbol's DEFINED_IN edge to the FILE node made every deleted function leave an
         orphan, unresolved, degree-0 stub behind (COGNIREPO-128).
         """
-        node_data = self.G.nodes.get(nid, {})
+        node_data = self.node_attrs(nid)
         if node_data.get("type") not in (NodeType.FUNCTION, NodeType.CLASS):
             return  # only symbol nodes participate in call/inherit stub edges
 
-        predecessors = [p for p in self.G.predecessors(nid) if p not in exclude]
-        successors = [s for s in self.G.successors(nid) if s not in exclude]
+        predecessors = [p for p in self.predecessors(nid) if p not in exclude]
+        successors = [s for s in self.successors(nid) if s not in exclude]
         # "Referenced from outside" = an incoming CALLED_BY (a caller outside the file) or
         # INHERITS (a subclass outside the file). Adjacency alone is not enough: call edges are
         # stored in BOTH directions (caller→callee CALLED_BY, callee→caller CALLS), so a deleted
@@ -940,7 +956,7 @@ class KnowledgeGraph:
         # An edge with no relation label at all (older graphs) can't be proven harmless, so it
         # counts as a reference — keeping a stub is safe, dropping a real edge is not.
         referenced = any(
-            self.G[p][nid].get("rel") in (None, EdgeType.CALLED_BY, EdgeType.INHERITS)
+            (self.edge_data(p, nid) or {}).get("rel") in (None, EdgeType.CALLED_BY, EdgeType.INHERITS)
             for p in predecessors
         )
         if not referenced:
@@ -955,17 +971,17 @@ class KnowledgeGraph:
         for pred in predecessors:
             if pred == stub:
                 continue
-            if not self.G.has_edge(pred, stub):
+            if not self.has_edge(pred, stub):
                 self.copy_edge(pred, nid, pred, stub)
         for succ in successors:
             if succ == stub:
                 continue
-            if not self.G.has_edge(stub, succ):
+            if not self.has_edge(stub, succ):
                 self.copy_edge(nid, succ, stub, succ)
 
     def copy_edge(self, src: str, dst: str, new_src: str, new_dst: str) -> None:
         """Re-create edge (src, dst) as (new_src, new_dst) with identical attributes."""
-        data = dict(self.G[src][dst])
+        data = dict(self.edge_data(src, dst) or {})
         rel = data.pop("rel", None)
         weight = data.pop("weight", None)
         self._do(("e", new_src, new_dst, rel, weight, data))
@@ -981,6 +997,22 @@ class KnowledgeGraph:
     # so the storage behind them can change (SQLite, ADR 002) without touching ~65 call sites.
     # They return plain lists/dicts (copies), never live networkx views: a caller can iterate
     # while the graph is mutated, and nothing networkx-specific leaks out.
+
+    def graph_attr(self, key: str, default: Any = None) -> Any:
+        """A graph-level attribute (e.g. the ``complete`` marker); ``default`` when unset."""
+        return self.G.graph.get(key, default)
+
+    def count_nodes_of_type(self, node_type: str) -> int:
+        """Number of nodes whose ``type`` is *node_type*."""
+        return sum(1 for _n, d in self.G.nodes(data=True) if d.get("type") == node_type)
+
+    def isolated_node_ids(self) -> list[str]:
+        """Ids of nodes with no edges at all (degree 0)."""
+        return [n for n in self.G.nodes() if self.G.degree(n) == 0]
+
+    def top_degree_ids(self, limit: int) -> list[str]:
+        """The *limit* highest-degree node ids, highest first (ties in graph order)."""
+        return sorted(self.G.nodes(), key=self.G.degree, reverse=True)[:max(0, limit)]
 
     def node_count(self) -> int:
         """Number of nodes."""
@@ -1054,7 +1086,7 @@ class KnowledgeGraph:
         Optionally filter by edge rel type.
         Returns list of {"node_id", "type", "hops", ...node_attrs}.
         """
-        if not self.G.has_node(node_id):
+        if not self.node_exists(node_id):
             return []
 
         from collections import deque  # pylint: disable=import-outside-toplevel
@@ -1067,15 +1099,14 @@ class KnowledgeGraph:
             current_hops = visited[current]
             if current_hops >= depth:
                 continue
-            for neighbor in self.G.successors(current):
+            for neighbor in self.successors(current):
                 if neighbor in visited:
                     continue
-                edge_data = self.G[current][neighbor]
-                if edge_type and edge_data.get("rel") != edge_type:
+                if edge_type and (self.edge_data(current, neighbor) or {}).get("rel") != edge_type:
                     continue
                 hops = current_hops + 1
                 visited[neighbor] = hops
-                node_data = dict(self.G.nodes[neighbor])
+                node_data = self.node_attrs(neighbor)
                 node_data["node_id"] = neighbor
                 node_data["hops"] = hops
                 results.append(node_data)
