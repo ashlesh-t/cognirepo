@@ -504,13 +504,33 @@ cognirepo subgraph ENTITY [OPTIONS]
 
 ## cognirepo graph
 
-Knowledge-graph integrity maintenance: `repair`, `restore` and `prune-quarantine`. All three are dry-run unless `--apply` is given.
+Knowledge-graph maintenance: integrity (`repair`, `restore` and `prune-quarantine`, all dry-run unless `--apply` is given) and
+storage (`backend`, `migrate`).
 
 ```bash
 cognirepo graph repair [--apply]
 cognirepo graph restore [--apply] [--force]
 cognirepo graph prune-quarantine [--days N] [--apply]
+cognirepo graph backend [--json]
+cognirepo graph migrate --to networkx|sqlite [--dry-run] [--replace] [--stop-watcher] [--json]
 ```
+
+**Graph storage** (networkx pickle or SQLite; see [ADR 002](adr/002-sqlite-graph-store.md) and the README's
+[which to use](../README.md#graph-storage-networkx-or-sqlite)):
+
+* `backend` — the backend in force (and what the config file says, if an environment override or encryption makes them
+  differ), each file's size, node/edge counts, how many cognirepo processes are attached, a **recommendation with its
+  reasons**, a warning when the unused backend's file is newer, and the command to switch.
+* `migrate --to X` — copy the graph to backend X, **verify it** (node/edge counts, graph attributes, a sample of node and
+  edge attributes), and only then switch `storage.graph_backend`. Works both ways. The source is never modified. Takes the
+  index writer lease (exit `75` if an index run holds it). Refuses with exit `2` when a watcher is running (use
+  `--stop-watcher`: it is stopped and restarted afterwards; a watcher embedded in an agent's server is left alone and follows the
+  switch itself), when the target already exists (`--replace` sets it aside as `<file>.replaced-<timestamp>`, a pickle's journal
+  with it), when there is nothing to migrate from, or when `storage.encrypt` is on (SQLite is not encrypted yet). A failed
+  verification undoes the copy and changes nothing.
+* `--dry-run` shows sizes, the memory the copy needs, what would be set aside and any blockers, and changes nothing.
+  `--json` prints one JSON object per line: `{"phase", "done", "total"}` progress, then `{"result": "ok", "summary": …}` or
+  `{"result": "error", "code", "message"}`. Exit codes: `0` ok, `75` busy, `2` refused, `1` failed.
 
 | Command / flag | Default | Description |
 |------|---------|-------------|

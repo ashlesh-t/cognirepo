@@ -58,6 +58,13 @@ _SHARED_RETRIEVER: HybridRetriever | None = None
 
 def _get_retriever() -> HybridRetriever:
     global _SHARED_RETRIEVER  # pylint: disable=global-statement
+    if _SHARED_RETRIEVER is not None:
+        try:                                    # a graph-backend switch needs a retriever on the new graph
+            from data.graph.backend import is_current  # pylint: disable=import-outside-toplevel
+            if not is_current(_SHARED_RETRIEVER.graph):
+                _SHARED_RETRIEVER = None
+        except Exception:  # pylint: disable=broad-except
+            pass
     if _SHARED_RETRIEVER is None:
         _SHARED_RETRIEVER = HybridRetriever()
     return _SHARED_RETRIEVER

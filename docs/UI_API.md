@@ -103,6 +103,10 @@ The only token-less responses are the data-free landing page / static console as
 | `GET` | `/api/v1/daemon` | The optional per-user daemon: supervisor and its repo workers. See [Daemon, queue and journal](#daemon-queue-and-journal) |
 | `GET` | `/api/v1/queue?repo=` | The file watcher's queue for a repo (`running: false` when no watcher is running) |
 | `GET` | `/api/v1/journal?tail=&types=&repo=` | Recent graph, prune, re-index and service events, oldest first |
+| `GET` | `/api/v1/graph/backend?repo=` | Which graph store is in use (`networkx` / `sqlite`), what each file holds, whether the toggle is safe, and a recommendation. See [Graph storage backend](#graph-storage-backend) |
+| `GET` | `/api/v1/graph/backend/job` | The graph migration job (`idle` / `running`, progress, last result) |
+| `POST` | `/api/v1/graph/backend/switch` | The toggle. Body `{"to": "networkx"\|"sqlite", "confirm": true}`. Flips the setting if the target already holds an up-to-date graph, otherwise migrates first as a job; never switches onto stale data |
+| `POST` | `/api/v1/graph/backend/migrate` | Migrate either way. Body `{"to", "replace": false, "dry_run": false, "confirm": true}`; `dry_run` returns the plan and changes nothing |
 | `GET` | `/api/v1/audit?tail=` | Last `tail` (1–500, default 100) records of the control-API audit log, newest last |
 | `GET` | `/api/v1/services` | State of the allowlisted services |
 | `POST` | `/api/v1/services/{name}/start` | Start a service. Body must be `{"confirm": true}` (strict boolean) |
@@ -216,6 +220,37 @@ matches `types` (comma-separated globs; default `graph.delta,prune,watcher.reind
 schema below. It is a bounded slice of the event log (live file + one backup), not a durable audit trail. With
 `COGNIREPO_EVENTS_METADATA_ONLY=1` graph deltas are `reset` markers without node ids, as everywhere else; with
 `COGNIREPO_EVENTS=0` the list is empty. Follow the same events live with `GET /api/v1/events`.
+
+### Graph storage backend
+
+The graph can be stored as a pickle (`networkx`, the default) or in SQLite (see [ADR 002](adr/002-sqlite-graph-store.md)).
+These routes let the console show and change that, with the same engine as `cognirepo graph migrate`
+(`data/graph/migrate.py`); the console has no copy logic of its own.
+
+* **`GET /graph/backend`** (`?repo=` allowed; `job` only for the served repo) returns `active` (what this server's
+  environment resolves to), `configured` (what `config.json` says), `env_override` (`COGNIREPO_GRAPH_BACKEND` in the server
+  process, which wins over the file), `forced_by_encryption` + `note`, `files` (`exists`, `bytes`, `mtime` of each
+  backend's file; SQLite includes its WAL), `nodes` / `edges` (from the `graph.stats` sidecar, `null` before the first save),
+  `stale_note` (set when the unused backend's file is newer), `recommendation` (`use`, `confidence` = `clear` / `leaning` /
+  `either`, `reasons`), `sessions` (attached `cognirepo serve` processes), and the toggle's state: `can_toggle`,
+  `toggle_blocker` (`env_override`, `encryption_on`, `job_running`, `not_initialised`), `switch_to`, `switch_needs_migration`.
+* **`POST /graph/backend/switch`** is the toggle. If the target backend already holds an up-to-date graph (or there is
+  nothing to carry over) it only changes `storage.graph_backend` (`action: "switched"`); otherwise it starts the migration
+  job (`action: "migrating"`) and the setting changes only after the copy is verified; `"noop"` if already there. A stale
+  target is set aside, not merged. Blocked states answer `409` with the blocker code.
+* **`POST /graph/backend/migrate`** is the explicit control. `dry_run: true` runs `cognirepo graph migrate --dry-run`
+  and returns the plan (`from`, `to`, `nodes`, `edges`, `ram_mb`, `needs_replace`, `moves_aside`, `blockers`) without
+  changing anything; otherwise it starts the job (`{"started": bool, "job": …}`; one at a time).
+* **`GET /graph/backend/job`**: `state`, `progress` (`phase`: prepare → copy → import/export → write → verify → switch → done,
+  with `done` / `total`), `last_run` (`result` `ok` / `failed` / `busy`, `reason` = the CLI's error code such as
+  `target_exists`, `no_source`, `verify_failed`, `watcher_not_stopped`, `encryption_on`), `summary`.
+
+Writes need `confirm: true` (strict boolean) and are audited (`graph_backend_switch`, `graph_backend_migrate`); like all
+writes they are for the served repo only (`409 not_served_repo`). The job runs `cognirepo graph migrate --json --stop-watcher`
+with a fixed argv (only the validated backend name and the `replace` flag come from the request): it takes the index writer
+lease (an index run makes it `busy`), stops and afterwards restarts a standalone watcher, copies, verifies and only then
+switches the setting; a failed verification undoes the copy and changes nothing. Running agents, the watcher and cached
+retrievers follow the new setting on their next call. Job files live in `<store>/jobs/`.
 
 ### Status codes
 `200` ok · `400` `confirm_required` · `401` missing/invalid token · `403` bad `Host`/`Origin` · `404` unknown service/path ·

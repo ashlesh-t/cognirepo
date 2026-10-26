@@ -307,6 +307,138 @@
         "title": "ErrorBody",
         "type": "object"
       },
+      "GraphBackendState": {
+        "description": "Which graph store is in force, what each file holds, whether switching is safe, and what to recommend.",
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "string"
+          },
+          "can_toggle": {
+            "title": "Can Toggle",
+            "type": "boolean"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "string"
+          },
+          "edges": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edges"
+          },
+          "env_override": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env Override"
+          },
+          "files": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/GraphFile"
+            },
+            "title": "Files",
+            "type": "object"
+          },
+          "forced_by_encryption": {
+            "title": "Forced By Encryption",
+            "type": "boolean"
+          },
+          "job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphJob"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nodes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nodes"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "recommendation": {
+            "$ref": "#/components/schemas/GraphRecommendation"
+          },
+          "sessions": {
+            "title": "Sessions",
+            "type": "integer"
+          },
+          "stale_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stale Note"
+          },
+          "switch_needs_migration": {
+            "title": "Switch Needs Migration",
+            "type": "boolean"
+          },
+          "switch_to": {
+            "title": "Switch To",
+            "type": "string"
+          },
+          "toggle_blocker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Toggle Blocker"
+          }
+        },
+        "required": [
+          "active",
+          "configured",
+          "forced_by_encryption",
+          "files",
+          "recommendation",
+          "sessions",
+          "can_toggle",
+          "switch_to",
+          "switch_needs_migration"
+        ],
+        "title": "GraphBackendState",
+        "type": "object"
+      },
       "GraphChanges": {
         "properties": {
           "more": {
@@ -376,6 +508,140 @@
           "target"
         ],
         "title": "GraphEdge",
+        "type": "object"
+      },
+      "GraphFile": {
+        "description": "One backend's graph file(s): ``graph.pkl`` for networkx, ``graph.sqlite`` (+ WAL) for sqlite.",
+        "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "mtime": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mtime"
+          }
+        },
+        "required": [
+          "exists",
+          "bytes"
+        ],
+        "title": "GraphFile",
+        "type": "object"
+      },
+      "GraphJob": {
+        "description": "The detached ``graph migrate`` run (idle until one has been started).",
+        "properties": {
+          "last_run": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GraphMigrateProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "GraphJob",
+        "type": "object"
+      },
+      "GraphMigrateProgress": {
+        "properties": {
+          "done": {
+            "default": 0,
+            "title": "Done",
+            "type": "integer"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "phase"
+        ],
+        "title": "GraphMigrateProgress",
+        "type": "object"
+      },
+      "GraphMigrateRequest": {
+        "description": "``dry_run``: report the plan and change nothing. ``replace``: set an existing graph of the target aside.",
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "replace": {
+            "default": false,
+            "title": "Replace",
+            "type": "boolean"
+          },
+          "to": {
+            "enum": [
+              "networkx",
+              "sqlite"
+            ],
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "title": "GraphMigrateRequest",
         "type": "object"
       },
       "GraphNode": {
@@ -536,6 +802,33 @@
         "title": "GraphOp",
         "type": "object"
       },
+      "GraphRecommendation": {
+        "description": "Which backend to prefer and why. Rough guidance from one benchmark, not a rule.",
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "use": {
+            "title": "Use",
+            "type": "string"
+          }
+        },
+        "required": [
+          "use",
+          "confidence",
+          "reasons"
+        ],
+        "title": "GraphRecommendation",
+        "type": "object"
+      },
       "GraphResponse": {
         "properties": {
           "edges": {
@@ -601,6 +894,50 @@
           "edges"
         ],
         "title": "GraphStats",
+        "type": "object"
+      },
+      "GraphSwitchRequest": {
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "dry_run": {
+            "default": false,
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "to": {
+            "enum": [
+              "networkx",
+              "sqlite"
+            ],
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "title": "GraphSwitchRequest",
+        "type": "object"
+      },
+      "GraphSwitchResult": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/GraphBackendState"
+          }
+        },
+        "required": [
+          "action",
+          "state"
+        ],
+        "title": "GraphSwitchResult",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -2407,6 +2744,269 @@
           }
         },
         "summary": "Read-only, bounded knowledge-graph slice"
+      }
+    },
+    "/api/v1/graph/backend": {
+      "get": {
+        "operationId": "graph_backend_state_api_v1_graph_backend_get",
+        "parameters": [
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphBackendState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "Which graph store is in use (networkx / sqlite), what each file holds, and what to recommend"
+      }
+    },
+    "/api/v1/graph/backend/job": {
+      "get": {
+        "operationId": "graph_backend_job_api_v1_graph_backend_job_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphJob"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "The graph migration job (served repo)"
+      }
+    },
+    "/api/v1/graph/backend/migrate": {
+      "post": {
+        "operationId": "graph_backend_migrate_api_v1_graph_backend_migrate_post",
+        "parameters": [
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphMigrateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Graph Backend Migrate Api V1 Graph Backend Migrate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "Migrate the graph between backends, either way (needs confirm=true). dry_run returns the plan and changes nothing; otherwise starts a job (poll /graph/backend/job)."
+      }
+    },
+    "/api/v1/graph/backend/switch": {
+      "post": {
+        "operationId": "graph_backend_switch_api_v1_graph_backend_switch_post",
+        "parameters": [
+          {
+            "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+            "in": "query",
+            "name": "repo",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1024,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repo to read: an exact path or unique directory name from `GET /api/v1/repos`. Omitted = the repo this server was started for. Unknown names are `404 unknown_repo`.",
+              "title": "Repo"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GraphSwitchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSwitchResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Missing or invalid token"
+          },
+          "403": {
+            "description": "Host or Origin header not allowed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "description": "Locked out after repeated bad tokens (see Retry-After)"
+          }
+        },
+        "summary": "Toggle the graph backend (needs confirm=true): flips the setting if the target is up to date, otherwise migrates first as a job. Never switches onto stale data."
       }
     },
     "/api/v1/graph/changes": {

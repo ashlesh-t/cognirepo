@@ -150,6 +150,23 @@ Where the implementation departs from, or settles, what is written above:
 * **Unchanged on purpose:** the index-run writer lease (`JournalBusy`), the `graph.delta` / `graph_seq` change feed
   (one batch per commit, #209), `graph.stats`, the control API. `OrgGraph` is a separate class and untouched.
 
+### Switching and migrating (follow-up)
+
+`cognirepo graph migrate --to networkx|sqlite` (`data/graph/migrate.py`) and the console's Controls page make the backend a
+product choice instead of a hand-edited config key. Order of operations: take the index writer lease; set an existing target
+aside as `.replaced-<ts>` (a pickle's journal with it, or it would replay over the new file); copy (networkx -> sqlite is the
+importer above, sqlite -> networkx streams into a fresh pickle); **verify** (node and edge counts, graph attributes, a sample
+of attributes read back from the target); only then change `storage.graph_backend`. Any failure undoes the copy and restores
+what was set aside; the source is never modified. The console's toggle goes through the same engine and never flips onto a
+missing or older graph. Running agents, the watcher and cached retrievers rebuild their graph when the setting no longer
+matches the backend they were built for (`backend.is_current`). `backend.recommend()` encodes the rough guidance (networkx for
+small graphs / one session / encryption; SQLite from about 100k nodes, or 20k+ nodes with 3+ attached processes); the
+thresholds come from the single synthetic benchmark below and are advice, not rules. Migrating that benchmark graph
+(105k nodes, 1.28M edges) takes about 6 s in either direction and peaks at about 1.0 GB of RSS (roughly 2.3x the resident
+graph: the copy holds the graph once and the verification loads the result again), so `--dry-run` reports a memory estimate
+before anything is touched. The sqlite -> networkx export interns node ids; without that the pickle was twice the size
+(135 MB vs 70 MB) and the peak 1.6 GB.
+
 ### Measurements
 
 `scripts/bench_graph_backends.py --nodes 100000 --degree 6`: a synthetic code graph (105 000 nodes, 1.28 M edges:

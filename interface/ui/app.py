@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Body, FastAPI, Header, Path, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
@@ -67,6 +67,16 @@ class ConfirmBody(BaseModel):
 
 class AutoIndexRequest(ConfirmBody):
     enabled: StrictBool
+
+
+class GraphSwitchRequest(ConfirmBody):
+    to: Literal["networkx", "sqlite"]
+
+
+class GraphMigrateRequest(ConfirmBody):
+    """``dry_run``: report the plan and change nothing. ``replace``: set an existing graph of the target aside."""
+    to: Literal["networkx", "sqlite"]
+    replace: StrictBool = False
 
 
 def _client(request: Request) -> str:
@@ -337,6 +347,102 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
     def stop_service(name: str, request: Request, body: ConfirmBody | None = Body(default=None),
                      repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> JSONResponse:
         return _served_or_deny(repo, request, "service_stop") or _control("stop", name, body, request)
+
+    # ── graph storage backend: state, toggle and migrate (#115 follow-up) ─────
+    import threading as _threading  # pylint: disable=import-outside-toplevel
+    from interface.ui import graph_backend as gbe  # pylint: disable=import-outside-toplevel
+    graph_lock = _threading.Lock()                     # one switch/migrate decision at a time
+    graph_jobs: dict[str, Any] = {}
+
+    def _graph_job() -> gbe.GraphBackendJob:
+        if "job" not in graph_jobs:
+            graph_jobs["job"] = gbe.GraphBackendJob(app.state.repo_root, _store_dir(app.state.repo_root))
+        return graph_jobs["job"]
+
+    def _graph_state(repo: str | None = None) -> dict[str, Any]:
+        root, store, served = _sel(repo)
+        return gbe.state(root, store, _graph_job().view() if served else None)
+
+    @app.get("/api/v1/graph/backend", response_model=m.GraphBackendState, response_model_exclude_none=False,
+             summary="Which graph store is in use (networkx / sqlite), what each file holds, and what to recommend")
+    def graph_backend_state(repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> dict[str, Any]:
+        return _graph_state(repo)
+
+    @app.get("/api/v1/graph/backend/job", response_model=m.GraphJob, summary="The graph migration job (served repo)")
+    def graph_backend_job() -> dict[str, Any]:
+        return _graph_job().view()
+
+    def _graph_audit(what: str, request: Request, body: Any, result: str, **extra: Any) -> None:
+        if audit:
+            audit.log(what, to=body.to, result=result, client=_client(request),
+                      origin=request.headers.get("origin"), **extra)
+
+    @app.post("/api/v1/graph/backend/switch", response_model=m.GraphSwitchResult,
+              summary="Toggle the graph backend (needs confirm=true): flips the setting if the target is up to date, "
+                      "otherwise migrates first as a job. Never switches onto stale data.",
+              responses={400: {"model": m.ErrorBody}, 409: {"model": m.ErrorBody}, 422: {"model": m.ErrorBody}})
+    def graph_backend_switch(body: GraphSwitchRequest, request: Request,
+                             repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> JSONResponse:
+        denied = _served_or_deny(repo, request, "graph_backend_switch")
+        if denied is not None:
+            return denied
+        if body.confirm is not True:
+            _graph_audit("graph_backend_switch", request, body, "denied_no_confirm")
+            return _deny(400, "confirm_required")
+        with graph_lock:
+            store = _store_dir(app.state.repo_root)
+            st = gbe.state(app.state.repo_root, store, _graph_job().view())
+            if not st["can_toggle"]:
+                _graph_audit("graph_backend_switch", request, body, "denied", reason=st["toggle_blocker"])
+                return _deny(409, str(st["toggle_blocker"]))
+            if body.to == st["configured"] == st["active"]:
+                _graph_audit("graph_backend_switch", request, body, "ok", changed=False)
+                return JSONResponse({"action": "noop", "state": st})
+            if body.to == gbe.gb.SQLITE and gbe.gb.encryption_on(store):
+                _graph_audit("graph_backend_switch", request, body, "denied", reason="encryption_on")
+                return _deny(409, "encryption_on")
+            if gbe.gb.needs_migration(store, body.to):
+                replace = bool(gbe.gb.graph_files(store)[body.to]["exists"])      # a stale target is set aside, not merged
+                _graph_job().start(body.to, replace)
+                _graph_audit("graph_backend_switch", request, body, "ok", outcome="migrating", replace=replace)
+                return JSONResponse({"action": "migrating", "state": gbe.state(app.state.repo_root, store, _graph_job().view())})
+            from interface.ui import settings as ui_settings  # pylint: disable=import-outside-toplevel
+            try:
+                changed = ui_settings.set_graph_backend(store, body.to)
+            except ui_settings.SettingsError as exc:
+                _graph_audit("graph_backend_switch", request, body, "error", code=exc.code)
+                return _deny(409, exc.code)
+            _graph_audit("graph_backend_switch", request, body, "ok", outcome="switched", changed=changed)
+            return JSONResponse({"action": "switched", "state": gbe.state(app.state.repo_root, store, _graph_job().view())})
+
+    @app.post("/api/v1/graph/backend/migrate", response_model=dict[str, Any],
+              summary="Migrate the graph between backends, either way (needs confirm=true). dry_run returns the plan "
+                      "and changes nothing; otherwise starts a job (poll /graph/backend/job).",
+              responses={400: {"model": m.ErrorBody}, 409: {"model": m.ErrorBody}, 422: {"model": m.ErrorBody}})
+    def graph_backend_migrate(body: GraphMigrateRequest, request: Request,
+                              repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> JSONResponse:
+        denied = _served_or_deny(repo, request, "graph_backend_migrate")
+        if denied is not None:
+            return denied
+        if body.confirm is not True:
+            _graph_audit("graph_backend_migrate", request, body, "denied_no_confirm")
+            return _deny(400, "confirm_required")
+        with graph_lock:
+            store = _store_dir(app.state.repo_root)
+            if body.dry_run:
+                plan = _graph_job().dry_run(body.to)
+                _graph_audit("graph_backend_migrate", request, body, "ok", dry_run=True)
+                return JSONResponse(plan)
+            st = gbe.state(app.state.repo_root, store, _graph_job().view())
+            if st["toggle_blocker"] in ("job_running", "not_initialised", "env_override"):
+                _graph_audit("graph_backend_migrate", request, body, "denied", reason=st["toggle_blocker"])
+                return _deny(409, str(st["toggle_blocker"]))
+            if body.to == gbe.gb.SQLITE and gbe.gb.encryption_on(store):
+                _graph_audit("graph_backend_migrate", request, body, "denied", reason="encryption_on")
+                return _deny(409, "encryption_on")
+            started = _graph_job().start(body.to, body.replace)
+            _graph_audit("graph_backend_migrate", request, body, "ok", replace=body.replace, started=started)
+            return JSONResponse({"started": started, "job": _graph_job().view()})
 
     @app.post("/api/v1/settings/auto-index", response_model=m.AutoIndexState,
               summary="Persist watch.auto_enabled for this repo (needs confirm=true)",

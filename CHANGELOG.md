@@ -9,6 +9,15 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Added
+- **Graph storage toggle and two-way migration (#115 follow-up).** New `cognirepo graph backend` (what is in use, file
+  sizes, and a recommendation with reasons: networkx for small repos / one session / encryption, SQLite for roughly 100k+
+  nodes, several agents on a repo, or tight memory) and `cognirepo graph migrate --to networkx|sqlite [--dry-run]
+  [--replace] [--stop-watcher]`: copy, **verify** (counts, graph attributes, sampled node/edge attributes), then switch the
+  setting; undone and unchanged on any mismatch; the source is never modified. Control API (additive):
+  `GET /api/v1/graph/backend`, `GET .../job`, `POST .../switch` (the toggle: flips only onto an up-to-date graph, otherwise
+  migrates first) and `POST .../migrate` (with `dry_run`), for the console. Running agents (`mcp_server`), the watcher and
+  the shared retriever now follow a backend switch on their next call instead of writing to the old store. `doctor` hints at
+  SQLite for large graphs. The console UI is a separate PR in `cognirepo-console`.
 - **Knowledge graph on SQLite, opt-in (#115, ADR 002 steps 2-3).** `storage.graph_backend: "sqlite"` stores the
   graph in `graph/graph.sqlite` (WAL) instead of a pickle that every process loads whole: reads are indexed
   queries with a small adjacency cache, writes are transactions (no journal, no rebase), and searches

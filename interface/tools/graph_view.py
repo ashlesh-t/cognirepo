@@ -55,7 +55,11 @@ def _graph(store: str | None = None):
                     del _cache[oldest]
                     gc.collect()
             else:
-                entry["kg"].reload_if_changed()
+                from data.graph.backend import is_current  # pylint: disable=import-outside-toplevel
+                if not is_current(entry["kg"]):
+                    entry["kg"] = KnowledgeGraph()
+                else:
+                    entry["kg"].reload_if_changed()
         finally:
             if token is not None:
                 _CTX_DIR.reset(token)
