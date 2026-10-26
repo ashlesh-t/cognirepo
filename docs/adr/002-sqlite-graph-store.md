@@ -159,7 +159,9 @@ importer above, sqlite -> networkx streams into a fresh pickle); **verify** (nod
 of attributes read back from the target); only then change `storage.graph_backend`. Any failure undoes the copy and restores
 what was set aside; the source is never modified. The console's toggle goes through the same engine and never flips onto a
 missing or older graph. Running agents, the watcher and cached retrievers rebuild their graph when the setting no longer
-matches the backend they were built for (`backend.is_current`). `backend.recommend()` encodes the rough guidance (networkx for
+matches the backend they were built for (`backend.is_current`). Whether the unused store has changed since the two last matched is tracked with a small sync record (`graph/backend_sync.json`,
+each file's mtime, written after every verified migration), not by comparing mtimes, which cannot tell "written since" from
+"copied later". `backend.recommend()` encodes the rough guidance (networkx for
 small graphs / one session / encryption; SQLite from about 100k nodes, or 20k+ nodes with 3+ attached processes); the
 thresholds come from the single synthetic benchmark below and are advice, not rules. Migrating that benchmark graph
 (105k nodes, 1.28M edges) takes about 6 s in either direction and peaks at about 1.0 GB of RSS (roughly 2.3x the resident

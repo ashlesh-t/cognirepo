@@ -2912,7 +2912,7 @@
                 }
               }
             },
-            "description": "Unprocessable Content"
+            "description": "Invalid request body"
           },
           "429": {
             "description": "Locked out after repeated bad tokens (see Retry-After)"
@@ -3000,7 +3000,7 @@
                 }
               }
             },
-            "description": "Unprocessable Content"
+            "description": "Invalid request body"
           },
           "429": {
             "description": "Locked out after repeated bad tokens (see Retry-After)"

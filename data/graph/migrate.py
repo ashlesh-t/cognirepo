@@ -283,6 +283,7 @@ def migrate(to: str, *, replace: bool = False, progress: Progress | None = None)
         _verify(to, total_n, total_e, src_attrs, samples)
         emit("switch")
         changed = set_value(store, "storage", "graph_backend", to)
+        gb.mark_synced(store)                                  # both files hold the same graph from here
     except BaseException:
         if copy_started:                                      # undo: drop the partial target ...
             for p in _target_files(to):

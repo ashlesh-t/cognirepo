@@ -232,8 +232,10 @@ class TestRunningProcessesFollowTheSwitch:
         # Other tests reload data.graph.knowledge_graph, leaving an older SqliteGraph subclassing an older class;
         # re-import it so the dispatch sees a subclass of the KnowledgeGraph these tests construct.
         import sys
-        sys.modules.pop("data.graph.sqlite_graph", None)
+        saved = sys.modules.pop("data.graph.sqlite_graph", None)
         yield
+        if saved is not None:                       # put the module other tests hold a reference to back
+            sys.modules["data.graph.sqlite_graph"] = saved
 
     def test_the_mcp_server_singleton_is_rebuilt_on_its_next_call(self, repo, monkeypatch):
         import interface.server.mcp_server as ms
@@ -329,3 +331,23 @@ class TestCli:
             assert cli._cmd_graph_migrate("sqlite", as_json=True) == 75      # an index run owns the graph
         finally:
             lease.release()
+
+
+class TestSyncRecord:
+    def test_a_late_copy_is_not_mistaken_for_changes_since(self, repo):
+        _networkx_graph(repo)
+        old = _store() / "graph" / "graph.pkl"
+        os.utime(old, (1_000_000_000, 1_000_000_000))            # the pickle was written long before the copy
+        mg.migrate("sqlite")
+        assert gb.needs_migration(str(repo), "networkx") is False, "flipping back must not re-copy an identical graph"
+        assert gb.stale_note(str(repo)) == ""
+
+    def test_a_write_after_the_copy_is_detected_on_either_side(self, repo):
+        _networkx_graph(repo)
+        mg.migrate("sqlite")
+        os.utime(_store() / "graph" / "graph.pkl", (4_000_000_000, 4_000_000_000))
+        assert gb.needs_migration(str(repo), "sqlite") is True and "graph.pkl is newer" in gb.stale_note(str(repo))
+        mg.migrate("sqlite", replace=True)
+        assert gb.stale_note(str(repo)) == ""
+        os.utime(_store() / "graph" / "graph.sqlite", (4_100_000_000, 4_100_000_000))
+        assert gb.needs_migration(str(repo), "networkx") is True

@@ -125,24 +125,66 @@ def graph_files(store: str) -> dict:
             SQLITE: _file_info(db, db + "-wal")}
 
 
+SYNC_FILE = "backend_sync.json"
+
+
+def _sync_path(store: str) -> str:
+    return os.path.join(store, "graph", SYNC_FILE)
+
+
+def mark_synced(store: str) -> None:
+    """Record that the two stores hold the same graph right now (written after a verified migration), as each
+    file's mtime. Without it "the other file is newer" cannot tell *changed since the copy* from *simply copied
+    later than the source was written*."""
+    from core.config.atomic import atomic_json_dump  # pylint: disable=import-outside-toplevel
+    files = graph_files(store)
+    try:
+        atomic_json_dump(_sync_path(store), {n: files[n]["mtime"] for n in BACKENDS}, indent=None, fsync=False)
+    except OSError:
+        pass
+
+
+def _synced_mtimes(store: str) -> dict | None:
+    try:
+        with open(_sync_path(store), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def changed_since_sync(store: str, name: str) -> bool:
+    """True when backend *name*'s file has been written to since the stores were last known to match.
+
+    With a sync record (any verified migration) that is exact. Without one (a graph imported on first open) it
+    falls back to "this file is newer than the other one"."""
+    files = graph_files(store)
+    if not files[name]["exists"]:
+        return False
+    marker = _synced_mtimes(store)
+    if marker and isinstance(marker.get(name), (int, float)):
+        return files[name]["mtime"] > marker[name] + 1
+    other = SQLITE if name == NETWORKX else NETWORKX
+    return files[other]["exists"] and files[name]["mtime"] > files[other]["mtime"] + 1
+
+
 def stale_note(store: str | None = None) -> str:
     """Why the graph in use may be out of date relative to the other backend's file, or "".
 
     The pickle is imported into SQLite once and kept as the fallback, but nothing syncs them afterwards: if
-    both files exist and the one NOT in use was written more recently, the changes made under the other
-    backend are invisible to this one."""
+    both files exist and the one NOT in use has been written since they last matched, the changes made under
+    the other backend are invisible to this one."""
     if store is None:
         from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
         store = str(get_cognirepo_dir())
     files, active = graph_files(store), resolve(store).backend
     if not (files[NETWORKX]["exists"] and files[SQLITE]["exists"]):
         return ""
-    t_pkl, t_db = files[NETWORKX]["mtime"], files[SQLITE]["mtime"]
-    if active == SQLITE and t_pkl > t_db + 1:
+    if active == SQLITE and changed_since_sync(store, NETWORKX):
         return ("graph.pkl is newer than graph.sqlite: changes made while the networkx backend was in use are "
                 "not in the SQLite graph (the pickle is imported only once). Re-run `cognirepo index-repo .`, or "
                 "delete graph.sqlite to import the pickle again")
-    if active == NETWORKX and t_db > t_pkl + 1:
+    if active == NETWORKX and changed_since_sync(store, SQLITE):
         return ("graph.sqlite is newer than graph.pkl: changes made while the SQLite backend was in use are not "
                 "in the pickle graph. Re-run `cognirepo index-repo .` to rebuild it")
     return ""
@@ -160,7 +202,7 @@ def needs_migration(store: str, to: str) -> bool:
         return False                      # nothing to carry over: the target builds itself on the next index
     if not files[to]["exists"]:
         return True
-    return files[other]["mtime"] > files[to]["mtime"] + 1
+    return changed_since_sync(store, other)
 
 
 def graph_counts(store: str) -> tuple[int, int] | None:

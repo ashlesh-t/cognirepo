@@ -380,7 +380,8 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
     @app.post("/api/v1/graph/backend/switch", response_model=m.GraphSwitchResult,
               summary="Toggle the graph backend (needs confirm=true): flips the setting if the target is up to date, "
                       "otherwise migrates first as a job. Never switches onto stale data.",
-              responses={400: {"model": m.ErrorBody}, 409: {"model": m.ErrorBody}, 422: {"model": m.ErrorBody}})
+              responses={400: {"model": m.ErrorBody}, 409: {"model": m.ErrorBody},
+                         422: {"model": m.ErrorBody, "description": "Invalid request body"}})
     def graph_backend_switch(body: GraphSwitchRequest, request: Request,
                              repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> JSONResponse:
         denied = _served_or_deny(repo, request, "graph_backend_switch")
@@ -418,7 +419,8 @@ def create_app(cfg: sec.SecurityConfig, repo_root: str, audit: AuditLog | None =
     @app.post("/api/v1/graph/backend/migrate", response_model=dict[str, Any],
               summary="Migrate the graph between backends, either way (needs confirm=true). dry_run returns the plan "
                       "and changes nothing; otherwise starts a job (poll /graph/backend/job).",
-              responses={400: {"model": m.ErrorBody}, 409: {"model": m.ErrorBody}, 422: {"model": m.ErrorBody}})
+              responses={400: {"model": m.ErrorBody}, 409: {"model": m.ErrorBody},
+                         422: {"model": m.ErrorBody, "description": "Invalid request body"}})
     def graph_backend_migrate(body: GraphMigrateRequest, request: Request,
                               repo: str | None = Query(default=None, max_length=1024, description=repo_select.REPO_DESC)) -> JSONResponse:
         denied = _served_or_deny(repo, request, "graph_backend_migrate")
