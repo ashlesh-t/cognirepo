@@ -1769,38 +1769,46 @@ class ASTIndexer:
     # ── public API ────────────────────────────────────────────────────────────
 
     def _batch_embed_pending(self, batch_size: int | None = None) -> None:
-        """Encode all deferred embed texts in one batched model.encode() call.
+        """Embed the deferred texts and add them to FAISS, a window at a time.
 
-        Collecting texts across all files and encoding them together is 20-50x
-        faster than one encode() call per symbol because the transformer GPU/CPU
-        kernel amortises overhead across the full batch.
+        Texts go to the model in small bounded batches (``embedding.batch_size``, see
+        :func:`data.memory.embeddings.embed_many`) because fastembed's own default of 256 peaked at ~5 GB on a
+        10k-symbol repo (#98/#105). Each window's vectors are added to FAISS before the next window starts, so if
+        embedding stops part-way (circuit breaker open, model error) the work already done is kept, the remaining
+        symbols keep ``faiss_id == -1`` exactly as with ``--no-embed``, and they stay in ``_pending_embeds`` for a
+        later flush to retry.
         """
         pending = getattr(self, "_pending_embeds", [])
         if not pending:
             return
-        texts = [p[0] for p in pending]
-        from data.memory.embeddings import embed_batch_size  # pylint: disable=import-outside-toplevel
-        print(f"  Embedding {len(texts):,} texts in batches of {batch_size or embed_batch_size()}…")
+        from data.memory.embeddings import embed_batch_size, embed_many  # pylint: disable=import-outside-toplevel
+        size = batch_size or embed_batch_size()
+        total = len(pending)
+        print(f"  Embedding {total:,} texts in batches of {size}…")
+        window = max(size, 512)
+        done = 0
         try:
             from tqdm import tqdm  # pylint: disable=import-outside-toplevel
-            from data.memory.embeddings import embed_many  # pylint: disable=import-outside-toplevel
-            # Bounded batches, shortest first, breaker-checked: fastembed's default batch of 256 peaked at ~5 GB
-            # on a 10k-symbol repo (#98/#105). ``batch_size`` below is the parameter this method always had.
-            with tqdm(total=len(texts), desc="Embedding", unit="vec", dynamic_ncols=True) as _bar:
-                vecs = embed_many(self.model, texts, batch_size=batch_size, progress=_bar.update)
+            with tqdm(total=total, desc="Embedding", unit="vec", dynamic_ncols=True) as bar:
+                while self._pending_embeds:
+                    chunk = self._pending_embeds[:window]
+                    vecs = embed_many(self.model, [p[0] for p in chunk], batch_size=size, progress=bar.update)
+                    for vec, (_, meta, sym) in zip(vecs, chunk):
+                        faiss_id = len(self.faiss_meta)
+                        self.faiss_index.add_with_ids(
+                            np.array([vec], dtype="float32"),
+                            np.array([faiss_id], dtype=np.int64),
+                        )
+                        self.faiss_meta.append(meta)
+                        if sym is not None:
+                            sym["faiss_id"] = faiss_id
+                    del self._pending_embeds[:len(chunk)]
+                    done += len(chunk)
         except Exception as exc:  # pylint: disable=broad-except
-            log.warning("Batch encode failed (%s) — skipping FAISS embed", exc)
-            return
-        for vec, (_, meta, sym) in zip(vecs, pending):
-            faiss_id = len(self.faiss_meta)
-            self.faiss_index.add_with_ids(
-                np.array([vec], dtype="float32"),
-                np.array([faiss_id], dtype=np.int64),
-            )
-            self.faiss_meta.append(meta)
-            if sym is not None:
-                sym["faiss_id"] = faiss_id
-        self._pending_embeds.clear()
+            log.warning("Batch encode failed (%s) — %d of %d symbols embedded", exc, done, total)
+            print(f"  ⚠  Embedding stopped after {done:,} of {total:,} symbols ({type(exc).__name__}: {str(exc)[:120]}). "
+                  "The rest were indexed without vectors (symbol lookup and the graph are complete); re-run "
+                  "`cognirepo index-repo .` once memory is free to embed them.")
 
     def index_repo(
         self,

@@ -25,8 +25,17 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 CHILD = r"""
-import ast, glob, json, os, resource, sys, time
+import ast, glob, json, os, sys, time
 repo, batch, n = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+try:
+    import resource
+except ImportError:                                  # Windows
+    resource = None
+def peak_mb():
+    if resource is None:
+        return None
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak // (1024 * 1024) if sys.platform == "darwin" else peak // 1024   # bytes on macOS, KB elsewhere
 texts = []
 for f in sorted(glob.glob(os.path.join(repo, "**", "*.py"), recursive=True)):
     try:
@@ -41,11 +50,11 @@ if not texts:
 texts = (texts * (n // len(texts) + 1))[:n]
 from fastembed import TextEmbedding
 model = TextEmbedding("sentence-transformers/all-MiniLM-L6-v2")
-base = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+base = peak_mb()
 start = time.time()
 count = sum(1 for _ in model.embed(texts, batch_size=batch))
 print(json.dumps({"batch": batch, "texts": count, "avg_chars": sum(map(len, texts)) // len(texts), "base_mb": base,
-                  "peak_mb": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024, "secs": round(time.time() - start, 1)}))
+                  "peak_mb": peak_mb(), "secs": round(time.time() - start, 1)}))
 """
 
 
@@ -66,7 +75,8 @@ def main() -> None:
             continue
         if "error" in row:
             sys.exit(row["error"])
-        print(f"{row['batch']:>6} {row['texts']:>6} {row['avg_chars']:>10} {row['peak_mb']:>8} {row['secs']:>6}")
+        peak = "n/a" if row["peak_mb"] is None else row["peak_mb"]
+        print(f"{row['batch']:>6} {row['texts']:>6} {row['avg_chars']:>10} {peak:>8} {row['secs']:>6}")
 
 
 if __name__ == "__main__":

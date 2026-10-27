@@ -77,6 +77,7 @@ def encode_with_timeout(text: str, timeout: float | None = None):
 #: Texts per ONNX call for bulk embedding. fastembed's own default (256) pads every text in a batch to the longest
 #: one and keeps the attention activations of the whole batch alive; measured on 3,000 real symbol texts that is
 #: 4.8 GB peak and 85 s, versus 0.5 GB and 16 s at 16 (#98, #105). Overridable, see :func:`embed_batch_size`.
+EMBED_DIM = 384          # all-MiniLM-L6-v2
 DEFAULT_EMBED_BATCH = 16
 MAX_EMBED_BATCH = 256
 
@@ -116,7 +117,7 @@ def embed_many(model, texts, batch_size: int | None = None, progress=None):
     size = max(1, min(MAX_EMBED_BATCH, int(size)))
     texts = list(texts)
     if not texts:
-        return np.zeros((0, 0), dtype="float32")
+        return np.zeros((0, EMBED_DIM), dtype="float32")
     order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
     out = None
     breaker = get_breaker()

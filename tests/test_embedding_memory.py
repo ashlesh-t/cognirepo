@@ -16,6 +16,8 @@ import textwrap
 import pytest
 
 pytest.importorskip("fastembed")
+# ru_maxrss is KB on Linux, bytes on macOS, and `resource` does not exist on Windows
+pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="peak RSS is measured with Linux units")
 
 BUDGET_MB = 1200
 
@@ -35,7 +37,7 @@ SCRIPT = textwrap.dedent("""
 def _run(env_extra: dict[str, str]) -> dict:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
-        proc = subprocess.run([sys.executable, "-c", SCRIPT, root], capture_output=True, text=True, timeout=420,
+        proc = subprocess.run([sys.executable, "-c", SCRIPT, root], capture_output=True, text=True, timeout=240,
                               env={**os.environ, **env_extra}, check=False)
     except subprocess.TimeoutExpired:
         pytest.skip("the embedding model could not be loaded in time (first use downloads it)")
@@ -46,7 +48,10 @@ def _run(env_extra: dict[str, str]) -> dict:
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
+# CI runs pytest with --timeout=30; the first use of the model downloads and loads it, which can take longer
+@pytest.mark.timeout(300)
 def test_bulk_embedding_stays_within_the_memory_budget():
-    result = _run({"COGNIREPO_EMBED_BATCH": ""})
+    # pin the batch size: a developer's own config.json (embedding.batch_size) must not change what is measured
+    result = _run({"COGNIREPO_EMBED_BATCH": "16"})
     assert result["n"] == 1200
     assert result["peak_mb"] < BUDGET_MB, f"bulk embedding peaked at {result['peak_mb']} MB (budget {BUDGET_MB} MB)"

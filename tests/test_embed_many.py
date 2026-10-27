@@ -40,8 +40,8 @@ class TestEmbedMany:
         lengths = [len(t) for call in model.calls for t in call]
         assert lengths == sorted(lengths)
 
-    def test_empty_input(self):
-        assert emb.embed_many(FakeModel(), []).shape[0] == 0
+    def test_empty_input_has_the_embedding_width(self):
+        assert emb.embed_many(FakeModel(), []).shape == (0, emb.EMBED_DIM)
 
     def test_progress_counts_every_text(self):
         seen = []
@@ -106,3 +106,42 @@ class TestCallSites:
         idx._batch_embed_pending()
         assert idx.model.calls and max(len(c) for c in idx.model.calls) <= emb.DEFAULT_EMBED_BATCH
         assert len(idx.faiss_meta) == 300 and not idx._pending_embeds
+
+
+class TestPartialFailureKeepsWhatWasDone:
+    def _indexer(self, model, n):
+        from intelligence.indexer.ast_indexer import ASTIndexer
+        idx = ASTIndexer.__new__(ASTIndexer)
+        idx.model, idx.faiss_meta = model, []
+
+        class Index:
+            def __init__(self):
+                self.ids = []
+
+            def add_with_ids(self, _v, ids):
+                self.ids.extend(int(i) for i in ids)
+        idx.faiss_index = Index()
+        idx._pending_embeds = [(f"symbol {i}", {"name": str(i)}, {"n": i}) for i in range(n)]
+        return idx
+
+    def test_a_breaker_trip_part_way_keeps_the_embedded_windows_and_says_so(self, monkeypatch, capsys):
+        import data.memory.circuit_breaker as cb
+        calls = {"n": 0}
+
+        class Breaker:
+            def check(self):
+                calls["n"] += 1
+                if calls["n"] > 40:                     # 32 batches of 16 = the first 512-text window, then trip
+                    raise CircuitOpenError("rss over the limit")
+        monkeypatch.setattr(cb, "get_breaker", lambda: Breaker())
+        idx = self._indexer(FakeModel(), 1000)
+        idx._batch_embed_pending()
+        out = capsys.readouterr().out
+        assert "Embedding stopped after 512 of 1,000 symbols" in out and "without vectors" in out
+        assert len(idx.faiss_meta) == 512 and len(idx.faiss_index.ids) == 512     # the finished window survived
+        assert len(idx._pending_embeds) == 488, "the rest stay queued for a later flush"
+
+    def test_a_clean_run_clears_the_queue(self):
+        idx = self._indexer(FakeModel(), 700)
+        idx._batch_embed_pending()
+        assert not idx._pending_embeds and len(idx.faiss_meta) == 700
