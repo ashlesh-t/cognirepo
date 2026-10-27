@@ -142,13 +142,17 @@ class DocIngester:
         # end of large-repo indexing runs.
         batch: list[tuple] = []
         try:
-            texts = [c["text"] for c in chunks]
-            for chunk, vec in zip(chunks, model.embed(texts, batch_size=64)):
-                # Use the actual relative file path as source so search_docs can
-                # apply _should_skip_file() correctly; fall back to "init_doc" for
-                # chunks without a traceable path (e.g. git log).
-                chunk_source = chunk.get("source") or "init_doc"
-                batch.append((vec.astype("float32"), chunk["text"], 0.6, chunk_source))
+            from data.memory.embeddings import embed_batch_size, embed_many  # pylint: disable=import-outside-toplevel
+            size = embed_batch_size()          # resolved once, not per window
+            window = 256        # embed window by window, so a failure keeps what was embedded before it
+            for start in range(0, len(chunks), window):
+                part = chunks[start:start + window]
+                for chunk, vec in zip(part, embed_many(model, [c["text"] for c in part], batch_size=size)):
+                    # Use the actual relative file path as source so search_docs can
+                    # apply _should_skip_file() correctly; fall back to "init_doc" for
+                    # chunks without a traceable path (e.g. git log).
+                    chunk_source = chunk.get("source") or "init_doc"
+                    batch.append((vec.astype("float32"), chunk["text"], 0.6, chunk_source))
         except Exception as exc:  # pylint: disable=broad-except
             log.warning("DocIngester: batch embed failed (%s) — storing %d chunk(s) embedded so far", exc, len(batch))
 

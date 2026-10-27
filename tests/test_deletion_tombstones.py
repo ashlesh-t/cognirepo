@@ -108,7 +108,7 @@ def test_vector_hits_skip_tombstoned_file(isolated_cognirepo, tmp_path, monkeypa
     from intelligence.retrieval.hybrid import HybridRetriever
 
     class FakeModel:
-        def embed(self, texts):
+        def embed(self, texts, batch_size=256, **_kw):
             for t in texts:
                 seed = int(hashlib.sha256(t.encode()).hexdigest()[:8], 16)
                 yield np.random.default_rng(seed).random(384).astype("float32")

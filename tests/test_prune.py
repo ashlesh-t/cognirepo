@@ -185,7 +185,7 @@ class TestPruneWithEncryption:
         entries = read_semantic_metadata()
 
         class FakeModel:
-            def embed(self, texts):
+            def embed(self, texts, batch_size=256, **_kw):
                 return iter([np.zeros(DIM, dtype="float32") for _ in texts])
 
         import data.memory.embeddings as emb
