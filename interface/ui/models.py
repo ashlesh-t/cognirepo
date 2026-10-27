@@ -174,6 +174,59 @@ class ServiceState(BaseModel):
     retryable: bool | None = None
 
 
+class GraphFile(BaseModel):
+    """One backend's graph file(s): ``graph.pkl`` for networkx, ``graph.sqlite`` (+ WAL) for sqlite."""
+    exists: bool
+    bytes: int
+    mtime: float | None = None
+
+
+class GraphRecommendation(BaseModel):
+    """Which backend to prefer and why. Rough guidance from one benchmark, not a rule."""
+    use: str
+    confidence: str          # clear | leaning | either
+    reasons: list[str]
+
+
+class GraphMigrateProgress(BaseModel):
+    phase: str
+    done: int = 0
+    total: int = 0
+
+
+class GraphJob(BaseModel):
+    """The detached ``graph migrate`` run (idle until one has been started)."""
+    state: str               # idle | running
+    last_run: dict[str, Any] | None = None
+    summary: dict[str, Any] | None = None
+    progress: GraphMigrateProgress | None = None
+
+
+class GraphBackendState(BaseModel):
+    """Which graph store is in force, what each file holds, whether switching is safe, and what to recommend."""
+    active: str
+    configured: str
+    env_override: str | None = None
+    forced_by_encryption: bool
+    note: str | None = None
+    files: dict[str, GraphFile]
+    nodes: int | None = None
+    edges: int | None = None
+    stale_note: str | None = None
+    recommendation: GraphRecommendation
+    sessions: int
+    can_toggle: bool
+    toggle_blocker: str | None = None
+    switch_to: str
+    switch_needs_migration: bool
+    job: GraphJob | None = None
+
+
+class GraphSwitchResult(BaseModel):
+    action: str              # noop | switched | migrating
+    state: GraphBackendState
+
+
 class AutoIndexState(BaseModel):
     auto_index: bool
     changed: bool

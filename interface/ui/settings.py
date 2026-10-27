@@ -4,7 +4,8 @@
 # This file is part of CogniRepo — https://github.com/ashlesh-t/cognirepo
 # Licensed under MIT. See LICENSE file in repository root.
 
-"""The one repo setting the control API may change: ``watch.auto_enabled`` in ``config.json`` (#211).
+"""The repo settings the control API may change in ``config.json``: ``watch.auto_enabled`` (#211) and
+``storage.graph_backend``.
 
 Everything else in ``config.json`` is left untouched (read-modify-write under the store lock, atomic
 replace). Reading is in ``interface.ui.repos`` (strictly read-only); this is the only writer.
@@ -13,17 +14,10 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
 
-from core.config.atomic import atomic_json_dump
-from core.config.lock import store_lock
+from core.config.store_settings import SettingsError, set_value
 
-
-class SettingsError(Exception):
-    def __init__(self, code: str, message: str = "") -> None:
-        super().__init__(message or code)
-        self.code = code
-        self.message = message or code
+__all__ = ["SettingsError", "explicit_auto_index", "set_auto_index", "set_graph_backend"]
 
 
 def explicit_auto_index(store: str) -> bool:
@@ -39,23 +33,9 @@ def explicit_auto_index(store: str) -> bool:
 
 def set_auto_index(store: str, enabled: bool) -> bool:
     """Persist ``watch.auto_enabled``. Returns whether the stored value changed."""
-    path = os.path.join(store, "config.json")
-    with store_lock(lock_path=os.path.join(store, "cognirepo.lock")):
-        try:
-            with open(path, encoding="utf-8") as fh:
-                cfg: Any = json.load(fh)
-        except FileNotFoundError as exc:
-            raise SettingsError("not_initialised", "no config.json for this repo; run `cognirepo init`") from exc
-        except (OSError, ValueError) as exc:
-            raise SettingsError("config_unreadable", "config.json could not be read; nothing was changed") from exc
-        if not isinstance(cfg, dict):
-            raise SettingsError("config_unreadable", "config.json is not an object; nothing was changed")
-        watch = cfg.get("watch")
-        if not isinstance(watch, dict):
-            watch = {}
-        changed = watch.get("auto_enabled") is not enabled
-        watch["auto_enabled"] = enabled
-        cfg["watch"] = watch
-        if changed:
-            atomic_json_dump(path, cfg)
-        return changed
+    return set_value(store, "watch", "auto_enabled", enabled)
+
+
+def set_graph_backend(store: str, backend: str) -> bool:
+    """Persist ``storage.graph_backend`` (``networkx`` or ``sqlite``). Returns whether it changed."""
+    return set_value(store, "storage", "graph_backend", backend)

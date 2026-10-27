@@ -115,8 +115,26 @@ def _get_graph():
                 from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
                 _GRAPH = KnowledgeGraph()
                 return _GRAPH
+    if not _backend_is_current(_GRAPH):
+        # storage.graph_backend changed under a running server (console toggle / `graph migrate`): follow it on
+        # the next call rather than keep reading, and saving to, the store that was just migrated away from.
+        with _SINGLETON_LOCK:
+            if not _backend_is_current(_GRAPH):
+                from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+                _GRAPH = KnowledgeGraph()
+                if _INDEXER is not None:
+                    _INDEXER.graph = _GRAPH
+                return _GRAPH
     _revalidate(_GRAPH)
     return _GRAPH
+
+
+def _backend_is_current(graph) -> bool:
+    try:
+        from data.graph.backend import is_current  # pylint: disable=import-outside-toplevel
+        return is_current(graph)
+    except Exception:  # pylint: disable=broad-except
+        return True
 
 
 def _revalidate(obj) -> bool:

@@ -671,6 +671,34 @@ class SqliteGraph(KnowledgeGraph):  # pylint: disable=too-many-public-methods
         return [(r[0], r[1]) for r in self._all(
             "SELECT n.id, (SELECT COUNT(*) FROM edges e WHERE e.dst = n.id) FROM nodes n ORDER BY n.rowid")]
 
+    def iter_nodes(self, batch: int = 10_000):
+        """Yield ``(id, attrs)`` in insertion order without holding the whole graph (keyset pagination)."""
+        last = 0
+        while True:
+            rows = self._all("SELECT rowid, id, type, attrs FROM nodes WHERE rowid > ? ORDER BY rowid LIMIT ?",
+                             (last, batch))
+            if not rows:
+                return
+            for rowid, nid, ntype, attrs in rows:
+                last = rowid
+                yield nid, self._node_dict(ntype, attrs)
+
+    def iter_edges(self, batch: int = 10_000):
+        """Yield ``(src, dst, attrs)`` in insertion order without holding the whole graph."""
+        last = 0
+        while True:
+            rows = self._all("SELECT rowid, src, dst, rel, weight, attrs FROM edges WHERE rowid > ? "
+                             "ORDER BY rowid LIMIT ?", (last, batch))
+            if not rows:
+                return
+            for rowid, src, dst, rel, weight, attrs in rows:
+                last = rowid
+                yield src, dst, self._edge_dict(rel, weight, attrs)
+
+    def graph_attrs(self) -> dict[str, Any]:
+        """All graph-level attributes (e.g. ``complete``)."""
+        return {k[3:]: json.loads(v) for k, v in self._all("SELECT key, value FROM meta WHERE key LIKE 'ga:%'")}
+
     def graph_attr(self, key: str, default: Any = None) -> Any:
         row = self._one("SELECT value FROM meta WHERE key=?", (f"ga:{key}",))
         return default if row is None else json.loads(row[0])

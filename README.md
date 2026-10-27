@@ -31,7 +31,10 @@ It sits between your codebase and any AI tool, providing:
   decisions, docs, architecture notes. Retrieve them with natural language.
 - **Episodic log** — append-only event journal. Know what happened before that error.
 - **Knowledge graph** — NetworkX DiGraph linking functions, classes, files, imports,
-  inheritance chains, call relationships, and concepts. All queryable.
+  inheritance chains, call relationships, and concepts. All queryable. **Big repo or many
+  agents? Switch the graph to SQLite in one click** (console → Controls → Graph storage, or
+  `cognirepo graph migrate --to sqlite`): about 5x less memory per process and instant open;
+  see [Graph storage: networkx or SQLite](#graph-storage-networkx-or-sqlite).
 - **AST reverse index** — O(1) symbol lookup across your entire codebase in any supported language.
 - **User behavior profiling** — tracks how you prompt so Claude adapts its response
   style without you having to re-explain preferences every session.
@@ -375,6 +378,36 @@ The knowledge graph is significantly richer than a simple call graph.
 
 `IMPORTS` and `INHERITS` edges are built automatically during `index-repo` from Python AST.
 Use `subgraph("MyClass", depth=2)` or `dependency_graph("mymodule")` to query them.
+
+### Graph storage: networkx or SQLite
+
+The graph can live in one of two stores. **networkx (the default)** keeps it in `graph.pkl`, loaded whole into every
+process that touches it. **SQLite** keeps it in `graph.sqlite` and reads only what a query needs.
+
+| Use | When |
+|---|---|
+| **networkx** (default) | small or medium repos (roughly under 20k graph nodes), one agent session at a time, you want the fastest queries and the smallest file, or `storage.encrypt` is on (SQLite is not encrypted yet, so encrypted repos always stay on networkx) |
+| **SQLite** | large graphs (roughly 100k nodes and up), several agents / sessions sharing one repo, or memory is tight |
+
+Measured on a synthetic 105k-node, 1.28M-edge graph: **459 MB → 54 MB resident per process after open** (92 MB after a
+query workload), open time 0.6 s → instant; queries are slower (about 0.01 ms → 0.01-4 ms) and the file is about 4x bigger
+([benchmark and caveats](docs/adr/002-sqlite-graph-store.md)). The thresholds are rough guidance from one benchmark.
+
+**Switch from the console:** `cognirepo ui` → **Controls → Graph storage**: a toggle that never switches onto stale data,
+a migrate control that works in both directions (with a dry-run preview), and a recommendation for *your* repo.
+**Or from the terminal:**
+
+```bash
+cognirepo graph backend                       # what is in use, file sizes, and which one to prefer
+cognirepo graph migrate --to sqlite --dry-run  # sizes, memory needed, what would be set aside; changes nothing
+cognirepo graph migrate --to sqlite            # copy, verify, then switch (add --stop-watcher if a watcher runs)
+cognirepo graph migrate --to networkx --replace   # and back
+```
+
+A migration copies the graph, **verifies it** (counts, graph attributes and a sample of node/edge attributes) and only
+then switches the setting; the old file is always kept (an existing target is set aside as `.replaced-<timestamp>`).
+Running agents and the watcher pick up the new backend on their next call. The two stores are not kept in sync after a
+switch; `cognirepo doctor` warns when the one you are not using is newer.
 
 ---
 

@@ -275,8 +275,27 @@ class RepoFileHandler(FileSystemEventHandler):
         except Exception:  # pylint: disable=broad-except
             pass
 
+    def _follow_backend(self) -> None:
+        """If ``storage.graph_backend`` changed since this watcher started (console toggle / ``graph migrate``),
+        switch to a graph on the new backend before touching anything, so it never saves into the store that was
+        just migrated away from. The indexer and behaviour tracker hold the same graph, so they follow."""
+        try:
+            from data.graph.backend import is_current  # pylint: disable=import-outside-toplevel
+            if is_current(self.graph):
+                return
+            from data.graph.knowledge_graph import KnowledgeGraph  # pylint: disable=import-outside-toplevel
+            fresh = KnowledgeGraph()
+        except Exception:  # pylint: disable=broad-except
+            return
+        self.graph = fresh
+        for holder in (self.indexer, self.behaviour):
+            if getattr(holder, "graph", None) is not None:
+                holder.graph = fresh
+        log.info("graph backend changed; the watcher now uses %s", type(fresh).__name__)
+
     def _process_batch(self, pending: dict[str, str]) -> None:
         """Index, remove and persist one batch (the old flush body). Callers hold self._flush_lock."""
+        self._follow_backend()
         any_reindexed = False
         reindexed_rel_paths: list[str] = []
         removed_rel_paths: list[str] = []

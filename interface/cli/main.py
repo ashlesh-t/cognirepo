@@ -299,6 +299,126 @@ def _cmd_graph_restore(apply: bool = False, force: bool = False) -> int:
     return 0
 
 
+def _graph_ctx() -> tuple[str, str]:
+    from core.config.paths import get_cognirepo_dir, get_path  # pylint: disable=import-outside-toplevel
+    return os.path.dirname(os.path.abspath(get_path(""))), str(get_cognirepo_dir())
+
+
+def _cmd_graph_backend(as_json: bool = False) -> int:
+    """Show the graph backend in force, what each file holds and which backend to prefer (read-only)."""
+    from interface.ui import graph_backend as ui_gb  # pylint: disable=import-outside-toplevel
+    repo_root, store = _graph_ctx()
+    st = ui_gb.state(repo_root, store)
+    if as_json:
+        print(json.dumps(st))
+        return 0
+    rec = st["recommendation"]
+    print(f"Graph backend in use: {st['active']}" + (f"  (configured: {st['configured']})" if st["configured"] != st["active"] else ""))
+    if st["note"]:
+        print(f"  note: {st['note']}")
+    if st["env_override"]:
+        print(f"  COGNIREPO_GRAPH_BACKEND={st['env_override']} is set in this environment and overrides the config file")
+    for name in ("networkx", "sqlite"):
+        f = st["files"][name]
+        size = f"{f['bytes'] / 1e6:.1f} MB" if f["exists"] else "-"
+        print(f"  {name:9} {'present' if f['exists'] else 'absent':8} {size}")
+    if st["nodes"] is not None:
+        print(f"  graph: {st['nodes']:,} nodes, {st['edges']:,} edges · {st['sessions']} cognirepo process(es) attached")
+    print(f"Recommendation: {rec['use']} ({rec['confidence']})")
+    for reason in rec["reasons"]:
+        print(f"  - {reason}")
+    if st["stale_note"]:
+        print(f"WARNING: {st['stale_note']}")
+    other = st["switch_to"]
+    if st["can_toggle"]:
+        print(f"Switch: cognirepo graph migrate --to {other}" + ("" if st["switch_needs_migration"] else "   (the other store is up to date)"))
+    else:
+        print(f"Switching is blocked: {st['toggle_blocker']}")
+    return 0
+
+
+def _cmd_graph_migrate(to: str, dry_run: bool = False, replace: bool = False, stop_watcher: bool = False,
+                       as_json: bool = False) -> int:
+    """Copy the graph to the other backend, verify it, switch the setting. Exit: 0 ok, 75 busy, 2 refused, 1 failed."""
+    from data.graph import migrate as mg  # pylint: disable=import-outside-toplevel
+    repo_root, _store = _graph_ctx()
+
+    def out(obj: dict) -> None:
+        if as_json:
+            print(json.dumps(obj), flush=True)
+        else:
+            phase = obj.get("phase")
+            if phase:
+                print(f"  {phase}" + (f" {obj['done']:,}/{obj['total']:,}" if obj.get("total") else ""), flush=True)
+
+    def fail(code: str, message: str, rc: int = 2) -> int:
+        out({"result": "error", "code": code, "message": message})
+        if not as_json:
+            print(f"graph migrate: {message} [{code}]", file=sys.stderr)
+        return rc
+
+    try:
+        info = mg.plan(to)
+    except mg.MigrationError as exc:
+        return fail(exc.code, exc.message)
+    if dry_run:
+        if as_json:
+            out({"result": "plan", **info})
+        else:
+            print(f"Would move the graph {info['from']} -> {info['to']}"
+                  + (f": {info['nodes']:,} nodes, {info['edges']:,} edges" if info["nodes"] is not None else ""))
+            if info["ram_mb"]:
+                print(f"  memory needed during the copy: about {info['ram_mb']:,} MB")
+            if info["moves_aside"]:
+                print(f"  would set aside (needs --replace): {', '.join(info['moves_aside'])}")
+            if info["blockers"]:
+                print(f"  blocked: {', '.join(info['blockers'])}")
+            print("  nothing was changed")
+        return 2 if info["blockers"] else 0
+
+    from interface.cli import daemon as cli_daemon  # pylint: disable=import-outside-toplevel
+    watcher = cli_daemon.is_watcher_running_for_path(repo_root)
+    if watcher and watcher.get("kind") == "embedded":
+        watcher = None          # lives inside an agent's server; it follows the switch itself on its next batch
+    if watcher and watcher.get("pid") == os.getpid():
+        watcher = None          # never mistake this process for the watcher
+    if watcher:
+        if not stop_watcher:
+            return fail("watcher_running", "a background watcher is running for this repo; re-run with "
+                        "--stop-watcher (it is restarted afterwards) or stop it first")
+        if cli_daemon.stop_watcher_and_wait(str(watcher["pid"])) not in ("stopped", "killed", "not_found"):
+            return fail("watcher_not_stopped", "the background watcher would not stop; nothing was changed", 1)
+    try:
+        summary = mg.migrate(to, replace=replace, progress=out)
+    except mg.MigrationError as exc:
+        _restart_watcher(repo_root, watcher)
+        return fail(exc.code, exc.message, 75 if exc.code == "busy" else 2 if exc.code in (
+            "target_exists", "encryption_on", "no_source", "bad_target") else 1)
+    except Exception as exc:  # pylint: disable=broad-except
+        _restart_watcher(repo_root, watcher)
+        return fail("migrate_failed", f"{type(exc).__name__}: {str(exc)[:300]}", 1)
+    _restart_watcher(repo_root, watcher)
+    out({"result": "ok", "summary": summary})
+    if not as_json:
+        print(f"Moved {summary['nodes']:,} nodes / {summary['edges']:,} edges to {to} in {summary['seconds']}s; "
+              f"setting switched. Previous files are kept: {', '.join(summary['kept']) or 'the source was not modified'}.")
+        if summary.get("env_override"):
+            print(f"  note: COGNIREPO_GRAPH_BACKEND={summary['env_override']} is set here and still overrides the config")
+    return 0
+
+
+def _restart_watcher(repo_root: str, was_running: dict | None) -> None:
+    """Start the background watcher again if migrate had stopped one (best effort)."""
+    if not was_running:
+        return
+    import subprocess  # pylint: disable=import-outside-toplevel
+    try:
+        subprocess.run([sys.executable, "-m", "interface.cli.main", "watch", "--path", repo_root, "--ensure-running"],  # nosec B603
+                       cwd=repo_root, check=False, stdin=subprocess.DEVNULL, capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def _cmd_graph_prune_quarantine(days: float, apply: bool = False) -> int:
     """Retention for quarantined graphs: remove only the genuinely unreadable ones older than ``days``."""
     # pylint: disable=import-outside-toplevel
@@ -618,6 +738,11 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         _stale = _gb.switch_note()
         if _stale:
             _warn(f"Graph backend — {_stale}")
+        if _res.backend == _gb.NETWORKX and not _res.note and isinstance(_nodes, int):
+            _rec = _gb.recommend(_nodes, 0, False)
+            if _rec.use == _gb.SQLITE:
+                _ok(f"Graph backend — {_nodes:,} nodes: the SQLite backend would use far less memory per process. "
+                    "See `cognirepo graph backend` (or the console's Controls page)")
         if verbose:
             _gpath = get_path("graph/graph.sqlite" if _res.backend == _gb.SQLITE else "graph/graph.pkl")
             print(f"       {os.path.abspath(_gpath)}")
@@ -4095,6 +4220,24 @@ def _main():
         "--force", action="store_true",
         help="Replace a graph.pkl that is itself readable (it is kept as graph.pkl.replaced-<ts>)",
     )
+    p_graph_backend = graph_sub.add_parser(
+        "backend",
+        help="Show which graph store is in use (networkx pickle or SQLite), why, and which one to prefer",
+    )
+    p_graph_backend.add_argument("--json", action="store_true", help="Machine-readable output")
+    p_graph_migrate = graph_sub.add_parser(
+        "migrate",
+        help="Move the knowledge graph between the networkx and SQLite backends (either way) and switch to it",
+    )
+    p_graph_migrate.add_argument("--to", required=True, choices=["networkx", "sqlite"],
+                                 help="Backend to move the graph to")
+    p_graph_migrate.add_argument("--dry-run", action="store_true",
+                                 help="Show what would happen (sizes, memory, what is set aside); change nothing")
+    p_graph_migrate.add_argument("--replace", action="store_true",
+                                 help="Set an existing graph of the target backend aside (.replaced-<ts>) and replace it")
+    p_graph_migrate.add_argument("--stop-watcher", action="store_true",
+                                 help="Stop this repo's background watcher during the copy and restart it afterwards")
+    p_graph_migrate.add_argument("--json", action="store_true", help="JSON progress lines and a JSON result")
     p_graph_prune = graph_sub.add_parser(
         "prune-quarantine",
         help="Remove quarantined graph files that are genuinely unreadable and old (dry-run by default)",
@@ -5468,7 +5611,12 @@ def _main():
                 sys.exit(_cmd_graph_restore(apply=args.apply, force=args.force))
             if getattr(args, "graph_command", None) == "prune-quarantine":
                 sys.exit(_cmd_graph_prune_quarantine(days=args.days, apply=args.apply))
-            print("Usage: cognirepo graph repair|restore|prune-quarantine [--apply]")
+            if getattr(args, "graph_command", None) == "backend":
+                sys.exit(_cmd_graph_backend(as_json=args.json))
+            if getattr(args, "graph_command", None) == "migrate":
+                sys.exit(_cmd_graph_migrate(args.to, dry_run=args.dry_run, replace=args.replace,
+                                            stop_watcher=args.stop_watcher, as_json=args.json))
+            print("Usage: cognirepo graph repair|restore|prune-quarantine|backend|migrate")
             sys.exit(2)
 
         elif args.command == "mcp-setup":

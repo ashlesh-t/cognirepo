@@ -247,7 +247,9 @@ class TestServices:
                          "/api/v1/insights", "/api/v1/insights/report", "/api/v1/events",
                          "/api/v1/sessions", "/api/v1/sessions/{session_id}", "/api/v1/repos", "/api/v1/graph/changes",
                          "/api/v1/settings/auto-index", "/api/v1/processes", "/api/v1/audit",
-                         "/api/v1/daemon", "/api/v1/queue", "/api/v1/journal"}
+                         "/api/v1/daemon", "/api/v1/queue", "/api/v1/journal",
+                         "/api/v1/graph/backend", "/api/v1/graph/backend/job",
+                         "/api/v1/graph/backend/switch", "/api/v1/graph/backend/migrate"}
 
 
 class TestServiceManager:
