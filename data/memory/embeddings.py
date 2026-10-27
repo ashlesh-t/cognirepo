@@ -74,6 +74,64 @@ def encode_with_timeout(text: str, timeout: float | None = None):
         raise
 
 
+#: Texts per ONNX call for bulk embedding. fastembed's own default (256) pads every text in a batch to the longest
+#: one and keeps the attention activations of the whole batch alive; measured on 3,000 real symbol texts that is
+#: 4.8 GB peak and 85 s, versus 0.5 GB and 16 s at 16 (#98, #105). Overridable, see :func:`embed_batch_size`.
+DEFAULT_EMBED_BATCH = 16
+MAX_EMBED_BATCH = 256
+
+
+def embed_batch_size() -> int:
+    """Texts per ONNX call for bulk embedding: ``COGNIREPO_EMBED_BATCH``, else ``embedding.batch_size`` in the repo's
+    ``config.json``, else :data:`DEFAULT_EMBED_BATCH`; clamped to ``1..MAX_EMBED_BATCH``."""
+    raw: object = os.environ.get("COGNIREPO_EMBED_BATCH", "").strip()
+    if not raw:
+        try:
+            import json  # pylint: disable=import-outside-toplevel
+            from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
+            with open(get_path("config.json"), encoding="utf-8") as fh:
+                section = json.load(fh).get("embedding")
+            raw = section.get("batch_size") if isinstance(section, dict) else None
+        except (OSError, ValueError, AttributeError):
+            raw = None
+    try:
+        return max(1, min(MAX_EMBED_BATCH, int(raw)))      # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_EMBED_BATCH
+
+
+def embed_many(model, texts, batch_size: int | None = None, progress=None):
+    """Embed many texts with bounded memory. Returns a ``float32`` array in the order of *texts*.
+
+    * at most ``batch_size`` (default :func:`embed_batch_size`) texts go to the model per call, so padding and
+      activations stay small however many texts there are;
+    * texts are processed shortest-first so a batch is padded to a similar length, then put back in input order;
+    * the circuit breaker is consulted before every batch, so a runaway RSS degrades (``CircuitOpenError``, which
+      callers already handle) instead of being OOM-killed by the kernel;
+    * ``progress(n)`` is called after each batch with the number of texts it held (for a progress bar).
+    """
+    import numpy as np  # pylint: disable=import-outside-toplevel
+    from data.memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
+    size = batch_size if batch_size is not None else embed_batch_size()
+    size = max(1, min(MAX_EMBED_BATCH, int(size)))
+    texts = list(texts)
+    if not texts:
+        return np.zeros((0, 0), dtype="float32")
+    order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
+    out = None
+    breaker = get_breaker()
+    for start in range(0, len(order), size):
+        idx = order[start:start + size]
+        breaker.check()
+        vecs = np.asarray(list(model.embed([texts[i] for i in idx], batch_size=size)), dtype="float32")
+        if out is None:
+            out = np.empty((len(texts), vecs.shape[1]), dtype="float32")
+        out[idx] = vecs
+        if progress is not None:
+            progress(len(idx))
+    return out
+
+
 def evict_model() -> None:
     """
     Release the in-memory embedding model to free RAM.

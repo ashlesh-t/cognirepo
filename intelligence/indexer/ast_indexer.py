@@ -1768,7 +1768,7 @@ class ASTIndexer:
 
     # ── public API ────────────────────────────────────────────────────────────
 
-    def _batch_embed_pending(self, batch_size: int = 256) -> None:
+    def _batch_embed_pending(self, batch_size: int | None = None) -> None:
         """Encode all deferred embed texts in one batched model.encode() call.
 
         Collecting texts across all files and encoding them together is 20-50x
@@ -1779,19 +1779,15 @@ class ASTIndexer:
         if not pending:
             return
         texts = [p[0] for p in pending]
-        print(f"  Embedding {len(texts):,} texts in batches of {batch_size}…")
+        from data.memory.embeddings import embed_batch_size  # pylint: disable=import-outside-toplevel
+        print(f"  Embedding {len(texts):,} texts in batches of {batch_size or embed_batch_size()}…")
         try:
-            import numpy as _np  # pylint: disable=import-outside-toplevel
             from tqdm import tqdm  # pylint: disable=import-outside-toplevel
-            _embed_gen = self.model.embed(texts)
-            _vecs_list = list(tqdm(
-                _embed_gen,
-                total=len(texts),
-                desc="Embedding",
-                unit="vec",
-                dynamic_ncols=True,
-            ))
-            vecs = _np.array(_vecs_list).astype("float32")
+            from data.memory.embeddings import embed_many  # pylint: disable=import-outside-toplevel
+            # Bounded batches, shortest first, breaker-checked: fastembed's default batch of 256 peaked at ~5 GB
+            # on a 10k-symbol repo (#98/#105). ``batch_size`` below is the parameter this method always had.
+            with tqdm(total=len(texts), desc="Embedding", unit="vec", dynamic_ncols=True) as _bar:
+                vecs = embed_many(self.model, texts, batch_size=batch_size, progress=_bar.update)
         except Exception as exc:  # pylint: disable=broad-except
             log.warning("Batch encode failed (%s) — skipping FAISS embed", exc)
             return

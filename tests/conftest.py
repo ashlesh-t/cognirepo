@@ -43,7 +43,7 @@ def mock_embeddings():
     import numpy as np
 
     with MagicMock() as mock_engine:
-        def fake_embed(texts):
+        def fake_embed(texts, batch_size=256, **_kw):
             results = []
             # List of keywords that tests look for. 
             # Order matters: we pick the FIRST matching keyword to define the vector.

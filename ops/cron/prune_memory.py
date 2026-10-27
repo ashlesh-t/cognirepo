@@ -127,7 +127,8 @@ def _rebuild_faiss(kept: list[dict[str, Any]], dry_run: bool) -> int:
 
         model = get_model()
         texts = [e.get("text", "") for e in kept]
-        vectors = np.array(list(model.embed(texts))).astype("float32")
+        from data.memory.embeddings import embed_many  # pylint: disable=import-outside-toplevel
+        vectors = embed_many(model, texts)
         dim = vectors.shape[1]
         index = faiss.IndexFlatL2(dim)
         index.add(vectors)  # pylint: disable=no-value-for-parameter

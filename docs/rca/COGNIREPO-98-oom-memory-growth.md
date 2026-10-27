@@ -1,7 +1,7 @@
 # RCA — `cognirepo` OOM-killed at ~5.2 GB RSS (issue #98)
 
-**Status: root cause found and fixed (2026-10-01), pending verified reproduction of the exact
-original incident.** §6 has the finding. This document also records what was confirmed/ruled out
+**Status: root cause reproduced, measured and fixed (2026-10-27, §7). §6 (2026-10-01) was a plausible
+but wrong candidate and is kept for the record.** §6 has the finding. This document also records what was confirmed/ruled out
 along the way, the mitigation shipped first, and an earlier repro attempt that didn't reproduce it.
 Tracking follow-up: #105. Mitigation PR: #102. Root-cause fix PR: see §6.
 
@@ -110,3 +110,52 @@ the code path that actually matches the original incident's shape — but it has
 against a true multi-hour, multi-process, MCP-reconnect session identical to the original incident
 (§4 item 1 is still nobody's done that). Treat this as the most likely root cause, well-evidenced,
 not as a confirmed-by-exact-reproduction one.
+
+## 7. Root cause reproduced and fixed (2026-10-27, #98 / #105)
+
+**It reproduces, on a normal command.** `cognirepo init` (which indexes and embeds) on
+`cognirepo_test_repo/medium/celery` (821 files, 10,668 symbols) reached **5.46 GB RSS 27 seconds in** and
+sat at **5.7 GB** (anonymous memory, 77 threads, ~950 % CPU) for the four minutes it was left running, embedding at
+about 76 vectors/s. The kernel kills in #98 were at 5.34 and 5.16 GB of anonymous RSS. Reproduced twice, once by
+accident on the host and once under `systemd-run --user --scope -p MemoryMax=7G -p MemorySwapMax=0`.
+
+**Cause: the embedding batch size, not a leak.** `ASTIndexer._batch_embed_pending()` took a `batch_size=256`
+parameter that was only used in a `print`; the call itself was `model.embed(texts)`, i.e. fastembed's default
+`batch_size=256` with ONNX Runtime on all cores. A batch is padded to its longest text (up to 256 word pieces) and the
+attention activations of all 256 rows stay alive, and ONNX Runtime's arena keeps the high-water mark. Sweep with
+`scripts/measure_embed_memory.py` (3,000 real symbol texts, average 90 characters, each run in its own process):
+
+| batch size | peak RSS | time |
+|---|---|---|
+| 256 (the old behaviour) | **4,779 MB** | 44-85 s |
+| 64 | 1,426 MB | 27 s |
+| 32 | 816 MB | 21-27 s |
+| **16 (new default)** | **520 MB** | 16-19 s |
+
+Smaller batches are not just smaller, they are **faster** (less padding, better cache behaviour). A tracemalloc run of
+1,500 texts shows the Python heap at 428 MB while the process peaked at 4.9 GB at batch 256 (66 MB vs 560 MB at batch
+16): the growth is native ONNX Runtime memory, which is why no Python-level profile or the RSS watchdog could see it
+coming. The breaker and watchdog (#102) only look between calls; this was a single call.
+
+**Why it hit a long-running session.** The server spawns `cognirepo index-repo --changed-only --no-watch` in the
+background (`mcp_server._spawn_background_reindex`) when it finds the index stale. The killed process in #98's kernel log is
+literally named `cognirepo`, a child `cognirepo` of ~11 MB is listed next to the second kill, and the store's
+`vector_db/chroma` and `semantic.index` were recreated right after, i.e. a full re-embed of the repo ran. That is this
+path. (Not reproduced through the MCP reconnect itself; the mechanism and the size match.)
+
+**Fix.** `data/memory/embeddings.py::embed_many()` is now the only way bulk text is embedded: batches of
+`embedding.batch_size` (default 16, env `COGNIREPO_EMBED_BATCH`, clamped to 1-256), shortest text first to cut padding,
+results returned in input order, and the circuit breaker consulted **before every batch**, so a runaway now degrades
+(`CircuitOpenError`, which the indexer already handles) instead of being OOM-killed. Used by the indexer, `prune`,
+`docs_index` and the doc ingester. Verified: the same `cognirepo init` on celery now peaks at **713 MB** (was 5.7 GB),
+finishes in 78 s, and builds a complete index (10,668 vectors, 10,668 metadata rows).
+
+**Regression tests.** `tests/test_embed_many.py` (bounded batches, order, breaker, config) and
+`tests/test_embedding_memory.py`, which embeds 1,200 real-sized texts with the real model in a subprocess and fails above
+1,200 MB (new default: 476 MB; batch 256: 2,284 MB). That is the test the original growth never had.
+
+**Superseded.** §6's explanation (model resident through `graph.save()`) was real for #107 but is not what produced
+the 5 GB here: the peak happens during embedding, before any save. The #112 recovery stays, it is harmless and correct.
+
+**Not covered.** The multi-process / reconnect session shape was not replayed end to end; each embedding call site was
+bounded instead. Other native allocators (Chroma, FAISS) were not found to contribute at this size.

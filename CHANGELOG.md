@@ -8,6 +8,15 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Fixed
+- **Indexing no longer needs ~5 GB (#98, #105).** `cognirepo init` / `index-repo` embedded all symbols with fastembed's
+  default batch of 256, which pads every text to the longest in the batch and peaked at 5.5-5.7 GB on a 10k-symbol repo
+  (reproduced; it is the kernel OOM-kill from #98) and ran at ~76 vectors/s. Bulk embedding now goes through
+  `embed_many()`: batches of 16 (`embedding.batch_size` / `COGNIREPO_EMBED_BATCH`), shortest first, results in input
+  order, circuit breaker checked before every batch. The same `init` on the celery fixture now peaks at 713 MB and takes
+  78 s. Also used by `prune`, `docs_index` and the doc ingester. New `scripts/measure_embed_memory.py` and a real-model
+  memory regression test. RCA: `docs/rca/COGNIREPO-98-oom-memory-growth.md` §7.
+
 ### Added
 - **Graph storage toggle and two-way migration (#115 follow-up).** New `cognirepo graph backend` (what is in use, file
   sizes, and a recommendation with reasons: networkx for small repos / one session / encryption, SQLite for roughly 100k+

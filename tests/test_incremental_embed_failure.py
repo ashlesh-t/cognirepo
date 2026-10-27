@@ -26,7 +26,7 @@ class ExplodingModel:
     def __init__(self):
         self.calls = 0
 
-    def embed(self, _texts):
+    def embed(self, _texts, batch_size=256, **_kw):
         self.calls += 1
         raise RuntimeError("model unavailable")
 
@@ -82,7 +82,7 @@ class TestIndexFileSurvivesEmbeddingFailure:
         idx, src = indexed
 
         class Fine:
-            def embed(self, _t):
+            def embed(self, _t, batch_size=256, **_kw):
                 import numpy as np
                 yield np.zeros(384, dtype="float32")
 

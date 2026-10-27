@@ -128,7 +128,8 @@ def build_docs_index(dest: Path, doc_roots: Optional[list[Path]] = None) -> int:
     model = get_model()
     texts = [c["text"] for c in all_chunks]
     t0 = time.perf_counter()
-    vectors = np.array(list(model.embed(texts))).astype("float32")
+    from data.memory.embeddings import embed_many  # pylint: disable=import-outside-toplevel
+    vectors = embed_many(model, texts)
     logger.info("docs_index: embedded %d chunks in %.1fs", len(texts), time.perf_counter() - t0)
 
     # FAISS
