@@ -768,6 +768,33 @@ cognirepo repos scan --root DIR [--depth 3] [--dry-run]   # find initialised rep
 
 ---
 
+## cognirepo agents
+
+Show which agent CLIs (`claude`, `codex`, `gemini`) are installed and could serve as routing backends. See the
+design in [planning/07-model-discovery-design.md](planning/07-model-discovery-design.md).
+
+```bash
+cognirepo agents list [--json]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--json` | `False` | Machine-readable output (one object per CLI: `name`, `installed`, `enabled`, `ready`, `version`, `path`, `terms_gated`) |
+
+`list` is local only: it looks the binaries up on `PATH` and runs `<binary> --version` (3 s cap each, in parallel).
+It never makes a model call, so it spends no quota and works offline.
+
+| Column | Meaning |
+|--------|---------|
+| `INSTALLED` | On `PATH` and answers `--version` |
+| `ENABLED` | `cli_providers.<name>.enabled` in `.cognirepo/config.json` (nothing is enabled by default) |
+| `READY` | `yes` after a successful real call, `no` after an auth failure, `unknown` if never called or the CLI version changed |
+
+`doctor` also prints one informational line listing the detected CLIs; it never fails on them. State is kept in
+`~/.cognirepo/provider_status.json` (see [CONFIGURATION.md](CONFIGURATION.md#storage-layout)).
+
+---
+
 ## cognirepo list
 
 List MCP servers, organizations, and running watcher daemons.

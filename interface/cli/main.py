@@ -974,6 +974,18 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             "Optional: set ANTHROPIC_API_KEY · GEMINI_API_KEY · OPENAI_API_KEY · GROK_API_KEY",
         )
 
+    # ── Check 7b: agent CLIs (informational, local --version only) ─────────────
+    try:
+        from intelligence.orchestrator.provider_status import detect_cli_agents  # pylint: disable=import-outside-toplevel
+        _clis = [r for r in detect_cli_agents() if r.installed]
+        if _clis:
+            _ok("Agent CLIs — " + ", ".join(f"{r.name} {r.version}" for r in _clis)
+                + " (detected; see `cognirepo agents list`)")
+        else:
+            _ok("Agent CLIs — none detected (optional)")
+    except Exception as exc:  # pylint: disable=broad-except
+        _ok(f"Agent CLIs — detection skipped ({exc})")
+
     # ── Check 8: Daemon heartbeat ─────────────────────────────────────────────
     try:
         from interface.cli.daemon import (  # pylint: disable=import-outside-toplevel
@@ -3644,6 +3656,28 @@ def _cmd_repos(args) -> int:
     return 2
 
 
+def _cmd_agents(args) -> int:
+    """``cognirepo agents list`` — which agent CLIs are installed, enabled and known to work. Local only."""
+    from intelligence.orchestrator.provider_status import detect_cli_agents  # pylint: disable=import-outside-toplevel
+    cmd = getattr(args, "agents_command", None) or "list"
+    if cmd != "list":
+        return 2
+    rows = detect_cli_agents()
+    if getattr(args, "json", False):
+        print(json.dumps([r.to_dict() for r in rows], indent=2))
+        return 0
+    ready_txt = {True: "yes", False: "no", None: "unknown"}
+    print(f"{'AGENT':<8} {'INSTALLED':<10} {'ENABLED':<8} {'READY':<8} VERSION")
+    for r in rows:
+        print(f"{r.name:<8} {'yes' if r.installed else 'no':<10} {'yes' if r.enabled else 'no':<8} "
+              f"{ready_txt[r.ready] if r.installed else '-':<8} {r.version or '-'}")
+    if any(r.installed for r in rows):
+        print("\nDetected CLIs are not used for routing until enabled. Nothing was called and no quota was spent.")
+    else:
+        print("\nNo agent CLI found on PATH.")
+    return 0
+
+
 def _cmd_install_hooks() -> int:
     """Write the git hooks that keep the index in step with the files on disk.
 
@@ -4669,6 +4703,12 @@ def _main():
     p_repos_scan.add_argument("--depth", type=int, default=3, help="How many levels down to look (default 3)")
     p_repos_scan.add_argument("--dry-run", action="store_true", default=False, help="Only list what would be registered")
 
+    # agents — installed agent CLIs usable as routing backends (#87/#88)
+    p_agents = sub.add_parser("agents", help="Show which agent CLIs (claude, codex, gemini) are installed and usable as backends")
+    agents_sub = p_agents.add_subparsers(dest="agents_command")
+    p_agents_list = agents_sub.add_parser("list", help="Installed / enabled / ready state of each agent CLI (local only)")
+    p_agents_list.add_argument("--json", action="store_true", default=False, help="Machine-readable output")
+
     # ui — local-only control API + console (COGNIREPO-129)
     p_ui = sub.add_parser("ui", help="Start the local-only control API and open the Engram console")
     p_ui.add_argument("--host", default="127.0.0.1",
@@ -4792,7 +4832,7 @@ def _main():
 
     # ── init guard: require .cognirepo/config.json for all storage commands ──
     _INIT_EXEMPT = {"init", "setup", "doctor", "migrate-config", "setup-env", "metrics",
-                    "list", "delete", "ui", "repos", "daemon", None}
+                    "list", "delete", "ui", "repos", "daemon", "agents", None}
     if args.command not in _INIT_EXEMPT:
         import pathlib  # pylint: disable=import-outside-toplevel
         from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
@@ -5220,6 +5260,9 @@ def _main():
 
     if args.command == "repos":
         sys.exit(_cmd_repos(args))
+
+    if args.command == "agents":
+        sys.exit(_cmd_agents(args))
 
     if args.command == "daemon":
         from interface.daemon.cli import run as _daemon_run  # pylint: disable=import-outside-toplevel
