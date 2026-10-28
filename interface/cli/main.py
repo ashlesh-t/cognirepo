@@ -4996,6 +4996,10 @@ def _main():
         sys.exit(0)
 
     if args.command == "serve":
+        from core.config.headless import is_headless  # pylint: disable=import-outside-toplevel
+        if is_headless():  # also covers the daemon proxy path below (#88)
+            print("cognirepo serve: COGNIREPO_HEADLESS is set; not serving.", file=sys.stderr)
+            sys.exit(0)
         # Opt-in daemon (#116): when `daemon.enabled`, serve through the repo worker with a thin proxy (no tool
         # modules imported here). Any failure BEFORE stdio is taken over falls through to the in-process server.
         try:

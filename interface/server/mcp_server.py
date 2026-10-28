@@ -2658,6 +2658,10 @@ def run_server(project_dir: str | None = None) -> None:
     Storage defaults to ``~/.cognirepo/storage/<project_hash>/`` to ensure
     isolation between projects even when started without flags.
     """
+    from core.config.headless import is_headless  # pylint: disable=import-outside-toplevel
+    if is_headless():  # an agent CogniRepo launched headless must not reach CogniRepo again (#88)
+        logger.info("COGNIREPO_HEADLESS set: not starting the MCP server")
+        return
     _prepare_runtime(project_dir)
     _init_mcp_session()
     import atexit as _atexit  # pylint: disable=import-outside-toplevel
