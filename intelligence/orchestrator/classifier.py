@@ -216,6 +216,15 @@ ADAPTER_STANDALONE_DEFAULTS: dict[str, str] = {
 }
 
 
+# Model *aliases* for agent CLIs used as headless backends (model_adapters/cli_adapter.py). The CLI resolves an
+# alias to its newest model in that family itself, so these cannot go stale here. Only `claude` accepts aliases;
+# `codex` and `gemini` have none, so no entry means "omit --model and use the CLI's own default" (unless the user
+# pins one). QUICK never reaches a CLI: it stays on the local resolver.
+CLI_TIER_ALIASES: dict[str, dict[str, str]] = {
+    "claude": {"STANDARD": "haiku", "COMPLEX": "sonnet", "EXPERT": "opus"},
+}
+
+
 def classify(
     query: str,
     context: dict | None = None,

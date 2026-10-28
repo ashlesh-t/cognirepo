@@ -72,6 +72,10 @@ def _record_query(project_dir: str, query_text: str) -> None:
 
 
 def main() -> int:
+    # Started by CogniRepo's own headless agent call: never record or answer (#88). Reads the env var directly
+    # (same rule as core.config.headless.is_headless) because this script can run without `core` importable.
+    if os.environ.get("COGNIREPO_HEADLESS", "").strip().lower() not in ("", "0", "false", "off", "no"):
+        return 0
     project_dir = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
 
     # Parse stdin — Claude Code sends JSON

@@ -38,6 +38,9 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 }
 ```
 
+`cli_timeout_s` (optional, default `120`, allowed `1`-`1800`): hard time limit for one headless agent-CLI call
+(`model_adapters/cli_adapter.py`). A call that exceeds it is killed (whole process group) and reported as a timeout.
+
 > **Single-model shorthand:** `cognirepo init` may write a simplified `"model": {"provider": "anthropic", "model": "claude-sonnet-4-6"}` form. This is auto-expanded to the four-tier registry at runtime. Use `cognirepo migrate-config` to canonicalise to the full form.
 
 | Field | Type | Default | Description |
@@ -93,6 +96,7 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 |----------|-------------|---------|
 | `COGNIREPO_LOCK_HOLD_WARN_SECS` | A store lock held longer than this many seconds is logged (WARNING) when released, with its duration. Default `10` | `5` |
 | `COGNIREPO_LOCK_STRICT` | Any value: taking a second, different store lock while holding one raises `LockOrderError` instead of logging a warning. For tests / debugging; see `docs/architecture/GRAPH_CONCURRENCY.md` | `1` |
+| `COGNIREPO_HEADLESS` | Set by CogniRepo itself on the agent CLIs it runs as headless backends. While set, `cognirepo serve`, the MCP server and the prompt-submit hook do nothing, so an agent started that way cannot reach CogniRepo again. Do not set it yourself: it disables those entry points. | set by the adapter |
 | `COGNIREPO_NO_WATCHER` | If set (any value), `init` / `index-repo --daemon` do not start a background watcher and `serve` does not start its in-process one. For CI, containers and the test suite | `1` |
 | `COGNIREPO_PROGRESS_FILE` | Path of a JSON file that `index-repo --files` / `--changed-only` keeps updated with `{"done", "total"}`. Set only by the `cognirepo ui` index service (#211); unset (the default) it does nothing | unset |
 | `COGNIREPO_ENCRYPT_KEY` | Encryption key (overrides keychain) | `<hex-encoded AES key>` |
