@@ -529,9 +529,24 @@ ANTHROPIC_API_KEY=sk-ant-...
 GEMINI_API_KEY=AIza...
 ```
 
-MCP tools and `cognirepo ask` work without any API keys — local QUICK-tier resolution only.
-API keys are only needed if you use `cognirepo ask` with STANDARD/COMPLEX/EXPERT tier routing
-via the `[providers]` extra.
+### No API key? Use an agent CLI you already have
+
+If `claude`, `codex` or `gemini` is installed and logged in, it can answer `cognirepo ask` instead of an API key:
+
+```bash
+cognirepo agents list                 # what is installed (local only, no quota)
+cognirepo agents enable codex         # opt in; claude and gemini also need --accept-terms-risk
+cognirepo agents probe codex          # one tiny real call to confirm the login works
+```
+
+CLIs run headless with tools, MCP and hooks off. They use your own subscription quota and receive repo-derived
+context from your query. API keys are tried first when both exist (`provider_preference: "cli"` flips that).
+The vendors' terms for this are reported to be restrictive for `claude` and `gemini`; see `cognirepo agents` in
+[CLI_REFERENCE.md](CLI_REFERENCE.md#cognirepo-agents).
+
+MCP tools and `cognirepo ask` work without any API keys or CLIs — local QUICK-tier resolution only.
+API keys (or an enabled agent CLI) are only needed if you use `cognirepo ask` with STANDARD/COMPLEX/EXPERT tier
+routing via the `[providers]` extra.
 
 ---
 

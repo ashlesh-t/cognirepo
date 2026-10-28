@@ -1115,6 +1115,7 @@ def init_project(
 
     # ── run wizard (interactive mode) ─────────────────────────────────────────
     _wizard_ran = False
+    _cli_choices: dict = {}
     if interactive  and not non_interactive:
         try:
             from interface.cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
@@ -1130,6 +1131,7 @@ def init_project(
             autosave_context = wizard_cfg.get("autosave_context", autosave_context)
             behaviour_tracking = wizard_cfg.get("behaviour_tracking", behaviour_tracking)
             tier           = wizard_cfg.get("tier", tier)
+            _cli_choices   = wizard_cfg.get("cli_backends", {})
             _wizard_ran = True
         except (ImportError, KeyboardInterrupt):
             # Fall back to non-interactive with defaults
@@ -1353,6 +1355,14 @@ def init_project(
             print(f"  Semantic store: {_n_chunks} doc chunks embedded.")
     except Exception:  # pylint: disable=broad-except
         pass  # best-effort — never block init
+
+    if _cli_choices:  # agent CLIs the user opted into in the wizard (config.json exists by now)
+        try:
+            from intelligence.orchestrator.provider_status import apply_choices  # pylint: disable=import-outside-toplevel
+            for _name, _ok_cli, _msg_cli in apply_choices(_cli_choices):
+                print(f"  {'✓' if _ok_cli else '✗'}  {_msg_cli}")
+        except Exception:  # pylint: disable=broad-except
+            pass  # best-effort — never block init
 
     print("\n✓ Done — CogniRepo is ready.")
 

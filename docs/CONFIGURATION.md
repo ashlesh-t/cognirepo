@@ -38,6 +38,9 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 }
 ```
 
+`cli_providers` (optional): `{"codex": {"enabled": true, "terms_ack": false}}`, written by `cognirepo agents enable`.
+An agent CLI is used for routing only when `enabled` is true (and `terms_ack` is true for `claude` and `gemini`).
+`provider_preference` (optional): `"api"` (default, API keys before CLIs) or `"cli"`.
 `cli_timeout_s` (optional, default `120`, allowed `1`-`1800`): hard time limit for one headless agent-CLI call
 (`model_adapters/cli_adapter.py`). A call that exceeds it is killed (whole process group) and reported as a timeout.
 
