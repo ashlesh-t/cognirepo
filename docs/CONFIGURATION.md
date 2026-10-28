@@ -142,6 +142,13 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
     2026-04-03.log
 ```
 
+Per-user files (shared by every repo, in `~/.cognirepo/` or `$COGNIREPO_GLOBAL_DIR`):
+
+| File | Purpose |
+|------|---------|
+| `repos.json` | Registry of repos CogniRepo has been used on (paths and timestamps) |
+| `provider_status.json` | Mode 0600. Which agent CLIs (`claude`, `codex`, `gemini`) are installed and whether they last worked: versions and readiness only, never credentials. Written when readiness is recorded (`cognirepo agents`); safe to delete |
+
 ---
 
 ## Encryption at Rest
