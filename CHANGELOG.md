@@ -18,6 +18,10 @@ Versioning: [Semantic Versioning](https://semver.org/)
   memory regression test. RCA: `docs/rca/COGNIREPO-98-oom-memory-growth.md` §7.
 
 ### Added
+- **Setup-latency regression tests and a manual UX suite (#89).** `tests/test_setup_latency.py` pins that provider discovery adds
+  nothing to `setup`/`init` on the common path: no network without a key or a request, agent-CLI detection in parallel with
+  a 3 s cap, and a cached `resolve_model` at about 0.05 ms per call. `docs/MANUAL_TESTS_PROVIDERS.md` lists the real-login /
+  real-key checks. The model-refresh offer in `setup` moved into `_offer_model_refresh()` (behaviour unchanged).
 - **Model discovery, opt-in (#86/#87/#88).** `cognirepo models refresh|list|clear` asks each provider that has an API key
   which models it offers (5 s per provider, 8 s overall; keys in headers only), tiers them with built-in family rules
   (unknown families stay `unassigned` and are never auto-selected) and caches the result for 24 h in
