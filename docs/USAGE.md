@@ -529,6 +529,13 @@ ANTHROPIC_API_KEY=sk-ant-...
 GEMINI_API_KEY=AIza...
 ```
 
+### Keep model ids current
+
+Defaults in `classifier.py` can go stale when a provider retires a model. `cognirepo models refresh` asks each provider
+with a key what it offers and caches it for 24 h; the router then replaces a retired default or prefers a newer model
+of the same family. It is opt-in and the only network call (`models list` and `clear` are local). Pin a model with
+`model_overrides.pin` if you want one fixed; see [CLI_REFERENCE.md](CLI_REFERENCE.md#cognirepo-models).
+
 ### No API key? Use an agent CLI you already have
 
 If `claude`, `codex` or `gemini` is installed and logged in, it can answer `cognirepo ask` instead of an API key:

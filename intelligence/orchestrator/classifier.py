@@ -29,6 +29,7 @@ Hard overrides (bypass score):
   error trace in query                    → COMPLEX minimum
 """
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -151,13 +152,16 @@ def _resolve_provider(provider: str) -> str:
     return "anthropic"  # fallback
 
 
+_DEFAULT_TIER_REGISTRY: dict[str, dict[str, str]] = {
+    "QUICK":    {"provider": "local",     "model": "local-resolver"},
+    "STANDARD": {"provider": "anthropic", "model": "claude-haiku-4-5"},
+    "COMPLEX":  {"provider": "anthropic", "model": "claude-sonnet-4-6"},
+    "EXPERT":   {"provider": "anthropic", "model": "claude-opus-4-6"},
+}
+
+
 def _load_model_registry() -> dict:
-    default = {
-        "QUICK":    {"provider": "local",     "model": "local-resolver"},
-        "STANDARD": {"provider": "anthropic", "model": "claude-haiku-4-5"},
-        "COMPLEX":  {"provider": "anthropic", "model": "claude-sonnet-4-6"},
-        "EXPERT":   {"provider": "anthropic", "model": "claude-opus-4-6"},
-    }
+    default = {tier: dict(entry) for tier, entry in _DEFAULT_TIER_REGISTRY.items()}
     if not os.path.exists(_config_file()):
         return default
     try:
@@ -223,6 +227,127 @@ ADAPTER_STANDALONE_DEFAULTS: dict[str, str] = {
 CLI_TIER_ALIASES: dict[str, dict[str, str]] = {
     "claude": {"STANDARD": "haiku", "COMPLEX": "sonnet", "EXPERT": "opus"},
 }
+
+
+# ── model discovery: tier assignment + resolution (#87/#88) ───────────────────────────────────────
+# `cognirepo models refresh` lists what an API key can use (model_discovery.py). Everything about *which
+# tier* a discovered model belongs to, and *which model wins*, lives here with the other model names.
+
+#: Not routable chat models: dropped from tiering (kept visible in `models list` as unassigned).
+_NON_CHAT_RE = re.compile(r"(embed|whisper|tts|dall-e|image|moderation|realtime|audio|transcribe|davinci|babbage|^ft[:-])")
+
+#: Ordered, first match wins. STANDARD is checked first so "*-mini" / "*-nano" / "flash" beat the broad rules.
+#: A token must start at a boundary ("gemini" must not match "mini"). Unknown families match nothing and stay
+#: unassigned: they are never auto-selected.
+_B = r"(?:^|[-_.:/])"
+FAMILY_TIER_RULES: tuple[tuple[str, "re.Pattern[str]"], ...] = (
+    ("STANDARD", re.compile(_B + r"(haiku|mini|nano|flash|fast)")),
+    ("EXPERT",   re.compile(_B + r"(opus|ultra|heavy|reason|o\d)")),
+    ("COMPLEX",  re.compile(_B + r"(sonnet|pro)(?![a-z])|^(gpt|grok|claude|gemini)-\d")),
+)
+_TIER_ORDER = ("STANDARD", "COMPLEX", "EXPERT")
+_MIN_CTX_FOR_UPPER_TIERS = 32_000
+_DATE_SUFFIX_RE = re.compile(r"-(\d{8}|\d{4}-\d{2}-\d{2})$")
+# Release noise that must not count as a version: '-preview-09-2025', '-exp', '-latest', '-001', '-0613'.
+_PRERELEASE_RE = re.compile(r"-(preview|exp|experimental|latest)\b.*$")
+_BUILD_SUFFIX_RE = re.compile(r"-(\d{3}|\d{4})$")
+MODEL_ID_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,128}$")
+
+
+def rules_hash() -> str:
+    """Fingerprint of the tier rules: a cache written under other rules is stale."""
+    import hashlib  # pylint: disable=import-outside-toplevel
+    blob = repr([(t, p.pattern) for t, p in FAMILY_TIER_RULES]) + _NON_CHAT_RE.pattern
+    return hashlib.sha256(blob.encode()).hexdigest()[:12]
+
+
+def assign_tier(model_id: str, ctx: int | None = None, methods: list[str] | None = None) -> str | None:
+    """Tier for a discovered model id, or None when it is not a routable chat model / of unknown family.
+
+    ``methods`` is Gemini's ``supportedGenerationMethods`` (must include generateContent); ``ctx`` is the input
+    token limit where the provider reports one: under 32k a COMPLEX/EXPERT guess is demoted one tier.
+    """
+    if not MODEL_ID_RE.match(model_id or ""):
+        return None
+    name = model_id.lower()
+    if _NON_CHAT_RE.search(name):
+        return None
+    if methods is not None and "generateContent" not in methods:
+        return None
+    tier = next((t for t, pat in FAMILY_TIER_RULES if pat.search(name)), None)
+    if tier is None:
+        return None
+    if ctx and ctx < _MIN_CTX_FOR_UPPER_TIERS and tier != "STANDARD":
+        tier = _TIER_ORDER[_TIER_ORDER.index(tier) - 1]
+    return tier
+
+
+def model_version(model_id: str) -> tuple[int, ...]:
+    """Numeric version parsed from an id (a trailing date is ignored); () if there is none."""
+    name = _BUILD_SUFFIX_RE.sub("", _PRERELEASE_RE.sub("", _DATE_SUFFIX_RE.sub("", model_id.lower())))
+    return tuple(int(n) for n in re.findall(r"\d+", name))
+
+
+def is_prerelease(model_id: str) -> bool:
+    """True for preview / experimental / 'latest' ids: never preferred over a stable id of the same tier."""
+    return bool(_PRERELEASE_RE.search(model_id.lower()))
+
+
+def model_family(model_id: str) -> str:
+    """The id without its version numbers and date: 'x-opus-4-6' and 'x-opus-5' share a family."""
+    parts = [p for p in re.split(r"[-_:/.]", _DATE_SUFFIX_RE.sub("", model_id.lower())) if p and not any(c.isdigit() for c in p)]
+    return "-".join(parts)
+
+
+def is_dated_snapshot(model_id: str, all_ids: "set[str] | frozenset[str]") -> bool:
+    """True for an id with a date suffix whose undated alias is also listed (prefer the alias)."""
+    stem = _DATE_SUFFIX_RE.sub("", model_id)
+    return stem != model_id and stem in all_ids
+
+
+def hardcoded_models() -> set[str]:
+    """Every model id CogniRepo ships as a default. Anything else in a config's `models` block is the user's."""
+    return ({e["model"] for e in _DEFAULT_TIER_REGISTRY.values()}
+            | set(DEFAULT_MODELS_BY_PROVIDER.values()) | set(ADAPTER_STANDALONE_DEFAULTS.values()))
+
+
+def default_model_for(provider: str, tier: str) -> str:
+    """The hardcoded default for ``provider`` at ``tier`` (what runs when nothing has been discovered)."""
+    entry = _DEFAULT_TIER_REGISTRY.get(tier, {})
+    if entry.get("provider") == provider:
+        return entry["model"]
+    return DEFAULT_MODELS_BY_PROVIDER.get(provider) or ADAPTER_STANDALONE_DEFAULTS.get(provider, "")
+
+
+def resolve_model(provider: str, tier: str | None, configured: str | None = None, cfg: dict | None = None) -> str:
+    """The model to call for ``provider`` at ``tier``. ``configured`` is what the caller would use today.
+
+    Ladder (each rung total; any error returns ``configured``): user pin (config ``model_overrides.pin``)
+    -> a model the user chose themselves in config -> a fresh discovery cache (retired default replaced; a newer
+    model of the same family and tier preferred) -> the hardcoded default. With no cache the result is exactly
+    ``configured``, so behaviour is unchanged until `cognirepo models refresh` has run.
+    """
+    baseline = configured or ""
+    try:
+        if cfg is None:
+            with open(_config_file(), encoding="utf-8") as fh:
+                cfg = json.load(fh)
+    except (OSError, ValueError):
+        cfg = {}
+    try:
+        overrides = cfg.get("model_overrides") if isinstance(cfg, dict) else None
+        overrides = overrides if isinstance(overrides, dict) else {}
+        pin = ((overrides.get("pin") or {}).get(provider) or {}).get(tier or "")
+        if isinstance(pin, str) and MODEL_ID_RE.match(pin):
+            return pin
+        if baseline and baseline not in hardcoded_models():
+            return baseline  # the user's own choice is never overridden by discovery
+        from intelligence.orchestrator.model_discovery import pick_for_tier  # pylint: disable=import-outside-toplevel
+        return pick_for_tier(provider, tier or "", baseline, overrides) or baseline
+    except Exception as exc:  # pylint: disable=broad-except
+        # total by design (routing must never fail on discovery), but say why a pin/override had no effect
+        logging.getLogger(__name__).warning("model_overrides ignored for %s/%s: %s", provider, tier, type(exc).__name__)
+        return baseline
 
 
 def classify(

@@ -986,6 +986,18 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     except Exception as exc:  # pylint: disable=broad-except
         _ok(f"Agent CLIs — detection skipped ({exc})")
 
+    # ── Check 7c: cached model lists (informational) ────────────────────────────
+    try:
+        from intelligence.orchestrator import model_discovery as _md  # pylint: disable=import-outside-toplevel
+        _bits = []
+        for _p in _md.PROVIDERS:
+            _e = _md.load_entry(_p)
+            if _e is not None:
+                _bits.append(f"{_p} {len(_e['models'])} ({'fresh' if _md.entry_is_fresh(_p, _e) else 'stale'})")
+        _ok("Model lists — " + (", ".join(_bits) if _bits else "none cached (optional: cognirepo models refresh)"))
+    except Exception as exc:  # pylint: disable=broad-except
+        _ok(f"Model lists — check skipped ({exc})")
+
     # ── Check 8: Daemon heartbeat ─────────────────────────────────────────────
     try:
         from interface.cli.daemon import (  # pylint: disable=import-outside-toplevel
@@ -1934,6 +1946,19 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     except Exception as exc:  # pylint: disable=broad-except
         print(f"  ✗ init failed: {exc}")
         sys.exit(1)
+
+    # ── 2a0. Offer (never force) a model-list refresh when API keys are present ─────
+    try:
+        from intelligence.orchestrator import model_discovery as _md  # pylint: disable=import-outside-toplevel
+        if any(_md.api_key(_p) for _p in _md.PROVIDERS):
+            print("  Run 'cognirepo models refresh' to check which models your API keys can use.")
+            if sys.stdin.isatty():
+                from interface.cli.wizard import _ask_yn  # pylint: disable=import-outside-toplevel
+                if _ask_yn("Check now? (one request per provider, 8 s cap)", default=False):
+                    for _n, _r in _md.refresh().items():
+                        print(f"    {_n}: {_r['status']}" + (f" ({_r['count']} models)" if _r["status"] == "ok" else ""))
+    except Exception:  # pylint: disable=broad-except
+        pass  # best-effort — setup never depends on discovery
 
     # ── 2a. Agent CLIs the user opted into in the wizard (config.json exists now) ──
     if cli_choices:
@@ -3707,6 +3732,64 @@ def _cmd_agents(args) -> int:
     return 0
 
 
+def _cmd_models(args) -> int:
+    """``cognirepo models refresh|list|clear`` — opt-in model discovery. Only ``refresh`` uses the network."""
+    from intelligence.orchestrator import model_discovery as md  # pylint: disable=import-outside-toplevel
+    from intelligence.orchestrator.classifier import default_model_for, resolve_model  # pylint: disable=import-outside-toplevel
+    cmd = getattr(args, "models_command", None) or "list"
+    provider = getattr(args, "provider", None)
+    if cmd == "clear":
+        ok = md.clear_cache(provider)
+        print(f"Cleared cached models for {provider or 'all providers'}." if ok else "Could not update the cache.")
+        return 0 if ok else 1
+    if cmd == "refresh":
+        try:
+            with open(get_path("config.json"), encoding="utf-8") as fh:
+                tiers = (json.load(fh).get("model_overrides") or {}).get("tiers") or {}
+        except Exception:  # pylint: disable=broad-except
+            tiers = {}
+        report = md.refresh([provider] if provider else None, timeout=args.timeout, tier_overrides=tiers)
+        for name, r in report.items():
+            line = f"{name:<10} {r['status']:<9}"
+            print(line + (f" {r['count']} models ({r['detail']})" if r["status"] == "ok" else f" {r['detail']}"))
+        if not any(r["status"] != "no_key" for r in report.values()):
+            print("No API key set for any provider; nothing to refresh.", file=sys.stderr)
+            return 1
+        return 0 if all(r["status"] in ("ok", "no_key") for r in report.values()) else 1
+    if cmd != "list":
+        return 2
+    out: dict = {}
+    for name in ([provider] if provider else md.PROVIDERS):
+        entry = md.load_entry(name)
+        if entry is None:
+            continue
+        fresh = md.entry_is_fresh(name, entry)
+        if not fresh and not getattr(args, "stale", False):
+            continue
+        effective = {}
+        for tier in ("STANDARD", "COMPLEX", "EXPERT"):
+            base = default_model_for(name, tier)
+            chosen = resolve_model(name, tier, base) if fresh else base
+            effective[tier] = {"model": chosen, "source": "discovered" if chosen != base else "default"}
+        out[name] = {"fetched_at": entry.get("fetched_at"), "fresh": fresh, "models": entry["models"],
+                     "denied": entry.get("denied", []), "effective": effective}
+    if getattr(args, "json", False):
+        print(json.dumps(out, indent=2))
+        return 0
+    if not out:
+        print("No cached models. Run `cognirepo models refresh` (needs an API key; it is the only network call).")
+        return 0
+    for name, info in out.items():
+        print(f"{name}  fetched {info['fetched_at']}  {'fresh' if info['fresh'] else 'STALE (ignored)'}")
+        for row in info["models"]:
+            if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+                continue  # hand-edited cache: skip a malformed row rather than traceback
+            mark = "  denied" if row["id"] in info["denied"] else ""
+            print(f"  {row['id']:<44} {row.get('tier') or 'unassigned':<10}{mark}")
+        print("  would use: " + ", ".join(f"{t} -> {v['model']} ({v['source']})" for t, v in info["effective"].items()))
+    return 0
+
+
 def _cmd_install_hooks() -> int:
     """Write the git hooks that keep the index in step with the files on disk.
 
@@ -4751,6 +4834,20 @@ def _main():
                                 help="Agent CLI to probe (default: every enabled one)")
     p_agents_probe.add_argument("--timeout", type=float, default=60.0, help="Seconds to wait per CLI (default 60)")
 
+    # models — which models each configured API key can use (#87/#88), opt-in and on demand
+    p_models = sub.add_parser("models", help="Check which models your API keys can use (opt-in; the only network call)")
+    models_sub = p_models.add_subparsers(dest="models_command")
+    _prov = ("anthropic", "openai", "gemini", "grok")
+    p_models_refresh = models_sub.add_parser("refresh", help="Ask each provider with a key which models it offers; cache the result")
+    p_models_refresh.add_argument("--provider", choices=_prov, default=None, help="Only this provider")
+    p_models_refresh.add_argument("--timeout", type=float, default=5.0, help="Seconds per request (default 5; 8 s overall cap)")
+    p_models_list = models_sub.add_parser("list", help="Cached models, their tiers and the model each tier would use")
+    p_models_list.add_argument("--provider", choices=_prov, default=None, help="Only this provider")
+    p_models_list.add_argument("--stale", action="store_true", default=False, help="Also show cache entries that are out of date")
+    p_models_list.add_argument("--json", action="store_true", default=False, help="Machine-readable output")
+    p_models_clear = models_sub.add_parser("clear", help="Forget the cached model lists (defaults apply again)")
+    p_models_clear.add_argument("--provider", choices=_prov, default=None, help="Only this provider")
+
     # ui — local-only control API + console (COGNIREPO-129)
     p_ui = sub.add_parser("ui", help="Start the local-only control API and open the Engram console")
     p_ui.add_argument("--host", default="127.0.0.1",
@@ -4874,7 +4971,7 @@ def _main():
 
     # ── init guard: require .cognirepo/config.json for all storage commands ──
     _INIT_EXEMPT = {"init", "setup", "doctor", "migrate-config", "setup-env", "metrics",
-                    "list", "delete", "ui", "repos", "daemon", "agents", None}
+                    "list", "delete", "ui", "repos", "daemon", "agents", "models", None}
     if args.command not in _INIT_EXEMPT:
         import pathlib  # pylint: disable=import-outside-toplevel
         from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
@@ -5309,6 +5406,9 @@ def _main():
 
     if args.command == "agents":
         sys.exit(_cmd_agents(args))
+
+    if args.command == "models":
+        sys.exit(_cmd_models(args))
 
     if args.command == "daemon":
         from interface.daemon.cli import run as _daemon_run  # pylint: disable=import-outside-toplevel

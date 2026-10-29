@@ -29,7 +29,7 @@ import subprocess  # nosec B404
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -93,17 +93,26 @@ def load() -> dict[str, Any]:
         return {"version": _STATUS_VERSION, "cli": {}}
     if not isinstance(data, dict) or not isinstance(data.get("cli"), dict):
         return {"version": _STATUS_VERSION, "cli": {}}
+    if not isinstance(data.get("api"), dict):
+        data.pop("api", None)
     return data
 
 
-def _save(doc: dict[str, Any]) -> bool:
-    """Atomic, locked, 0600 write. Returns False instead of raising (status is advisory)."""
+def modify(mutator: Callable[[dict[str, Any]], None]) -> bool:
+    """Locked read-modify-write of the whole status document (the CLI and API sections share one file).
+
+    ``mutator`` edits the loaded document in place. Atomic, 0600, returns False instead of raising: status is
+    advisory and must never break the caller.
+    """
     from core.config.atomic import atomic_json_dump  # pylint: disable=import-outside-toplevel
     from core.config.lock import store_lock  # pylint: disable=import-outside-toplevel
     try:
         path = status_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with store_lock(timeout=2.0, lock_path=path + ".lock"):
+            doc = load()
+            doc["version"] = _STATUS_VERSION
+            mutator(doc)
             atomic_json_dump(path, doc, indent=2, fsync=False)
             try:
                 os.chmod(path, 0o600)
@@ -119,10 +128,8 @@ def record_readiness(name: str, ready: bool | None, version: str | None = None) 
     """Remember that ``name`` worked (``True``), was rejected (``False``) or must be re-probed (``None``)."""
     if name not in CLI_AGENT_SPECS:
         return False
-    doc = load()
-    doc["version"] = _STATUS_VERSION
-    doc["cli"][name] = {"ready": ready, "version": version, "checked_at": _now()}
-    return _save(doc)
+    stamp = {"ready": ready, "version": version, "checked_at": _now()}
+    return modify(lambda doc: doc["cli"].__setitem__(name, stamp))
 
 
 def _probe_version(path: str, timeout: float) -> str | None:

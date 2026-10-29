@@ -60,6 +60,10 @@ vendors' terms for driving a consumer login from a third-party tool are reported
 and `gemini` (hence `--accept-terms-risk`); that is your decision and risk, and an API key avoids it.
 `~/.cognirepo/provider_status.json` (0600) holds versions and readiness only, never credentials.
 
+`cognirepo models refresh` (opt-in, never run automatically) sends one list request per provider that has a key, to that
+provider's own API, with the key in a request header. Only model ids come back; the cache stores a short hash of the key,
+never the key.
+
 CogniRepo has no telemetry, no analytics, and no callbacks to any CogniRepo server.
 There is no CogniRepo home server. Your data stays on your machine.
 
