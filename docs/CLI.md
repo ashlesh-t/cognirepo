@@ -111,6 +111,7 @@ Use `/agents` to inspect sub-agent state and `/agents cancel <id>` to stop one.
 | `GEMINI_API_KEY` | — | Gemini API key |
 | `GROK_API_KEY` | — | Grok / xAI API key |
 | `OPENAI_API_KEY` | — | OpenAI API key |
+| `COGNIREPO_HEADLESS` | — | Set by CogniRepo on agent CLIs it runs headless; makes `serve`, the MCP server and the prompt hook no-ops. Do not set it yourself |
 
 ---
 

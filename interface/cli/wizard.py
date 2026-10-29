@@ -516,6 +516,34 @@ def _animate_indexing(name: str, done_event: threading.Event) -> None:
 
 # ── main wizard entry point ───────────────────────────────────────────────────
 
+def _ask_cli_backends() -> dict[str, bool]:
+    """Offer each installed agent CLI as a routing backend. Default No; returns ``{name: terms_risk_accepted}``.
+
+    Nothing is enabled unless the user says yes here, and a CLI whose vendor terms are reported restrictive needs
+    a second, explicit acknowledgement. Detection is local (``--version`` only).
+    """
+    from intelligence.orchestrator.provider_status import CLI_AGENT_SPECS, TERMS_WARNING, detect_cli_agents  # pylint: disable=import-outside-toplevel
+    chosen: dict[str, bool] = {}
+    found = [r for r in detect_cli_agents() if r.installed]
+    if not found:
+        return chosen
+    print()
+    print(f"  {_c(_BOLD, 'Agent CLIs found:')} " + ", ".join(r.name for r in found))
+    print(f"  {_c(_DIM, 'They can answer `cognirepo ask` with no API key, using your own login and quota.')}")
+    print(f"  {_c(_DIM, 'Repo-derived context is sent to that vendor. Tools, MCP and hooks are off for the call.')}")
+    for row in found:
+        if not _ask_yn(f"Use {row.name} as a routing backend?", default=False):
+            continue
+        if CLI_AGENT_SPECS[row.name].terms_gated:
+            _warn(TERMS_WARNING)
+            if not _ask_yn(f"Enable {row.name} anyway, at your own risk?", default=False):
+                continue
+            chosen[row.name] = True
+        else:
+            chosen[row.name] = False
+    return chosen
+
+
 def run_wizard() -> dict:
     """
     Run the interactive init wizard. Returns a configuration dict with keys:
@@ -755,6 +783,9 @@ def run_wizard() -> dict:
         cfg["rejected_repos"]    = []
         cfg["orchestrator_mode"] = False
 
+    # ── Agent CLIs as routing backends (opt-in, default No) ───────────────────
+    cfg["cli_backends"] = _ask_cli_backends()
+
     # ── Confirmation summary ──────────────────────────────────────────────────
     _child_names = [s.name for s in cfg.get("child_repos", [])]
     _summary_rows = [
@@ -773,6 +804,7 @@ def run_wizard() -> dict:
         ("Sub-repos",       f"{len(_child_names)} service(s)" if _child_names else "none detected"),
         ("Services",        ", ".join(_child_names) if _child_names else "—"),
         ("Parent mode",     "orchestrator (docs only)" if cfg.get("orchestrator_mode") else "standard"),
+        ("Agent CLI backends", ", ".join(cfg.get("cli_backends", {})) or "none"),
     ]
 
     print()

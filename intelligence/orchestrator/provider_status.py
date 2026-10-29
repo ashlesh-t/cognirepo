@@ -145,8 +145,8 @@ def _probe_version(path: str, timeout: float) -> str | None:
     return None
 
 
-def _enabled_agents() -> dict[str, bool]:
-    """``cli_providers.<name>.enabled`` from the repo's config.json; empty outside an initialised repo."""
+def _read_config() -> dict[str, Any]:
+    """This repo's config.json, or {} outside an initialised repo / when unreadable. Never raises."""
     import json  # pylint: disable=import-outside-toplevel
     try:
         from core.config.paths import get_path  # pylint: disable=import-outside-toplevel
@@ -154,10 +154,147 @@ def _enabled_agents() -> dict[str, bool]:
             cfg = json.load(fh)
     except Exception:  # pylint: disable=broad-except
         return {}
-    block = cfg.get("cli_providers") if isinstance(cfg, dict) else None
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def cli_settings(cfg: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+    """``cli_providers`` from config.json: ``{agent: {"enabled": bool, "terms_ack": bool}}`` (known agents only)."""
+    block = (cfg if cfg is not None else _read_config()).get("cli_providers")
     if not isinstance(block, dict):
         return {}
-    return {n: bool(v.get("enabled")) for n, v in block.items() if isinstance(v, dict)}
+    return {n: v for n, v in block.items() if n in CLI_AGENT_SPECS and isinstance(v, dict)}
+
+
+def _enabled_agents() -> dict[str, bool]:
+    return {n: bool(v.get("enabled")) for n, v in cli_settings().items()}
+
+
+def provider_preference(cfg: dict[str, Any] | None = None) -> str:
+    """``"api"`` (default: API keys before CLIs) or ``"cli"``."""
+    value = (cfg if cfg is not None else _read_config()).get("provider_preference")
+    return "cli" if value == "cli" else "api"
+
+
+def enabled_cli_backends(cfg: dict[str, Any] | None = None) -> list[str]:
+    """Agent names the router may use right now, best first. Cheap enough for the hot path: no subprocess.
+
+    An agent qualifies when it is enabled (and, if its vendor terms are reported restrictive, the user
+    acknowledged that), its binary is on PATH, and its last recorded outcome was not an auth failure.
+    Known-working agents come before untested ones.
+    """
+    settings = cli_settings(cfg)
+    saved = load()["cli"]
+    good: list[str] = []
+    unknown: list[str] = []
+    for name, spec in CLI_AGENT_SPECS.items():
+        conf = settings.get(name)
+        if not conf or not conf.get("enabled"):
+            continue
+        if spec.terms_gated and not conf.get("terms_ack"):
+            continue
+        if not shutil.which(spec.binary):
+            continue
+        prior = saved.get(name)
+        ready = prior.get("ready") if isinstance(prior, dict) else None
+        if ready is False:
+            continue
+        (good if ready is True else unknown).append(name)
+    return good + unknown
+
+
+def mark_result(agent: str, ok: bool) -> None:
+    """Record that a real call to ``agent`` worked or was rejected. No write when nothing changed. Never raises."""
+    try:
+        spec = CLI_AGENT_SPECS.get(agent)
+        if spec is None:
+            return
+        prior = load()["cli"].get(agent)
+        if isinstance(prior, dict) and prior.get("ready") is ok:
+            return
+        path = shutil.which(spec.binary)
+        record_readiness(agent, ok, _probe_version(path, VERSION_TIMEOUT_S) if path else None)
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.debug("mark_result(%s) skipped: %s", agent, exc)
+
+
+TERMS_WARNING = (
+    "Vendor terms for driving a consumer subscription login from a third-party tool are reported to be "
+    "restrictive for this CLI (accounts have reportedly been limited or suspended). Re-run with "
+    "--accept-terms-risk to enable it anyway, at your own risk. An API key avoids the question."
+)
+DATA_NOTICE = (
+    "Enabled CLIs receive repo-derived context from your queries and use your own subscription quota. "
+    "They run with tools, MCP and hooks off. Verify with: cognirepo agents probe {name}"
+)
+
+
+def _write_setting(agent: str, value: dict[str, Any]) -> None:
+    from core.config.paths import get_cognirepo_dir  # pylint: disable=import-outside-toplevel
+    from core.config.store_settings import set_value  # pylint: disable=import-outside-toplevel
+    set_value(get_cognirepo_dir(), "cli_providers", agent, value)
+
+
+def enable_agent(agent: str, accept_terms_risk: bool = False) -> tuple[bool, str]:
+    """Turn ``agent`` on as a routing backend. Returns ``(ok, message)``; writes nothing on refusal."""
+    from core.config.store_settings import SettingsError  # pylint: disable=import-outside-toplevel
+    spec = CLI_AGENT_SPECS.get(agent)
+    if spec is None:
+        return False, f"unknown agent {agent!r} (known: {', '.join(CLI_AGENT_SPECS)})"
+    if not shutil.which(spec.binary):
+        return False, f"{spec.binary} was not found on PATH"
+    prior = cli_settings().get(agent, {})
+    acked = bool(accept_terms_risk or prior.get("terms_ack"))
+    if spec.terms_gated and not acked:
+        return False, TERMS_WARNING
+    try:
+        _write_setting(agent, {"enabled": True, "terms_ack": acked})
+    except SettingsError as exc:
+        return False, exc.message
+    return True, f"{agent} enabled. " + DATA_NOTICE.format(name=agent)
+
+
+def apply_choices(choices: dict[str, bool]) -> list[tuple[str, bool, str]]:
+    """Enable what the setup wizard collected (``{agent: terms_risk_accepted}``). Returns ``(agent, ok, message)``."""
+    return [(name, *enable_agent(name, accept_terms_risk=bool(acked))) for name, acked in choices.items()]
+
+
+def disable_agent(agent: str) -> tuple[bool, str]:
+    from core.config.store_settings import SettingsError  # pylint: disable=import-outside-toplevel
+    if agent not in CLI_AGENT_SPECS:
+        return False, f"unknown agent {agent!r} (known: {', '.join(CLI_AGENT_SPECS)})"
+    prior = cli_settings().get(agent, {})
+    try:
+        _write_setting(agent, {"enabled": False, "terms_ack": bool(prior.get("terms_ack"))})
+    except SettingsError as exc:
+        return False, exc.message
+    return True, f"{agent} disabled."
+
+
+def probe_agent(agent: str, timeout: float = 60.0) -> tuple[bool | None, str]:
+    """One tiny real call to an *enabled* agent. Records readiness. Returns ``(ready, detail)``.
+
+    ``ready`` is None when the outcome says nothing about login (timeout, crash)."""
+    from intelligence.orchestrator.model_adapters import cli_adapter  # pylint: disable=import-outside-toplevel
+    from intelligence.orchestrator.model_adapters.errors import ModelCallError  # pylint: disable=import-outside-toplevel
+    spec = CLI_AGENT_SPECS.get(agent)
+    if spec is None:
+        return None, f"unknown agent {agent!r}"
+    conf = cli_settings().get(agent, {})
+    if not conf.get("enabled"):
+        return None, f"{agent} is not enabled (cognirepo agents enable {agent})"
+    if spec.terms_gated and not conf.get("terms_ack"):
+        return None, TERMS_WARNING
+    path = shutil.which(spec.binary)
+    version = _probe_version(path, VERSION_TIMEOUT_S) if path else None
+    try:
+        reply = cli_adapter.call("Reply with the single word OK.", agent=agent, timeout=timeout)
+    except ModelCallError as exc:
+        if exc.status_code == 401:
+            record_readiness(agent, False, version)
+            return False, f"not logged in or rejected: {exc.message}"
+        return None, f"inconclusive: {exc.message}"
+    record_readiness(agent, True, version)
+    return True, f"ok ({reply.usage.get('input_tokens', 0)} in / {reply.usage.get('output_tokens', 0)} out tokens)"
 
 
 def _detect_one(spec: CliAgentSpec, timeout: float) -> tuple[str | None, str | None]:

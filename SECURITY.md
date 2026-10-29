@@ -52,6 +52,14 @@ CogniRepo never sends data to external servers.
 Query text and the assembled context bundle are sent to whichever model API you
 configure (Anthropic, Google, xAI, OpenAI). **Nothing else.**
 
+If you enable an installed agent CLI (`cognirepo agents enable`, opt-in, default off) the same query text and
+context go to that CLI's vendor through the CLI, using your own login and subscription quota. The CLI is run
+headless from an empty directory with tools, MCP, user hooks and session files off, with every provider API-key
+variable removed from its environment, and with `COGNIREPO_HEADLESS=1` so it cannot reach CogniRepo again. The
+vendors' terms for driving a consumer login from a third-party tool are reported to be restrictive for `claude`
+and `gemini` (hence `--accept-terms-risk`); that is your decision and risk, and an API key avoids it.
+`~/.cognirepo/provider_status.json` (0600) holds versions and readiness only, never credentials.
+
 CogniRepo has no telemetry, no analytics, and no callbacks to any CogniRepo server.
 There is no CogniRepo home server. Your data stays on your machine.
 

@@ -770,28 +770,43 @@ cognirepo repos scan --root DIR [--depth 3] [--dry-run]   # find initialised rep
 
 ## cognirepo agents
 
-Show which agent CLIs (`claude`, `codex`, `gemini`) are installed and could serve as routing backends. See the
-design in [planning/07-model-discovery-design.md](planning/07-model-discovery-design.md).
+Agent CLIs (`claude`, `codex`, `gemini`) that can answer `cognirepo ask` as a headless backend, with no API key.
+Design: [planning/07-model-discovery-design.md](planning/07-model-discovery-design.md).
 
 ```bash
 cognirepo agents list [--json]
+cognirepo agents enable NAME [--accept-terms-risk]
+cognirepo agents disable NAME
+cognirepo agents probe [NAME] [--timeout S]
 ```
+
+| Subcommand | Description |
+|------------|-------------|
+| `list` | Installed / enabled / ready state of each CLI. Local only: `PATH` lookup plus `<binary> --version` (3 s cap each, in parallel). Never makes a model call, so it spends no quota and works offline |
+| `enable NAME` | Use `NAME` as a routing backend (`cli_providers.<name>.enabled` in `.cognirepo/config.json`). Nothing is enabled by default. Needs an initialised repo and the binary on `PATH` |
+| `disable NAME` | Stop using it (the terms acknowledgement is kept) |
+| `probe [NAME]` | One tiny real call to each enabled CLI (or just `NAME`) to check it is logged in; records `ready`. Spends a few tokens of your own quota |
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--json` | `False` | Machine-readable output (one object per CLI: `name`, `installed`, `enabled`, `ready`, `version`, `path`, `terms_gated`) |
+| `--json` | `False` | `list`: machine-readable output (`name`, `installed`, `enabled`, `ready`, `version`, `path`, `terms_gated`) |
+| `--accept-terms-risk` | `False` | `enable`: required for `claude` and `gemini`. Their vendors' terms are reported to restrict third-party use of a consumer login (accounts have reportedly been limited or suspended); this acknowledges that risk. `codex` does not need it. An API key avoids the question |
+| `--timeout S` | `60` | `probe`: seconds to wait per CLI |
 
-`list` is local only: it looks the binaries up on `PATH` and runs `<binary> --version` (3 s cap each, in parallel).
-It never makes a model call, so it spends no quota and works offline.
-
-| Column | Meaning |
-|--------|---------|
+| `list` column | Meaning |
+|---------------|---------|
 | `INSTALLED` | On `PATH` and answers `--version` |
-| `ENABLED` | `cli_providers.<name>.enabled` in `.cognirepo/config.json` (nothing is enabled by default) |
+| `ENABLED` | `cli_providers.<name>.enabled` in `.cognirepo/config.json` |
 | `READY` | `yes` after a successful real call, `no` after an auth failure, `unknown` if never called or the CLI version changed |
 
-`doctor` also prints one informational line listing the detected CLIs; it never fails on them. State is kept in
-`~/.cognirepo/provider_status.json` (see [CONFIGURATION.md](CONFIGURATION.md#storage-layout)).
+**How routing uses them.** With `provider_preference` `"api"` (default) API keys are tried first and enabled CLIs are
+the fallback, and the only path when no key is set; `"cli"` tries CLIs first. A CLI that fails with an auth error is
+skipped until `probe` succeeds. A CLI is always run headless with tools, MCP, user hooks and session files off, from an
+empty directory, with `COGNIREPO_HEADLESS=1` set and every provider API-key variable removed from its environment.
+Repo-derived context from your query is sent to that vendor and counts against your own subscription.
+
+`doctor` prints one informational line listing detected CLIs. `setup` / interactive `init` ask once per detected CLI
+(default **No**). State is kept in `~/.cognirepo/provider_status.json` (see [CONFIGURATION.md](CONFIGURATION.md#storage-layout)).
 
 ---
 

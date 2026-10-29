@@ -35,7 +35,9 @@ import traceback
 from dataclasses import dataclass
 from typing import Generator
 
-from intelligence.orchestrator.classifier import ADAPTER_STANDALONE_DEFAULTS, ClassifierResult, classify, DEFAULT_MODELS_BY_PROVIDER
+from intelligence.orchestrator.classifier import (
+    ADAPTER_STANDALONE_DEFAULTS, CLI_TIER_ALIASES, ClassifierResult, classify, DEFAULT_MODELS_BY_PROVIDER,
+)
 from intelligence.orchestrator.context_builder import ContextBundle, build as build_context
 from intelligence.orchestrator.model_adapters.anthropic_adapter import ModelResponse
 from intelligence.orchestrator.model_adapters.errors import ModelCallError
@@ -202,6 +204,7 @@ def route(
             tool_manifest=bundle.tool_manifest,
             max_tokens=max_tokens,
             messages_history=messages_history,
+            tier=clf.tier,
         )
     except ModelCallError as exc:
         error_msg = f"ModelCallError [{clf.provider}/{clf.model}]: {exc.message}"
@@ -269,6 +272,62 @@ def _available_providers() -> list[str]:
     return available
 
 
+#: Backend names of agent CLIs used as headless completion engines: "<agent>-cli" (see model_adapters/cli_adapter.py).
+_CLI_SUFFIX = "-cli"
+
+
+def _is_cli_backend(provider: str) -> bool:
+    return provider.endswith(_CLI_SUFFIX)
+
+
+def _cli_backends() -> list[str]:
+    """Enabled, usable agent-CLI backends as provider names. Never raises (a broken status file means none)."""
+    try:
+        from intelligence.orchestrator.provider_status import enabled_cli_backends  # pylint: disable=import-outside-toplevel
+        return [f"{a}{_CLI_SUFFIX}" for a in enabled_cli_backends(_load_config())]
+    except Exception:  # pylint: disable=broad-except
+        return []
+
+
+def _prefers_cli() -> bool:
+    return _load_config().get("provider_preference") == "cli"
+
+
+def _ordered_backends(primary_provider: str | None) -> list[str]:
+    """API providers (primary first, then priority order) and enabled CLI backends, best first.
+
+    API keys come before CLIs unless config ``provider_preference`` is ``"cli"``. With only API keys this is
+    exactly the previous ordering.
+    """
+    available = _available_providers()
+    api: list[str] = []
+    if primary_provider in available:
+        api.append(primary_provider)  # type: ignore[arg-type]
+    for p in _PROVIDER_PRIORITY:
+        if p in available and p not in api:
+            api.append(p)
+    cli = _cli_backends()
+    return cli + api if cli and _prefers_cli() else api + cli
+
+
+def _model_for(provider: str, tier: str | None, primary_provider: str | None = None, primary_model: str | None = None) -> str:
+    """Model id to send ``provider``: the classifier's pick for the primary, else a CLI alias or the provider default."""
+    if _is_cli_backend(provider):
+        return CLI_TIER_ALIASES.get(provider[: -len(_CLI_SUFFIX)], {}).get(tier or "", "")
+    if primary_model and provider == primary_provider:
+        return primary_model
+    return _PROVIDER_DEFAULT_MODELS.get(provider, primary_model or DEFAULT_MODELS_BY_PROVIDER["anthropic"])
+
+
+def _note_cli_result(provider: str, ok: bool) -> None:
+    if _is_cli_backend(provider):
+        try:
+            from intelligence.orchestrator.provider_status import mark_result  # pylint: disable=import-outside-toplevel
+            mark_result(provider[: -len(_CLI_SUFFIX)], ok)
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+
 def _dispatch_with_fallback(
     query: str,
     primary_provider: str,
@@ -277,21 +336,14 @@ def _dispatch_with_fallback(
     tool_manifest: list[dict],
     max_tokens: int,
     messages_history: list[dict] | None = None,
+    tier: str | None = None,
 ) -> ModelResponse:
     """
-    Try the primary provider first, then fall back through available providers.
+    Try the primary provider first, then fall back through available backends (API keys, then enabled CLIs).
 
-    Raises :class:`ModelCallError` only after all providers have been exhausted.
+    Raises :class:`ModelCallError` only after all backends have been exhausted.
     """
-    available = _available_providers()
-
-    # Build ordered provider list: primary first, then remaining available providers
-    ordered: list[str] = []
-    if primary_provider in available:
-        ordered.append(primary_provider)
-    for p in _PROVIDER_PRIORITY:
-        if p in available and p not in ordered:
-            ordered.append(p)
+    ordered = _ordered_backends(primary_provider)
 
     if not ordered:
         # No keys configured — try the primary anyway (let it fail with a clear error)
@@ -299,22 +351,27 @@ def _dispatch_with_fallback(
 
     last_exc: Exception | None = None
     for i, provider in enumerate(ordered):
-        model_id = (
-            primary_model if provider == primary_provider
-            else _PROVIDER_DEFAULT_MODELS.get(provider, primary_model)
-        )
+        model_id = _model_for(provider, tier, primary_provider, primary_model)
         is_fallback = i > 0
         if is_fallback:
             logger.debug("Falling back from %s to %s/%s", ordered[i - 1], provider, model_id)
         try:
-            return _call_adapter(
+            result = _call_adapter(
                 query=query, provider=provider, model_id=model_id,
                 system_prompt=system_prompt, tool_manifest=tool_manifest,
                 max_tokens=max_tokens, messages_history=messages_history,
             )
+            _note_cli_result(provider, True)
+            return result
         except ModelCallError as exc:
             last_exc = exc
-            if exc.status_code in ModelCallError.NON_RETRYABLE_CODES or i == len(ordered) - 1:
+            if exc.status_code == 401:
+                _note_cli_result(provider, False)
+            # A non-retryable API error (bad key, bad request) stops the chain, unless an agent CLI is still
+            # waiting: that is exactly the "key path failed, use the CLI" case. A failing CLI never stops it.
+            cli_left = any(_is_cli_backend(p) for p in ordered[i + 1:])
+            stop = exc.status_code in ModelCallError.NON_RETRYABLE_CODES and not _is_cli_backend(provider) and not cli_left
+            if stop or i == len(ordered) - 1:
                 raise
             continue
 
@@ -333,11 +390,11 @@ def _promote_to_standard(
     by re-classifying and dispatching to the best available provider.
     Returns None if no provider is available.
     """
-    available = _available_providers()
+    available = _ordered_backends(None)
     if not available:
         return None
     provider = available[0]
-    model_id = _PROVIDER_DEFAULT_MODELS.get(provider, DEFAULT_MODELS_BY_PROVIDER["anthropic"])
+    model_id = _model_for(provider, "STANDARD")
     try:
         return _call_adapter(
             query=query, provider=provider, model_id=model_id,
@@ -396,6 +453,9 @@ def _call_adapter(
     if provider in ("openai", "azure", "ollama", "lmstudio"):
         from intelligence.orchestrator.model_adapters import openai_adapter  # pylint: disable=import-outside-toplevel
         return openai_adapter.call(**kwargs)
+    if _is_cli_backend(provider):
+        from intelligence.orchestrator.model_adapters import cli_adapter  # pylint: disable=import-outside-toplevel
+        return cli_adapter.call(agent=provider[: -len(_CLI_SUFFIX)], **kwargs)
     raise ValueError(f"Unknown provider: {provider!r}")
 
 
@@ -623,10 +683,16 @@ def stream_route(
     full_text: list[str] = []
     usage: dict = {}
 
+    provider, model_id = clf.provider, clf.model
+    if provider != "local":  # an enabled CLI replaces a primary that has no usable API key (or when preferred)
+        first = next(iter(_ordered_backends(provider)), None)
+        if first is not None and _is_cli_backend(first) and first != provider:
+            provider, model_id = first, _model_for(first, clf.tier)
+
     gen = _stream_dispatch(
         query=query,
-        provider=clf.provider,
-        model_id=clf.model,
+        provider=provider,
+        model_id=model_id,
         system_prompt=bundle.system_prompt,
         tool_manifest=bundle.tool_manifest,
         max_tokens=max_tokens,
@@ -652,8 +718,8 @@ def stream_route(
     # Post-process after stream completes (runs before caller's StopIteration)
     response = ModelResponse(
         text="".join(full_text),
-        model=clf.model,
-        provider=clf.provider,
+        model=model_id,
+        provider=provider,
         usage=usage,
     )
     _post_process(query=query, clf=clf, bundle=bundle, response=response)
@@ -686,10 +752,10 @@ def _stream_dispatch(
         except NoLocalAnswer:
             # Promote to STANDARD — fall back to first available provider
             logger.info("local_adapter (stream): no answer, promoting to STANDARD")
-            available = _available_providers()
+            available = _ordered_backends(None)
             if available:
                 promoted_provider = available[0]
-                promoted_model = _PROVIDER_DEFAULT_MODELS.get(promoted_provider, DEFAULT_MODELS_BY_PROVIDER["anthropic"])
+                promoted_model = _model_for(promoted_provider, "STANDARD")
                 kwargs["model_id"] = promoted_model
                 del kwargs["stream"]
                 kwargs["stream"] = True
@@ -713,6 +779,16 @@ def _stream_dispatch(
     if provider in ("openai", "azure", "ollama", "lmstudio"):
         from intelligence.orchestrator.model_adapters import openai_adapter  # pylint: disable=import-outside-toplevel
         return (yield from openai_adapter.call(**kwargs))
+    if _is_cli_backend(provider):
+        from intelligence.orchestrator.model_adapters import cli_adapter  # pylint: disable=import-outside-toplevel
+        try:
+            usage = yield from cli_adapter.call(agent=provider[: -len(_CLI_SUFFIX)], **kwargs)
+        except ModelCallError as exc:
+            if exc.status_code == 401:
+                _note_cli_result(provider, False)
+            raise
+        _note_cli_result(provider, True)
+        return usage
     raise ValueError(f"Unknown provider: {provider!r}")
 
 

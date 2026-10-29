@@ -190,7 +190,8 @@ Use `get_storage_adapter()` factory (`core/vector_db/__init__.py`) — do not in
 |--------|---------------|
 | `intelligence/orchestrator/classifier.py` | Query complexity classifier — QUICK / STANDARD / COMPLEX / EXPERT |
 | `intelligence/orchestrator/router.py` | Routes QUICK to Gemini Flash, COMPLEX to Claude Opus, etc. |
-| `intelligence/orchestrator/model_adapters/cli_adapter.py` | An installed agent CLI (`claude`, `codex`, `gemini`) as a headless text-in/text-out backend: neutral empty cwd, tools / MCP / hooks / session files off, API-key env vars stripped, `COGNIREPO_HEADLESS=1` set so CogniRepo never calls itself through the agent. Not yet reachable from `router.py` (wired in a follow-up). |
+| `intelligence/orchestrator/model_adapters/cli_adapter.py` | An installed agent CLI (`claude`, `codex`, `gemini`) as a headless text-in/text-out backend: neutral empty cwd, tools / MCP / hooks / session files off, API-key env vars stripped, `COGNIREPO_HEADLESS=1` set so CogniRepo never calls itself through the agent. Reached from `router.py` as backend `<agent>-cli` (`_ordered_backends()`): API keys first, enabled CLIs as the fallback or the only path, or CLIs first with `provider_preference: "cli"`. |
+| `intelligence/orchestrator/provider_status.py` | Which agent CLIs are installed / enabled / known to work (local detection, readiness, `enable`/`disable`/`probe`), state in `~/.cognirepo/provider_status.json` |
 | `core/config/headless.py` | `is_headless()` — the recursion guard checked by `cognirepo serve`, the MCP server and the prompt-submit hook |
 | `intelligence/orchestrator/insights_collector.py` | `collect(repo_root, since)` — COGNIREPO-301: aggregates the merged timeline, git history (`interface/tools/git_utils.py`), behaviour hot symbols, and graph stats/integrity into one read-only InsightsModel dict for the EPIC-300 repo-insights report. No MCP tool wrapper yet. |
 

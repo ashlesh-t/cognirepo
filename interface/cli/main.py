@@ -1910,6 +1910,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     child_repos       = wizard_cfg.pop("child_repos", [])
     rejected_repos    = wizard_cfg.pop("rejected_repos", [])
     orchestrator_mode = wizard_cfg.pop("orchestrator_mode", False)
+    cli_choices          = wizard_cfg.pop("cli_backends", {})
 
     # ── 2. Init + index parent repo ──────────────────────────────────────────
     try:
@@ -1933,6 +1934,12 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     except Exception as exc:  # pylint: disable=broad-except
         print(f"  ✗ init failed: {exc}")
         sys.exit(1)
+
+    # ── 2a. Agent CLIs the user opted into in the wizard (config.json exists now) ──
+    if cli_choices:
+        from intelligence.orchestrator import provider_status as _ps  # pylint: disable=import-outside-toplevel
+        for _name, _ok_cli, _msg_cli in _ps.apply_choices(cli_choices):
+            print(f"  {'✓' if _ok_cli else '✗'}  {_msg_cli}")
 
     # ── 2b. No changelog file or git tags found — offer to seed release notes ──
     if sys.stdin.isatty():
@@ -2291,7 +2298,9 @@ def _cmd_ask_local(query: str, verbose: bool = False, top_k: int = 5) -> None:
         "  • episodic_search(\"" + query[:40] + "\")  — searches past decisions\n"
         "\nOr install model providers and set an API key:\n"
         "  pip install 'cognirepo[providers]'\n"
-        "  export ANTHROPIC_API_KEY=sk-..."
+        "  export ANTHROPIC_API_KEY=sk-...\n"
+        "\nOr use an agent CLI you already have installed and logged in (claude, codex, gemini):\n"
+        "  cognirepo agents list && cognirepo agents enable codex"
     )
 
 
@@ -3657,12 +3666,31 @@ def _cmd_repos(args) -> int:
 
 
 def _cmd_agents(args) -> int:
-    """``cognirepo agents list`` — which agent CLIs are installed, enabled and known to work. Local only."""
-    from intelligence.orchestrator.provider_status import detect_cli_agents  # pylint: disable=import-outside-toplevel
+    """``cognirepo agents list|enable|disable|probe`` — agent CLIs usable as routing backends."""
+    from intelligence.orchestrator import provider_status as ps  # pylint: disable=import-outside-toplevel
     cmd = getattr(args, "agents_command", None) or "list"
+    if cmd == "enable":
+        ok, msg = ps.enable_agent(args.name, accept_terms_risk=args.accept_terms_risk)
+        print(msg, file=sys.stdout if ok else sys.stderr)
+        return 0 if ok else 1
+    if cmd == "disable":
+        ok, msg = ps.disable_agent(args.name)
+        print(msg, file=sys.stdout if ok else sys.stderr)
+        return 0 if ok else 1
+    if cmd == "probe":
+        names = [args.name] if args.name else [n for n, c in ps.cli_settings().items() if c.get("enabled")]
+        if not names:
+            print("No agent CLI is enabled. Run `cognirepo agents enable <name>` first.", file=sys.stderr)
+            return 1
+        code = 0
+        for name in names:
+            ready, detail = ps.probe_agent(name, timeout=args.timeout)
+            print(f"{name}: {'ready' if ready else 'NOT ready' if ready is False else 'inconclusive'} — {detail}")
+            code = code or (0 if ready else 1)
+        return code
     if cmd != "list":
         return 2
-    rows = detect_cli_agents()
+    rows = ps.detect_cli_agents()
     if getattr(args, "json", False):
         print(json.dumps([r.to_dict() for r in rows], indent=2))
         return 0
@@ -3672,7 +3700,8 @@ def _cmd_agents(args) -> int:
         print(f"{r.name:<8} {'yes' if r.installed else 'no':<10} {'yes' if r.enabled else 'no':<8} "
               f"{ready_txt[r.ready] if r.installed else '-':<8} {r.version or '-'}")
     if any(r.installed for r in rows):
-        print("\nDetected CLIs are not used for routing until enabled. Nothing was called and no quota was spent.")
+        print("\nOnly enabled CLIs are used for routing (`cognirepo agents enable <name>`). "
+              "Listing made no model call and spent no quota.")
     else:
         print("\nNo agent CLI found on PATH.")
     return 0
@@ -4708,6 +4737,19 @@ def _main():
     agents_sub = p_agents.add_subparsers(dest="agents_command")
     p_agents_list = agents_sub.add_parser("list", help="Installed / enabled / ready state of each agent CLI (local only)")
     p_agents_list.add_argument("--json", action="store_true", default=False, help="Machine-readable output")
+    p_agents_enable = agents_sub.add_parser(
+        "enable", help="Use an installed agent CLI as a routing backend (spends your subscription quota)")
+    p_agents_enable.add_argument("name", choices=("claude", "codex", "gemini"), help="Agent CLI to enable")
+    p_agents_enable.add_argument(
+        "--accept-terms-risk", action="store_true", default=False,
+        help="Required for CLIs whose vendor terms are reported to restrict third-party use of a consumer login")
+    p_agents_disable = agents_sub.add_parser("disable", help="Stop using an agent CLI as a routing backend")
+    p_agents_disable.add_argument("name", choices=("claude", "codex", "gemini"), help="Agent CLI to disable")
+    p_agents_probe = agents_sub.add_parser(
+        "probe", help="Make one tiny real call to enabled agent CLIs to check they are logged in (spends a few tokens)")
+    p_agents_probe.add_argument("name", nargs="?", choices=("claude", "codex", "gemini"),
+                                help="Agent CLI to probe (default: every enabled one)")
+    p_agents_probe.add_argument("--timeout", type=float, default=60.0, help="Seconds to wait per CLI (default 60)")
 
     # ui — local-only control API + console (COGNIREPO-129)
     p_ui = sub.add_parser("ui", help="Start the local-only control API and open the Engram console")

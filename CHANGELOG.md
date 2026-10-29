@@ -18,6 +18,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
   memory regression test. RCA: `docs/rca/COGNIREPO-98-oom-memory-growth.md` §7.
 
 ### Added
+- **Agent CLIs as routing backends (#86/#87/#88).** Installed `claude`, `codex` and `gemini` can answer `cognirepo ask`
+  with no API key, run headless (tools, MCP, hooks and session files off, empty working directory, provider API-key
+  variables stripped, `COGNIREPO_HEADLESS=1` so they cannot call CogniRepo back). New `cognirepo agents
+  list|enable|disable|probe`; opt-in per CLI (default No in `setup` / `init`), `--accept-terms-risk` for `claude` and
+  `gemini` whose vendor terms are reported restrictive. API keys are tried first unless `provider_preference` is
+  `"cli"`; a non-retryable API error now falls through to an enabled CLI instead of ending the chain. Config:
+  `cli_providers`, `provider_preference`, `cli_timeout_s`. State: `~/.cognirepo/provider_status.json`.
 - **Graph storage toggle and two-way migration (#115 follow-up).** New `cognirepo graph backend` (what is in use, file
   sizes, and a recommendation with reasons: networkx for small repos / one session / encryption, SQLite for roughly 100k+
   nodes, several agents on a repo, or tight memory) and `cognirepo graph migrate --to networkx|sqlite [--dry-run]

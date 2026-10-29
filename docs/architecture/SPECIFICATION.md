@@ -229,6 +229,15 @@ Full language support details and the roadmap for adding new languages: [LANGUAG
 
 ---
 
+## Agent CLIs as backends
+
+Besides API-key providers, `router._ordered_backends()` includes enabled agent CLIs as providers named
+`<agent>-cli` (`claude-cli`, `codex-cli`, `gemini-cli`), served by `model_adapters/cli_adapter.py`. Enablement is
+per repo (`cli_providers` in `config.json`, set by `cognirepo agents enable`); readiness is per user
+(`~/.cognirepo/provider_status.json`). A CLI that fails with an auth error is skipped until `agents probe`
+succeeds. Tier -> model for `claude` uses aliases in `classifier.CLI_TIER_ALIASES`; `codex` and `gemini` use the
+CLI's own default model.
+
 ## Adding a Model Adapter
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. In brief:
