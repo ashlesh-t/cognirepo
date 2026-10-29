@@ -12,7 +12,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.config.paths import get_path
 from intelligence.orchestrator import classifier as clf
 from intelligence.orchestrator import model_discovery as md
 from intelligence.orchestrator import provider_status as ps
