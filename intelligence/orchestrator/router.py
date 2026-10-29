@@ -37,6 +37,7 @@ from typing import Generator
 
 from intelligence.orchestrator.classifier import (
     ADAPTER_STANDALONE_DEFAULTS, CLI_TIER_ALIASES, ClassifierResult, classify, DEFAULT_MODELS_BY_PROVIDER,
+    resolve_model,
 )
 from intelligence.orchestrator.context_builder import ContextBundle, build as build_context
 from intelligence.orchestrator.model_adapters.anthropic_adapter import ModelResponse
@@ -311,12 +312,15 @@ def _ordered_backends(primary_provider: str | None) -> list[str]:
 
 
 def _model_for(provider: str, tier: str | None, primary_provider: str | None = None, primary_model: str | None = None) -> str:
-    """Model id to send ``provider``: the classifier's pick for the primary, else a CLI alias or the provider default."""
+    """Model id to send ``provider``: a CLI alias, or the classifier's pick / the provider default for an API
+    provider, passed through ``resolve_model`` (a no-op until `cognirepo models refresh` has cached something)."""
     if _is_cli_backend(provider):
         return CLI_TIER_ALIASES.get(provider[: -len(_CLI_SUFFIX)], {}).get(tier or "", "")
     if primary_model and provider == primary_provider:
-        return primary_model
-    return _PROVIDER_DEFAULT_MODELS.get(provider, primary_model or DEFAULT_MODELS_BY_PROVIDER["anthropic"])
+        baseline = primary_model
+    else:
+        baseline = _PROVIDER_DEFAULT_MODELS.get(provider, primary_model or DEFAULT_MODELS_BY_PROVIDER["anthropic"])
+    return resolve_model(provider, tier, baseline, _load_config())
 
 
 def _note_cli_result(provider: str, ok: bool) -> None:
@@ -367,6 +371,12 @@ def _dispatch_with_fallback(
             last_exc = exc
             if exc.status_code == 401:
                 _note_cli_result(provider, False)
+            elif exc.status_code == 404 and not _is_cli_backend(provider):
+                try:  # the key cannot see this model: stop picking it until the next `models refresh`
+                    from intelligence.orchestrator.model_discovery import deny  # pylint: disable=import-outside-toplevel
+                    deny(provider, model_id)
+                except Exception:  # pylint: disable=broad-except
+                    pass
             # A non-retryable API error (bad key, bad request) stops the chain, unless an agent CLI is still
             # waiting: that is exactly the "key path failed, use the CLI" case. A failing CLI never stops it.
             cli_left = any(_is_cli_backend(p) for p in ordered[i + 1:])
@@ -688,6 +698,8 @@ def stream_route(
         first = next(iter(_ordered_backends(provider)), None)
         if first is not None and _is_cli_backend(first) and first != provider:
             provider, model_id = first, _model_for(first, clf.tier)
+        else:
+            model_id = _model_for(provider, clf.tier, provider, clf.model)
 
     gen = _stream_dispatch(
         query=query,
