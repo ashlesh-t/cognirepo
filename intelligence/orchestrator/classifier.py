@@ -29,6 +29,7 @@ Hard overrides (bypass score):
   error trace in query                    → COMPLEX minimum
 """
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -247,6 +248,9 @@ FAMILY_TIER_RULES: tuple[tuple[str, "re.Pattern[str]"], ...] = (
 _TIER_ORDER = ("STANDARD", "COMPLEX", "EXPERT")
 _MIN_CTX_FOR_UPPER_TIERS = 32_000
 _DATE_SUFFIX_RE = re.compile(r"-(\d{8}|\d{4}-\d{2}-\d{2})$")
+# Release noise that must not count as a version: '-preview-09-2025', '-exp', '-latest', '-001', '-0613'.
+_PRERELEASE_RE = re.compile(r"-(preview|exp|experimental|latest)\b.*$")
+_BUILD_SUFFIX_RE = re.compile(r"-(\d{3}|\d{4})$")
 MODEL_ID_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,128}$")
 
 
@@ -280,7 +284,13 @@ def assign_tier(model_id: str, ctx: int | None = None, methods: list[str] | None
 
 def model_version(model_id: str) -> tuple[int, ...]:
     """Numeric version parsed from an id (a trailing date is ignored); () if there is none."""
-    return tuple(int(n) for n in re.findall(r"\d+", _DATE_SUFFIX_RE.sub("", model_id.lower())))
+    name = _BUILD_SUFFIX_RE.sub("", _PRERELEASE_RE.sub("", _DATE_SUFFIX_RE.sub("", model_id.lower())))
+    return tuple(int(n) for n in re.findall(r"\d+", name))
+
+
+def is_prerelease(model_id: str) -> bool:
+    """True for preview / experimental / 'latest' ids: never preferred over a stable id of the same tier."""
+    return bool(_PRERELEASE_RE.search(model_id.lower()))
 
 
 def model_family(model_id: str) -> str:
@@ -334,7 +344,9 @@ def resolve_model(provider: str, tier: str | None, configured: str | None = None
             return baseline  # the user's own choice is never overridden by discovery
         from intelligence.orchestrator.model_discovery import pick_for_tier  # pylint: disable=import-outside-toplevel
         return pick_for_tier(provider, tier or "", baseline, overrides) or baseline
-    except Exception:  # pylint: disable=broad-except
+    except Exception as exc:  # pylint: disable=broad-except
+        # total by design (routing must never fail on discovery), but say why a pin/override had no effect
+        logging.getLogger(__name__).warning("model_overrides ignored for %s/%s: %s", provider, tier, type(exc).__name__)
         return baseline
 
 

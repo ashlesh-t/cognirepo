@@ -3764,7 +3764,7 @@ def _cmd_models(args) -> int:
         if entry is None:
             continue
         fresh = md.entry_is_fresh(name, entry)
-        if not fresh and not args.stale:
+        if not fresh and not getattr(args, "stale", False):
             continue
         effective = {}
         for tier in ("STANDARD", "COMPLEX", "EXPERT"):
@@ -3782,8 +3782,10 @@ def _cmd_models(args) -> int:
     for name, info in out.items():
         print(f"{name}  fetched {info['fetched_at']}  {'fresh' if info['fresh'] else 'STALE (ignored)'}")
         for row in info["models"]:
+            if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+                continue  # hand-edited cache: skip a malformed row rather than traceback
             mark = "  denied" if row["id"] in info["denied"] else ""
-            print(f"  {row['id']:<44} {row['tier'] or 'unassigned':<10}{mark}")
+            print(f"  {row['id']:<44} {row.get('tier') or 'unassigned':<10}{mark}")
         print("  would use: " + ", ".join(f"{t} -> {v['model']} ({v['source']})" for t, v in info["effective"].items()))
     return 0
 

@@ -24,17 +24,19 @@ import hashlib
 import json
 import logging
 import os
+import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from intelligence.orchestrator import provider_status
 from intelligence.orchestrator.classifier import (
-    MODEL_ID_RE, assign_tier, hardcoded_models, is_dated_snapshot, model_family, model_version, rules_hash,
+    MODEL_ID_RE, assign_tier, hardcoded_models, is_dated_snapshot, is_prerelease, model_family, model_version, rules_hash,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,7 @@ TOTAL_TIMEOUT_S = 8.0
 _MAX_PAGES = 5
 _MAX_BODY = 5_000_000
 PROVIDERS = ("anthropic", "openai", "gemini", "grok")
+_TIERS = ("STANDARD", "COMPLEX", "EXPERT")
 
 _KEY_ENV: dict[str, tuple[str, ...]] = {
     "anthropic": ("ANTHROPIC_API_KEY",),
@@ -89,13 +92,22 @@ def fingerprint(key: str) -> str:
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────────────────────────
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D401
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _get_json(url: str, headers: dict[str, str], timeout: float) -> Any:
     """GET ``url`` and decode JSON. Raises FetchError. Keys travel in headers only, never in the URL."""
     if not url.startswith("https://"):
         raise FetchError("malformed", "refusing a non-https URL")
     req = urllib.request.Request(url, headers={**headers, "accept": "application/json"}, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # nosec B310 - https only, fixed provider hosts
+        # no redirects: a 3xx would forward the key header to wherever it points (possibly plain http)
+        with _OPENER.open(req, timeout=timeout) as resp:  # nosec B310 - https only, fixed provider hosts
             body = resp.read(_MAX_BODY)
     except urllib.error.HTTPError as exc:
         kind = "rejected" if exc.code in (401, 403) else "transient"
@@ -165,7 +177,15 @@ def parse_grok(page: Any) -> tuple[list[ModelInfo], str | None]:
             for r in rows if isinstance(r, dict) and _valid(r.get("id"))], None
 
 
-def _fetch_paged(key: str, timeout: float, provider: str) -> tuple[list[ModelInfo], str]:
+def _fetch_paged(key: str, timeout: float, provider: str,
+                 deadline: float | None = None) -> tuple[list[ModelInfo], str]:
+    def get(url: str, headers: dict[str, str]) -> Any:
+        """One request, never allowed to outlive the shared deadline (so a worker thread cannot hang the exit)."""
+        left = timeout if deadline is None else min(timeout, deadline - time.monotonic())
+        if left <= 0:
+            raise FetchError("transient", "deadline exceeded")
+        return _get_json(url, headers, left)
+
     models: list[ModelInfo] = []
     cursor: str | None = None
     if provider == "anthropic":
@@ -173,7 +193,7 @@ def _fetch_paged(key: str, timeout: float, provider: str) -> tuple[list[ModelInf
         for _ in range(_MAX_PAGES):
             url = "https://api.anthropic.com/v1/models?limit=100" + (
                 f"&after_id={urllib.parse.quote(cursor)}" if cursor else "")
-            page, cursor = parse_anthropic(_get_json(url, headers, timeout))
+            page, cursor = parse_anthropic(get(url, headers))
             models += page
             if not cursor:
                 break
@@ -183,7 +203,7 @@ def _fetch_paged(key: str, timeout: float, provider: str) -> tuple[list[ModelInf
         for _ in range(_MAX_PAGES):
             url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=100" + (
                 f"&pageToken={urllib.parse.quote(cursor)}" if cursor else "")
-            page, cursor = parse_gemini(_get_json(url, headers, timeout))
+            page, cursor = parse_gemini(get(url, headers))
             models += page
             if not cursor:
                 break
@@ -191,17 +211,18 @@ def _fetch_paged(key: str, timeout: float, provider: str) -> tuple[list[ModelInf
     headers = {"Authorization": f"Bearer {key}"}
     if provider == "grok":
         try:  # richer endpoint first, fall back to the OpenAI-compatible list
-            return parse_grok(_get_json("https://api.x.ai/v1/language-models", headers, timeout))[0], "v1/language-models"
+            return parse_grok(get("https://api.x.ai/v1/language-models", headers))[0], "v1/language-models"
         except FetchError as exc:
             if exc.kind == "rejected":
                 raise
-        return parse_grok(_get_json("https://api.x.ai/v1/models", headers, timeout))[0], "v1/models"
-    return parse_openai(_get_json("https://api.openai.com/v1/models", headers, timeout))[0], "v1/models"
+        return parse_grok(get("https://api.x.ai/v1/models", headers))[0], "v1/models"
+    return parse_openai(get("https://api.openai.com/v1/models", headers))[0], "v1/models"
 
 
-def fetch_provider_models(provider: str, key: str, timeout: float = REQUEST_TIMEOUT_S) -> tuple[list[ModelInfo], str]:
+def fetch_provider_models(provider: str, key: str, timeout: float = REQUEST_TIMEOUT_S,
+                          deadline: float | None = None) -> tuple[list[ModelInfo], str]:
     """All models ``key`` can list for ``provider`` plus the endpoint used. Raises FetchError."""
-    models, endpoint = _fetch_paged(key, timeout, provider)
+    models, endpoint = _fetch_paged(key, timeout, provider, deadline)
     if not models:
         raise FetchError("malformed", "provider returned no models")
     return models, endpoint
@@ -220,6 +241,19 @@ def tier_models(models: list[ModelInfo], tier_overrides: dict[str, str] | None =
             tier = None  # the undated alias is listed: prefer it
         rows.append({"id": m.id, "tier": tier, "ctx": m.ctx, "created": m.created})
     return rows
+
+
+def _clean_tier_overrides(raw: Any) -> dict[str, str]:
+    """Only ``{valid model id: STANDARD|COMPLEX|EXPERT}`` pairs; anything else is dropped (and logged once)."""
+    if not isinstance(raw, dict):
+        if raw:
+            logger.warning("model_overrides.tiers must be an object; ignoring it")
+        return {}
+    good = {k: v for k, v in raw.items() if _valid(k) and v in _TIERS}
+    if len(good) != len(raw):
+        logger.warning("model_overrides.tiers: ignoring %d invalid entr%s", len(raw) - len(good),
+                     "y" if len(raw) - len(good) == 1 else "ies")
+    return good
 
 
 def _now() -> str:
@@ -280,24 +314,29 @@ def refresh(providers: list[str] | None = None, timeout: float = REQUEST_TIMEOUT
     report: dict[str, dict[str, Any]] = {}
     jobs: dict[str, tuple[str, Any]] = {}
     pool = ThreadPoolExecutor(max_workers=4)
+    deadline = time.monotonic() + total_timeout
     try:
         for p in wanted:
             key = api_key(p)
             if key is None:
                 report[p] = {"status": "no_key", "count": 0, "detail": "no API key set"}
             else:
-                jobs[p] = (key, pool.submit(fetch_provider_models, p, key, timeout))
+                jobs[p] = (key, pool.submit(fetch_provider_models, p, key, timeout, deadline))
         for p, (key, fut) in jobs.items():
             try:
-                models, endpoint = fut.result(timeout=total_timeout)
+                models, endpoint = fut.result(timeout=max(0.0, deadline - time.monotonic()))
             except FetchError as exc:
                 report[p] = {"status": "rejected" if exc.kind == "rejected" else "failed", "count": 0,
                              "detail": "key rejected" if exc.kind == "rejected" else exc.message}
                 continue
-            except (FutureTimeout, Exception) as exc:  # pylint: disable=broad-except
+            except Exception as exc:  # pylint: disable=broad-except
                 report[p] = {"status": "failed", "count": 0, "detail": type(exc).__name__}
                 continue
-            rows = tier_models(models, tier_overrides)
+            try:
+                rows = tier_models(models, _clean_tier_overrides(tier_overrides))
+            except Exception as exc:  # pylint: disable=broad-except
+                report[p] = {"status": "failed", "count": 0, "detail": type(exc).__name__}
+                continue
             entry = {"fetched_at": _now(), "key_fingerprint": fingerprint(key), "endpoint": endpoint,
                      "rules_hash": rules_hash(), "models": rows, "denied": []}
             if provider_status.modify(lambda doc, p=p, entry=entry: doc.setdefault("api", {}).__setitem__(p, entry)):
@@ -331,10 +370,15 @@ def pick_for_tier(provider: str, tier: str, baseline: str, overrides: dict[str, 
     usable = [(i, t) for i, t in usable if t]
 
     def newest(candidates: list[str]) -> str | None:
-        return max(candidates, key=lambda i: (model_version(i), i), default=None)
+        return max(candidates, key=lambda i: (not is_prerelease(i), model_version(i), i), default=None)
 
-    if baseline and baseline in listed and baseline not in blocked:
-        base_tier = next((t for i, t in usable if i == baseline), None)
+    # A shipped alias ('claude-haiku-4-5') may be listed only as dated snapshots ('claude-haiku-4-5-2025...'):
+    # that still means it exists, so it is not "retired".
+    present = baseline if baseline in listed else next(
+        (i for i in sorted(listed) if baseline and i.startswith(baseline + "-")
+         and re.fullmatch(r"\d{8}|\d{4}-\d{2}-\d{2}", i[len(baseline) + 1:])), None)
+    if baseline and present and baseline not in blocked:
+        base_tier = next((t for i, t in usable if i in (baseline, present)), None)
         family = model_family(baseline)
         better = [i for i, t in usable if t == base_tier and base_tier and model_family(i) == family
                   and model_version(i) > model_version(baseline)]

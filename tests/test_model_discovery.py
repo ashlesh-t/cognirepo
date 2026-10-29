@@ -180,7 +180,7 @@ class _Resp(io.BytesIO):
 
 def test_key_travels_in_a_header_not_the_url(monkeypatch):
     seen = []
-    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout: seen.append(req) or _Resp(b'{"data": [{"id": "claude-a-1"}]}'))
+    monkeypatch.setattr(md, "_OPENER", SimpleNamespace(open=lambda req, timeout: seen.append(req) or _Resp(b'{"data": [{"id": "claude-a-1"}]}')))
     for provider in ("anthropic", "openai", "gemini", "grok"):
         seen.clear()
         try:
@@ -200,18 +200,18 @@ def test_non_https_is_refused():
 def test_http_status_classes(monkeypatch, code, kind):
     def boom(req, timeout):
         raise urllib.error.HTTPError(req.full_url, code, "x", {}, None)
-    monkeypatch.setattr("urllib.request.urlopen", boom)
+    monkeypatch.setattr(md, "_OPENER", SimpleNamespace(open=boom))
     with pytest.raises(md.FetchError) as ei:
         md._get_json("https://x.example/v1", {}, 1)  # pylint: disable=protected-access
     assert ei.value.kind == kind
 
 
 def test_network_error_and_bad_json_are_classified(monkeypatch):
-    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout: (_ for _ in ()).throw(TimeoutError()))
+    monkeypatch.setattr(md, "_OPENER", SimpleNamespace(open=lambda req, timeout: (_ for _ in ()).throw(TimeoutError())))
     with pytest.raises(md.FetchError) as ei:
         md._get_json("https://x.example/v1", {}, 1)  # pylint: disable=protected-access
     assert ei.value.kind == "transient"
-    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout: _Resp(b"<html>"))
+    monkeypatch.setattr(md, "_OPENER", SimpleNamespace(open=lambda req, timeout: _Resp(b"<html>")))
     with pytest.raises(md.FetchError) as ei:
         md._get_json("https://x.example/v1", {}, 1)  # pylint: disable=protected-access
     assert ei.value.kind == "malformed"
@@ -220,7 +220,7 @@ def test_network_error_and_bad_json_are_classified(monkeypatch):
 # ── refresh + cache ──────────────────────────────────────────────────────────────────────────────
 
 def _fetch_returns(monkeypatch, ids=("claude-haiku-4-5", "claude-sonnet-5", "claude-opus-4-6")):
-    monkeypatch.setattr(md, "fetch_provider_models", lambda p, k, t=5.0: (_info(*ids), "v1/models"))
+    monkeypatch.setattr(md, "fetch_provider_models", lambda *a, **k: (_info(*ids), "v1/models"))
 
 
 def test_refresh_without_keys_does_no_network(monkeypatch):
@@ -469,3 +469,98 @@ def test_discovery_module_holds_no_model_id_literals():
     import re
     src = open(md.__file__, encoding="utf-8").read()
     assert not re.search(r'"claude-[a-z]+-[0-9]|"gemini-[0-9]|"gpt-[0-9]|"grok-', src)
+
+
+# ── review follow-ups (#245) ─────────────────────────────────────────────────────────────────────
+
+def test_bare_models_command_does_not_crash(monkeypatch, capsys):
+    """`cognirepo models` with no subcommand has no --stale/--json attributes; a cached entry must not raise."""
+    import interface.cli.main as cli
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
+    _seed(fetched_at="2020-01-01T00:00:00Z")
+    assert cli._cmd_models(SimpleNamespace(models_command=None)) == 0  # pylint: disable=protected-access
+    _seed()
+    assert cli._cmd_models(SimpleNamespace(models_command=None)) == 0  # pylint: disable=protected-access
+    assert "claude-sonnet-4-6" in capsys.readouterr().out
+
+
+def test_refresh_deadline_is_shared_across_providers(monkeypatch):
+    """Four hung providers must take about one budget in total, not one budget each."""
+    import time
+    for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GROK_API_KEY"):
+        monkeypatch.setenv(k, SECRET)
+    monkeypatch.setattr(md, "fetch_provider_models", lambda *a, **k: time.sleep(3))
+    t0 = time.monotonic()
+    report = md.refresh(total_timeout=0.4)
+    assert time.monotonic() - t0 < 1.5
+    assert {r["status"] for r in report.values()} == {"failed"}
+
+
+def test_workers_stop_at_the_deadline(monkeypatch):
+    """A paged fetch past the shared deadline stops issuing requests instead of running on in the background."""
+    import time
+    calls = []
+
+    def slow(url, headers, timeout):
+        calls.append(timeout)
+        return {"data": [{"id": "claude-a-1"}], "has_more": True, "last_id": "claude-a-1"}
+    monkeypatch.setattr(md, "_get_json", slow)
+    with pytest.raises(md.FetchError):
+        md.fetch_provider_models("anthropic", SECRET, 5.0, deadline=time.monotonic() - 1)
+    assert not calls
+
+
+def test_redirects_are_not_followed():
+    handler = md._NoRedirect()  # pylint: disable=protected-access
+    assert handler.redirect_request(None, None, 302, "Found", {}, "http://evil.example/") is None
+
+
+def test_alias_default_listed_only_as_dated_snapshots_is_not_retired(monkeypatch):
+    """The shipped alias 'x-haiku-4-5' may be listed only as 'x-haiku-4-5-<date>': it still exists."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
+    _seed(ids=("claude-haiku-4-5-20251001", "claude-haiku-4-4-20250101", "claude-sonnet-4-6"))
+    assert md.pick_for_tier("anthropic", "STANDARD", "claude-haiku-4-5") is None
+
+
+def test_alias_with_a_newer_snapshot_family_member_still_upgrades(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
+    _seed(ids=("claude-haiku-4-5-20251001", "claude-haiku-5-20260101"))
+    assert md.pick_for_tier("anthropic", "STANDARD", "claude-haiku-4-5") == "claude-haiku-5-20260101"
+
+
+@pytest.mark.parametrize("older,newer", [
+    ("gpt-4-0613", "gpt-4.1"),
+    ("gemini-2.5-flash-preview-09-2025", "gemini-2.5-flash"),
+    ("gemini-2.0-flash-001", "gemini-2.5-flash"),
+])
+def test_version_order_ignores_build_and_preview_noise(older, newer):
+    assert clf.model_version(older) < clf.model_version(newer) or clf.model_version(older) == clf.model_version(newer)
+    assert clf.model_version("gpt-4-0613") == (4,)
+    assert clf.model_version("gemini-2.5-flash-preview-09-2025") == (2, 5)
+
+
+def test_stable_beats_preview_of_the_same_version(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", SECRET)
+    _seed("gemini", ids=("gemini-2.5-flash-preview-09-2025", "gemini-2.5-flash"))
+    assert md.pick_for_tier("gemini", "STANDARD", "gone-model") == "gemini-2.5-flash"
+
+
+def test_bad_tier_overrides_do_not_raise_and_are_dropped(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
+    _fetch_returns(monkeypatch)
+    for bad in ("not-a-dict", ["x"], {"claude-sonnet-5": "SUPREME", "bad id": "EXPERT"}):
+        assert md.refresh(["anthropic"], tier_overrides=bad)["anthropic"]["status"] == "ok"
+    rows = {r["id"]: r["tier"] for r in md.load_entry("anthropic")["models"]}
+    assert rows["claude-sonnet-5"] == "COMPLEX"  # the invalid override did not stick
+
+
+def test_models_list_skips_a_malformed_cache_row(monkeypatch, capsys):
+    import interface.cli.main as cli
+    monkeypatch.setenv("ANTHROPIC_API_KEY", SECRET)
+    _seed()
+
+    def corrupt(doc):
+        doc["api"]["anthropic"]["models"] += [{"tier": "COMPLEX"}, "junk", {"id": "claude-x-1"}]
+    ps.modify(corrupt)
+    assert cli._cmd_models(_args("list")) == 0  # pylint: disable=protected-access
+    assert "claude-x-1" in capsys.readouterr().out
