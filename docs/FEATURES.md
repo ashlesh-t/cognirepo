@@ -242,6 +242,7 @@ These were documented here as shipped but no longer exist; they are listed so no
 | Local resolver (QUICK short-circuits) | ✅ | `local_adapter.py` + `try_local_resolve()` — zero-API |
 | Provider fallback chain | ✅ | `_dispatch_with_fallback()` — anthropic → gemini → grok → openai |
 | `_available_providers()` | ✅ | Checks env vars for API keys (API providers only) |
+| Model discovery (opt-in) | ✅ | `cognirepo models refresh/list/clear`; `classifier.resolve_model()` swaps a retired default or upgrades within a family from a fresh cache; never overrides a model you set; unknown families stay `unassigned` |
 | Agent CLIs as backends | ✅ | `claude` / `codex` / `gemini` run headless via `model_adapters/cli_adapter.py`; opt-in with `cognirepo agents enable`; `_ordered_backends()` merges them with API keys (keys first by default) |
 | Model adapters | ✅ | anthropic, gemini, grok, openai adapters in `orchestrator/model_adapters/` |
 | Retry with exponential backoff | ✅ | `orchestrator/model_adapters/retry.py` |
@@ -316,7 +317,7 @@ These were documented here as shipped but no longer exist; they are listed so no
 
 ## 15. Test Coverage
 
-165 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
+166 test files under `tests/test_*.py` (run `venv/bin/python -m pytest tests/ --collect-only -q`
 for the current test-function count). This table is representative, not exhaustive — see
 `tests/` for the full list. This count is checked by `tests/test_docs_sync.py`, which fails if it drifts
 more than 5 files from the real glob count (a small tolerance, so concurrent PRs that each add

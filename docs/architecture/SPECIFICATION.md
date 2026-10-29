@@ -229,6 +229,13 @@ Full language support details and the roadmap for adding new languages: [LANGUAG
 
 ---
 
+## Model discovery
+
+`resolve_model(provider, tier, configured)` (classifier.py) is the single read path. Order: `model_overrides.pin` ->
+a model the user set (anything not in `hardcoded_models()`) -> a fresh cache via `model_discovery.pick_for_tier` ->
+`configured`. Fresh means < 24 h, same tier rules (`rules_hash`) and same API key (fingerprint). Every rung is total:
+any error returns `configured`. `DEFAULT_MODELS_BY_PROVIDER` and `ADAPTER_STANDALONE_DEFAULTS` are never mutated.
+
 ## Agent CLIs as backends
 
 Besides API-key providers, `router._ordered_backends()` includes enabled agent CLIs as providers named

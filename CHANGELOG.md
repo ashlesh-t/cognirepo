@@ -18,6 +18,13 @@ Versioning: [Semantic Versioning](https://semver.org/)
   memory regression test. RCA: `docs/rca/COGNIREPO-98-oom-memory-growth.md` §7.
 
 ### Added
+- **Model discovery, opt-in (#86/#87/#88).** `cognirepo models refresh|list|clear` asks each provider that has an API key
+  which models it offers (5 s per provider, 8 s overall; keys in headers only), tiers them with built-in family rules
+  (unknown families stay `unassigned` and are never auto-selected) and caches the result for 24 h in
+  `~/.cognirepo/provider_status.json`. The router reads that cache through `classifier.resolve_model`: a retired default
+  is replaced, a newer model of the same family and tier is preferred, a model you set yourself is never overridden, and
+  `model_overrides` (`pin` / `deny` / `tiers`) wins. A model a real call reports as not found is skipped until the next
+  refresh. With no cache nothing changes. `setup` offers a refresh (default No); `doctor` shows the cache state.
 - **Agent CLIs as routing backends (#86/#87/#88).** Installed `claude`, `codex` and `gemini` can answer `cognirepo ask`
   with no API key, run headless (tools, MCP, hooks and session files off, empty working directory, provider API-key
   variables stripped, `COGNIREPO_HEADLESS=1` so they cannot call CogniRepo back). New `cognirepo agents

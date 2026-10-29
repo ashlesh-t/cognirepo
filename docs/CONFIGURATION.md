@@ -38,6 +38,20 @@ CogniRepo reads its configuration from `.cognirepo/config.json` in the project r
 }
 ```
 
+`model_overrides` (optional, used by `cognirepo models`):
+
+```json
+"model_overrides": {
+  "pin":   {"anthropic": {"COMPLEX": "<model-id>"}},
+  "deny":  ["<model-id>"],
+  "tiers": {"<model-id>": "EXPERT"}
+}
+```
+
+`pin` always wins for that provider and tier; `deny` removes a model from discovery's choices; `tiers` assigns a tier to
+a model the built-in rules leave `unassigned`. Precedence: `pin` > a model you set in `models` > discovered > hardcoded
+default. Ids must match `[A-Za-z0-9._:/-]{1,128}`.
+
 `cli_providers` (optional): `{"codex": {"enabled": true, "terms_ack": false}}`, written by `cognirepo agents enable`.
 An agent CLI is used for routing only when `enabled` is true (and `terms_ack` is true for `claude` and `gemini`).
 `provider_preference` (optional): `"api"` (default, API keys before CLIs) or `"cli"`.
@@ -154,7 +168,7 @@ Per-user files (shared by every repo, in `~/.cognirepo/` or `$COGNIREPO_GLOBAL_D
 | File | Purpose |
 |------|---------|
 | `repos.json` | Registry of repos CogniRepo has been used on (paths and timestamps) |
-| `provider_status.json` | Mode 0600. Which agent CLIs (`claude`, `codex`, `gemini`) are installed and whether they last worked: versions and readiness only, never credentials. Written when readiness is recorded (`cognirepo agents`); safe to delete |
+| `provider_status.json` | Mode 0600. Which agent CLIs (`claude`, `codex`, `gemini`) are installed and whether they last worked, plus the model lists from `cognirepo models refresh` (24 h TTL, key stored only as a short hash). Versions, readiness and model ids only, never credentials. Safe to delete |
 
 ---
 

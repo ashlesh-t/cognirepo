@@ -810,6 +810,41 @@ Repo-derived context from your query is sent to that vendor and counts against y
 
 ---
 
+## cognirepo models
+
+Opt-in model discovery: ask each provider that has an API key which models it offers, tier them, and let the router
+use a newer model than the hardcoded default. **`refresh` is the only command that touches the network**, and nothing
+runs it automatically. Design: [planning/07-model-discovery-design.md](planning/07-model-discovery-design.md).
+
+```bash
+cognirepo models refresh [--provider P] [--timeout S]
+cognirepo models list [--provider P] [--stale] [--json]
+cognirepo models clear [--provider P]
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| `refresh` | One list request per provider with a key (anthropic, openai, gemini, grok), in parallel, 5 s each and 8 s overall. Keys go in request headers, never in a URL, and are never written to disk (only a short hash is kept to notice a rotated key). A failure keeps the previous cache; an empty answer never replaces a good one. Exit 1 if a provider with a key failed or no key is set |
+| `list` | Cached models per provider with their tier (`unassigned` = unknown family, never auto-selected), plus the model each tier would use and whether it is `discovered` or `default`. Local only |
+| `clear` | Forget the cache; the hardcoded defaults apply again |
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--provider P` | all | Limit to `anthropic`, `openai`, `gemini` or `grok` |
+| `--timeout S` | `5` | `refresh`: seconds per request (the 8 s overall cap still applies) |
+| `--stale` | `False` | `list`: also show entries older than 24 h or written under other tier rules (they are ignored by the router) |
+| `--json` | `False` | `list`: machine-readable output |
+
+**What it changes.** The router only *reads* the cache. A model you set yourself in `config.json` is never touched.
+Otherwise a retired default is replaced by the newest model of the same tier, and a newer model of the same family and tier
+is preferred; a `model_overrides.pin` wins over everything ([CONFIGURATION.md](CONFIGURATION.md#config-json-fields)).
+A model a real call reports as not found is skipped until the next `refresh`. With no cache nothing changes.
+
+`setup` prints a one-line hint when API keys are set and, interactively, offers a refresh (default **No**). `doctor`
+prints one informational line about the cache.
+
+---
+
 ## cognirepo list
 
 List MCP servers, organizations, and running watcher daemons.
