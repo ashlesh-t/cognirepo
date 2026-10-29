@@ -1903,6 +1903,21 @@ def _cmd_index_progress(interval: float = 1.0, once: bool = False) -> None:
         print("\n  Stopped.\n")
 
 
+def _offer_model_refresh() -> None:
+    """Hint (and, on a terminal, ask) about ``models refresh``. With no API key it prints and fetches nothing."""
+    try:
+        from intelligence.orchestrator import model_discovery as _md  # pylint: disable=import-outside-toplevel
+        if any(_md.api_key(_p) for _p in _md.PROVIDERS):
+            print("  Run 'cognirepo models refresh' to check which models your API keys can use.")
+            if sys.stdin.isatty():
+                from interface.cli.wizard import _ask_yn  # pylint: disable=import-outside-toplevel
+                if _ask_yn("Check now? (one request per provider, 8 s cap)", default=False):
+                    for _n, _r in _md.refresh().items():
+                        print(f"    {_n}: {_r['status']}" + (f" ({_r['count']} models)" if _r["status"] == "ok" else ""))
+    except Exception:  # pylint: disable=broad-except
+        pass  # best-effort — setup never depends on discovery
+
+
 def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     """
     One-command onboarding: runs the wizard directly (no subprocess) so that
@@ -1948,17 +1963,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
         sys.exit(1)
 
     # ── 2a0. Offer (never force) a model-list refresh when API keys are present ─────
-    try:
-        from intelligence.orchestrator import model_discovery as _md  # pylint: disable=import-outside-toplevel
-        if any(_md.api_key(_p) for _p in _md.PROVIDERS):
-            print("  Run 'cognirepo models refresh' to check which models your API keys can use.")
-            if sys.stdin.isatty():
-                from interface.cli.wizard import _ask_yn  # pylint: disable=import-outside-toplevel
-                if _ask_yn("Check now? (one request per provider, 8 s cap)", default=False):
-                    for _n, _r in _md.refresh().items():
-                        print(f"    {_n}: {_r['status']}" + (f" ({_r['count']} models)" if _r["status"] == "ok" else ""))
-    except Exception:  # pylint: disable=broad-except
-        pass  # best-effort — setup never depends on discovery
+    _offer_model_refresh()
 
     # ── 2a. Agent CLIs the user opted into in the wizard (config.json exists now) ──
     if cli_choices:
