@@ -9,6 +9,14 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Fixed
+- **`cognirepo setup` no longer pays for agent-CLI detection twice (#89, manual case P-14 / A2).** With `gemini` (a node CLI whose
+  `--version` takes ~1.4 s) installed, `setup` ran detection once for the wizard offer and again for the doctor line, adding
+  2.6-3.7 s over a machine with no agent CLIs (expected: about 1 s). Probe results are now shared for 60 s
+  (`provider_status._probe_version_cached`, keyed on path + mtime + size so an upgraded binary is re-probed at once, and
+  in-flight probes are shared), detection starts in the background when the wizard opens (`prefetch_cli_agents`), and the
+  wizard no longer waits for detection when stdin is not a terminal (nothing can be enabled there anyway). Measured on flask
+  (`setup --no-index`, gemini installed): the gap fell from 2.6-3.7 s to about 1.0 s, which is the floor set by `gemini --version`
+  itself (1.4 s); on a tiny repo it is within noise. An interactive terminal still gets the offer.
 - **Indexing no longer needs ~5 GB (#98, #105).** `cognirepo init` / `index-repo` embedded all symbols with fastembed's
   default batch of 256, which pads every text to the longest in the batch and peaked at 5.5-5.7 GB on a 10k-symbol repo
   (reproduced; it is the kernel OOM-kill from #98) and ran at ~76 vectors/s. Bulk embedding now goes through

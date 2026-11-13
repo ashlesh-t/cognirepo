@@ -26,7 +26,9 @@ import logging
 import os
 import shutil
 import subprocess  # nosec B404
-from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -304,11 +306,63 @@ def probe_agent(agent: str, timeout: float = 60.0) -> tuple[bool | None, str]:
     return True, f"ok ({reply.usage.get('input_tokens', 0)} in / {reply.usage.get('output_tokens', 0)} out tokens)"
 
 
+# One `setup` asks "which agent CLIs are installed?" twice (the wizard offer, then the doctor line), and a node-based
+# CLI needs ~1.4 s just to print `--version`. Probe results are therefore shared for a short time. The key includes the
+# binary's mtime and size (stat follows symlinks), so an upgrade or replacement is probed again at once, and the
+# in-flight probe is shared so a background prefetch and the wizard never run the same binary twice.
+_PROBE_TTL_S = 60.0
+_probe_cache: dict[tuple[str, int, int, float], tuple[float, Future]] = {}
+_probe_lock = threading.Lock()
+
+
+def clear_probe_cache() -> None:
+    """Forget remembered ``--version`` results (tests, and anything that just changed a binary)."""
+    with _probe_lock:
+        _probe_cache.clear()
+
+
+def _probe_version_cached(path: str, timeout: float) -> str | None:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return _probe_version(path, timeout)
+    key = (path, st.st_mtime_ns, st.st_size, timeout)
+    now = time.monotonic()
+    with _probe_lock:
+        hit = _probe_cache.get(key)
+        owner = hit is None or now - hit[0] > _PROBE_TTL_S
+        if owner:
+            hit = (now, Future())
+            _probe_cache[key] = hit
+    fut = hit[1]
+    if owner:
+        try:
+            fut.set_result(_probe_version(path, timeout))
+        except BaseException as exc:  # pylint: disable=broad-except
+            with _probe_lock:
+                _probe_cache.pop(key, None)
+            fut.set_exception(exc)
+    return fut.result()
+
+
 def _detect_one(spec: CliAgentSpec, timeout: float) -> tuple[str | None, str | None]:
     path = shutil.which(spec.binary)
     if not path:
         return None, None
-    return path, _probe_version(path, timeout)
+    return path, _probe_version_cached(path, timeout)
+
+
+def prefetch_cli_agents() -> None:
+    """Start detection in the background so a later ``detect_cli_agents()`` finds it done. Never raises or blocks."""
+    def _run() -> None:
+        try:
+            detect_cli_agents()
+        except Exception:  # pylint: disable=broad-except
+            logger.debug("agent CLI prefetch failed", exc_info=True)
+    try:
+        threading.Thread(target=_run, name="cli-detect-prefetch", daemon=True).start()
+    except RuntimeError:
+        pass
 
 
 def detect_cli_agents(timeout: float = VERSION_TIMEOUT_S) -> list[ProviderStatus]:

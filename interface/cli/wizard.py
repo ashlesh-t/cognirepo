@@ -524,6 +524,8 @@ def _ask_cli_backends() -> dict[str, bool]:
     """
     from intelligence.orchestrator.provider_status import CLI_AGENT_SPECS, TERMS_WARNING, detect_cli_agents  # pylint: disable=import-outside-toplevel
     chosen: dict[str, bool] = {}
+    if not sys.stdin.isatty():  # nothing is ever enabled non-interactively, so do not wait for detection (a node CLI takes >1 s)
+        return chosen
     found = [r for r in detect_cli_agents() if r.installed]
     if not found:
         return chosen
@@ -562,6 +564,11 @@ def run_wizard() -> dict:
 
     Vector storage is fixed: FAISS for AST indexing, ChromaDB for semantic text.
     """
+    try:  # a node-based agent CLI needs >1 s for `--version`; start it now so the offer later finds it done
+        from intelligence.orchestrator.provider_status import prefetch_cli_agents  # pylint: disable=import-outside-toplevel
+        prefetch_cli_agents()
+    except Exception:  # pylint: disable=broad-except
+        pass
     # Microservice detection deferred until user opts in (step 8).
     _candidates: list = []
     STEPS = 9

@@ -129,3 +129,31 @@ def test_setup_offer_with_a_key_only_hints_when_not_a_terminal(monkeypatch, caps
     monkeypatch.setattr("sys.stdin", type("S", (), {"isatty": staticmethod(lambda: False)})())
     cli._offer_model_refresh()  # pylint: disable=protected-access
     assert "models refresh" in capsys.readouterr().out
+
+
+def test_second_detection_in_one_setup_is_served_from_the_probe_cache(bindir):
+    """`setup` detects twice (wizard offer, then doctor). A node-based CLI needs >1 s for --version: pay it once."""
+    ps.clear_probe_cache()
+    _fake_bin(bindir, "gemini", f'{SLEEP} 0.6; echo "gemini 1.0"')
+    first, rows1 = _timed(ps.detect_cli_agents)
+    second, rows2 = _timed(ps.detect_cli_agents)
+    assert first >= 0.5 and second < 0.2
+    assert [r.version for r in rows1] == [r.version for r in rows2]
+
+
+def test_replaced_binary_is_probed_again_not_served_stale(bindir):
+    ps.clear_probe_cache()
+    _fake_bin(bindir, "codex", 'echo "codex 1.0"')
+    assert next(r for r in ps.detect_cli_agents() if r.name == "codex").version == "codex 1.0"
+    _fake_bin(bindir, "codex", 'echo "codex 2.0 upgraded"')  # different size, so a different cache key
+    assert next(r for r in ps.detect_cli_agents() if r.name == "codex").version == "codex 2.0 upgraded"
+
+
+def test_prefetch_overlaps_detection_with_other_work(bindir):
+    """Prefetch in the background, do 0.6 s of other work, then ask: the answer is already there."""
+    ps.clear_probe_cache()
+    _fake_bin(bindir, "gemini", f'{SLEEP} 0.5; echo "gemini 1.0"')
+    ps.prefetch_cli_agents()
+    time.sleep(0.8)
+    elapsed, rows = _timed(ps.detect_cli_agents)
+    assert elapsed < 0.2 and next(r for r in rows if r.name == "gemini").installed

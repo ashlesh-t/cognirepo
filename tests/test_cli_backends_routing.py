@@ -8,6 +8,8 @@ import os
 import stat
 from types import SimpleNamespace
 
+import types
+
 import pytest
 
 from core.config.paths import get_path
@@ -384,6 +386,7 @@ def _row(name, installed=True):
 ])
 def test_wizard_offers_each_installed_cli_default_no(monkeypatch, answers, rows, expected):
     from interface.cli import wizard
+    monkeypatch.setattr(wizard.sys, "stdin", types.SimpleNamespace(isatty=lambda: True))  # simulate a terminal
     monkeypatch.setattr(ps, "detect_cli_agents", lambda *a, **k: rows)
     asked = []
     it = iter(answers)
@@ -395,6 +398,19 @@ def test_wizard_offers_each_installed_cli_default_no(monkeypatch, answers, rows,
     monkeypatch.setattr(wizard, "_ask_yn", ask)
     assert wizard._ask_cli_backends() == expected  # pylint: disable=protected-access
     assert all(default is False for _, default in asked)  # never defaults to yes
+
+
+def test_wizard_does_not_detect_or_ask_without_a_terminal(monkeypatch):
+    """Nothing is ever enabled non-interactively, so the offer must not wait for (slow) CLI detection either."""
+    from interface.cli import wizard
+    monkeypatch.setattr(wizard.sys, "stdin", types.SimpleNamespace(isatty=lambda: False))
+
+    def boom(*a, **k):
+        raise AssertionError("detection must not run when stdin is not a terminal")
+
+    monkeypatch.setattr(ps, "detect_cli_agents", boom)
+    monkeypatch.setattr(wizard, "_ask_yn", boom)
+    assert wizard._ask_cli_backends() == {}  # pylint: disable=protected-access
 
 
 def test_apply_choices_enables_what_the_wizard_collected(bindir):
