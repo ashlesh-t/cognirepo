@@ -392,8 +392,13 @@ def pick_for_tier(provider: str, tier: str, baseline: str, overrides: dict[str, 
             return None
         usable = [(i, t) for i, t in usable if i.lower().startswith(prefix)]
 
+    # On a version tie a gateway's plain id beats its variants (gpt-5 over gpt-5-codex / -search-api, grok-4.20 over
+    # -multi-agent): the longest id would otherwise win. A vendor never ties: its same-family check screens variants out.
+    plain_first = provider == "gateway"
+
     def newest(candidates: list[str]) -> str | None:
-        return max(candidates, key=lambda i: (not is_prerelease(i), model_version(i), i), default=None)
+        return max(candidates, key=lambda i: (not is_prerelease(i), model_version(i), -len(i) if plain_first else 0, i),
+                   default=None)
 
     # A shipped alias ('claude-haiku-4-5') may be listed only as dated snapshots ('claude-haiku-4-5-2025...'):
     # that still means it exists, so it is not "retired".

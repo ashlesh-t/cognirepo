@@ -264,7 +264,8 @@ local proxy): `GET {url}/models` with `Authorization: Bearer`, parsed like OpenA
 
 - **No hardcoded default model.** A gateway's catalogue is its own, so the baseline is `""`: a pin wins; otherwise the
   newest tier-assigned model whose id starts with `prefer`; otherwise nothing, and the router skips the gateway for that
-  tier (`_no_model`, `_usable_backends`). Version numbers are not comparable across vendors, so there is no unscoped pick.
+  tier (`_no_model`, `_usable_backends`). Version numbers are not comparable across vendors, so there is no unscoped pick;
+  on a version tie the shortest id wins (the plain model over its `-codex` / `-search-api` / `-multi-agent` variants).
 - **The URL is a credential destination**, so it comes only from the environment or the user-level config, never the
   repo's `.cognirepo/config.json`; it is validated (`https`, or `http` to loopback) and never stored, logged or printed.
   The cache identity is `sha256(key@url)[:12]`.

@@ -32,7 +32,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   `~/.cognirepo/config.json`); `cognirepo models refresh|list|clear --provider gateway`, `test-connection --provider gateway`
   and `doctor` know it, and the router uses it after the vendor keys. Before this, a gateway key was sent to the vendor's own
   host and rejected, and discovery and the key probes could not be pointed anywhere else. A gateway lists every vendor, so no
-  model is picked across them on its own: a `model_overrides.pin.gateway.<TIER>` wins, else the newest model under `prefer`,
+  model is picked across them on its own: a `model_overrides.pin.gateway.<TIER>` wins, else the newest model under `prefer` (the plain id wins a version tie, e.g. `gpt-5` over `gpt-5-codex`),
   else the gateway is skipped for that tier (and `models list` says what to set). Safety: the URL is read only from the
   environment or the user-level file, never a repo's `.cognirepo/config.json` (a cloned repo could otherwise redirect your
   key); it must be `https://` (or `http://` to localhost), carry no credentials, and is never logged, printed or cached.

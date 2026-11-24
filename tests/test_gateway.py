@@ -272,6 +272,20 @@ def test_prefer_can_be_another_vendor_or_a_bare_family(monkeypatch):
     assert _pick("COMPLEX") == "gpt-4o"
 
 
+def test_on_a_version_tie_the_plain_model_beats_its_variants(monkeypatch):
+    """Real gateways list gpt-5, gpt-5-codex and gpt-5-search-api side by side: the tie must not go to the longest id."""
+    ids = ("gpt-5", "gpt-5-codex", "gpt-5-search-api", "x-ai/grok-4.20", "x-ai/grok-4.20-multi-agent")
+    _configure(monkeypatch, prefer="gpt-")
+    _seed(monkeypatch, ids)
+    assert _pick("COMPLEX") == "gpt-5"
+    monkeypatch.setenv(gw.ENV_PREFER, "x-ai/")
+    assert _pick("COMPLEX") == "x-ai/grok-4.20"
+    # a genuinely newer model still wins over a plain older one, variant or not
+    _seed(monkeypatch, ids + ("gpt-6-codex",))
+    monkeypatch.setenv(gw.ENV_PREFER, "gpt-")
+    assert _pick("COMPLEX") == "gpt-6-codex"
+
+
 def test_a_pin_wins_and_needs_no_prefer(monkeypatch):
     _configure(monkeypatch)
     _seed(monkeypatch)

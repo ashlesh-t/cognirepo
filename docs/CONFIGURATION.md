@@ -160,7 +160,8 @@ CogniRepo never picks one on its own across them. For each tier (`STANDARD`, `CO
 
 1. a pin in the repo's `.cognirepo/config.json`: `"model_overrides": {"pin": {"gateway": {"EXPERT": "anthropic/claude-opus-4.6"}}}`
    (ids are the gateway's own, exactly as `models list` prints them);
-2. otherwise the newest model discovered for that tier whose id starts with `prefer`;
+2. otherwise the newest model discovered for that tier whose id starts with `prefer` (on a version tie the plain id wins
+   over its variants: `gpt-5` over `gpt-5-codex` / `gpt-5-search-api`, `grok-4.20` over `grok-4.20-multi-agent`; pin a variant if you want one);
 3. otherwise **none**: the gateway is skipped for that tier and the next backend is tried. `models list` says so.
 
 Model ids are tiered by the same family rules as the vendors' own, with or without a `vendor/` prefix. A family the rules
