@@ -149,6 +149,13 @@ cognirepo models list --provider gateway          # each model's tier, and what 
 cognirepo test-connection --provider gateway      # one real 10-token call
 ```
 
+**The `openai` package.** Listing models (`models refresh|list`) needs nothing extra. Calls, and `test-connection`, go through
+the optional `openai` package: `pip install openai`, or for a pipx install `pipx inject cognirepo openai`. `doctor` warns when
+a gateway is set and the package is missing.
+
+**Request identity.** Model discovery sends `User-Agent: cognirepo/<version>`. Gateways behind Cloudflare (aicredits.in is
+one) refuse urllib's default agent with `403 error code: 1010`, which discovery would otherwise report as a rejected key.
+
 To keep it for every shell, put the non-secret part in the user-level file (the key stays in your environment):
 
 ```json

@@ -19,6 +19,8 @@ There is no default model: a gateway's catalogue is its own, so the caller must 
 """
 from __future__ import annotations
 
+import importlib.util
+
 from intelligence.orchestrator import gateway
 from intelligence.orchestrator.model_adapters import openai_adapter
 from intelligence.orchestrator.model_adapters.errors import ModelCallError
@@ -58,6 +60,12 @@ def call(
             "gateway", None,
             "no model chosen for the gateway: pin one under model_overrides.pin.gateway "
             f"or set {gateway.ENV_PREFER} (an id prefix) and run `cognirepo models refresh`",
+        )
+    if importlib.util.find_spec("openai") is None:  # optional extra; absent from a default pipx install
+        raise ModelCallError(
+            "gateway", None,
+            "gateway calls need the openai package, which is not installed: "
+            "pip install openai (installed with pipx: pipx inject cognirepo openai)",
         )
     return openai_adapter.call(
         query=query,
