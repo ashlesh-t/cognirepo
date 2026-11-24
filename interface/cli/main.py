@@ -966,13 +966,26 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         "GROK_API_KEY": "Grok",
     }
     _found = [name for var, name in _providers.items() if os.environ.get(var)]
+    _gw_warn = ""
+    try:  # gateway: needs a valid URL and a key; only the host is ever shown (the path may hold a token)
+        from intelligence.orchestrator import gateway as _gw  # pylint: disable=import-outside-toplevel
+        if _gw.configured():
+            _found.append(f"Gateway ({_gw.host()})")
+        elif _gw.api_key() or os.environ.get(_gw.ENV_URL):
+            _gw_warn = (f"Gateway — needs both {_gw.ENV_URL} (an https:// URL, or http:// to localhost) "
+                        f"and {_gw.ENV_KEY}")
+    except Exception:  # pylint: disable=broad-except
+        pass
     if _found:
         _ok(f"Model API keys — {', '.join(_found)}")
-    else:
+    elif not _gw_warn:  # a half-set gateway gets its own, more specific warning below
         _warn(
             "Model API keys — none configured (cognirepo ask will not work)",
-            "Optional: set ANTHROPIC_API_KEY · GEMINI_API_KEY · OPENAI_API_KEY · GROK_API_KEY",
+            "Optional: set ANTHROPIC_API_KEY · GEMINI_API_KEY · OPENAI_API_KEY · GROK_API_KEY "
+            "· COGNIREPO_GATEWAY_API_KEY + COGNIREPO_GATEWAY_BASE_URL",
         )
+    if _gw_warn:
+        _warn(_gw_warn, "See docs/CONFIGURATION.md#gateway")
 
     # ── Check 7b: agent CLIs (informational, local --version only) ─────────────
     try:
@@ -3256,6 +3269,12 @@ def _test_connection(provider: str) -> dict:
         elif provider == "openai":
             from intelligence.orchestrator.model_adapters import openai_adapter as oa  # pylint: disable=import-outside-toplevel
             resp = oa.call(query, system, manifest, max_tokens=10)
+        elif provider == "gateway":
+            from intelligence.orchestrator.classifier import resolve_model  # pylint: disable=import-outside-toplevel
+            from intelligence.orchestrator.model_adapters import gateway_adapter  # pylint: disable=import-outside-toplevel
+            # a gateway has no default model: a pin or a discovered one under `prefer` (else the adapter says what to set)
+            resp = gateway_adapter.call(query, system, manifest, max_tokens=10,
+                                        model_id=resolve_model("gateway", "STANDARD", ""))
         else:
             return {
                 "status": "error", "provider": provider,
@@ -3775,7 +3794,8 @@ def _cmd_models(args) -> int:
         for tier in ("STANDARD", "COMPLEX", "EXPERT"):
             base = default_model_for(name, tier)
             chosen = resolve_model(name, tier, base) if fresh else base
-            effective[tier] = {"model": chosen, "source": "discovered" if chosen != base else "default"}
+            effective[tier] = {"model": chosen,
+                               "source": "discovered" if chosen != base else ("default" if chosen else "none")}
         out[name] = {"fetched_at": entry.get("fetched_at"), "fresh": fresh, "models": entry["models"],
                      "denied": entry.get("denied", []), "effective": effective}
     if getattr(args, "json", False):
@@ -3791,7 +3811,11 @@ def _cmd_models(args) -> int:
                 continue  # hand-edited cache: skip a malformed row rather than traceback
             mark = "  denied" if row["id"] in info["denied"] else ""
             print(f"  {row['id']:<44} {row.get('tier') or 'unassigned':<10}{mark}")
-        print("  would use: " + ", ".join(f"{t} -> {v['model']} ({v['source']})" for t, v in info["effective"].items()))
+        print("  would use: " + ", ".join(f"{t} -> {v['model'] or 'no model'} ({v['source']})"
+                                          for t, v in info["effective"].items()))
+        if name == "gateway" and any(not v["model"] for v in info["effective"].values()):
+            print("  a gateway lists every vendor, so no model is picked on its own: set COGNIREPO_GATEWAY_PREFER to an id "
+                  "prefix (e.g. anthropic/) or pin one under model_overrides.pin.gateway.<TIER> in .cognirepo/config.json")
     return 0
 
 
@@ -4535,9 +4559,9 @@ def _main():
     p_tc.add_argument(
         "--provider",
         default=None,
-        choices=["anthropic", "gemini", "grok", "openai"],
+        choices=["anthropic", "gemini", "grok", "openai", "gateway"],
         metavar="PROVIDER",
-        help="Provider to test: anthropic | gemini | grok | openai. "
+        help="Provider to test: anthropic | gemini | grok | openai | gateway. "
              "Omit to test all configured providers.",
     )
 
@@ -4842,7 +4866,7 @@ def _main():
     # models — which models each configured API key can use (#87/#88), opt-in and on demand
     p_models = sub.add_parser("models", help="Check which models your API keys can use (opt-in; the only network call)")
     models_sub = p_models.add_subparsers(dest="models_command")
-    _prov = ("anthropic", "openai", "gemini", "grok")
+    _prov = ("anthropic", "openai", "gemini", "grok", "gateway")
     p_models_refresh = models_sub.add_parser("refresh", help="Ask each provider with a key which models it offers; cache the result")
     p_models_refresh.add_argument("--provider", choices=_prov, default=None, help="Only this provider")
     p_models_refresh.add_argument("--timeout", type=float, default=5.0, help="Seconds per request (default 5; 8 s overall cap)")
@@ -5333,6 +5357,7 @@ def _main():
             "gemini": "GEMINI_API_KEY",
             "grok": "GROK_API_KEY",
             "openai": "OPENAI_API_KEY",
+            "gateway": "COGNIREPO_GATEWAY_API_KEY",
         }
         providers_to_test = (
             [args.provider] if args.provider
@@ -5340,7 +5365,8 @@ def _main():
         )
         if not providers_to_test:
             print("No API keys found. Set ANTHROPIC_API_KEY, GEMINI_API_KEY, "
-                  "GROK_API_KEY, or OPENAI_API_KEY and try again.")
+                  "GROK_API_KEY, OPENAI_API_KEY, or COGNIREPO_GATEWAY_API_KEY "
+                  "(plus COGNIREPO_GATEWAY_BASE_URL) and try again.")
             sys.exit(1)
         exit_code = 0
         for prov in providers_to_test:

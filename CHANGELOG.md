@@ -26,6 +26,19 @@ Versioning: [Semantic Versioning](https://semver.org/)
   memory regression test. RCA: `docs/rca/COGNIREPO-98-oom-memory-growth.md` §7.
 
 ### Added
+- **OpenAI-compatible gateway provider (`gateway`).** One URL and one key in front of many models (LiteLLM, OpenRouter,
+  aicredits.in, a localhost proxy) can now be used next to the vendor keys. Set `COGNIREPO_GATEWAY_BASE_URL` and
+  `COGNIREPO_GATEWAY_API_KEY` (optionally `COGNIREPO_GATEWAY_PREFER`, e.g. `anthropic/`, or the same under `"gateway"` in
+  `~/.cognirepo/config.json`); `cognirepo models refresh|list|clear --provider gateway`, `test-connection --provider gateway`
+  and `doctor` know it, and the router uses it after the vendor keys. Before this, a gateway key was sent to the vendor's own
+  host and rejected, and discovery and the key probes could not be pointed anywhere else. A gateway lists every vendor, so no
+  model is picked across them on its own: a `model_overrides.pin.gateway.<TIER>` wins, else the newest model under `prefer`,
+  else the gateway is skipped for that tier (and `models list` says what to set). Safety: the URL is read only from the
+  environment or the user-level file, never a repo's `.cognirepo/config.json` (a cloned repo could otherwise redirect your
+  key); it must be `https://` (or `http://` to localhost), carry no credentials, and is never logged, printed or cached.
+  Namespaced ids (`vendor/model`, `claude-haiku-4.5`) are tiered like bare ones. `models refresh` now uses one worker per
+  provider (it was 4, which would have queued a fifth). Docs: `docs/CONFIGURATION.md#gateway`. Not covered: Anthropic-native
+  `/v1/messages` gateways and `setup`/`setup-env` prompts.
 - **Setup-latency regression tests and a manual UX suite (#89).** `tests/test_setup_latency.py` pins that provider discovery adds
   nothing to `setup`/`init` on the common path: no network without a key or a request, agent-CLI detection in parallel with
   a 3 s cap, and a cached `resolve_model` at about 0.05 ms per call. `docs/MANUAL_TESTS_PROVIDERS.md` lists the real-login /

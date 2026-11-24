@@ -214,3 +214,126 @@ def test_available_providers_lists_configured_keys(router, monkeypatch):
     providers = router._available_providers()
     assert "anthropic" in providers
     assert "gemini" not in providers
+
+
+# ── gateway: one URL + key in front of many models ────────────────────────────
+
+_PIN_STANDARD = {"model_overrides": {"pin": {"gateway": {"STANDARD": "vendor/pinned-model"}}}}
+
+
+def _clear_vendor_keys(monkeypatch):
+    for var in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "GROK_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_gateway_is_available_only_with_a_valid_url_and_a_key(router, monkeypatch):
+    _clear_vendor_keys(monkeypatch)
+    monkeypatch.setenv("COGNIREPO_GATEWAY_API_KEY", "k")
+    assert "gateway" not in router._available_providers()  # key alone: nowhere to send it
+    monkeypatch.setenv("COGNIREPO_GATEWAY_BASE_URL", "http://gw.example.test/v1")
+    assert "gateway" not in router._available_providers()  # remote plain http is refused
+    monkeypatch.setenv("COGNIREPO_GATEWAY_BASE_URL", "https://gw.example.test/v1")
+    assert router._available_providers() == ["gateway"]
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    assert router._available_providers() == ["anthropic", "gateway"]  # real vendor keys come first
+    monkeypatch.delenv("COGNIREPO_GATEWAY_API_KEY")
+    assert router._available_providers() == ["anthropic"]
+
+
+def test_gateway_without_a_model_is_skipped_never_guessed(router, monkeypatch):
+    """No pin and no `prefer`: the gateway has nothing to send, so the chain moves on to the next backend."""
+    with (
+        patch.object(router, "_available_providers", return_value=["gateway"]),
+        patch.object(router, "_cli_backends", return_value=["codex-cli"]),
+        patch.object(router, "_load_config", return_value={}),
+        patch.object(router, "_call_adapter") as mock_call,
+    ):
+        mock_call.return_value = ModelResponse(text="from cli", model="", provider="codex-cli")
+        result = router._dispatch_with_fallback(
+            query="q", primary_provider="anthropic", primary_model="claude-haiku-4-5",
+            system_prompt="", tool_manifest=[], max_tokens=64, tier="STANDARD",
+        )
+    assert result.text == "from cli"
+    assert [c.kwargs["provider"] for c in mock_call.call_args_list] == ["codex-cli"]  # the gateway was never called
+
+
+def test_gateway_alone_without_a_model_fails_with_a_message_that_says_what_to_set(router):
+    with (
+        patch.object(router, "_available_providers", return_value=["gateway"]),
+        patch.object(router, "_cli_backends", return_value=[]),
+        patch.object(router, "_load_config", return_value={}),
+        patch.object(router, "_call_adapter") as mock_call,
+    ):
+        with pytest.raises(ModelCallError) as ei:
+            router._dispatch_with_fallback(
+                query="q", primary_provider="anthropic", primary_model="claude-haiku-4-5",
+                system_prompt="", tool_manifest=[], max_tokens=64, tier="STANDARD",
+            )
+    assert "no model chosen" in ei.value.message and "COGNIREPO_GATEWAY_PREFER" in ei.value.message
+    mock_call.assert_not_called()
+
+
+def test_a_pinned_gateway_model_is_used_and_is_a_fallback_for_a_failing_vendor(router):
+    ok = ModelResponse(text="gw answer", model="vendor/pinned-model", provider="gateway")
+    with (
+        patch.object(router, "_available_providers", return_value=["anthropic", "gateway"]),
+        patch.object(router, "_cli_backends", return_value=[]),
+        patch.object(router, "_load_config", return_value=_PIN_STANDARD),
+        patch.object(router, "_call_adapter") as mock_call,
+    ):
+        mock_call.side_effect = [ModelCallError("anthropic", 429, "quota"), ok]
+        result = router._dispatch_with_fallback(
+            query="q", primary_provider="anthropic", primary_model="claude-haiku-4-5",
+            system_prompt="", tool_manifest=[], max_tokens=64, tier="STANDARD",
+        )
+    assert result.text == "gw answer"
+    second = mock_call.call_args_list[1].kwargs
+    assert second["provider"] == "gateway" and second["model_id"] == "vendor/pinned-model"
+
+
+def test_usable_backends_drops_only_a_modelless_gateway(router):
+    backends = ["anthropic", "gateway", "codex-cli"]
+    with patch.object(router, "_load_config", return_value={}):
+        assert router._usable_backends(backends, "STANDARD") == ["anthropic", "codex-cli"]
+    with patch.object(router, "_load_config", return_value=_PIN_STANDARD):
+        assert router._usable_backends(backends, "STANDARD") == backends
+        assert router._usable_backends(backends, "EXPERT") == ["anthropic", "codex-cli"]  # pinned for STANDARD only
+    assert not router._no_model("codex-cli", "")  # an agent CLI's empty model means "its own default"
+    assert router._no_model("gateway", "") and not router._no_model("gateway", "vendor/m")
+
+
+def test_call_adapter_and_stream_dispatch_reach_the_gateway_adapter(router):
+    from intelligence.orchestrator.model_adapters import gateway_adapter
+    resp = ModelResponse(text="x", model="m", provider="gateway")
+    with patch.object(gateway_adapter, "call", return_value=resp) as call:
+        out = router._call_adapter(query="q", provider="gateway", model_id="vendor/m", system_prompt="s",
+                                   tool_manifest=[], max_tokens=8)
+        assert out is resp and call.call_args.kwargs["model_id"] == "vendor/m"
+
+    def fake_stream(**_kw):
+        yield "chunk"
+        return {"input_tokens": 1, "output_tokens": 1}
+
+    with patch.object(gateway_adapter, "call", side_effect=fake_stream):
+        gen = router._stream_dispatch(query="q", provider="gateway", model_id="vendor/m", system_prompt="s",
+                                      tool_manifest=[], max_tokens=8)
+        assert next(gen) == "chunk"
+
+
+def test_a_quick_query_the_local_resolver_cannot_answer_uses_the_standard_pick_on_a_gateway(router):
+    """QUICK has no tier of its own on a gateway; a vendor falls back to its cheap default, a gateway to STANDARD."""
+    with patch.object(router, "_load_config", return_value=_PIN_STANDARD):
+        assert router._model_for("gateway", "QUICK") == "vendor/pinned-model"
+        assert router._model_for("gateway", "EXPERT") == ""  # only STANDARD is pinned: no other tier borrows it
+    with (
+        patch.object(router, "_available_providers", return_value=["gateway"]),
+        patch.object(router, "_cli_backends", return_value=[]),
+        patch.object(router, "_load_config", return_value=_PIN_STANDARD),
+        patch.object(router, "_call_adapter") as mock_call,
+    ):
+        mock_call.return_value = ModelResponse(text="gw", model="vendor/pinned-model", provider="gateway")
+        router._dispatch_with_fallback(
+            query="q", primary_provider="local", primary_model="local-resolver",
+            system_prompt="", tool_manifest=[], max_tokens=64, tier="QUICK",
+        )
+    assert mock_call.call_args.kwargs["model_id"] == "vendor/pinned-model"

@@ -238,12 +238,13 @@ _NON_CHAT_RE = re.compile(r"(embed|whisper|tts|dall-e|image|moderation|realtime|
 
 #: Ordered, first match wins. STANDARD is checked first so "*-mini" / "*-nano" / "flash" beat the broad rules.
 #: A token must start at a boundary ("gemini" must not match "mini"). Unknown families match nothing and stay
-#: unassigned: they are never auto-selected.
+#: unassigned: they are never auto-selected. A gateway namespaces ids ("<vendor>/<model>"), so the versioned-family
+#: rule also matches right after a "/".
 _B = r"(?:^|[-_.:/])"
 FAMILY_TIER_RULES: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ("STANDARD", re.compile(_B + r"(haiku|mini|nano|flash|fast)")),
     ("EXPERT",   re.compile(_B + r"(opus|ultra|heavy|reason|o\d)")),
-    ("COMPLEX",  re.compile(_B + r"(sonnet|pro)(?![a-z])|^(gpt|grok|claude|gemini)-\d")),
+    ("COMPLEX",  re.compile(_B + r"(sonnet|pro)(?![a-z])|(?:^|/)(gpt|grok|claude|gemini)-\d")),
 )
 _TIER_ORDER = ("STANDARD", "COMPLEX", "EXPERT")
 _MIN_CTX_FOR_UPPER_TIERS = 32_000
