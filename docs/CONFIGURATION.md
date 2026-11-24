@@ -180,7 +180,8 @@ do not know stays `unassigned` and is never picked automatically; pin it, or giv
   A repo's own `.cognirepo/config.json` can never set it (a cloned repo could otherwise point your key at its author's server).
 - It must be `https://`, or `http://` to `127.0.0.1` / `localhost` / `::1` for a local proxy. A URL with credentials, a
   query string or a fragment is ignored, as if no gateway were configured.
-- The URL is never logged, printed or cached, because some gateways put a token in the path. `doctor` and `models list`
+- The URL is never logged, printed or cached, because some gateways put a token in the path (the HTTP client's own
+  request logging is switched to WARNING for gateway calls). `doctor` and `models list`
   show only the host. The cache keeps a hash of the key and URL together, so changing either one makes it stale.
 - Discovery does not follow redirects, and the key travels only in the `Authorization` header.
 
