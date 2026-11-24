@@ -565,3 +565,25 @@ def test_serve_reports_import_failure_on_stderr(capsys, monkeypatch):
     assert "cannot import the MCP server" in err
     assert sys.executable in err
     assert "cognirepo doctor" in err
+
+
+def _hide_openai(monkeypatch):
+    import importlib.util
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a, **k: None if name == "openai" else real(name, *a, **k))
+
+
+def test_doctor_warns_when_a_gateway_is_set_but_the_openai_package_is_missing(capsys, monkeypatch):
+    monkeypatch.setenv("COGNIREPO_GATEWAY_BASE_URL", "https://gw.example.test/v1")
+    monkeypatch.setenv("COGNIREPO_GATEWAY_API_KEY", "gw-key")
+    _hide_openai(monkeypatch)
+    _run_doctor(capsys, monkeypatch, api_keys=False)
+    out = capsys.readouterr().out
+    assert "Gateway (gw.example.test)" in out
+    assert "openai package" in out and "pipx inject cognirepo openai" in out
+
+
+def test_doctor_stays_quiet_about_openai_without_a_gateway(capsys, monkeypatch):
+    _hide_openai(monkeypatch)
+    _run_doctor(capsys, monkeypatch, api_keys=True)
+    assert "pipx inject cognirepo openai" not in capsys.readouterr().out

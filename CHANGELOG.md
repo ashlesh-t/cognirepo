@@ -37,7 +37,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   environment or the user-level file, never a repo's `.cognirepo/config.json` (a cloned repo could otherwise redirect your
   key); it must be `https://` (or `http://` to localhost), carry no credentials, and is never logged, printed or cached.
   Namespaced ids (`vendor/model`, `claude-haiku-4.5`) are tiered like bare ones. `models refresh` now uses one worker per
-  provider (it was 4, which would have queued a fifth). Docs: `docs/CONFIGURATION.md#gateway`. Not covered: Anthropic-native
+  provider (it was 4, which would have queued a fifth). Model discovery now sends `User-Agent: cognirepo/<version>` for every provider: urllib's default agent is refused with 403 by Cloudflare-fronted gateways (aicredits.in), which showed up as a rejected key. Gateway calls need the optional `openai` package; `doctor` and the adapter say how to install it, also under pipx. Docs: `docs/CONFIGURATION.md#gateway`. Not covered: Anthropic-native
   `/v1/messages` gateways and `setup`/`setup-env` prompts.
 - **Setup-latency regression tests and a manual UX suite (#89).** `tests/test_setup_latency.py` pins that provider discovery adds
   nothing to `setup`/`init` on the common path: no network without a key or a request, agent-CLI detection in parallel with

@@ -967,10 +967,13 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     }
     _found = [name for var, name in _providers.items() if os.environ.get(var)]
     _gw_warn = ""
+    _gw_pkg_warn = False
     try:  # gateway: needs a valid URL and a key; only the host is ever shown (the path may hold a token)
+        import importlib.util as _ilu  # pylint: disable=import-outside-toplevel
         from intelligence.orchestrator import gateway as _gw  # pylint: disable=import-outside-toplevel
         if _gw.configured():
             _found.append(f"Gateway ({_gw.host()})")
+            _gw_pkg_warn = _ilu.find_spec("openai") is None  # model lists need no package; calls do
         elif _gw.api_key() or os.environ.get(_gw.ENV_URL):
             _gw_warn = (f"Gateway — needs both {_gw.ENV_URL} (an https:// URL, or http:// to localhost) "
                         f"and {_gw.ENV_KEY}")
@@ -986,6 +989,9 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
         )
     if _gw_warn:
         _warn(_gw_warn, "See docs/CONFIGURATION.md#gateway")
+    if _gw_pkg_warn:
+        _warn("Gateway — the openai package is not installed, so gateway calls will fail (model lists still work)",
+              "Install it: pip install openai  (installed with pipx: pipx inject cognirepo openai)")
 
     # ── Check 7b: agent CLIs (informational, local --version only) ─────────────
     try:

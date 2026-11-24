@@ -19,9 +19,25 @@ There is no default model: a gateway's catalogue is its own, so the caller must 
 """
 from __future__ import annotations
 
+import importlib.util
+import logging
+
 from intelligence.orchestrator import gateway
 from intelligence.orchestrator.model_adapters import openai_adapter
 from intelligence.orchestrator.model_adapters.errors import ModelCallError
+
+
+#: HTTP client libraries (current and renamed ones) that log "HTTP Request: POST <full url>" at INFO.
+_HTTP_LOGGERS = ("httpx", "httpx2", "httpcore", "httpcore2", "openai")
+
+
+def _keep_url_out_of_logs() -> None:
+    """A gateway URL may carry a token in its path and is never logged (docs/CONFIGURATION.md#gateway), but the HTTP
+    client logs every request URL at INFO. Keep those loggers at WARNING once a gateway is used."""
+    for name in _HTTP_LOGGERS:
+        log = logging.getLogger(name)
+        if log.level == logging.NOTSET or log.level < logging.WARNING:
+            log.setLevel(logging.WARNING)
 
 
 def call(
@@ -58,6 +74,13 @@ def call(
             "gateway", None,
             "no model chosen for the gateway: pin one under model_overrides.pin.gateway "
             f"or set {gateway.ENV_PREFER} (an id prefix) and run `cognirepo models refresh`",
+        )
+    _keep_url_out_of_logs()
+    if importlib.util.find_spec("openai") is None:  # optional extra; absent from a default pipx install
+        raise ModelCallError(
+            "gateway", None,
+            "gateway calls need the openai package, which is not installed: "
+            "pip install openai (installed with pipx: pipx inject cognirepo openai)",
         )
     return openai_adapter.call(
         query=query,

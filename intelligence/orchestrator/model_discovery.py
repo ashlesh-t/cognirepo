@@ -110,11 +110,19 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
+def _user_agent() -> str:
+    """``cognirepo/<version>``. urllib's own agent (``Python-urllib/3.x``) is refused by Cloudflare-fronted gateways with
+    403 "error code: 1010", which would be reported as a rejected key even though the key was never looked at."""
+    from core.config.version import __version__  # pylint: disable=import-outside-toplevel
+    return f"cognirepo/{__version__}"
+
+
 def _get_json(url: str, headers: dict[str, str], timeout: float) -> Any:
     """GET ``url`` and decode JSON. Raises FetchError. Keys travel in headers only, never in the URL."""
     if not url.startswith("https://") and not gateway.is_loopback_http(url):
         raise FetchError("malformed", "refusing a non-https URL")
-    req = urllib.request.Request(url, headers={**headers, "accept": "application/json"}, method="GET")
+    req = urllib.request.Request(
+        url, headers={"user-agent": _user_agent(), **headers, "accept": "application/json"}, method="GET")
     try:
         # no redirects: a 3xx would forward the key header to wherever it points (possibly plain http).
         # The scheme was checked above: https, or http to this machine only (a local gateway).
