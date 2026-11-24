@@ -788,3 +788,42 @@ class TestStreamRoute:
             result = stream_route("test")
             assert inspect.isgenerator(result)
             list(result)  # consume to avoid ResourceWarning
+
+
+# ── Gateway adapter ────────────────────────────────────────────────────────────
+
+class TestGatewayAdapter:
+    def test_uses_the_configured_url_key_and_model(self, monkeypatch):
+        monkeypatch.setattr("time.sleep", lambda _: None)
+        monkeypatch.setenv("COGNIREPO_GATEWAY_BASE_URL", "https://gw.example.test/v1/")
+        monkeypatch.setenv("COGNIREPO_GATEWAY_API_KEY", "test-gateway-key")
+
+        captured = {}
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = _make_openai_response("gw-pong")
+
+        def capture_openai(**kwargs):
+            captured.update(kwargs)
+            return mock_client
+
+        with patch("openai.OpenAI", side_effect=capture_openai):
+            from intelligence.orchestrator.model_adapters import gateway_adapter
+            result = gateway_adapter.call("ping", "system", [], model_id="vendor/model-x", max_tokens=9)
+
+        assert captured.get("base_url") == "https://gw.example.test/v1"  # trailing slash normalised
+        assert captured.get("api_key") == "test-gateway-key"
+        sent = mock_client.chat.completions.create.call_args.kwargs
+        assert sent["model"] == "vendor/model-x" and sent["max_tokens"] == 9
+        assert result.provider == "gateway" and result.text == "gw-pong"
+
+    def test_never_calls_out_without_a_url_a_key_and_a_model(self, monkeypatch):
+        from intelligence.orchestrator.model_adapters import gateway_adapter
+        from intelligence.orchestrator.model_adapters.errors import ModelCallError
+        with patch("openai.OpenAI") as client:
+            with pytest.raises(ModelCallError):
+                gateway_adapter.call("ping", "system", [], model_id="vendor/model-x")  # nothing configured
+            monkeypatch.setenv("COGNIREPO_GATEWAY_BASE_URL", "https://gw.example.test/v1")
+            monkeypatch.setenv("COGNIREPO_GATEWAY_API_KEY", "k")
+            with pytest.raises(ModelCallError):
+                gateway_adapter.call("ping", "system", [], model_id="")  # no model chosen
+            client.assert_not_called()

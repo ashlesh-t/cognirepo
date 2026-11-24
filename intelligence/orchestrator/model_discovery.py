@@ -15,6 +15,9 @@ Cache: the ``api`` section of ``~/.cognirepo/provider_status.json`` (0600, per u
 Per provider: ``fetched_at``, ``key_fingerprint`` (sha256 prefix, never the key), ``rules_hash`` (a cache written
 under other tier rules is stale), ``models`` and ``denied``. TTL 24 h; stale entries are ignored, not deleted.
 
+``gateway`` is an OpenAI-compatible endpoint at the user's own URL (``gateway.py``): it is listed from ``{url}/models``,
+its entry is bound to the key *and* the URL (a changed URL is a stale cache), and the URL itself is never stored.
+
 No model-ID literals live here: tier rules, parsing helpers and the resolve ladder are in ``classifier.py``.
 Model names come from the provider's own response and are validated before use.
 """
@@ -34,7 +37,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from intelligence.orchestrator import provider_status
+from intelligence.orchestrator import gateway, provider_status
 from intelligence.orchestrator.classifier import (
     MODEL_ID_RE, assign_tier, hardcoded_models, is_dated_snapshot, is_prerelease, model_family, model_version, rules_hash,
 )
@@ -46,7 +49,7 @@ REQUEST_TIMEOUT_S = 5.0
 TOTAL_TIMEOUT_S = 8.0
 _MAX_PAGES = 5
 _MAX_BODY = 5_000_000
-PROVIDERS = ("anthropic", "openai", "gemini", "grok")
+PROVIDERS = ("anthropic", "openai", "gemini", "grok", "gateway")
 _TIERS = ("STANDARD", "COMPLEX", "EXPERT")
 
 _KEY_ENV: dict[str, tuple[str, ...]] = {
@@ -54,6 +57,7 @@ _KEY_ENV: dict[str, tuple[str, ...]] = {
     "openai": ("OPENAI_API_KEY",),
     "gemini": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
     "grok": ("GROK_API_KEY",),
+    "gateway": (gateway.ENV_KEY,),
 }
 
 
@@ -90,6 +94,12 @@ def fingerprint(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:12]
 
 
+def _identity(provider: str, key: str) -> str:
+    """What a cache entry is bound to: the key, and for a gateway also its URL (one key at another URL is another
+    catalogue). Only the hash of this is stored, never the URL."""
+    return f"{key}@{gateway.base_url() or ''}" if provider == "gateway" else key
+
+
 # ── HTTP ─────────────────────────────────────────────────────────────────────────────────────────
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -102,12 +112,13 @@ _OPENER = urllib.request.build_opener(_NoRedirect)
 
 def _get_json(url: str, headers: dict[str, str], timeout: float) -> Any:
     """GET ``url`` and decode JSON. Raises FetchError. Keys travel in headers only, never in the URL."""
-    if not url.startswith("https://"):
+    if not url.startswith("https://") and not gateway.is_loopback_http(url):
         raise FetchError("malformed", "refusing a non-https URL")
     req = urllib.request.Request(url, headers={**headers, "accept": "application/json"}, method="GET")
     try:
-        # no redirects: a 3xx would forward the key header to wherever it points (possibly plain http)
-        with _OPENER.open(req, timeout=timeout) as resp:  # nosec B310 - https only, fixed provider hosts
+        # no redirects: a 3xx would forward the key header to wherever it points (possibly plain http).
+        # The scheme was checked above: https, or http to this machine only (a local gateway).
+        with _OPENER.open(req, timeout=timeout) as resp:  # nosec B310
             body = resp.read(_MAX_BODY)
     except urllib.error.HTTPError as exc:
         kind = "rejected" if exc.code in (401, 403) else "transient"
@@ -209,6 +220,11 @@ def _fetch_paged(key: str, timeout: float, provider: str,
                 break
         return models, "v1beta/models"
     headers = {"Authorization": f"Bearer {key}"}
+    if provider == "gateway":
+        base = gateway.base_url()
+        if base is None:
+            raise FetchError("malformed", "no valid gateway URL (set COGNIREPO_GATEWAY_BASE_URL to an https:// URL)")
+        return parse_openai(get(base + "/models", headers))[0], "gateway /models"
     if provider == "grok":
         try:  # richer endpoint first, fall back to the OpenAI-compatible list
             return parse_grok(get("https://api.x.ai/v1/language-models", headers))[0], "v1/language-models"
@@ -279,7 +295,7 @@ def entry_is_fresh(provider: str, entry: dict[str, Any], key: str | None = None)
     if age is None or age < 0 or age > TTL_SECONDS or entry.get("rules_hash") != rules_hash():
         return False
     key = key if key is not None else api_key(provider)
-    return key is not None and entry.get("key_fingerprint") == fingerprint(key)
+    return key is not None and entry.get("key_fingerprint") == fingerprint(_identity(provider, key))
 
 
 def clear_cache(provider: str | None = None) -> bool:
@@ -313,7 +329,7 @@ def refresh(providers: list[str] | None = None, timeout: float = REQUEST_TIMEOUT
     wanted = [p for p in (providers or PROVIDERS) if p in PROVIDERS]
     report: dict[str, dict[str, Any]] = {}
     jobs: dict[str, tuple[str, Any]] = {}
-    pool = ThreadPoolExecutor(max_workers=4)
+    pool = ThreadPoolExecutor(max_workers=max(1, len(wanted)))  # one per provider: none waits behind a hung one
     deadline = time.monotonic() + total_timeout
     try:
         for p in wanted:
@@ -337,7 +353,7 @@ def refresh(providers: list[str] | None = None, timeout: float = REQUEST_TIMEOUT
             except Exception as exc:  # pylint: disable=broad-except
                 report[p] = {"status": "failed", "count": 0, "detail": type(exc).__name__}
                 continue
-            entry = {"fetched_at": _now(), "key_fingerprint": fingerprint(key), "endpoint": endpoint,
+            entry = {"fetched_at": _now(), "key_fingerprint": fingerprint(_identity(p, key)), "endpoint": endpoint,
                      "rules_hash": rules_hash(), "models": rows, "denied": []}
             if provider_status.modify(lambda doc, p=p, entry=entry: doc.setdefault("api", {}).__setitem__(p, entry)):
                 report[p] = {"status": "ok", "count": len(rows), "detail": endpoint}
@@ -368,9 +384,21 @@ def pick_for_tier(provider: str, tier: str, baseline: str, overrides: dict[str, 
     listed = {r["id"] for r in rows}
     usable = [(r["id"], forced.get(r["id"]) or r.get("tier")) for r in rows if r["id"] not in blocked]
     usable = [(i, t) for i, t in usable if t]
+    if provider == "gateway":
+        # A gateway lists every vendor and version numbers are not comparable across vendors, so an automatic pick
+        # stays inside the user's chosen id prefix; with none chosen nothing is picked (a pin still applies upstream).
+        prefix = gateway.prefer()
+        if not prefix:
+            return None
+        usable = [(i, t) for i, t in usable if i.lower().startswith(prefix)]
+
+    # On a version tie a gateway's plain id beats its variants (gpt-5 over gpt-5-codex / -search-api, grok-4.20 over
+    # -multi-agent): the longest id would otherwise win. A vendor never ties: its same-family check screens variants out.
+    plain_first = provider == "gateway"
 
     def newest(candidates: list[str]) -> str | None:
-        return max(candidates, key=lambda i: (not is_prerelease(i), model_version(i), i), default=None)
+        return max(candidates, key=lambda i: (not is_prerelease(i), model_version(i), -len(i) if plain_first else 0, i),
+                   default=None)
 
     # A shipped alias ('claude-haiku-4-5') may be listed only as dated snapshots ('claude-haiku-4-5-2025...'):
     # that still means it exists, so it is not "retired".

@@ -52,6 +52,13 @@ def _seed(provider="anthropic", ids=("claude-haiku-4-5", "claude-sonnet-4-6", "c
     ("text-embedding-3-small", None), ("whisper-1", None), ("dall-e-3", None), ("gemini-embedding-001", None),
     ("some-new-thing", None), ("ft:gpt-4o:org", None), ("gpt-4o-realtime-preview", None), ("gpt-image-1", None),
     ("omni-moderation-latest", None), ("", None), ("bad id with spaces", None), ("-leading-dash", None),
+    # a gateway namespaces ids "<vendor>/<model>" (and dots versions): tiered like the bare id
+    ("anthropic/claude-haiku-4.5", "STANDARD"), ("anthropic/claude-sonnet-4.5", "COMPLEX"),
+    ("anthropic/claude-opus-4.6", "EXPERT"), ("google/gemini-2.5-flash", "STANDARD"), ("google/gemini-2.5-pro", "COMPLEX"),
+    ("openai/gpt-4o", "COMPLEX"), ("openai/gpt-4o-mini", "STANDARD"), ("openai/o3", "EXPERT"), ("x-ai/grok-4.20", "COMPLEX"),
+    ("cohere/embed-v4", None), ("black-forest-labs/flux-image-1", None), ("mancer/weaver", None),
+    # the family must start the id or follow a "/": a lookalike inside a longer token stays unassigned
+    ("megagpt-4", None), ("acme/notgpt-4", None),
 ])
 def test_assign_tier(model_id, tier):
     assert clf.assign_tier(model_id) == tier
@@ -485,10 +492,11 @@ def test_bare_models_command_does_not_crash(monkeypatch, capsys):
 
 
 def test_refresh_deadline_is_shared_across_providers(monkeypatch):
-    """Four hung providers must take about one budget in total, not one budget each."""
+    """Every hung provider (the gateway included) must take about one budget in total, not one budget each."""
     import time
-    for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GROK_API_KEY"):
-        monkeypatch.setenv(k, SECRET)
+    monkeypatch.setenv("COGNIREPO_GATEWAY_BASE_URL", "https://gw.example.test/v1")
+    for p in md.PROVIDERS:
+        monkeypatch.setenv(md._KEY_ENV[p][0], SECRET)  # pylint: disable=protected-access
     monkeypatch.setattr(md, "fetch_provider_models", lambda *a, **k: time.sleep(3))
     t0 = time.monotonic()
     report = md.refresh(total_timeout=0.4)

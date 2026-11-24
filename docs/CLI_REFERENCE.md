@@ -666,7 +666,7 @@ cognirepo test-connection [OPTIONS]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--provider {anthropic,gemini,grok,openai}` | none (tests all configured) | Provider to test; omit to test every configured provider |
+| `--provider {anthropic,gemini,grok,openai,gateway}` | none (tests all configured) | Provider to test; omit to test every configured provider. `gateway` sends one 10-token call to the model chosen for the `STANDARD` tier ([CONFIGURATION.md](CONFIGURATION.md#gateway)) and says what to set when there is none |
 
 ---
 
@@ -824,13 +824,13 @@ cognirepo models clear [--provider P]
 
 | Subcommand | Description |
 |------------|-------------|
-| `refresh` | One list request per provider with a key (anthropic, openai, gemini, grok), in parallel, 5 s each and 8 s overall. Keys go in request headers, never in a URL, and are never written to disk (only a short hash is kept to notice a rotated key). A failure keeps the previous cache; an empty answer never replaces a good one. Exit 1 if a provider with a key failed or no key is set |
+| `refresh` | One list request per provider with a key (anthropic, openai, gemini, grok, and `gateway` once a URL and key are set: [CONFIGURATION.md](CONFIGURATION.md#gateway)), in parallel, 5 s each and 8 s overall. Keys go in request headers, never in a URL, and are never written to disk (only a short hash is kept to notice a rotated key). A failure keeps the previous cache; an empty answer never replaces a good one. Exit 1 if a provider with a key failed or no key is set |
 | `list` | Cached models per provider with their tier (`unassigned` = unknown family, never auto-selected), plus the model each tier would use and whether it is `discovered` or `default`. Local only |
 | `clear` | Forget the cache; the hardcoded defaults apply again |
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--provider P` | all | Limit to `anthropic`, `openai`, `gemini` or `grok` |
+| `--provider P` | all | Limit to `anthropic`, `openai`, `gemini`, `grok` or `gateway` |
 | `--timeout S` | `5` | `refresh`: seconds per request (the 8 s overall cap still applies) |
 | `--stale` | `False` | `list`: also show entries older than 24 h or written under other tier rules (they are ignored by the router) |
 | `--json` | `False` | `list`: machine-readable output |

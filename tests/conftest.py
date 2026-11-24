@@ -235,6 +235,10 @@ def isolated_cognirepo(tmp_path, monkeypatch):
     # Change CWD so relative paths land in tmp
     monkeypatch.chdir(tmp_path)
 
+    # A developer's own gateway must not leak into a test (it would add a provider and change routing)
+    for _var in ("COGNIREPO_GATEWAY_BASE_URL", "COGNIREPO_GATEWAY_API_KEY", "COGNIREPO_GATEWAY_PREFER"):
+        monkeypatch.delenv(_var, raising=False)
+
     # Inject secrets via env vars (mirrors CI / Docker behaviour)
 
     # Create required subdirectories

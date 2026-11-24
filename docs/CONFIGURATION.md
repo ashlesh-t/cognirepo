@@ -122,6 +122,63 @@ An agent CLI is used for routing only when `enabled` is true (and `terms_ack` is
 | `GOOGLE_API_KEY` | Gemini (alternate key name) | `AIza...` |
 | `OPENAI_API_KEY` | OpenAI API key | `sk-...` |
 | `GROK_API_KEY` | Grok API key | `...` |
+| `COGNIREPO_GATEWAY_BASE_URL` | Base URL of an OpenAI-compatible gateway (`https://`, or `http://` to localhost). See [Gateway](#gateway) | `https://aicredits.in/v1` |
+| `COGNIREPO_GATEWAY_API_KEY` | The gateway's key. Environment only, never read from or written to a file | `...` |
+| `COGNIREPO_GATEWAY_PREFER` | Optional id prefix the gateway's automatic model pick stays inside | `anthropic/` |
+
+---
+
+## Gateway
+
+A gateway is one OpenAI-compatible URL and one key in front of many models (LiteLLM, OpenRouter, aicredits.in, a proxy on
+localhost). CogniRepo treats it as a fifth provider, `gateway`, next to `anthropic`, `openai`, `gemini` and `grok`. It
+runs alongside them (real vendor keys are tried first) and nothing changes until you set a URL **and** a key.
+
+| Setting | Environment (wins) | `~/.cognirepo/config.json` → `"gateway"` | Notes |
+|---|---|---|---|
+| Base URL | `COGNIREPO_GATEWAY_BASE_URL` | `base_url` | Required. The URL that has `/models` and `/chat/completions` under it, e.g. `https://aicredits.in/v1` |
+| Key | `COGNIREPO_GATEWAY_API_KEY` | not allowed | Required. Environment only |
+| Preferred vendor | `COGNIREPO_GATEWAY_PREFER` | `prefer` | Optional. A plain, case-insensitive id prefix: `anthropic/`, `google/` or `gpt-` |
+
+```bash
+export COGNIREPO_GATEWAY_BASE_URL=https://aicredits.in/v1
+export COGNIREPO_GATEWAY_API_KEY=...
+export COGNIREPO_GATEWAY_PREFER=anthropic/        # optional, see "Which model is used" below
+cognirepo models refresh --provider gateway       # lists the gateway's models (the only network call)
+cognirepo models list --provider gateway          # each model's tier, and what each tier would use
+cognirepo test-connection --provider gateway      # one real 10-token call
+```
+
+To keep it for every shell, put the non-secret part in the user-level file (the key stays in your environment):
+
+```json
+{ "gateway": { "base_url": "https://aicredits.in/v1", "prefer": "anthropic/" } }
+```
+
+**Which model is used.** A gateway lists every vendor's models, and version numbers are not comparable across vendors, so
+CogniRepo never picks one on its own across them. For each tier (`STANDARD`, `COMPLEX`, `EXPERT`), in order:
+
+1. a pin in the repo's `.cognirepo/config.json`: `"model_overrides": {"pin": {"gateway": {"EXPERT": "anthropic/claude-opus-4.6"}}}`
+   (ids are the gateway's own, exactly as `models list` prints them);
+2. otherwise the newest model discovered for that tier whose id starts with `prefer` (on a version tie the plain id wins
+   over its variants: `gpt-5` over `gpt-5-codex` / `gpt-5-search-api`, `grok-4.20` over `grok-4.20-multi-agent`; pin a variant if you want one);
+3. otherwise **none**: the gateway is skipped for that tier and the next backend is tried. `models list` says so.
+
+Model ids are tiered by the same family rules as the vendors' own, with or without a `vendor/` prefix. A family the rules
+do not know stays `unassigned` and is never picked automatically; pin it, or give it a tier with `model_overrides.tiers`.
+
+**Safety.**
+
+- The URL decides where your key is sent, so it is read **only** from the environment or `~/.cognirepo/config.json`.
+  A repo's own `.cognirepo/config.json` can never set it (a cloned repo could otherwise point your key at its author's server).
+- It must be `https://`, or `http://` to `127.0.0.1` / `localhost` / `::1` for a local proxy. A URL with credentials, a
+  query string or a fragment is ignored, as if no gateway were configured.
+- The URL is never logged, printed or cached, because some gateways put a token in the path. `doctor` and `models list`
+  show only the host. The cache keeps a hash of the key and URL together, so changing either one makes it stale.
+- Discovery does not follow redirects, and the key travels only in the `Authorization` header.
+
+**Not covered yet.** OpenAI-compatible gateways only (`/models`, `/chat/completions`); an Anthropic-native `/v1/messages`
+gateway is not supported. `setup` and `setup-env` do not ask for gateway settings; set them as above.
 
 ---
 

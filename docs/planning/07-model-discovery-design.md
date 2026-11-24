@@ -230,7 +230,7 @@ phase 1 or be dropped if nobody needs it.
 These are as understood at design time; #88b must verify each against a live key.
 
 - **Trigger:** `cognirepo models refresh [--provider P]` only. 5 s per provider, 8 s wall clock,
-  thread pool of 4. `setup`/`init`/`index-repo` never fetch.
+  one worker per provider (so none waits behind a hung one). `setup`/`init`/`index-repo` never fetch.
 - **Tiering:** pure `assign_tier(provider, ModelInfo) -> Tier | None`. Drop non-chat models, then an
   ordered `FAMILY_TIER_RULES` table in `classifier.py` (haiku/mini/nano/flash -> STANDARD,
   sonnet/gpt base/pro -> COMPLEX, opus/reasoning/ultra -> EXPERT), newest version wins within a tier,
@@ -255,6 +255,22 @@ These are as understood at design time; #88b must verify each against a live key
 - **Augment, never replace:** `DEFAULT_MODELS_BY_PROVIDER` and `ADAPTER_STANDALONE_DEFAULTS` stay
   immutable constants. `router._PROVIDER_DEFAULT_MODELS` and adapter defaults keep reading them for
   standalone calls; only router tier dispatch goes through `resolve_model`.
+
+### 6.1 Addendum — gateway provider
+
+A fifth provider, `gateway`, is an OpenAI-compatible endpoint at a user-chosen URL (LiteLLM, OpenRouter, aicredits.in, a
+local proxy): `GET {url}/models` with `Authorization: Bearer`, parsed like OpenAI's. Differences from the vendors, all in
+`gateway.py` and `pick_for_tier`:
+
+- **No hardcoded default model.** A gateway's catalogue is its own, so the baseline is `""`: a pin wins; otherwise the
+  newest tier-assigned model whose id starts with `prefer`; otherwise nothing, and the router skips the gateway for that
+  tier (`_no_model`, `_usable_backends`). Version numbers are not comparable across vendors, so there is no unscoped pick;
+  on a version tie the shortest id wins (the plain model over its `-codex` / `-search-api` / `-multi-agent` variants).
+- **The URL is a credential destination**, so it comes only from the environment or the user-level config, never the
+  repo's `.cognirepo/config.json`; it is validated (`https`, or `http` to loopback) and never stored, logged or printed.
+  The cache identity is `sha256(key@url)[:12]`.
+- Namespaced ids (`vendor/model`, dotted versions) are tiered by the same `FAMILY_TIER_RULES`; the versioned-family rule
+  also matches after a `/`.
 
 ## 7. Storage and config
 

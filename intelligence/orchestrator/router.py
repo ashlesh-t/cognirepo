@@ -39,6 +39,7 @@ from intelligence.orchestrator.classifier import (
     ADAPTER_STANDALONE_DEFAULTS, CLI_TIER_ALIASES, ClassifierResult, classify, DEFAULT_MODELS_BY_PROVIDER,
     resolve_model,
 )
+from intelligence.orchestrator import gateway
 from intelligence.orchestrator.context_builder import ContextBundle, build as build_context
 from intelligence.orchestrator.model_adapters.anthropic_adapter import ModelResponse
 from intelligence.orchestrator.model_adapters.errors import ModelCallError
@@ -250,12 +251,13 @@ def route(
 # ── provider availability + fallback chain ────────────────────────────────────
 
 #: Priority order for provider fallback (most capable first)
-_PROVIDER_PRIORITY = ["anthropic", "gemini", "grok", "openai"]
+_PROVIDER_PRIORITY = ["anthropic", "gemini", "grok", "openai", "gateway"]
 
 #: Default model IDs per provider — sourced from orchestrator/classifier.py (single source of truth)
 _PROVIDER_DEFAULT_MODELS: dict[str, str] = {
     **DEFAULT_MODELS_BY_PROVIDER,
     "grok": ADAPTER_STANDALONE_DEFAULTS["grok"],  # grok not in base classifier; extend here
+    "gateway": "",  # a gateway's catalogue is its own: no default, only a pin or a discovered model under `prefer`
 }
 
 
@@ -270,6 +272,8 @@ def _available_providers() -> list[str]:
         available.append("grok")
     if os.environ.get("OPENAI_API_KEY"):
         available.append("openai")
+    if gateway.configured():  # needs both a valid URL and a key; last, so real vendor keys come first
+        available.append("gateway")
     return available
 
 
@@ -316,11 +320,24 @@ def _model_for(provider: str, tier: str | None, primary_provider: str | None = N
     provider, passed through ``resolve_model`` (a no-op until `cognirepo models refresh` has cached something)."""
     if _is_cli_backend(provider):
         return CLI_TIER_ALIASES.get(provider[: -len(_CLI_SUFFIX)], {}).get(tier or "", "")
+    if provider == "gateway" and tier == "QUICK":
+        tier = "STANDARD"  # a vendor falls back to its cheap default for QUICK; a gateway has none, so the cheapest tier
     if primary_model and provider == primary_provider:
         baseline = primary_model
     else:
         baseline = _PROVIDER_DEFAULT_MODELS.get(provider, primary_model or DEFAULT_MODELS_BY_PROVIDER["anthropic"])
     return resolve_model(provider, tier, baseline, _load_config())
+
+
+def _no_model(provider: str, model_id: str) -> bool:
+    """True when ``provider`` has nothing to send. Only a gateway can be in that state (no pin and no ``prefer``): an
+    agent CLI's empty model means "use the CLI's own default", and an API provider always has a hardcoded one."""
+    return provider == "gateway" and not model_id
+
+
+def _usable_backends(backends: list[str], tier: str | None) -> list[str]:
+    """``backends`` without a gateway that has no model for ``tier`` (it is skipped, never guessed)."""
+    return [b for b in backends if b != "gateway" or _model_for(b, tier)]
 
 
 def _note_cli_result(provider: str, ok: bool) -> None:
@@ -356,6 +373,15 @@ def _dispatch_with_fallback(
     last_exc: Exception | None = None
     for i, provider in enumerate(ordered):
         model_id = _model_for(provider, tier, primary_provider, primary_model)
+        if _no_model(provider, model_id):
+            last_exc = ModelCallError(
+                provider, None,
+                "no model chosen for this tier: pin one under model_overrides.pin.gateway or set "
+                f"{gateway.ENV_PREFER} and run `cognirepo models refresh`",
+            )
+            if i == len(ordered) - 1:
+                raise last_exc
+            continue
         is_fallback = i > 0
         if is_fallback:
             logger.debug("Falling back from %s to %s/%s", ordered[i - 1], provider, model_id)
@@ -400,7 +426,7 @@ def _promote_to_standard(
     by re-classifying and dispatching to the best available provider.
     Returns None if no provider is available.
     """
-    available = _ordered_backends(None)
+    available = _usable_backends(_ordered_backends(None), "STANDARD")
     if not available:
         return None
     provider = available[0]
@@ -460,6 +486,9 @@ def _call_adapter(
     if provider == "grok":
         from intelligence.orchestrator.model_adapters import grok_adapter  # pylint: disable=import-outside-toplevel
         return grok_adapter.call(**kwargs)
+    if provider == "gateway":
+        from intelligence.orchestrator.model_adapters import gateway_adapter  # pylint: disable=import-outside-toplevel
+        return gateway_adapter.call(**kwargs)
     if provider in ("openai", "azure", "ollama", "lmstudio"):
         from intelligence.orchestrator.model_adapters import openai_adapter  # pylint: disable=import-outside-toplevel
         return openai_adapter.call(**kwargs)
@@ -695,8 +724,8 @@ def stream_route(
 
     provider, model_id = clf.provider, clf.model
     if provider != "local":  # an enabled CLI replaces a primary that has no usable API key (or when preferred)
-        first = next(iter(_ordered_backends(provider)), None)
-        if first is not None and _is_cli_backend(first) and first != provider:
+        first = next(iter(_usable_backends(_ordered_backends(provider), clf.tier)), None)
+        if first is not None and first != provider and (_is_cli_backend(first) or first == "gateway"):
             provider, model_id = first, _model_for(first, clf.tier)
         else:
             model_id = _model_for(provider, clf.tier, provider, clf.model)
@@ -764,7 +793,7 @@ def _stream_dispatch(
         except NoLocalAnswer:
             # Promote to STANDARD — fall back to first available provider
             logger.info("local_adapter (stream): no answer, promoting to STANDARD")
-            available = _ordered_backends(None)
+            available = _usable_backends(_ordered_backends(None), "STANDARD")
             if available:
                 promoted_provider = available[0]
                 promoted_model = _model_for(promoted_provider, "STANDARD")
@@ -788,6 +817,9 @@ def _stream_dispatch(
     if provider == "grok":
         from intelligence.orchestrator.model_adapters import grok_adapter  # pylint: disable=import-outside-toplevel
         return (yield from grok_adapter.call(**kwargs))
+    if provider == "gateway":
+        from intelligence.orchestrator.model_adapters import gateway_adapter  # pylint: disable=import-outside-toplevel
+        return (yield from gateway_adapter.call(**kwargs))
     if provider in ("openai", "azure", "ollama", "lmstudio"):
         from intelligence.orchestrator.model_adapters import openai_adapter  # pylint: disable=import-outside-toplevel
         return (yield from openai_adapter.call(**kwargs))
