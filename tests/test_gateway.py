@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import logging
 import os
 import threading
 from types import SimpleNamespace
@@ -442,6 +443,22 @@ def test_adapter_refuses_without_a_model(monkeypatch):
     with pytest.raises(ModelCallError) as ei:
         gateway_adapter.call("q", "s", [], model_id="")
     assert "no model chosen" in ei.value.message
+
+
+def test_a_gateway_call_does_not_log_the_url(stub_gateway, caplog):
+    """The HTTP client logs 'HTTP Request: POST <full url>' at INFO. Seen on the real CLI: the whole gateway URL, which may
+    hold a token in its path, reached stderr although the docs promise it is never logged."""
+    names = ("httpx", "httpx2", "httpcore", "httpcore2", "openai")
+    saved = {n: logging.getLogger(n).level for n in names}
+    try:
+        for n in names:
+            logging.getLogger(n).setLevel(logging.INFO)  # what the CLI's own log setup amounts to
+        with caplog.at_level(logging.INFO):
+            gateway_adapter.call("ping", "s", [], model_id="vendor/m", max_tokens=7)
+        assert stub_gateway not in caplog.text and "/chat/completions" not in caplog.text
+    finally:
+        for n, level in saved.items():
+            logging.getLogger(n).setLevel(level)
 
 
 def test_adapter_says_how_to_install_the_openai_package(monkeypatch):
