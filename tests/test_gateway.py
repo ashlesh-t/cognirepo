@@ -331,6 +331,7 @@ def test_models_list_says_why_there_is_no_model_and_never_prints_the_url(monkeyp
 
 class _Stub(http.server.BaseHTTPRequestHandler):
     seen: list = []
+    agents: list = []  # User-Agent of every GET
 
     def log_message(self, *_a):
         pass
@@ -345,6 +346,10 @@ class _Stub(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802
         _Stub.seen.append(("GET", self.path, self.headers.get("Authorization"), None))
+        agent = self.headers.get("User-Agent", "")
+        _Stub.agents.append(agent)
+        if agent.startswith("Python-urllib"):  # what Cloudflare-fronted gateways (aicredits.in) really answer
+            return self._send(403, "error code: 1010")
         if self.path == "/v1/models":
             self._send(200, _body())
         else:
@@ -365,6 +370,7 @@ class _Stub(http.server.BaseHTTPRequestHandler):
 @pytest.fixture
 def stub_gateway(monkeypatch):
     _Stub.seen = []
+    _Stub.agents = []
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Stub)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -394,6 +400,14 @@ def test_refresh_pick_and_call_against_a_local_gateway(stub_gateway):
     assert sent["model"] == chosen and sent["max_tokens"] == 7
     assert sent["messages"][0] == {"role": "system", "content": "be brief"}
     assert sent["messages"][-1] == {"role": "user", "content": "ping"}
+
+
+def test_discovery_does_not_introduce_itself_as_python_urllib(stub_gateway):
+    """aicredits.in sits behind Cloudflare, which answers urllib's default agent with 403 'error code: 1010'. Discovery
+    reported that as a rejected key, so a valid key looked wrong. Found against the real gateway; the stub now behaves alike."""
+    report = md.refresh(["gateway"])["gateway"]
+    assert report["status"] == "ok", report
+    assert _Stub.agents and all(a.startswith("cognirepo/") for a in _Stub.agents)
 
 
 def test_test_connection_uses_the_chosen_model(stub_gateway):
@@ -428,6 +442,18 @@ def test_adapter_refuses_without_a_model(monkeypatch):
     with pytest.raises(ModelCallError) as ei:
         gateway_adapter.call("q", "s", [], model_id="")
     assert "no model chosen" in ei.value.message
+
+
+def test_adapter_says_how_to_install_the_openai_package(monkeypatch):
+    """Found on a pipx install, which ships without the optional openai package: the call died with a bare
+    'pip install openai', which does not work inside a pipx venv."""
+    import importlib.util
+    _configure(monkeypatch)
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a, **k: None if name == "openai" else real(name, *a, **k))
+    with pytest.raises(ModelCallError) as ei:
+        gateway_adapter.call("q", "s", [], model_id="vendor/m")
+    assert ei.value.provider == "gateway" and "pipx inject cognirepo openai" in ei.value.message
 
 
 def test_a_gateway_http_error_is_a_model_call_error_with_its_status(stub_gateway):
