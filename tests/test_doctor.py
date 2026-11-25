@@ -19,9 +19,12 @@ Covered:
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 import types
+
+import pytest
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -36,6 +39,8 @@ def _run_doctor(
     episodic_fail: bool = False,
     api_keys: bool = True,
     with_init: bool = True,
+    ast_files=None,
+    summaries_missing: bool = False,
 ) -> int:
     """
     Exercise _cmd_doctor() in isolation, returning its exit-code integer.
@@ -207,6 +212,8 @@ def _run_doctor(
             # the doctor treats it as "not built" → increments issues.
             if faiss_fail and "ast_index.json" in ps:
                 return False
+            if summaries_missing and "summaries.json" in ps:
+                return False
             # Match files checked by doctor
             if "config.json" in ps or "semantic.index" in ps or \
                "graph.pkl" in ps or "ast_index.json" in ps or \
@@ -226,7 +233,8 @@ def _run_doctor(
             if "config.json" in ps and ".claude" not in ps and ".gemini" not in ps:
                 return io.StringIO('{"project_name": "test-project"}')
             if "ast_index.json" in ps:
-                return io.StringIO('{"files": {"f1.py": {"symbols": [{"name": "s1"}]}}}')
+                files = ast_files if ast_files is not None else {"f1.py": {"symbols": [{"name": "s1"}]}}
+                return io.StringIO(json.dumps({"files": files}))
             if "episodic.json" in ps:
                 # episodic is opened in "rb" mode
                 return io.BytesIO(b'[]')
@@ -587,3 +595,24 @@ def test_doctor_stays_quiet_about_openai_without_a_gateway(capsys, monkeypatch):
     _hide_openai(monkeypatch)
     _run_doctor(capsys, monkeypatch, api_keys=True)
     assert "pipx inject cognirepo openai" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("ast_files,summaries_missing", [
+    ({}, False),
+    ({"empty.py": {"symbols": []}}, False),
+    (None, True),
+    ({}, True),
+])
+def test_doctor_counts_empty_repo_checks_as_warnings(capsys, monkeypatch, ast_files, summaries_missing):
+    code = _run_doctor(capsys, monkeypatch, ast_files=ast_files, summaries_missing=summaries_missing)
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "warning(s). No errors." in out
+    assert "error(s)" not in out
+
+
+def test_doctor_real_failure_still_exits_two(capsys, monkeypatch):
+    code = _run_doctor(capsys, monkeypatch, graph_fail=True, ast_files={}, summaries_missing=True)
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "1 error(s)" in out
