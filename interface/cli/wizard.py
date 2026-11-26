@@ -569,9 +569,8 @@ def run_wizard() -> dict:
         prefetch_cli_agents()
     except Exception:  # pylint: disable=broad-except
         pass
-    # Microservice detection deferred until user opts in (step 8).
+    # Microservice detection deferred until the user opts in.
     _candidates: list = []
-    STEPS = 9
 
     print()
     print("  ╔══════════════════════════════════════════════════════╗")
@@ -582,17 +581,22 @@ def run_wizard() -> dict:
     print(f"  {_c(_DIM, 'Press Enter to accept the bracketed defaults.')}")
     print(f"  {_c(_DIM, 'Settings are saved to .cognirepo/config.json.')}")
 
+    from intelligence.indexer.ast_indexer import _LARGE_REPO_TIER_THRESHOLD  # pylint: disable=import-outside-toplevel
+    source_count = _count_source_files(os.getcwd())
+    show_indexing_strategy = source_count >= _LARGE_REPO_TIER_THRESHOLD
+    steps = 9 if show_indexing_strategy else 8
+    step_offset = 0 if show_indexing_strategy else 1
     cfg: dict = {}
 
     # ── 1. Project name ───────────────────────────────────────────────────────
-    _section(1, STEPS, "Project name",
+    _section(1, steps, "Project name",
              "Used to namespace data in global AI tool configs (Claude, Gemini, Cursor).")
     cfg["project_name"] = _ask_text(
         "Project name", default=os.path.basename(os.getcwd())
     )
 
     # ── 2. Encryption ─────────────────────────────────────────────────────────
-    _section(2, STEPS, "Storage",
+    _section(2, steps, "Storage",
              "Encryption uses Fernet AES-128 (key in OS keychain).\n"
              "  Vector storage is fixed: FAISS for AST indexing, ChromaDB for semantic text.")
     cfg["encrypt"] = _ask_yn("Enable encryption at rest?", default=False)
@@ -611,7 +615,7 @@ def run_wizard() -> dict:
         _warn("chromadb install failed — run: pip install chromadb")
 
     # ── 3. Behaviour tracking opt-in ─────────────────────────────────────────
-    _section(3, STEPS, "Behaviour profiling",
+    _section(3, steps, "Behaviour profiling",
              "Tracks query patterns to personalise AI agent responses over time.")
     cfg["behaviour_tracking"] = _ask_yn(
         "Enable user behaviour profiling? (opt-in)",
@@ -624,7 +628,7 @@ def run_wizard() -> dict:
         print(f"  {_c(_DIM, '  Disable anytime: set behaviour_tracking=false in .cognirepo/config.json')}")
 
     # ── 4. Language support ───────────────────────────────────────────────────
-    _section(4, STEPS, "Extended language support",  # noqa: E501
+    _section(4, steps, "Extended language support",  # noqa: E501
              "Adds tree-sitter parsers for JS/TS, Java, Go, Rust, C/C++.")
     cfg["install_languages"] = _ask_yn(
         "Install extended language parsers?", default=False
@@ -641,11 +645,9 @@ def run_wizard() -> dict:
     # indexer always does a full index anyway, so asking would be a pointless
     # extra prompt for the common case (COGNIREPO-500-D02 AC2).
     cfg["tier"] = None  # None → let the indexer decide (current auto behavior)
-    from intelligence.indexer.ast_indexer import _LARGE_REPO_TIER_THRESHOLD  # pylint: disable=import-outside-toplevel
-    _n_src = _count_source_files(os.getcwd())
-    if _n_src >= _LARGE_REPO_TIER_THRESHOLD:
-        _section(5, STEPS, "Indexing strategy",
-                 f"{_n_src:,} source files detected — large enough that indexing speed "
+    if show_indexing_strategy:
+        _section(5, steps, "Indexing strategy",
+                 f"{source_count:,} source files detected — large enough that indexing speed "
                  "vs. completeness is a real tradeoff here.")
         _tier_idx = _ask_choice(
             "How should the first index run?",
@@ -666,7 +668,7 @@ def run_wizard() -> dict:
         cfg["tier"] = None if _tier_idx == 0 else "all"
 
     # ── 6. AI tool MCP integration ────────────────────────────────────────────
-    _section(6, STEPS, "AI tool MCP integration",
+    _section(6 - step_offset, steps, "AI tool MCP integration",
              "Wire CogniRepo memory + code search into Claude / Gemini / Cursor / VS Code.")
     mcp_idx = _ask_choice(
         "Set up MCP server for:",
@@ -705,7 +707,7 @@ def run_wizard() -> dict:
     cfg["mcp_global"] = False  # always project-scoped; global registration removed
 
     # ── 7. Cross-agent context handoff ───────────────────────────────────────
-    _section(7, STEPS, "Cross-agent context handoff",
+    _section(7 - step_offset, steps, "Cross-agent context handoff",
              "Share last session context between Claude, Gemini, and Cursor automatically.")
     cfg["autosave_context"] = _ask_yn(
         "Enable cross-agent context handoff? (saves last query context to ~/.cognirepo/<repo>/)",
@@ -717,7 +719,7 @@ def run_wizard() -> dict:
         print(f"  {_c(_DIM, '  Sessions stay isolated. Enable later: set autosave_context=true in config.json')}")
 
     # ── 8. Organization + Project ─────────────────────────────────────────────
-    _section(8, STEPS, "Organisation & Project",
+    _section(8 - step_offset, steps, "Organisation & Project",
              "Group repos for cross-repo knowledge sharing.")
     from core.config.orgs import list_orgs, list_projects, create_project  # pylint: disable=import-outside-toplevel
     orgs = list_orgs()
@@ -762,7 +764,7 @@ def run_wizard() -> dict:
                     cfg["project"] = proj_name
 
     # ── 9. Microservice detection (opt-in) ───────────────────────────────────
-    _section(9, STEPS, "Microservice architecture",
+    _section(9 - step_offset, steps, "Microservice architecture",
              "Does this repo contain or orchestrate multiple microservices?")
     _is_microservice_repo = _ask_yn(
         "Is this repo part of a microservice architecture?", default=False

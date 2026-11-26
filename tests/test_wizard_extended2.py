@@ -4,6 +4,7 @@
 """tests/test_wizard_extended2.py — More coverage for cli/wizard.py (32% → 65%)."""
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -12,6 +13,25 @@ import pytest
 
 
 # ── run_wizard (simulate with monkeypatched input) ────────────────────────────
+
+@pytest.mark.parametrize("large_repo, total", [(False, 8), (True, 9)])
+def test_wizard_numbers_only_visible_sections(monkeypatch, tmp_path, capsys, large_repo, total):
+    from intelligence.indexer.ast_indexer import _LARGE_REPO_TIER_THRESHOLD
+    from interface.cli import wizard
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(wizard, "_count_source_files", lambda _: _LARGE_REPO_TIER_THRESHOLD if large_repo else 0)
+    monkeypatch.setattr(wizard, "_install_package", lambda _: True)
+    monkeypatch.setattr(wizard, "_ask_cli_backends", dict)
+    monkeypatch.setattr("builtins.input", lambda _="": "")
+    monkeypatch.setattr("core.config.orgs.list_orgs", dict)
+
+    wizard.run_wizard()
+
+    output = capsys.readouterr().out
+    assert re.findall(r"\[\d+/\d+\]", output) == [f"[{i}/{total}]" for i in range(1, total + 1)]
+    assert ("Indexing strategy" in output) == large_repo
+
 
 def _make_input_responses(*responses):
     """Return a mock input() that cycles through the given responses."""

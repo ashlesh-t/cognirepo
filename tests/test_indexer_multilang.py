@@ -554,6 +554,24 @@ class TestIndexRepoSummary:
         # .lua should appear in skipped extensions
         assert ".lua" in summary["skipped_extensions"]
         assert ".lua" in out or "Unsupported" in out
+        assert "install cognirepo[languages]" not in out
+
+    def test_summary_suggests_language_extra_only_for_known_grammars(
+        self, fresh_indexer, tmp_path, monkeypatch, capsys,
+    ):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "intelligence.indexer.ast_indexer.is_supported", lambda path: path.suffix == ".py",
+        )
+        _write(tmp_path, "main.py", "def entry(): pass\n")
+        _write(tmp_path, "helper.js", "function help() {}\n")
+        _write(tmp_path, "rules.mdc", "Some notes\n")
+
+        summary = fresh_indexer.index_repo(str(tmp_path))
+        out = capsys.readouterr().out
+
+        assert summary["skipped_extensions"] == [".js", ".mdc"]
+        assert "(install cognirepo[languages] for .js)" in out
 
     def test_summary_symbol_count(self, fresh_indexer, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
