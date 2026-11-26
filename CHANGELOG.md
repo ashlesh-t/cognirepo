@@ -10,6 +10,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ### Fixed
 - **Setup reports consecutive step numbers on small repositories (#279).** The indexer suggests installing `cognirepo[languages]` only for skipped extensions with a known grammar.
+- `cognirepo doctor` no longer counts empty AST indexes or missing summaries as errors. Warnings-only reports exit 1; real failures still exit 2 (#277).
 - **`cognirepo setup` no longer pays for agent-CLI detection twice (#89, manual case P-14 / A2).** With `gemini` (a node CLI whose
   `--version` takes ~1.4 s) installed, `setup` ran detection once for the wizard offer and again for the doctor line, adding
   2.6-3.7 s over a machine with no agent CLIs (expected: about 1 s). Probe results are now shared for 60 s

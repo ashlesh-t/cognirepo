@@ -780,11 +780,9 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
                     " Queries will return empty results.",
                     "Run: cognirepo index-repo . (check language support with --verbose)",
                 )
-                issues += 1
             elif _sym_count == 0:
                 _warn("FAISS (AST indexing) — file exists but contains no symbols.",
                       "Run: cognirepo index-repo .")
-                issues += 1
             else:
                 _ok(f"FAISS (AST indexing) — {_sym_count:,} symbols across {len(_ast_files)} files")
             if verbose:
@@ -1174,7 +1172,6 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
             "summaries.json missing — architecture_overview / prime_session will return empty. "
             "Run: cognirepo index-repo ."
         )
-        issues += 1
 
     # ── Check 16: behaviour hook script exists at expected path ─────────────
     _bh_path_ok = False
