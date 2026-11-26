@@ -16,7 +16,7 @@ Complete command reference for the `cognirepo` CLI.
 
 ## cognirepo init
 
-Scaffold `.cognirepo/` and write `config.json`. Safe to re-run (idempotent).
+Scaffold `.cognirepo/` and write `config.json`. Safe to re-run (idempotent): on a repo that already has a `config.json`, only the settings you pass or answer are changed. `storage.encrypt`, `storage.vector_backend`, `autosave_context`, `behaviour_tracking` and the organisation are otherwise left as they are, and missing keys get their defaults. Turning one off takes an explicit answer or an edit of `config.json`.
 
 ```bash
 cognirepo init [OPTIONS]
@@ -275,6 +275,8 @@ cognirepo setup [--no-index] [--targets claude cursor vscode]
 | `--targets …` | auto-detected | MCP targets to configure: `claude`, `cursor`, `vscode` |
 
 Detects `.cursor/`, `.vscode/`, and `.claude/` and writes the appropriate MCP connector config for each.
+
+**Re-running `setup`** on a configured repo is safe: the wizard offers the repo's current values (project name, encryption, behaviour profiling, context handoff, organisation, project) as its defaults, so pressing Enter at every prompt leaves `.cognirepo/config.json` unchanged. A different answer is applied, except that turning encryption off on an encrypted repo asks a second, separate question (default No), because the files already on disk stay encrypted and unreadable until it is turned back on. The vector backend is not asked; an existing repo keeps its own and a new one gets `chroma`. The health check and the other steps run as before.
 
 ---
 

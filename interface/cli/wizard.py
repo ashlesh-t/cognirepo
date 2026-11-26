@@ -546,7 +546,12 @@ def _ask_cli_backends() -> dict[str, bool]:
     return chosen
 
 
-def run_wizard() -> dict:
+def _saved_bool(value: object, default: bool) -> bool:
+    """A boolean setting read back from config.json; anything else (missing, hand-edited to a string) is *default*."""
+    return value if isinstance(value, bool) else default
+
+
+def run_wizard(saved: dict | None = None) -> dict:
     """
     Run the interactive init wizard. Returns a configuration dict with keys:
 
@@ -563,7 +568,17 @@ def run_wizard() -> dict:
       orchestrator_mode bool  True if child_repos is non-empty
 
     Vector storage is fixed: FAISS for AST indexing, ChromaDB for semantic text.
+
+    *saved* is the repo's current config.json (read from disk when omitted). Its values are what the prompts offer
+    as their defaults, so re-running the wizard and pressing Enter keeps the repo as it is (#280); a repo with no
+    config gets the fixed first-run defaults.
     """
+    if saved is None:
+        from interface.cli.init_project import saved_config  # pylint: disable=import-outside-toplevel
+        saved = saved_config()
+    saved_storage = saved.get("storage") if isinstance(saved.get("storage"), dict) else {}
+    saved_org = saved.get("org") if isinstance(saved.get("org"), str) and saved.get("org") else None
+    saved_project = saved.get("project") if isinstance(saved.get("project"), str) and saved.get("project") else None
     try:  # a node-based agent CLI needs >1 s for `--version`; start it now so the offer later finds it done
         from intelligence.orchestrator.provider_status import prefetch_cli_agents  # pylint: disable=import-outside-toplevel
         prefetch_cli_agents()
@@ -587,15 +602,26 @@ def run_wizard() -> dict:
     # ── 1. Project name ───────────────────────────────────────────────────────
     _section(1, STEPS, "Project name",
              "Used to namespace data in global AI tool configs (Claude, Gemini, Cursor).")
+    _saved_name = saved.get("project_name")
     cfg["project_name"] = _ask_text(
-        "Project name", default=os.path.basename(os.getcwd())
+        "Project name",
+        default=_saved_name if isinstance(_saved_name, str) and _saved_name else os.path.basename(os.getcwd()),
     )
 
     # ── 2. Encryption ─────────────────────────────────────────────────────────
     _section(2, STEPS, "Storage",
              "Encryption uses Fernet AES-128 (key in OS keychain).\n"
              "  Vector storage is fixed: FAISS for AST indexing, ChromaDB for semantic text.")
-    cfg["encrypt"] = _ask_yn("Enable encryption at rest?", default=False)
+    _was_encrypted = _saved_bool(saved_storage.get("encrypt"), False)
+    cfg["encrypt"] = _ask_yn("Enable encryption at rest?", default=_was_encrypted)
+    if _was_encrypted and not cfg["encrypt"]:
+        # Lowering it is the one change that can make the repo look broken: the files already on disk stay
+        # encrypted, and with storage.encrypt off they cannot be read (the graph loads empty and refuses to save).
+        _warn("This repo is encrypted. Turning encryption off leaves its existing files encrypted and unreadable "
+              "until you turn it back on.")
+        if not _ask_yn("Turn encryption off anyway?", default=False):
+            cfg["encrypt"] = True
+            print(f"  {_c(_DIM, '  Keeping encryption on.')}")
     if cfg["encrypt"]:
         print(f"  {_c(_DIM, '  Installing cognirepo[security] ...')}", end="", flush=True)
         if _pip_install("security"):
@@ -615,7 +641,7 @@ def run_wizard() -> dict:
              "Tracks query patterns to personalise AI agent responses over time.")
     cfg["behaviour_tracking"] = _ask_yn(
         "Enable user behaviour profiling? (opt-in)",
-        default=False,
+        default=_saved_bool(saved.get("behaviour_tracking"), False),
     )
     if cfg["behaviour_tracking"]:
         print(f"  {_c(_DIM, '  Stored in .cognirepo/graph/behaviour.json')}")
@@ -709,7 +735,7 @@ def run_wizard() -> dict:
              "Share last session context between Claude, Gemini, and Cursor automatically.")
     cfg["autosave_context"] = _ask_yn(
         "Enable cross-agent context handoff? (saves last query context to ~/.cognirepo/<repo>/)",
-        default=True,
+        default=_saved_bool(saved.get("autosave_context"), True),
     )
     if cfg["autosave_context"]:
         print(f"  {_c(_DIM, '  Each context_pack call writes a snapshot other agents can read.')}")
@@ -723,9 +749,12 @@ def run_wizard() -> dict:
     orgs = list_orgs()
     org_choices = ["None / Personal project"]
     org_choices.extend(list(orgs.keys()))
+    if saved_org and saved_org not in orgs:
+        org_choices.append(saved_org)  # linked in config.json but unknown to this machine's registry: keep it selectable
     org_choices.append("Create new organization...")
 
-    org_idx = _ask_choice("Join organization:", org_choices, default=0)
+    org_idx = _ask_choice("Join organization:", org_choices,
+                          default=org_choices.index(saved_org) if saved_org else 0)
 
     cfg["org"] = None
     cfg["project"] = None
@@ -740,12 +769,19 @@ def run_wizard() -> dict:
         cfg["org"] = org_choices[org_idx]
 
     if cfg["org"]:
-        want_project = _ask_yn("Link to a project within this org?", default=True)
+        _same_org = cfg["org"] == saved_org  # the saved project only means something inside the saved org
+        want_project = _ask_yn("Link to a project within this org?", default=bool(saved_project) if _same_org else True)
         if want_project:
             existing = list_projects(cfg["org"])
-            proj_choices = list(existing.keys()) + ["Create new project..."]
+            proj_names = list(existing.keys())
+            if _same_org and saved_project and saved_project not in proj_names:
+                proj_names.append(saved_project)
+            proj_choices = proj_names + ["Create new project..."]
             if len(proj_choices) > 1:
-                proj_idx = _ask_choice("Select project:", proj_choices, default=0)
+                proj_idx = _ask_choice(
+                    "Select project:", proj_choices,
+                    default=proj_names.index(saved_project) if _same_org and saved_project else 0,
+                )
                 if proj_idx == len(proj_choices) - 1:
                     proj_name = _ask_text("Project name", default="main")
                     proj_desc = _ask_text("Description (optional)", default="")

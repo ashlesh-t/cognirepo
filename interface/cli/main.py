@@ -1964,11 +1964,11 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
             project_name=wizard_cfg.get("project_name", os.path.basename(parent_path)),
             org=wizard_cfg.get("org"),
             project=wizard_cfg.get("project"),
-            encrypt=wizard_cfg.get("encrypt", False),
-            vector_backend="chroma",
+            encrypt=wizard_cfg.get("encrypt"),  # None = not asked, so a re-run keeps the saved value (#280)
+            # vector_backend is not asked either: a new repo gets chroma, an existing one keeps its own
             mcp_targets=wizard_cfg.get("mcp_targets", []),
-            autosave_context=wizard_cfg.get("autosave_context", True),
-            behaviour_tracking=wizard_cfg.get("behaviour_tracking", False),
+            autosave_context=wizard_cfg.get("autosave_context"),
+            behaviour_tracking=wizard_cfg.get("behaviour_tracking"),
             tier=wizard_cfg.get("tier"),
         )
     except KeyboardInterrupt:
