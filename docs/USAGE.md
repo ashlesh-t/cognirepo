@@ -573,7 +573,7 @@ executable path so they survive virtualenv changes.
 ### Manual wiring (if setup was run before this feature)
 
 ```bash
-cognirepo setup   # re-run — idempotent, only adds missing entries
+cognirepo setup   # re-run — idempotent: Enter at every prompt keeps your saved settings, only adds missing entries
 ```
 
 Or add manually to `.claude/settings.json`:
