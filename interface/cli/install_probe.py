@@ -30,6 +30,8 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 
+from core.security.encryption import is_unusable_backend  # one definition of 'no keyring here', shared with the key code
+
 #: throw-away service name: the probe never touches the real cognirepo keys
 PROBE_SERVICE = "cognirepo-doctor-probe"
 
@@ -162,9 +164,6 @@ def reinstall_fix(python: str, source_root: "str | None") -> str:
     return f"{python} -m pip install -e {source_root}" if source_root else f"{python} -m pip install --force-reinstall cognirepo"
 
 
-def is_unusable_backend(backend: "str | None") -> bool:
-    """keyring's fail/null backends mean 'no keyring here': every key lookup will error or miss."""
-    return bool(backend) and (".backends.fail." in backend or ".backends.null." in backend)
 
 
 def diagnose(

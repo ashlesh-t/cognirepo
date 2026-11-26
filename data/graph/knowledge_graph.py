@@ -95,7 +95,8 @@ _FERNET_PREFIX = b"gAAAAA"  # every Fernet token starts with version byte 0x80, 
 
 
 class GraphLockedError(RuntimeError):
-    """graph.pkl is encrypted and cannot be decrypted here; saving would destroy it."""
+    """The graph cannot be saved: its files cannot be read here (no key, wrong key, damage); saving would destroy
+    them. ``str()`` says which."""
 
 
 def _graph_file() -> str:
@@ -190,6 +191,7 @@ class KnowledgeGraph:
     _flush_secs = 30.0
     _last_flush = 0.0
     _locked = False
+    _lock_reason = ""            # why it is locked, in words the user can act on (set by _lock)
     _disk_stamp: tuple | None = None
     _lease: "_journal.WriterLease | None" = None
     _pending_overflow = False
@@ -318,6 +320,7 @@ class KnowledgeGraph:
         # The disk is authoritative on (re)load: drop stale in-memory state and any lock
         # left by an earlier unreadable journal/pickle — _load_base()/replay re-set it.
         self._locked = False
+        self._lock_reason = ""
         self.G = nx.DiGraph()
         self._load_base()
         # Seed from the marker pickled inside the graph so segment numbers keep rising
@@ -355,15 +358,16 @@ class KnowledgeGraph:
                 # this interpreter) or the key is wrong. The file is intact —
                 # do NOT quarantine it (COGNIREPO-97) and do NOT let save()
                 # overwrite it with the empty graph we start with here.
-                self._locked = True
+                from core.security.encryption import explain_key_failure  # pylint: disable=import-outside-toplevel
+                self._lock(
+                    f"{_graph_file()} is encrypted and cannot be decrypted: "
+                    f"{explain_key_failure(decrypt_error)} Refusing to overwrite it with an empty graph."
+                )
                 self.G = nx.DiGraph()
                 self._disk_stamp = stamp
                 warnings.warn(
-                    f"KnowledgeGraph: {_graph_file()} is encrypted but could not be "
-                    f"decrypted ({decrypt_error or 'storage.encrypt is off'}). "
-                    "The file was left untouched; starting with an empty in-memory graph "
-                    "and refusing to save. Install the security extras in this interpreter "
-                    "(pipx inject cognirepo keyring cryptography).",
+                    f"KnowledgeGraph: {self._lock_reason} The file was left untouched; starting with "
+                    "an empty in-memory graph.",
                     stacklevel=2,
                 )
                 return
@@ -395,6 +399,15 @@ class KnowledgeGraph:
 
     # ── journal (COGNIREPO-109) ────────────────────────────────────────────────
 
+    def _lock(self, reason: str) -> None:
+        """Refuse to save from now on (until the next load finds the files readable), and remember why."""
+        self._locked = True
+        self._lock_reason = reason
+
+    def _locked_error(self, doing: str = "") -> GraphLockedError:
+        """The error for an attempt to write while locked; it carries the reason the graph was locked."""
+        return GraphLockedError(self._lock_reason or f"{_graph_file()} is locked and cannot be {doing or 'saved'}.")
+
     @staticmethod
     def _journal_key() -> bytes | None:
         encrypt, project_id = _storage_config()
@@ -417,16 +430,28 @@ class KnowledgeGraph:
             return
         base_seq = self._journal_seq  # marker (full load) or last applied seq (incremental)
         try:
-            for seq, ops, end in _journal.iter_segments(path, self._journal_key(), start):
+            key = self._journal_key()
+        except Exception as exc:  # pylint: disable=broad-except
+            # storage.encrypt is on and the key is not reachable. Nothing is wrong with the files, so this is not
+            # "damage": say what is missing, and leave the journal (and graph.pkl) exactly as they are.
+            from core.security.encryption import explain_key_failure  # pylint: disable=import-outside-toplevel
+            self._lock(
+                f"storage.encrypt is on and the encryption key is not available, so the graph "
+                f"({_graph_file()} and its journal) cannot be read or saved: {explain_key_failure(exc)}"
+            )
+            warnings.warn(f"KnowledgeGraph: {self._lock_reason} Nothing on disk was changed.", stacklevel=2)
+            return
+        try:
+            for seq, ops, end in _journal.iter_segments(path, key, start):
                 if seq > base_seq:  # else: already folded into graph.pkl
                     for op in ops:
                         self._apply(op)
                 self._journal_seq = max(self._journal_seq, seq)
                 self._journal_bytes = end
         except Exception as exc:  # pylint: disable=broad-except
-            # Intact but unreadable (wrong/missing key, damaged record). Never delete it
+            # Intact but unreadable (wrong key, damaged record). Never delete it
             # and never let save() compact around it.
-            self._locked = True
+            self._lock(f"{path} could not be read ({exc}); the journal was left untouched.")
             warnings.warn(
                 f"KnowledgeGraph: {path} could not be read ({exc}). The journal was left "
                 "untouched and saving is disabled until it is readable again. Restore the "
@@ -448,7 +473,7 @@ class KnowledgeGraph:
         ``_pending`` in addition to the live graph.
         """
         if self._locked:
-            raise GraphLockedError("graph is locked; cannot journal")
+            raise self._locked_error("journalled")
         path = _journal_file()
         lease = _journal.WriterLease(path)
         lease.acquire(wait)
@@ -502,7 +527,7 @@ class KnowledgeGraph:
         if not self._pending:
             return
         if self._locked:
-            raise GraphLockedError("graph is locked; cannot journal")
+            raise self._locked_error("journalled")
         key = self._journal_key()
         path = _journal_file()
         with store_lock():
@@ -669,11 +694,7 @@ class KnowledgeGraph:
         """
         from data.memory.circuit_breaker import get_breaker  # pylint: disable=import-outside-toplevel
         if self._locked:
-            raise GraphLockedError(
-                f"{_graph_file()} is encrypted and could not be decrypted in this "
-                "interpreter; refusing to overwrite it with an empty graph. "
-                "Install keyring + cryptography (pipx inject cognirepo keyring cryptography)."
-            )
+            raise self._locked_error()
         breaker = get_breaker()
         breaker.check()
         os.makedirs(os.path.dirname(_graph_file()), exist_ok=True)
@@ -694,7 +715,7 @@ class KnowledgeGraph:
                 if self._locked:
                     raise GraphLockedError(
                         f"{_graph_file()} or its journal became unreadable during rebase; "
-                        "refusing to save."
+                        f"refusing to save. {self._lock_reason}".rstrip()
                     )
             # Marker pickled WITH the graph: replay skips journal records <= this seq, so a
             # crash between os.replace() below and the journal unlink cannot double-apply.
@@ -833,7 +854,7 @@ class KnowledgeGraph:
           AST index has files. A fragment left by an earlier incremental run fails this.
         """
         if self._locked:
-            return False, "the graph on disk is encrypted and cannot be decrypted here"
+            return False, self._lock_reason or "the graph on disk is encrypted and cannot be decrypted here"
         if self.graph_attr(self.COMPLETE_KEY):
             return True, ""
         if self.node_count() == 0:
