@@ -9,6 +9,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Fixed
+- **Token-limited OpenAI-compatible replies are reported as incomplete (#284).** Non-streaming routes preserve any partial text and token usage so clients can distinguish a cutoff from a successful reply.
 - **`cognirepo setup` no longer pays for agent-CLI detection twice (#89, manual case P-14 / A2).** With `gemini` (a node CLI whose
   `--version` takes ~1.4 s) installed, `setup` ran detection once for the wizard offer and again for the doctor line, adding
   2.6-3.7 s over a machine with no agent CLIs (expected: about 1 s). Probe results are now shared for 60 s

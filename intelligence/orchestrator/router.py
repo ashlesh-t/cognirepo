@@ -240,6 +240,13 @@ def route(
             error=error_msg,
         )
 
+    if response.truncated:
+        return RouteResult(
+            response=response, classifier=clf, bundle=bundle,
+            error="The model reached its output token limit before completing the reply. "
+                  "Increase the output budget or ask for a shorter answer.",
+        )
+
     # ── 5. post-process ───────────────────────────────────────────────────────
     _post_process(query=query, clf=clf, bundle=bundle, response=response)
 
