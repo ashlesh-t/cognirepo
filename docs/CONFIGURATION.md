@@ -58,7 +58,7 @@ An agent CLI is used for routing only when `enabled` is true (and `terms_ack` is
 `cli_timeout_s` (optional, default `120`, allowed `1`-`1800`): hard time limit for one headless agent-CLI call
 (`model_adapters/cli_adapter.py`). A call that exceeds it is killed (whole process group) and reported as a timeout.
 
-> **Single-model shorthand:** `cognirepo init` may write a simplified `"model": {"provider": "anthropic", "model": "claude-sonnet-4-6"}` form. This is auto-expanded to the four-tier registry at runtime. Use `cognirepo migrate-config` to canonicalise to the full form.
+> **Single-model shorthand:** `cognirepo init` may write a simplified `"model": {"provider": "anthropic", "model": "claude-sonnet-4-6"}` form. This is auto-expanded to the four-tier registry at runtime. Use `cognirepo migrate-config` to canonicalise to the full form. With `"provider": "auto"` (what `cognirepo setup` writes) the provider is the first one that has a key set, in the order Anthropic, Gemini (`GEMINI_API_KEY` or `GOOGLE_API_KEY`), OpenAI, Grok, and `"model": "auto"` gives each tier that provider's own default (the one `cognirepo models list` reports as `default`). A model you name yourself is used for every tier. A gateway is never picked by `auto`; it joins as a fallback backend (see the Gateway section).
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
