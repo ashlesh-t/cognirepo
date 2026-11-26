@@ -9,6 +9,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Fixed
+- **A Gemini, OpenAI or Grok key no longer gets an Anthropic model id (#270).** With the default from `cognirepo setup` (`"model": {"provider": "auto", "model": "auto"}`), `auto` filled every tier with a Claude model whatever provider the key belonged to, so Gemini and OpenAI answered 404 until `cognirepo models refresh` had run. Each tier now takes the resolved provider's own default; Anthropic is unchanged. `auto` also recognises `GOOGLE_API_KEY` and, after the others, `GROK_API_KEY`.
 - **Token-limited OpenAI-compatible replies are reported as incomplete (#284).** Non-streaming routes preserve any partial text and token usage so clients can distinguish a cutoff from a successful reply.
 - `cognirepo doctor` no longer counts empty AST indexes or missing summaries as errors. Warnings-only reports exit 1; real failures still exit 2 (#277).
 - **`cognirepo setup` no longer pays for agent-CLI detection twice (#89, manual case P-14 / A2).** With `gemini` (a node CLI whose
