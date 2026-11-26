@@ -9,6 +9,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
 ## [Unreleased]
 
 ### Fixed
+- **Token-limited OpenAI-compatible replies are reported as incomplete (#284).** Non-streaming routes preserve any partial text and token usage so clients can distinguish a cutoff from a successful reply.
 - `cognirepo doctor` no longer counts empty AST indexes or missing summaries as errors. Warnings-only reports exit 1; real failures still exit 2 (#277).
 - **`cognirepo setup` no longer pays for agent-CLI detection twice (#89, manual case P-14 / A2).** With `gemini` (a node CLI whose
   `--version` takes ~1.4 s) installed, `setup` ran detection once for the wizard offer and again for the doctor line, adding
