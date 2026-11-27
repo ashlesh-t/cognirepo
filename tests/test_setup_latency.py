@@ -57,14 +57,6 @@ def _timed(fn, repeat=1):
     return (time.monotonic() - t0) / repeat, out
 
 
-def test_no_cli_no_key_path_is_instant_and_offline(no_network):  # pylint: disable=unused-argument
-    """What `setup` does with nothing installed and no keys: detection, wizard offer, discovery offer."""
-    from interface.cli.wizard import _ask_cli_backends
-    elapsed, choices = _timed(lambda: (ps.detect_cli_agents(), _ask_cli_backends(),
-                                       [md.api_key(p) for p in md.PROVIDERS])[1])
-    assert choices == {} and elapsed < 1.0
-
-
 def test_detection_cost_is_bounded_by_the_slowest_binary_not_the_sum(bindir):
     """Three binaries that each take 0.5 s are probed in parallel: ~0.5 s, never 1.5 s."""
     for name in ("claude", "codex", "gemini"):
@@ -112,23 +104,6 @@ def test_a_corrupt_cache_costs_nothing_and_changes_nothing(no_network):  # pylin
     base = clf.default_model_for("openai", "STANDARD")
     elapsed, out = _timed(lambda: clf.resolve_model("openai", "STANDARD", base, {}), repeat=50)
     assert out == base and elapsed < 0.02
-
-
-def test_setup_offer_with_no_key_prints_and_fetches_nothing(monkeypatch, capsys, no_network):  # pylint: disable=unused-argument
-    import interface.cli.main as cli
-    monkeypatch.setattr(md, "refresh", lambda *a, **k: (_ for _ in ()).throw(AssertionError("refresh ran")))
-    elapsed, _ = _timed(cli._offer_model_refresh)  # pylint: disable=protected-access
-    assert capsys.readouterr().out == "" and elapsed < 0.5
-
-
-def test_setup_offer_with_a_key_only_hints_when_not_a_terminal(monkeypatch, capsys, no_network):  # pylint: disable=unused-argument
-    """Non-interactive `setup` never fetches: it prints one hint line and returns."""
-    import interface.cli.main as cli
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-latency")
-    monkeypatch.setattr(md, "refresh", lambda *a, **k: (_ for _ in ()).throw(AssertionError("refresh ran")))
-    monkeypatch.setattr("sys.stdin", type("S", (), {"isatty": staticmethod(lambda: False)})())
-    cli._offer_model_refresh()  # pylint: disable=protected-access
-    assert "models refresh" in capsys.readouterr().out
 
 
 def test_second_detection_in_one_setup_is_served_from_the_probe_cache(bindir):

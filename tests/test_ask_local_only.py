@@ -201,3 +201,34 @@ def test_sessions_empty_message_does_not_point_at_ask(capsys):
     assert "No sessions found" in out
     assert "cognirepo ask" not in out
     assert "MCP" in out
+
+
+# ── setup and summarize no longer talk about model keys ──────────────────────
+
+def test_setup_no_longer_nudges_towards_models_or_agent_cli_backends():
+    import interface.cli.init_project as init_project
+    import interface.cli.main as cli
+
+    assert not hasattr(cli, "_offer_model_refresh"), "nothing uses model lists, so setup must not offer a refresh"
+    for module in (cli, init_project):
+        assert "apply_choices" not in inspect.getsource(module), "setup must not enable agent-CLI backends"
+
+
+def test_summarize_is_described_as_local(capsys):
+    from interface.cli.main import _print_help
+
+    _print_help()
+
+    row = next(line for line in capsys.readouterr().out.splitlines() if "summarize" in line)
+    assert "local" in row and "LLM" not in row
+
+
+def test_no_setup_text_says_summarize_needs_an_api_key():
+    """``summarize`` is built from the AST index (`summarizer.py`: no LLM, no key); these strings said otherwise."""
+    import interface.cli.init_project as init_project
+    import interface.cli.main as cli
+
+    for module in (cli, init_project):
+        source = inspect.getsource(module)
+        for stale in ("requires an API key", "needs API key", "LLM API key", "via LLM"):
+            assert stale not in source, f"{stale!r} is stale"

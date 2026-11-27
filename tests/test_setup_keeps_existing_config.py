@@ -21,6 +21,7 @@ A setting the user changes on purpose must still change.
 from __future__ import annotations
 
 import json
+import types
 from unittest.mock import patch
 
 import pytest
@@ -59,12 +60,10 @@ def _answers(*scripted):
 
 @pytest.fixture()
 def quiet_wizard(isolated_cognirepo, monkeypatch):
-    """Run the real wizard without touching pip, the network or an installed agent CLI."""
+    """Run the real wizard without touching pip or the network."""
     monkeypatch.setattr("builtins.input", _answers())
     with patch("interface.cli.wizard._pip_install", return_value=True), \
-         patch("interface.cli.wizard._install_package", return_value=True), \
-         patch("interface.cli.wizard._ask_cli_backends", return_value={}), \
-         patch("intelligence.orchestrator.provider_status.prefetch_cli_agents"):
+         patch("interface.cli.wizard._install_package", return_value=True):
         yield
 
 
@@ -126,9 +125,7 @@ def test_the_org_can_still_be_left(isolated_cognirepo, monkeypatch):
     # name, encryption, behaviour, languages, MCP target, handoff: Enter; org: option 1 = "None / Personal project"
     monkeypatch.setattr("builtins.input", _answers("", "", "", "", "", "", "1"))
     with patch("interface.cli.wizard._pip_install", return_value=True), \
-         patch("interface.cli.wizard._install_package", return_value=True), \
-         patch("interface.cli.wizard._ask_cli_backends", return_value={}), \
-         patch("intelligence.orchestrator.provider_status.prefetch_cli_agents"):
+         patch("interface.cli.wizard._install_package", return_value=True):
         result = _run_wizard()
 
     assert (result["org"], result["project"]) == (None, None)
@@ -157,9 +154,7 @@ def _run_wizard_with(*scripted):
     """The real wizard with scripted answers (Enter for everything after them) and no pip, network or agent CLI."""
     with patch("builtins.input", _answers(*scripted)), \
          patch("interface.cli.wizard._pip_install", return_value=True), \
-         patch("interface.cli.wizard._install_package", return_value=True), \
-         patch("interface.cli.wizard._ask_cli_backends", return_value={}), \
-         patch("intelligence.orchestrator.provider_status.prefetch_cli_agents"):
+         patch("interface.cli.wizard._install_package", return_value=True):
         return _run_wizard()
 
 
@@ -323,3 +318,26 @@ def test_setup_on_a_new_repo_writes_the_documented_defaults(quiet_wizard):
     assert cfg["storage"] == {"encrypt": False, "vector_backend": "chroma"}
     assert cfg["autosave_context"] is True
     assert cfg["behaviour_tracking"] is False
+
+
+# ── the wizard has nothing to say about models (#269) ────────────────────────
+
+def test_the_wizard_does_not_look_for_or_offer_agent_clis(isolated_cognirepo, monkeypatch, capsys):
+    """CogniRepo does not call a model, so an agent CLI cannot be a "routing backend". The offer used to run only on
+    a terminal, so simulate one."""
+    from interface.cli import wizard
+
+    monkeypatch.setattr("builtins.input", _answers())
+    monkeypatch.setattr("sys.stdin", types.SimpleNamespace(isatty=lambda: True))
+    with patch("interface.cli.wizard._pip_install", return_value=True), \
+         patch("interface.cli.wizard._install_package", return_value=True), \
+         patch("intelligence.orchestrator.provider_status.detect_cli_agents") as detect, \
+         patch("intelligence.orchestrator.provider_status.prefetch_cli_agents") as prefetch:
+        result = _run_wizard()
+
+    out = capsys.readouterr().out
+    detect.assert_not_called()
+    prefetch.assert_not_called()
+    assert "cli_backends" not in result
+    assert "routing backend" not in out and "Agent CLI" not in out
+    assert not hasattr(wizard, "_ask_cli_backends")

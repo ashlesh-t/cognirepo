@@ -955,65 +955,8 @@ def _cmd_doctor(verbose: bool = False, release_check: bool = False, as_json: boo
     except Exception as exc:  # pylint: disable=broad-except
         _ok(f"Language support — Python (built-in) [{exc}]")
 
-    # ── Check 7: API keys ─────────────────────────────────────────────────────
-    _providers = {
-        "ANTHROPIC_API_KEY": "Anthropic",
-        "GEMINI_API_KEY": "Gemini",
-        "GOOGLE_API_KEY": "Gemini (alt)",
-        "OPENAI_API_KEY": "OpenAI",
-        "GROK_API_KEY": "Grok",
-    }
-    _found = [name for var, name in _providers.items() if os.environ.get(var)]
-    _gw_warn = ""
-    _gw_pkg_warn = False
-    try:  # gateway: needs a valid URL and a key; only the host is ever shown (the path may hold a token)
-        import importlib.util as _ilu  # pylint: disable=import-outside-toplevel
-        from intelligence.orchestrator import gateway as _gw  # pylint: disable=import-outside-toplevel
-        if _gw.configured():
-            _found.append(f"Gateway ({_gw.host()})")
-            _gw_pkg_warn = _ilu.find_spec("openai") is None  # model lists need no package; calls do
-        elif _gw.api_key() or os.environ.get(_gw.ENV_URL):
-            _gw_warn = (f"Gateway — needs both {_gw.ENV_URL} (an https:// URL, or http:// to localhost) "
-                        f"and {_gw.ENV_KEY}")
-    except Exception:  # pylint: disable=broad-except
-        pass
-    if _found:
-        _ok(f"Model API keys — {', '.join(_found)}")
-    elif not _gw_warn:  # a half-set gateway gets its own, more specific warning below
-        _warn(
-            "Model API keys — none configured (cognirepo ask will not work)",
-            "Optional: set ANTHROPIC_API_KEY · GEMINI_API_KEY · OPENAI_API_KEY · GROK_API_KEY "
-            "· COGNIREPO_GATEWAY_API_KEY + COGNIREPO_GATEWAY_BASE_URL",
-        )
-    if _gw_warn:
-        _warn(_gw_warn, "See docs/CONFIGURATION.md#gateway")
-    if _gw_pkg_warn:
-        _warn("Gateway — the openai package is not installed, so gateway calls will fail (model lists still work)",
-              "Install it: pip install openai  (installed with pipx: pipx inject cognirepo openai)")
-
-    # ── Check 7b: agent CLIs (informational, local --version only) ─────────────
-    try:
-        from intelligence.orchestrator.provider_status import detect_cli_agents  # pylint: disable=import-outside-toplevel
-        _clis = [r for r in detect_cli_agents() if r.installed]
-        if _clis:
-            _ok("Agent CLIs — " + ", ".join(f"{r.name} {r.version}" for r in _clis)
-                + " (detected; see `cognirepo agents list`)")
-        else:
-            _ok("Agent CLIs — none detected (optional)")
-    except Exception as exc:  # pylint: disable=broad-except
-        _ok(f"Agent CLIs — detection skipped ({exc})")
-
-    # ── Check 7c: cached model lists (informational) ────────────────────────────
-    try:
-        from intelligence.orchestrator import model_discovery as _md  # pylint: disable=import-outside-toplevel
-        _bits = []
-        for _p in _md.PROVIDERS:
-            _e = _md.load_entry(_p)
-            if _e is not None:
-                _bits.append(f"{_p} {len(_e['models'])} ({'fresh' if _md.entry_is_fresh(_p, _e) else 'stale'})")
-        _ok("Model lists — " + (", ".join(_bits) if _bits else "none cached (optional: cognirepo models refresh)"))
-    except Exception as exc:  # pylint: disable=broad-except
-        _ok(f"Model lists — check skipped ({exc})")
+    # Model API keys, agent CLIs and cached model lists are not checked: nothing calls a model (#269), so a missing
+    # key is not a problem and must not turn a healthy install into a warning.
 
     # ── Check 8: Daemon heartbeat ─────────────────────────────────────────────
     try:
@@ -1919,21 +1862,6 @@ def _cmd_index_progress(interval: float = 1.0, once: bool = False) -> None:
         print("\n  Stopped.\n")
 
 
-def _offer_model_refresh() -> None:
-    """Hint (and, on a terminal, ask) about ``models refresh``. With no API key it prints and fetches nothing."""
-    try:
-        from intelligence.orchestrator import model_discovery as _md  # pylint: disable=import-outside-toplevel
-        if any(_md.api_key(_p) for _p in _md.PROVIDERS):
-            print("  Run 'cognirepo models refresh' to check which models your API keys can use.")
-            if sys.stdin.isatty():
-                from interface.cli.wizard import _ask_yn  # pylint: disable=import-outside-toplevel
-                if _ask_yn("Check now? (one request per provider, 8 s cap)", default=False):
-                    for _n, _r in _md.refresh().items():
-                        print(f"    {_n}: {_r['status']}" + (f" ({_r['count']} models)" if _r["status"] == "ok" else ""))
-    except Exception:  # pylint: disable=broad-except
-        pass  # best-effort — setup never depends on discovery
-
-
 def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     """
     One-command onboarding: runs the wizard directly (no subprocess) so that
@@ -1953,7 +1881,6 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     child_repos       = wizard_cfg.pop("child_repos", [])
     rejected_repos    = wizard_cfg.pop("rejected_repos", [])
     orchestrator_mode = wizard_cfg.pop("orchestrator_mode", False)
-    cli_choices          = wizard_cfg.pop("cli_backends", {})
 
     # ── 2. Init + index parent repo ──────────────────────────────────────────
     try:
@@ -1977,15 +1904,6 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
     except Exception as exc:  # pylint: disable=broad-except
         print(f"  ✗ init failed: {exc}")
         sys.exit(1)
-
-    # ── 2a0. Offer (never force) a model-list refresh when API keys are present ─────
-    _offer_model_refresh()
-
-    # ── 2a. Agent CLIs the user opted into in the wizard (config.json exists now) ──
-    if cli_choices:
-        from intelligence.orchestrator import provider_status as _ps  # pylint: disable=import-outside-toplevel
-        for _name, _ok_cli, _msg_cli in _ps.apply_choices(cli_choices):
-            print(f"  {'✓' if _ok_cli else '✗'}  {_msg_cli}")
 
     # ── 2b. No changelog file or git tags found — offer to seed release notes ──
     if sys.stdin.isatty():
@@ -2143,7 +2061,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
                 print("     Run manually: cognirepo prime")
 
         print()
-        print("  Tip: run `cognirepo summarize` (requires an API key) to generate")
+        print("  Tip: run `cognirepo summarize` (local, no API key) to generate")
         print("       detailed architecture summaries for architecture_overview.")
         print("─" * 60 + "\n")
 
@@ -2538,7 +2456,7 @@ def _print_ready_summary(summary: dict | None = None) -> None:
     print("    cognirepo doctor          — check system health")
     print("    cognirepo index-repo .    — (re)index this repo for best query quality")
     print("    cognirepo prime           — session bootstrap: architecture + hot symbols")
-    print("    cognirepo summarize       — generate architecture summaries (needs API key)")
+    print("    cognirepo summarize       — generate architecture summaries (local, no API key)")
     print("    cognirepo retrieve-memory — search your stored context")
     print("    cognirepo store-memory    — save a new insight")
     print("─" * 60 + "\n")
@@ -3421,7 +3339,7 @@ def _print_help() -> None:
     # ── AI Query ──────────────────────────────────────────────────────────────
     _hdr("AI QUERY")
     _row("ask <query>",       "Answer a question from the local index (no model, no API key)")
-    _row("summarize",         "Generate hierarchical architecture summaries (L1–L3) via LLM")
+    _row("summarize",         "Generate hierarchical architecture summaries (L1–L3) from the AST index (local)")
     _row("sessions",          "List recent conversation sessions")
     _row("test-connection",   "(deprecated) Verify API key & connectivity per provider")
 
@@ -4537,7 +4455,7 @@ def _main():
     # summarize — generate hierarchical architectural summaries (Level 1-3)
     p_summarize = sub.add_parser(
         "summarize",
-        help="Generate hierarchical architectural summaries (Level 1-3) via LLM",
+        help="Generate hierarchical architectural summaries (Level 1-3) from the AST index (local, no LLM)",
     )
     p_summarize.add_argument(
         "--scope",
