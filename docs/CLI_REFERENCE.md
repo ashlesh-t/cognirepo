@@ -65,7 +65,7 @@ cognirepo index-repo [PATH] [OPTIONS]
 ## cognirepo summarize
 
 
-Generate hierarchical architectural summaries via LLM.
+Generate hierarchical architectural summaries from the AST index. Local: no LLM and no API key.
 
 ```bash
 cognirepo summarize [OPTIONS]
@@ -862,8 +862,7 @@ Otherwise a retired default is replaced by the newest model of the same tier, an
 is preferred; a `model_overrides.pin` wins over everything ([CONFIGURATION.md](CONFIGURATION.md#config-json-fields)).
 A model a real call reports as not found is skipped until the next `refresh`. With no cache nothing changes.
 
-`setup` prints a one-line hint when API keys are set and, interactively, offers a refresh (default **No**). `doctor`
-prints one informational line about the cache.
+Since 2.6.0 `setup` no longer offers a refresh and `doctor` no longer reports the cache (nothing uses model lists).
 
 ---
 

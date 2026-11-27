@@ -72,7 +72,7 @@ cognirepo init
 ### Docker
 
 ```bash
-cp .env.example .env    # fill in API keys
+cp .env.example .env    # optional: nothing in it is required
 docker compose up mcp   # Pure MCP server via stdio
 ```
 
@@ -140,7 +140,7 @@ JS, TS, Java, C#, Go, Rust, Ruby, C++, Swift, Kotlin, and PHP support beyond Pyt
 ### `cognirepo summarize`
 
 Generate hierarchical architectural summaries (Level 1: File, Level 2: Dir, Level 3: Repo).
-Uses LLM to rolling-summarize your codebase.
+Built locally from the AST index: no LLM and no API key.
 
 ```bash
 cognirepo summarize

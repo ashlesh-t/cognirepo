@@ -516,36 +516,6 @@ def _animate_indexing(name: str, done_event: threading.Event) -> None:
 
 # ── main wizard entry point ───────────────────────────────────────────────────
 
-def _ask_cli_backends() -> dict[str, bool]:
-    """Offer each installed agent CLI as a routing backend. Default No; returns ``{name: terms_risk_accepted}``.
-
-    Nothing is enabled unless the user says yes here, and a CLI whose vendor terms are reported restrictive needs
-    a second, explicit acknowledgement. Detection is local (``--version`` only).
-    """
-    from intelligence.orchestrator.provider_status import CLI_AGENT_SPECS, TERMS_WARNING, detect_cli_agents  # pylint: disable=import-outside-toplevel
-    chosen: dict[str, bool] = {}
-    if not sys.stdin.isatty():  # nothing is ever enabled non-interactively, so do not wait for detection (a node CLI takes >1 s)
-        return chosen
-    found = [r for r in detect_cli_agents() if r.installed]
-    if not found:
-        return chosen
-    print()
-    print(f"  {_c(_BOLD, 'Agent CLIs found:')} " + ", ".join(r.name for r in found))
-    print(f"  {_c(_DIM, 'They can answer `cognirepo ask` with no API key, using your own login and quota.')}")
-    print(f"  {_c(_DIM, 'Repo-derived context is sent to that vendor. Tools, MCP and hooks are off for the call.')}")
-    for row in found:
-        if not _ask_yn(f"Use {row.name} as a routing backend?", default=False):
-            continue
-        if CLI_AGENT_SPECS[row.name].terms_gated:
-            _warn(TERMS_WARNING)
-            if not _ask_yn(f"Enable {row.name} anyway, at your own risk?", default=False):
-                continue
-            chosen[row.name] = True
-        else:
-            chosen[row.name] = False
-    return chosen
-
-
 def _saved_bool(value: object, default: bool) -> bool:
     """A boolean setting read back from config.json; anything else (missing, hand-edited to a string) is *default*."""
     return value if isinstance(value, bool) else default
@@ -579,11 +549,6 @@ def run_wizard(saved: dict | None = None) -> dict:
     saved_storage = saved.get("storage") if isinstance(saved.get("storage"), dict) else {}
     saved_org = saved.get("org") if isinstance(saved.get("org"), str) and saved.get("org") else None
     saved_project = saved.get("project") if isinstance(saved.get("project"), str) and saved.get("project") else None
-    try:  # a node-based agent CLI needs >1 s for `--version`; start it now so the offer later finds it done
-        from intelligence.orchestrator.provider_status import prefetch_cli_agents  # pylint: disable=import-outside-toplevel
-        prefetch_cli_agents()
-    except Exception:  # pylint: disable=broad-except
-        pass
     # Microservice detection deferred until user opts in (step 8).
     _candidates: list = []
     STEPS = 9
@@ -826,9 +791,6 @@ def run_wizard(saved: dict | None = None) -> dict:
         cfg["rejected_repos"]    = []
         cfg["orchestrator_mode"] = False
 
-    # ── Agent CLIs as routing backends (opt-in, default No) ───────────────────
-    cfg["cli_backends"] = _ask_cli_backends()
-
     # ── Confirmation summary ──────────────────────────────────────────────────
     _child_names = [s.name for s in cfg.get("child_repos", [])]
     _summary_rows = [
@@ -847,7 +809,6 @@ def run_wizard(saved: dict | None = None) -> dict:
         ("Sub-repos",       f"{len(_child_names)} service(s)" if _child_names else "none detected"),
         ("Services",        ", ".join(_child_names) if _child_names else "—"),
         ("Parent mode",     "orchestrator (docs only)" if cfg.get("orchestrator_mode") else "standard"),
-        ("Agent CLI backends", ", ".join(cfg.get("cli_backends", {})) or "none"),
     ]
 
     print()

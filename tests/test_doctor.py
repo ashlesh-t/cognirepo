@@ -266,24 +266,31 @@ class TestDoctorAllHealthy:
         assert "All checks passed" in out or "No issues" in out or "warning" in out.lower()
 
 
-class TestDoctorNoApiKeys:
-    def test_exit_0_no_api_keys(self, capsys, monkeypatch):
-        # No API keys → warning → exit 1 (new contract: 0=clean, 1=warn, 2=error)
+class TestDoctorDoesNotCheckModelKeys:
+    """Nothing calls a model (#269): a missing key is not a problem, and doctor must not probe a model stack."""
+
+    def test_keys_do_not_change_the_result(self, capsys, monkeypatch):
+        without_keys = _run_doctor(capsys, monkeypatch, api_keys=False)
+        out_without = capsys.readouterr().out
+        with_keys = _run_doctor(capsys, monkeypatch, api_keys=True)
+        out_with = capsys.readouterr().out
+
+        assert without_keys == with_keys, "a missing model key must not turn a healthy install into a warning"
+        for out in (out_without, out_with):
+            assert "API_KEY" not in out and "Model API keys" not in out and "cognirepo ask will not work" not in out
+
+    def test_doctor_does_not_probe_agent_clis_or_model_lists(self, capsys, monkeypatch):
+        def boom(*_a, **_k):
+            raise AssertionError("doctor must not probe agent CLIs or read cached model lists")
+
+        monkeypatch.setattr("intelligence.orchestrator.provider_status.detect_cli_agents", boom)
+        monkeypatch.setattr("intelligence.orchestrator.model_discovery.load_entry", boom)
+
         code = _run_doctor(capsys, monkeypatch, api_keys=False)
+
+        out = capsys.readouterr().out
         assert code <= 1
-
-    def test_all_four_key_names_in_output(self, capsys, monkeypatch):
-        _run_doctor(capsys, monkeypatch, api_keys=False)
-        out = capsys.readouterr().out
-        assert "ANTHROPIC_API_KEY" in out
-        assert "GEMINI_API_KEY" in out
-        assert "OPENAI_API_KEY" in out
-        assert "GROK_API_KEY" in out
-
-    def test_warning_mark_on_api_key_check(self, capsys, monkeypatch):
-        _run_doctor(capsys, monkeypatch, api_keys=False)
-        out = capsys.readouterr().out
-        assert "⚠" in out
+        assert "Agent CLIs" not in out and "Model lists" not in out
 
 
 class TestDoctorFaissFailure:
@@ -573,28 +580,6 @@ def test_serve_reports_import_failure_on_stderr(capsys, monkeypatch):
     assert "cannot import the MCP server" in err
     assert sys.executable in err
     assert "cognirepo doctor" in err
-
-
-def _hide_openai(monkeypatch):
-    import importlib.util
-    real = importlib.util.find_spec
-    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a, **k: None if name == "openai" else real(name, *a, **k))
-
-
-def test_doctor_warns_when_a_gateway_is_set_but_the_openai_package_is_missing(capsys, monkeypatch):
-    monkeypatch.setenv("COGNIREPO_GATEWAY_BASE_URL", "https://gw.example.test/v1")
-    monkeypatch.setenv("COGNIREPO_GATEWAY_API_KEY", "gw-key")
-    _hide_openai(monkeypatch)
-    _run_doctor(capsys, monkeypatch, api_keys=False)
-    out = capsys.readouterr().out
-    assert "Gateway (gw.example.test)" in out
-    assert "openai package" in out and "pipx inject cognirepo openai" in out
-
-
-def test_doctor_stays_quiet_about_openai_without_a_gateway(capsys, monkeypatch):
-    _hide_openai(monkeypatch)
-    _run_doctor(capsys, monkeypatch, api_keys=True)
-    assert "pipx inject cognirepo openai" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("ast_files,summaries_missing", [

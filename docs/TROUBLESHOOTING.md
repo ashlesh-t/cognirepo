@@ -404,4 +404,4 @@ cognirepo index-repo .
 cognirepo doctor --verbose
 ```
 
-All lines should be ✓. Warnings (⚠) on optional API keys and language parsers are fine.
+All lines should be ✓. Warnings (⚠) on optional language parsers are fine. `doctor` does not check model API keys: CogniRepo does not call a model.

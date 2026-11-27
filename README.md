@@ -284,7 +284,7 @@ All 36 tools are available to Claude, Cursor, and any MCP-compatible client.
 | `episodic_search(query, limit=10)` | BM25 keyword search in event history | Find past decisions or incidents |
 | `dependency_graph(module, direction="both")` | Import/dependency relationships | Module coupling analysis |
 | `explain_change(target, since="7d")` | What changed in a file/function + git cross-ref | Understanding recent changes |
-| `architecture_overview(scope="root")` | Pre-computed LLM architectural summaries | Big-picture questions |
+| `architecture_overview(scope="root")` | Pre-computed architectural summaries (built from the AST index) | Big-picture questions |
 
 ### User & session intelligence
 
@@ -528,7 +528,7 @@ the last tool-call exchange for quick context scan.
 ## Architectural summaries
 
 `cognirepo init` automatically prompts to run `cognirepo summarize` after the first index.
-This produces a 3-level LLM summary of the entire codebase:
+This produces a 3-level summary of the entire codebase, built locally from the AST index (no LLM, no API key):
 
 - **Level 1** — repo-wide summary (what the project does, key modules, entry points)
 - **Level 2** — per-directory summaries (what each package is responsible for)
@@ -626,7 +626,7 @@ Full details and roadmap: [docs/LANGUAGES.md](docs/LANGUAGES.md)
     ast.index              ← FAISS IndexIDMap2 for code symbols
     ast_metadata.json      ← parallel metadata for ast.index rows
     manifest.json          ← git SHA, platform info and checksums for integrity checks (`verify-index`)
-    summaries.json         ← LLM architectural summaries (Level 1–3)
+    summaries.json         ← architectural summaries (Level 1–3), built from the AST index
     last_indexed.json, endpoints.json, http_calls.json, …   ← indexing bookkeeping
   vector_db/
     chroma/                ← default semantic-memory store (ChromaDB); `semantic.index` when `vector_backend: "faiss"`
@@ -665,7 +665,7 @@ cognirepo migrate-config        # migrate deprecated config keys
 
 # Indexing
 cognirepo index-repo [path]     # AST-index a codebase
-cognirepo summarize             # generate LLM architectural summaries (auto-prompted on init)
+cognirepo summarize             # generate architectural summaries from the AST index (local; auto-prompted on init)
 cognirepo seed --from-git       # seed behaviour weights from git history
 cognirepo verify-index          # verify AST index integrity
 cognirepo coverage              # per-directory symbol counts
