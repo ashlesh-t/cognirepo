@@ -59,13 +59,17 @@ def _warn(msg: str) -> None:
 
 
 # ── prompt primitives ─────────────────────────────────────────────────────────
+#
+# EOF (stdin closed, a pipe that ran dry) takes the prompt's default so a scripted run still finishes.
+# Ctrl-C is NOT an answer: it propagates as KeyboardInterrupt so the caller can cancel (#276). It used to take
+# the default too, so at "Proceed with this configuration?" (default yes) it confirmed the setup.
 
 def _ask_yn(prompt: str, default: bool = True) -> bool:
     hint = _c(_DIM, "(Y/n)" if default else "(y/N)")
     while True:
         try:
             raw = input(f"  {_c(_CYAN, '?')} {prompt} {hint}: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             print()
             return default
         if raw == "":
@@ -82,7 +86,7 @@ def _ask_text(prompt: str, default: str) -> str:
         raw = input(
             f"  {_c(_CYAN, '?')} {prompt} {_c(_DIM, f'[{default}]')}: "
         ).strip()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print()
         return default
     return raw if raw else default
@@ -107,7 +111,7 @@ def _ask_choice(
             raw = input(
                 f"\n  {_c(_DIM, f'Enter 1–{len(choices)} [default {default + 1}]')}: "
             ).strip()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
             print()
             return default
         if raw == "":
@@ -258,7 +262,7 @@ def _ask_multiselect_fallback(prompt: str, candidates: list) -> list:
     print(f"\n  {_c(_DIM, 'Enter numbers separated by commas (e.g. 1,2,3), or Enter for all:')}")
     try:
         raw = input("  > ").strip()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print()
         return list(candidates)
     if not raw:
@@ -389,7 +393,7 @@ def _ask_fuzzy_add(root: str, already_shown: list) -> list:
     print(f"\n  {_c(_DIM, '+ Add unlisted services (comma-separated names, fuzzy match) or Enter to skip:')}")
     try:
         raw = input("  > ").strip()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         print()
         return []
     if not raw:

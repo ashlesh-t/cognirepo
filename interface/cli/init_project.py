@@ -1159,8 +1159,9 @@ def init_project(
             behaviour_tracking = wizard_cfg.get("behaviour_tracking", behaviour_tracking)
             tier           = wizard_cfg.get("tier", tier)
             _wizard_ran = True
-        except (ImportError, KeyboardInterrupt):
-            # Fall back to non-interactive with defaults
+        except ImportError:
+            # Fall back to non-interactive with defaults. Ctrl-C is deliberately not caught here: it used to fall
+            # back too, which wrote a config with default answers after the user had tried to cancel (#276).
             mcp_targets = mcp_targets or []
 
     if mcp_targets is None:

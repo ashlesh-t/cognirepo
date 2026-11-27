@@ -12,6 +12,10 @@ Complete command reference for the `cognirepo` CLI.
 |------|-------------|
 | `-h`, `--help` | Show help and exit |
 
+A command stopped with Ctrl-C prints `Interrupted, closing gracefully.` and exits **130** (128 + SIGINT, what a shell
+reports for an interrupted command), so `cognirepo index-repo . && next-step` does not carry on. It used to exit 0.
+Commands that stop on Ctrl-C by design (`watch`, `daemon`, the metrics server) handle it themselves.
+
 ---
 
 ## cognirepo init
@@ -277,6 +281,8 @@ cognirepo setup [--no-index] [--targets claude cursor vscode]
 Detects `.cursor/`, `.vscode/`, and `.claude/` and writes the appropriate MCP connector config for each.
 
 **Re-running `setup`** on a configured repo is safe: the wizard offers the repo's current values (project name, encryption, behaviour profiling, context handoff, organisation, project) as its defaults, so pressing Enter at every prompt leaves `.cognirepo/config.json` unchanged. A different answer is applied, except that turning encryption off on an encrypted repo asks a second, separate question (default No), because the files already on disk stay encrypted and unreadable until it is turned back on. The vector backend is not asked; an existing repo keeps its own and a new one gets `chroma`. The health check and the other steps run as before.
+
+**Cancelling.** Ctrl-C at any wizard prompt, including the last one ("Proceed with this configuration?", which defaults to yes), cancels: `Setup cancelled. Nothing was changed in this repo.` and exit code 130. The wizard only asks; `.cognirepo/`, `.mcp.json`, `.claude/` and `.env` are written after you confirm, so nothing exists to clean up. (Extras the wizard installs as you answer, such as `cognirepo[security]`, stay installed.) A closed stdin (EOF, for example `setup < /dev/null`) is not a keypress and still takes each prompt's default. `cognirepo init` cancels the same way.
 
 ---
 
