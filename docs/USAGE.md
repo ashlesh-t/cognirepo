@@ -514,6 +514,10 @@ You can also invoke them explicitly:
 
 ### Adding API Keys
 
+> **Deprecated since 2.6.0.** `cognirepo ask` and the MCP tools need no API key and no agent CLI: `ask` answers from the local
+> index and CogniRepo does not call a model. The key, model-list and agent-CLI sections below, and the commands behind
+> them (`models`, `agents`, `test-connection`, `setup-env`), are scheduled for removal in a later release.
+
 Set keys as environment variables before running `cognirepo serve`:
 
 ```bash
@@ -538,7 +542,8 @@ of the same family. It is opt-in and the only network call (`models list` and `c
 
 ### No API key? Use an agent CLI you already have
 
-If `claude`, `codex` or `gemini` is installed and logged in, it can answer `cognirepo ask` instead of an API key:
+If `claude`, `codex` or `gemini` is installed and logged in, it could answer `cognirepo ask` instead of an API key
+(deprecated: `ask` no longer routes to a model):
 
 ```bash
 cognirepo agents list                 # what is installed (local only, no quota)
@@ -551,9 +556,8 @@ context from your query. API keys are tried first when both exist (`provider_pre
 The vendors' terms for this are reported to be restrictive for `claude` and `gemini`; see `cognirepo agents` in
 [CLI_REFERENCE.md](CLI_REFERENCE.md#cognirepo-agents).
 
-MCP tools and `cognirepo ask` work without any API keys or CLIs — local QUICK-tier resolution only.
-API keys (or an enabled agent CLI) are only needed if you use `cognirepo ask` with STANDARD/COMPLEX/EXPERT tier
-routing via the `[providers]` extra.
+MCP tools and `cognirepo ask` work without any API keys or CLIs: `ask` is local-only by design and exits 1 when the
+local index has no answer (the MCP tools `context_pack`, `episodic_search`, `lookup_symbol` and `who_calls` go further).
 
 ---
 

@@ -294,7 +294,8 @@ cognirepo migrate-config --dry-run # preview changes without writing
 ## cognirepo ask
 
 
-Send a single query through the full orchestrator pipeline (classifier → context builder → model router) without entering the REPL.
+Answer a natural-language question from the local index. **`ask` never calls a model and needs no API key or agent CLI**:
+CogniRepo supplies context to the AI agent you already use; it is not a second model client.
 
 ```bash
 cognirepo ask "QUERY" [OPTIONS]
@@ -302,9 +303,18 @@ cognirepo ask "QUERY" [OPTIONS]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `QUERY` | — | Natural-language query (optional; omitted, it reads from the prompt) |
-| `--verbose`, `-v` | `False` | Show the classifier tier and the matched source |
+| `QUERY` | — | Natural-language query. Without one it prints the usage and exits 2 |
+| `--verbose`, `-v` | `False` | Show the classifier tier and score |
 | `--top-k N` | `5` | Number of symbols to retrieve for context |
+
+What it can answer: `where is <symbol>`, `who calls <function>`, `list files`, `graph stats` / `how many nodes`,
+`recent history` / `what did I do`, and how-to questions about CogniRepo (the embedded docs index).
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Answered from the local index |
+| `1` | No local answer. The reason is on stderr and names the MCP tools that can (`context_pack`, `episodic_search`, `lookup_symbol`, `who_calls`) |
+| `2` | No question given |
 
 ---
 
@@ -386,7 +396,8 @@ cognirepo seed [--path DIR] [--dry-run] [--from-git] [--comments]
 ## cognirepo sessions
 
 
-List recent conversation sessions.
+List recent conversation sessions. The MCP server records one per agent session (the tool calls it served);
+`cognirepo ask` does not create one.
 
 ```bash
 cognirepo sessions [--limit N]
@@ -662,6 +673,8 @@ cognirepo index-progress [OPTIONS]
 
 Verify an API key and connectivity for a model provider.
 
+> **Deprecated since 2.6.0.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model API keys, agent-CLI backends or model lists any more. This command is scheduled for removal in a later release.
+
 ```bash
 cognirepo test-connection [OPTIONS]
 ```
@@ -675,6 +688,8 @@ cognirepo test-connection [OPTIONS]
 ## cognirepo setup-env
 
 Interactive wizard to set and verify model-provider API keys.
+
+> **Deprecated since 2.6.0.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model API keys, agent-CLI backends or model lists any more. This command is scheduled for removal in a later release.
 
 ```bash
 cognirepo setup-env [OPTIONS]
@@ -772,8 +787,10 @@ cognirepo repos scan --root DIR [--depth 3] [--dry-run]   # find initialised rep
 
 ## cognirepo agents
 
-Agent CLIs (`claude`, `codex`, `gemini`) that can answer `cognirepo ask` as a headless backend, with no API key.
+Agent CLIs (`claude`, `codex`, `gemini`) as a headless routing backend, with no API key.
 Design: [planning/07-model-discovery-design.md](planning/07-model-discovery-design.md).
+
+> **Deprecated since 2.6.0.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model API keys, agent-CLI backends or model lists any more. This command is scheduled for removal in a later release.
 
 ```bash
 cognirepo agents list [--json]
@@ -813,6 +830,9 @@ Repo-derived context from your query is sent to that vendor and counts against y
 ---
 
 ## cognirepo models
+
+> **Deprecated since 2.6.0.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model
+> lists any more. This command is scheduled for removal in a later release.
 
 Opt-in model discovery: ask each provider that has an API key which models it offers, tier them, and let the router
 use a newer model than the hardcoded default. **`refresh` is the only command that touches the network**, and nothing

@@ -65,29 +65,27 @@ embeddings + behaviour)           tracker
          (Fernet encrypted if storage.encrypt: true)
 ```
 
-### Orchestrator path (CLI `ask` / REPL)
+### Local query path (CLI `ask`)
+
+`ask` is local-only by design (#269): CogniRepo supplies context to the AI agent the user already runs and does not
+call a model itself. The model router, adapters and provider commands are deprecated and scheduled for removal.
 
 ```
-cognirepo ask "why is auth slow?"
+cognirepo ask "where is verify_token defined?"
     │
     ▼
-orchestrator/classifier.py      — score query → QUICK / STANDARD / COMPLEX / EXPERT tier
-    │                              errors → .cognirepo/errors/<date>.log (no raw tracebacks)
+orchestrator/classifier.py      — score the query → tier (shown with --verbose)
     ▼
-orchestrator/context_builder.py — hydrate ContextBundle from all 5 sources
-    │  (semantic memories, graph context, AST hits, episodic events, session history)
+orchestrator/context_builder.py — hydrate a ContextBundle from the local stores
     ▼
-orchestrator/router.py          — local resolver (QUICK) or model API call
-    │                              on error: user-friendly message + log to errors/
-    ├── local_adapter.py        — zero-API local resolver (QUICK tier primary)
-    ├── grok_adapter.py         — Grok / xAI  (STANDARD tier primary)
-    ├── gemini_adapter.py       — Gemini       (STANDARD/COMPLEX primary)
-    ├── anthropic_adapter.py    — Claude       (EXPERT primary)
-    └── openai_adapter.py       — OpenAI / Azure / Ollama / LM Studio (fallback)
-    │
+orchestrator/router.py::try_local_resolve — where is / who calls / list files / graph stats /
+    │                              recent history / embedded docs index
     ▼
-orchestrator/session.py         — persist exchange to .cognirepo/sessions/
+answer on stdout (exit 0)   or   "No local answer" + the MCP tools to use on stderr (exit 1)
 ```
+
+The MCP server separately records each agent session's tool calls through `orchestrator/session.py`
+(`.cognirepo/sessions/`, read by `get_session_history`).
 
 ### Init wizard + MCP connector setup
 
