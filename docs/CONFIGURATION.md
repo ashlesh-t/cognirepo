@@ -116,7 +116,6 @@ An agent CLI is used for routing only when `enabled` is true (and `terms_ack` is
 | `COGNIREPO_HEADLESS` | Set by CogniRepo itself on the agent CLIs it runs as headless backends. While set, `cognirepo serve`, the MCP server and the prompt-submit hook do nothing, so an agent started that way cannot reach CogniRepo again. Do not set it yourself: it disables those entry points. | set by the adapter |
 | `COGNIREPO_NO_WATCHER` | If set (any value), `init` / `index-repo --daemon` do not start a background watcher and `serve` does not start its in-process one. For CI, containers and the test suite | `1` |
 | `COGNIREPO_PROGRESS_FILE` | Path of a JSON file that `index-repo --files` / `--changed-only` keeps updated with `{"done", "total"}`. Set only by the `cognirepo ui` index service (#211); unset (the default) it does nothing | unset |
-| `COGNIREPO_ENCRYPT_KEY` | Encryption key (overrides keychain) | `<hex-encoded AES key>` |
 | `ANTHROPIC_API_KEY` | Anthropic/Claude API key | `sk-ant-...` |
 | `GEMINI_API_KEY` | Google Gemini API key | `AIza...` |
 | `GOOGLE_API_KEY` | Gemini (alternate key name) | `AIza...` |
@@ -252,6 +251,8 @@ When `storage.encrypt: true`:
 | macOS | Keychain Access (via `keyring`) |
 | Linux | Secret Service (KWallet / GNOME Keyring) |
 | Windows | Windows Credential Manager |
+
+The key is read **only** from the OS keychain; no environment variable or file can supply it. Where the keychain cannot be reached (SSH without a desktop session, a container, another user, a locked keychain), reading and saving the encrypted stores is refused, nothing on disk is changed, and the message says which cause it is: packages missing, no usable keyring backend (it names the one found), keychain locked, a key that does not decrypt the file, or `storage.encrypt` switched off over encrypted files. See [Troubleshooting](TROUBLESHOOTING.md#graph-is-empty--encrypted-but-could-not-be-decrypted).
 
 **To enable encryption:**
 ```bash
