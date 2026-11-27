@@ -2286,19 +2286,21 @@ fall back to grep / file read directly.
 
 def _cmd_ask_local(query: str, verbose: bool = False, top_k: int = 5) -> None:
     """
-    Answer a natural-language query entirely from the local index — no API key required.
+    Answer a natural-language query entirely from the local index. ``ask`` is local-only by design (#269):
+    CogniRepo supplies context to the AI agent you already use, it does not call a model itself, so there is no
+    API key, provider or agent CLI to configure.
 
-    Uses the QUICK-tier local resolver: symbol lookup, call graph, file listing,
-    graph stats, recent history, and docs FAISS search. If the query needs richer
-    analysis (STANDARD/COMPLEX tier), prints a helpful suggestion to use the MCP
-    tools from Claude Code instead of silently failing.
+    Uses the QUICK-tier local resolver: symbol lookup, call graph, file listing, graph stats, recent history, and
+    docs FAISS search. A question it cannot answer prints a pointer to the MCP tools on stderr and exits 1, so a
+    script or an agent can tell "answered" from "no local answer" (it used to exit 0 either way, #275). A missing
+    question is a usage error (exit 2).
     """
     if not query:
-        print("Usage: cognirepo ask <question>")
-        print("Example: cognirepo ask 'where is context_pack?'")
-        print("         cognirepo ask 'who calls hybrid_retrieve'")
-        print("         cognirepo ask 'list files'")
-        return
+        print("Usage: cognirepo ask <question>\n"
+              "Example: cognirepo ask 'where is context_pack?'\n"
+              "         cognirepo ask 'who calls hybrid_retrieve'\n"
+              "         cognirepo ask 'list files'", file=sys.stderr)
+        sys.exit(2)
 
     try:
         from intelligence.orchestrator.classifier import classify  # pylint: disable=import-outside-toplevel
@@ -2309,15 +2311,15 @@ def _cmd_ask_local(query: str, verbose: bool = False, top_k: int = 5) -> None:
         from interface.tools.context_pack import context_pack  # pylint: disable=import-outside-toplevel
         result = context_pack(query, max_tokens=1000, include_episodic=False)
         if result.get("status") in ("no_confident_match", "index_empty"):
-            print(f"No local match found. Run `cognirepo index-repo .` first.")
-        else:
-            for s in result.get("sections", []):
-                print(f"[{s.get('source', '')}]\n{s.get('content', '')}\n")
+            print("No local match found. Run `cognirepo index-repo .` first.", file=sys.stderr)
+            sys.exit(1)
+        for s in result.get("sections", []):
+            print(f"[{s.get('source', '')}]\n{s.get('content', '')}\n")
         return
 
     clf = classify(query)
     if verbose:
-        print(f"  tier={clf.tier}  score={clf.score:.1f}  model={clf.model}")
+        print(f"  tier={clf.tier}  score={clf.score:.1f}")
 
     # Build a minimal context bundle (no episode retrieval — local only)
     try:
@@ -2335,19 +2337,17 @@ def _cmd_ask_local(query: str, verbose: bool = False, top_k: int = 5) -> None:
         print(answer)
         return
 
-    # Local resolver has no confident answer — guide user to MCP tools
+    # The local resolver has no confident answer: say so on stderr, exit 1, and point at the MCP tools
     print(
-        f"This query needs deeper analysis (tier: {clf.tier}) that goes beyond the local index.\n"
-        "\nFor rich answers, use CogniRepo MCP tools from your AI agent:\n"
-        "  • Claude Code / Cursor: the MCP tools answer this automatically\n"
-        "  • context_pack(\"" + query[:60] + "\")  — retrieves relevant code\n"
+        f"No local answer (tier: {clf.tier}). `cognirepo ask` answers from the local index only and never calls "
+        "a model.\n"
+        "\nYour AI agent can answer this with the CogniRepo MCP tools:\n"
+        "  • context_pack(\"" + query[:60] + "\")  — retrieves the relevant code\n"
         "  • episodic_search(\"" + query[:40] + "\")  — searches past decisions\n"
-        "\nOr install model providers and set an API key:\n"
-        "  pip install 'cognirepo[providers]'\n"
-        "  export ANTHROPIC_API_KEY=sk-...\n"
-        "\nOr use an agent CLI you already have installed and logged in (claude, codex, gemini):\n"
-        "  cognirepo agents list && cognirepo agents enable codex"
+        "  • lookup_symbol(\"name\") / who_calls(\"name\")  — exact lookups",
+        file=sys.stderr,
     )
+    sys.exit(1)
 
 
 def _cmd_insights(since: str = "90d") -> None:
@@ -3300,123 +3300,12 @@ def _test_connection(provider: str) -> dict:
         return {"status": "error", "provider": provider, "error": str(exc)}
 
 
-def _resolve_session(continue_session: bool, session_id: str | None) -> dict | None:
-    """Return the session to continue, or None if starting fresh."""
-    from intelligence.orchestrator.session import load_current_session, find_session  # pylint: disable=import-outside-toplevel
-    if session_id:
-        sess = find_session(session_id)
-        if sess is None:
-            print(f"Session {session_id!r} not found.", file=sys.stderr)
-            sys.exit(1)
-        return sess
-    if continue_session:
-        sess = load_current_session()
-        if sess is None:
-            print("No current session found. Starting a new one.", file=sys.stderr)
-        return sess
-    return None
-
-
-def _save_exchange(session, query: str, response_text: str, model: str = "") -> None:
-    """Create or append to the session file, enforcing the history cap."""
-    from intelligence.orchestrator.session import (  # pylint: disable=import-outside-toplevel
-        create_session, append_exchange, load_max_exchanges,
-    )
-    if session is None:
-        session = create_session(model=model)
-    append_exchange(session, query, response_text, max_exchanges=load_max_exchanges())
-
-
-def _direct_ask(
-    query,
-    force_model,
-    top_k,
-    verbose,
-    no_stream=False,
-    continue_session=False,
-    session_id=None,
-    no_history=False,
-):
-    # ── resolve session ───────────────────────────────────────────────────────
-    session = None if no_history else _resolve_session(continue_session, session_id)
-    messages_history = session["messages"] if session else None
-
-    resolved_model = force_model or ""
-
-    if no_stream:
-        # Blocking mode: collect full response, then print
-        from intelligence.orchestrator.router import route  # pylint: disable=import-outside-toplevel
-        result = route(
-            query, force_model=force_model, top_k=top_k,
-            messages_history=messages_history,
-        )
-        if verbose:
-            clf = result.classifier
-            b = result.bundle
-            W = 60
-            print(f"\n\u250c\u2500 Classifier {'─' * (W - 13)}")
-            print(f"\u2502  tier     : {clf.tier}")
-            print(f"\u2502  score    : {clf.score:.1f}")
-            print(f"\u2502  model    : {clf.model}  ({clf.provider})")
-            if clf.signals:
-                print("\u2502  signals  :")
-                for sig, val in sorted(clf.signals.items(),
-                                       key=lambda x: abs(x[1]), reverse=True):
-                    bar = f"+{val:.1f}" if val >= 0 else f"{val:.1f}"
-                    print(f"\u2502    {sig:<28} {bar}")
-            if getattr(clf, "overrides", None):
-                print(f"\u2502  overrides: {', '.join(clf.overrides)}")
-            print(f"\u251c\u2500 Context bundle {'─' * (W - 17)}")
-            trimmed_flag = "  [TRIMMED]" if b.was_trimmed else ""
-            print(f"\u2502  tokens   : {b.token_count:,}/{b.max_tokens:,}{trimmed_flag}")
-            mem_count = len(b.memories) + len(b.ast_hits)
-            ep_count  = len(b.recent_episodes)
-            print(f"\u2502  memories : {mem_count} retrieved  ·  episodes: {ep_count}")
-            top_hits = (b.memories + b.ast_hits)[:5]
-            for hit in top_hits:
-                score = hit.get("final_score", hit.get("importance", 0.0))
-                src   = hit.get("text", "")[:50].replace("\n", " ")
-                print(f"\u2502    [{score:.2f}] {src}")
-            print(f"\u2514{'─' * W}")
-            print()
-        if result.error:
-            print(f"ERROR: {result.error}", file=sys.stderr)
-        if result.response.tool_calls:
-            print("\n[tool calls]")
-            for tc in result.response.tool_calls:
-                print(" ", json.dumps(tc))
-        response_text = result.response.text
-        resolved_model = result.classifier.model
-    else:
-        # Streaming mode (default): print each chunk as it arrives
-        from intelligence.orchestrator.router import stream_route  # pylint: disable=import-outside-toplevel
-        full_text: list[str] = []
-        try:
-            for chunk in stream_route(
-                query, force_model=force_model, top_k=top_k,
-                messages_history=messages_history,
-            ):
-                print(chunk, end="", flush=True)
-                full_text.append(chunk)
-        except KeyboardInterrupt:
-            print()
-            sys.exit(0)
-        print()  # trailing newline
-        response_text = "".join(full_text)
-
-    # ── persist exchange ──────────────────────────────────────────────────────
-    if not no_history and response_text:
-        _save_exchange(session, query, response_text, model=resolved_model)
-
-    return response_text
-
-
 def _cmd_sessions(limit: int = 20) -> None:
     """Print a table of recent sessions."""
     from intelligence.orchestrator.session import list_sessions, current_session_id  # pylint: disable=import-outside-toplevel
     sessions = list_sessions(limit=limit)
     if not sessions:
-        print("No sessions found. Run 'cognirepo ask' to start one.")
+        print("No sessions found. A session is recorded when an AI agent uses the CogniRepo MCP server.")
         return
     cur = current_session_id()
     print(f"{'ID':8}  {'CREATED':19}  {'EX':>2}  FIRST QUERY")
@@ -3531,10 +3420,10 @@ def _print_help() -> None:
 
     # ── AI Query ──────────────────────────────────────────────────────────────
     _hdr("AI QUERY")
-    _row("ask <query>",       "Route query through multi-model orchestrator")
+    _row("ask <query>",       "Answer a question from the local index (no model, no API key)")
     _row("summarize",         "Generate hierarchical architecture summaries (L1–L3) via LLM")
     _row("sessions",          "List recent conversation sessions")
-    _row("test-connection",   "Verify API key & connectivity per provider")
+    _row("test-connection",   "(deprecated) Verify API key & connectivity per provider")
 
     # ── Servers ───────────────────────────────────────────────────────────────
     _hdr("SERVERS")
@@ -3553,7 +3442,7 @@ def _print_help() -> None:
     _row("doctor",            "Full installation health check")
     _row("benchmark",         "Run quantitative value benchmarks")
     _row("migrate-config",    "Rename deprecated tier names in .cognirepo/config.json")
-    _row("setup-env",         "Interactive wizard to set and verify API keys")
+    _row("setup-env",         "(deprecated) Interactive wizard to set and verify API keys")
     _row("org",               "Manage local repository organizations (cross-repo context)")
     _row("org link-repos",   "Declare dependency edge between two repos in org graph")
     _row("org graph",        "Print org-level bidirectional dependency graph")
@@ -4182,6 +4071,15 @@ def _cmd_delete(args) -> None:
 
 from core.config.lock import LockTimeout, busy_message  # noqa: E402  (module-level so main() can name them)
 
+#: Commands that only exist to configure or test calling a model. `cognirepo ask` answers from the local index and
+#: no longer routes to a model (#269), so nothing uses their output; they are scheduled for removal.
+_MODEL_STACK_COMMANDS = frozenset({"models", "agents", "test-connection", "setup-env"})
+_MODEL_STACK_DEPRECATION = (
+    "note: `cognirepo {cmd}` is deprecated and will be removed in a future release. CogniRepo does not call a "
+    "model itself: `cognirepo ask` answers from the local index, so model API keys, agent-CLI backends and "
+    "model lists are no longer used by anything."
+)
+
 
 def main():
     """CLI entry point — parse args and route to commands."""
@@ -4568,13 +4466,13 @@ def _main():
              "Omit to test all configured providers.",
     )
 
-    # ask — placeholder (not yet implemented)
+    # ask — local index only, by design (#269): no model, no API key. Exit 1 when the index has no answer.
     p_ask = sub.add_parser(
         "ask",
-        help="Ask your codebase a natural-language question (answered from local index, no API key needed)",
+        help="Ask your codebase a natural-language question (answered from the local index only: no model, no API key)",
     )
     p_ask.add_argument("query", nargs="?", help="Natural language query")
-    p_ask.add_argument("--verbose", "-v", action="store_true", help="Show classifier tier and matched source")
+    p_ask.add_argument("--verbose", "-v", action="store_true", help="Show the classifier tier and score")
     p_ask.add_argument("--top-k", type=int, default=5, help="Symbols to retrieve for context (default: 5)")
 
     # sessions — list recent conversations
@@ -4991,15 +4889,11 @@ def _main():
         sys.exit(0)
 
     if args.command is None:
-        if sys.stdin.isatty():
-            _print_help()
-            sys.exit(0)
-        else:
-            # piped input: read from stdin and route as a single query
-            query = sys.stdin.read().strip()
-            if query:
-                _direct_ask(query, None, 5, False)
-            sys.exit(0)
+        _print_help()  # piped stdin used to be routed to a model (dead code since the CLI refactor); ask is local-only
+        sys.exit(0)
+
+    if args.command in _MODEL_STACK_COMMANDS:
+        print(_MODEL_STACK_DEPRECATION.format(cmd=args.command), file=sys.stderr)
 
     # ── init guard: require .cognirepo/config.json for all storage commands ──
     _INIT_EXEMPT = {"init", "setup", "doctor", "migrate-config", "setup-env", "metrics",
