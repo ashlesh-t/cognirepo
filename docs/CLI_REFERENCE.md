@@ -673,7 +673,7 @@ cognirepo index-progress [OPTIONS]
 
 Verify an API key and connectivity for a model provider.
 
-> **Deprecated.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model API keys, agent-CLI backends or model lists any more. This command is scheduled for removal in a future release.
+> **Deprecated since 2.6.0.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model API keys, agent-CLI backends or model lists any more. This command is scheduled for removal in a later release.
 
 ```bash
 cognirepo test-connection [OPTIONS]
@@ -689,7 +689,7 @@ cognirepo test-connection [OPTIONS]
 
 Interactive wizard to set and verify model-provider API keys.
 
-> **Deprecated.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model API keys, agent-CLI backends or model lists any more. This command is scheduled for removal in a future release.
+> **Deprecated since 2.6.0.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model API keys, agent-CLI backends or model lists any more. This command is scheduled for removal in a later release.
 
 ```bash
 cognirepo setup-env [OPTIONS]
@@ -790,7 +790,7 @@ cognirepo repos scan --root DIR [--depth 3] [--dry-run]   # find initialised rep
 Agent CLIs (`claude`, `codex`, `gemini`) as a headless routing backend, with no API key.
 Design: [planning/07-model-discovery-design.md](planning/07-model-discovery-design.md).
 
-> **Deprecated.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model API keys, agent-CLI backends or model lists any more. This command is scheduled for removal in a future release.
+> **Deprecated since 2.6.0.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model API keys, agent-CLI backends or model lists any more. This command is scheduled for removal in a later release.
 
 ```bash
 cognirepo agents list [--json]
@@ -831,8 +831,8 @@ Repo-derived context from your query is sent to that vendor and counts against y
 
 ## cognirepo models
 
-> **Deprecated.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model
-> lists any more. This command is scheduled for removal in a future release.
+> **Deprecated since 2.6.0.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model
+> lists any more. This command is scheduled for removal in a later release.
 
 Opt-in model discovery: ask each provider that has an API key which models it offers, tier them, and let the router
 use a newer model than the hardcoded default. **`refresh` is the only command that touches the network**, and nothing

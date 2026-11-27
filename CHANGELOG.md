@@ -32,7 +32,7 @@ Versioning: [Semantic Versioning](https://semver.org/)
   memory regression test. RCA: `docs/rca/COGNIREPO-98-oom-memory-growth.md` §7.
 
 ### Deprecated
-- **`cognirepo models`, `agents`, `test-connection` and `setup-env`** print a deprecation notice on stderr (stdout, including `--json`, is unchanged). They configure or test calling a model, which nothing does any more (#269). They will be removed in a future release together with the model router and adapters; model API keys, agent-CLI backends and discovered model lists are no longer used by anything.
+- **`cognirepo models`, `agents`, `test-connection` and `setup-env`** print a deprecation notice on stderr (stdout, including `--json`, is unchanged). They configure or test calling a model, which nothing does any more (#269). Deprecated in 2.6.0; they will be removed in a later release together with the model router and adapters; model API keys, agent-CLI backends and discovered model lists are no longer used by anything.
 
 ### Added
 - **OpenAI-compatible gateway provider (`gateway`).** One URL and one key in front of many models (LiteLLM, OpenRouter,

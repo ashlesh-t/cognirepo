@@ -4075,7 +4075,7 @@ from core.config.lock import LockTimeout, busy_message  # noqa: E402  (module-le
 #: no longer routes to a model (#269), so nothing uses their output; they are scheduled for removal.
 _MODEL_STACK_COMMANDS = frozenset({"models", "agents", "test-connection", "setup-env"})
 _MODEL_STACK_DEPRECATION = (
-    "note: `cognirepo {cmd}` is deprecated and will be removed in a future release. CogniRepo does not call a "
+    "note: `cognirepo {cmd}` is deprecated since 2.6.0 and will be removed in a later release. CogniRepo does not call a "
     "model itself: `cognirepo ask` answers from the local index, so model API keys, agent-CLI backends and "
     "model lists are no longer used by anything."
 )

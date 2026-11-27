@@ -514,9 +514,9 @@ You can also invoke them explicitly:
 
 ### Adding API Keys
 
-> **Deprecated.** `cognirepo ask` and the MCP tools need no API key and no agent CLI: `ask` answers from the local
+> **Deprecated since 2.6.0.** `cognirepo ask` and the MCP tools need no API key and no agent CLI: `ask` answers from the local
 > index and CogniRepo does not call a model. The key, model-list and agent-CLI sections below, and the commands behind
-> them (`models`, `agents`, `test-connection`, `setup-env`), are scheduled for removal in a future release.
+> them (`models`, `agents`, `test-connection`, `setup-env`), are scheduled for removal in a later release.
 
 Set keys as environment variables before running `cognirepo serve`:
 

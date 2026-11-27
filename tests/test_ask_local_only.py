@@ -154,7 +154,7 @@ def test_agents_list_json_stays_machine_readable_and_the_notice_goes_to_stderr(m
     out = capsys.readouterr()
     assert code == 0
     assert json.loads(out.out) == [], "the notice must not corrupt --json output"
-    assert "`cognirepo agents` is deprecated" in out.err
+    assert "`cognirepo agents` is deprecated since 2.6.0" in out.err
     assert "cognirepo ask" in out.err, "say what replaced it"
 
 
