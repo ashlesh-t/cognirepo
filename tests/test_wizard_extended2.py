@@ -22,7 +22,6 @@ def test_wizard_numbers_only_visible_sections(monkeypatch, tmp_path, capsys, lar
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(wizard, "_count_source_files", lambda _: _LARGE_REPO_TIER_THRESHOLD if large_repo else 0)
     monkeypatch.setattr(wizard, "_install_package", lambda _: True)
-    monkeypatch.setattr(wizard, "_ask_cli_backends", dict)
     monkeypatch.setattr("builtins.input", lambda _="": "")
     monkeypatch.setattr("core.config.orgs.list_orgs", dict)
 
@@ -65,7 +64,6 @@ def test_wizard_recounts_sources_after_installing_a_grammar(monkeypatch, tmp_pat
 
     monkeypatch.setattr(wizard, "_pip_install", install)
     monkeypatch.setattr(wizard, "_install_package", lambda _: True)
-    monkeypatch.setattr(wizard, "_ask_cli_backends", dict)
     monkeypatch.setattr("core.config.orgs.list_orgs", dict)
     monkeypatch.setattr(
         "builtins.input", lambda prompt="": "y" if "Install extended language parsers?" in prompt else ""
