@@ -71,14 +71,17 @@ def _detect_blind_spots(index_health: dict) -> list[str]:
         from data.graph.backend import graph_store_path  # pylint: disable=import-outside-toplevel
         pkl_path = graph_store_path()
         pkl_exists = _os.path.exists(pkl_path)
-        if kg.node_count() == 0:
+        # An empty graph is only a problem when something was indexed (#278): a new or empty repo
+        # legitimately has a graph file with 0 nodes, and check 2 above already says nothing is indexed.
+        # (A graph file that cannot be read is quarantined on load, so it never reaches this branch.)
+        if kg.node_count() == 0 and index_health.get("symbols", 0) > 0:
             if pkl_exists:
                 spots.append(
                     "Knowledge graph file exists but loaded empty (likely corrupted). "
                     "Cross-file call relationships unavailable. "
                     "Run: cognirepo index-repo . to rebuild."
                 )
-            elif index_health.get("symbols", 0) > 0:
+            else:
                 spots.append(
                     "Knowledge graph not built — who_calls() and subgraph() unavailable. "
                     "Run: cognirepo index-repo ."
