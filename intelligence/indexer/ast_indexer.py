@@ -56,6 +56,7 @@ from intelligence.indexer.index_utils import SymbolTable, build_symbol_table_fro
 from intelligence.indexer.language_registry import (
     _get_language,
     is_supported,
+    known_extensions,
     lang_label,
     lang_name,
 )
@@ -2111,10 +2112,9 @@ class ASTIndexer:
             print(f"  {parts}")
         if skipped_exts:
             skipped_str = ", ".join(sorted(skipped_exts))
-            print(
-                f"  Unsupported extensions skipped: {skipped_str} "
-                f"(install cognirepo[languages])"
-            )
+            missing_grammars = sorted(skipped_exts.intersection(known_extensions()))
+            hint = f" (install cognirepo[languages] for {', '.join(missing_grammars)})" if missing_grammars else ""
+            print(f"  Unsupported extensions skipped: {skipped_str}{hint}")
 
         if _tier2_pending:
             print(

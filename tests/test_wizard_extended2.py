@@ -4,6 +4,7 @@
 """tests/test_wizard_extended2.py — More coverage for cli/wizard.py (32% → 65%)."""
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -12,6 +13,24 @@ import pytest
 
 
 # ── run_wizard (simulate with monkeypatched input) ────────────────────────────
+
+@pytest.mark.parametrize("large_repo, total", [(False, 8), (True, 9)])
+def test_wizard_numbers_only_visible_sections(monkeypatch, tmp_path, capsys, large_repo, total):
+    from intelligence.indexer.ast_indexer import _LARGE_REPO_TIER_THRESHOLD
+    from interface.cli import wizard
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(wizard, "_count_source_files", lambda _: _LARGE_REPO_TIER_THRESHOLD if large_repo else 0)
+    monkeypatch.setattr(wizard, "_install_package", lambda _: True)
+    monkeypatch.setattr("builtins.input", lambda _="": "")
+    monkeypatch.setattr("core.config.orgs.list_orgs", dict)
+
+    wizard.run_wizard()
+
+    output = capsys.readouterr().out
+    assert re.findall(r"\[\d+/\d+\]", output) == [f"[{i}/{total}]" for i in range(1, total + 1)]
+    assert ("Indexing strategy" in output) == large_repo
+
 
 def _make_input_responses(*responses):
     """Return a mock input() that cycles through the given responses."""
@@ -22,6 +41,40 @@ def _make_input_responses(*responses):
         except StopIteration:
             return ""
     return _input
+
+
+def test_wizard_recounts_sources_after_installing_a_grammar(monkeypatch, tmp_path, capsys):
+    from intelligence.indexer import language_registry
+    from intelligence.indexer.ast_indexer import _LARGE_REPO_TIER_THRESHOLD
+    from interface.cli import wizard
+
+    grammar = pytest.importorskip("tree_sitter_javascript")
+    monkeypatch.chdir(tmp_path)
+    for index in range(_LARGE_REPO_TIER_THRESHOLD):
+        (tmp_path / f"source{index}.js").touch()
+    monkeypatch.setitem(sys.modules, "tree_sitter_javascript", None)
+    monkeypatch.setattr(language_registry, "_lang_cache", {})
+    monkeypatch.setattr(language_registry, "_TS_AVAILABLE", None)
+    assert not language_registry.is_supported(Path("source0.js"))
+
+    def install(extra):
+        assert extra == "languages"
+        monkeypatch.setitem(sys.modules, "tree_sitter_javascript", grammar)
+        return True
+
+    monkeypatch.setattr(wizard, "_pip_install", install)
+    monkeypatch.setattr(wizard, "_install_package", lambda _: True)
+    monkeypatch.setattr("core.config.orgs.list_orgs", dict)
+    monkeypatch.setattr(
+        "builtins.input", lambda prompt="": "y" if "Install extended language parsers?" in prompt else ""
+    )
+
+    wizard.run_wizard()
+
+    assert language_registry.is_supported(Path("source0.js"))
+    output = capsys.readouterr().out
+    assert "Indexing strategy" in output
+    assert re.findall(r"\[(\d+)/\d+\]", output) == [str(i) for i in range(1, 10)]
 
 
 def test_run_wizard_skip_all_defaults(monkeypatch, tmp_path, capsys):
