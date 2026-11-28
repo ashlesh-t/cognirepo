@@ -44,6 +44,41 @@ def _make_input_responses(*responses):
     return _input
 
 
+def test_wizard_recounts_sources_after_installing_a_grammar(monkeypatch, tmp_path, capsys):
+    from intelligence.indexer import language_registry
+    from intelligence.indexer.ast_indexer import _LARGE_REPO_TIER_THRESHOLD
+    from interface.cli import wizard
+
+    grammar = pytest.importorskip("tree_sitter_javascript")
+    monkeypatch.chdir(tmp_path)
+    for index in range(_LARGE_REPO_TIER_THRESHOLD):
+        (tmp_path / f"source{index}.js").touch()
+    monkeypatch.setitem(sys.modules, "tree_sitter_javascript", None)
+    monkeypatch.setattr(language_registry, "_lang_cache", {})
+    monkeypatch.setattr(language_registry, "_TS_AVAILABLE", None)
+    assert not language_registry.is_supported(Path("source0.js"))
+
+    def install(extra):
+        assert extra == "languages"
+        monkeypatch.setitem(sys.modules, "tree_sitter_javascript", grammar)
+        return True
+
+    monkeypatch.setattr(wizard, "_pip_install", install)
+    monkeypatch.setattr(wizard, "_install_package", lambda _: True)
+    monkeypatch.setattr(wizard, "_ask_cli_backends", dict)
+    monkeypatch.setattr("core.config.orgs.list_orgs", dict)
+    monkeypatch.setattr(
+        "builtins.input", lambda prompt="": "y" if "Install extended language parsers?" in prompt else ""
+    )
+
+    wizard.run_wizard()
+
+    assert language_registry.is_supported(Path("source0.js"))
+    output = capsys.readouterr().out
+    assert "Indexing strategy" in output
+    assert re.findall(r"\[(\d+)/\d+\]", output) == [str(i) for i in range(1, 10)]
+
+
 def test_run_wizard_skip_all_defaults(monkeypatch, tmp_path, capsys):
     """Simulate wizard with all defaults, skipping MCP (index 7) and no org."""
     from interface.cli.wizard import run_wizard

@@ -637,6 +637,18 @@ def run_wizard() -> dict:
         print(f"  {_c(_DIM, '  Installing cognirepo[languages] ...')}", end="", flush=True)
         if _pip_install("languages"):
             _ok("cognirepo[languages] installed")
+            from importlib import invalidate_caches  # pylint: disable=import-outside-toplevel
+            from intelligence.indexer.language_registry import clear_cache  # pylint: disable=import-outside-toplevel
+
+            # The pre-scan can cache a grammar that did not exist before installation.
+            invalidate_caches()
+            clear_cache()
+            source_count = _count_source_files(os.getcwd())
+            if not show_indexing_strategy and source_count >= _LARGE_REPO_TIER_THRESHOLD:
+                show_indexing_strategy = True
+                steps = 9
+                step_offset = 0
+                print("  Added an indexing strategy step for the newly supported files.")
         else:
             _warn("Install failed — run: pip install cognirepo[languages]")
 
