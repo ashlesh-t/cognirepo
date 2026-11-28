@@ -12,11 +12,15 @@ Complete command reference for the `cognirepo` CLI.
 |------|-------------|
 | `-h`, `--help` | Show help and exit |
 
+A command stopped with Ctrl-C prints `Interrupted, closing gracefully.` and exits **130** (128 + SIGINT, what a shell
+reports for an interrupted command), so `cognirepo index-repo . && next-step` does not carry on. It used to exit 0.
+Commands that stop on Ctrl-C by design (`watch`, `daemon`, the metrics server) handle it themselves.
+
 ---
 
 ## cognirepo init
 
-Scaffold `.cognirepo/` and write `config.json`. Safe to re-run (idempotent).
+Scaffold `.cognirepo/` and write `config.json`. Safe to re-run (idempotent): on a repo that already has a `config.json`, only the settings you pass or answer are changed. `storage.encrypt`, `storage.vector_backend`, `autosave_context`, `behaviour_tracking` and the organisation are otherwise left as they are, and missing keys get their defaults. Turning one off takes an explicit answer or an edit of `config.json`.
 
 ```bash
 cognirepo init [OPTIONS]
@@ -65,7 +69,7 @@ cognirepo index-repo [PATH] [OPTIONS]
 ## cognirepo summarize
 
 
-Generate hierarchical architectural summaries via LLM.
+Generate hierarchical architectural summaries from the AST index. Local: no LLM and no API key.
 
 ```bash
 cognirepo summarize [OPTIONS]
@@ -276,6 +280,10 @@ cognirepo setup [--no-index] [--targets claude cursor vscode]
 
 Detects `.cursor/`, `.vscode/`, and `.claude/` and writes the appropriate MCP connector config for each.
 
+**Re-running `setup`** on a configured repo is safe: the wizard offers the repo's current values (project name, encryption, behaviour profiling, context handoff, organisation, project) as its defaults, so pressing Enter at every prompt leaves `.cognirepo/config.json` unchanged. A different answer is applied, except that turning encryption off on an encrypted repo asks a second, separate question (default No), because the files already on disk stay encrypted and unreadable until it is turned back on. The vector backend is not asked; an existing repo keeps its own and a new one gets `chroma`. The health check and the other steps run as before.
+
+**Cancelling.** Ctrl-C at any wizard prompt, including the last one ("Proceed with this configuration?", which defaults to yes), cancels: `Setup cancelled. Nothing was changed in this repo.` and exit code 130. The wizard only asks; `.cognirepo/`, `.mcp.json`, `.claude/` and `.env` are written after you confirm, so nothing exists to clean up. (Extras the wizard installs as you answer, such as `cognirepo[security]`, stay installed.) A closed stdin (EOF, for example `setup < /dev/null`) is not a keypress and still takes each prompt's default. `cognirepo init` cancels the same way.
+
 ---
 
 ## cognirepo migrate-config
@@ -292,7 +300,8 @@ cognirepo migrate-config --dry-run # preview changes without writing
 ## cognirepo ask
 
 
-Send a single query through the full orchestrator pipeline (classifier → context builder → model router) without entering the REPL.
+Answer a natural-language question from the local index. **`ask` never calls a model and needs no API key or agent CLI**:
+CogniRepo supplies context to the AI agent you already use; it is not a second model client.
 
 ```bash
 cognirepo ask "QUERY" [OPTIONS]
@@ -300,9 +309,18 @@ cognirepo ask "QUERY" [OPTIONS]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `QUERY` | — | Natural-language query (optional; omitted, it reads from the prompt) |
-| `--verbose`, `-v` | `False` | Show the classifier tier and the matched source |
+| `QUERY` | — | Natural-language query. Without one it prints the usage and exits 2 |
+| `--verbose`, `-v` | `False` | Show the classifier tier and score |
 | `--top-k N` | `5` | Number of symbols to retrieve for context |
+
+What it can answer: `where is <symbol>`, `who calls <function>`, `list files`, `graph stats` / `how many nodes`,
+`recent history` / `what did I do`, and how-to questions about CogniRepo (the embedded docs index).
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Answered from the local index |
+| `1` | No local answer. The reason is on stderr and names the MCP tools that can (`context_pack`, `episodic_search`, `lookup_symbol`, `who_calls`) |
+| `2` | No question given |
 
 ---
 
@@ -384,7 +402,8 @@ cognirepo seed [--path DIR] [--dry-run] [--from-git] [--comments]
 ## cognirepo sessions
 
 
-List recent conversation sessions.
+List recent conversation sessions. The MCP server records one per agent session (the tool calls it served);
+`cognirepo ask` does not create one.
 
 ```bash
 cognirepo sessions [--limit N]
@@ -660,6 +679,8 @@ cognirepo index-progress [OPTIONS]
 
 Verify an API key and connectivity for a model provider.
 
+> **Deprecated since 2.6.0.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model API keys, agent-CLI backends or model lists any more. This command is scheduled for removal in a later release.
+
 ```bash
 cognirepo test-connection [OPTIONS]
 ```
@@ -673,6 +694,8 @@ cognirepo test-connection [OPTIONS]
 ## cognirepo setup-env
 
 Interactive wizard to set and verify model-provider API keys.
+
+> **Deprecated since 2.6.0.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model API keys, agent-CLI backends or model lists any more. This command is scheduled for removal in a later release.
 
 ```bash
 cognirepo setup-env [OPTIONS]
@@ -770,8 +793,10 @@ cognirepo repos scan --root DIR [--depth 3] [--dry-run]   # find initialised rep
 
 ## cognirepo agents
 
-Agent CLIs (`claude`, `codex`, `gemini`) that can answer `cognirepo ask` as a headless backend, with no API key.
+Agent CLIs (`claude`, `codex`, `gemini`) as a headless routing backend, with no API key.
 Design: [planning/07-model-discovery-design.md](planning/07-model-discovery-design.md).
+
+> **Deprecated since 2.6.0.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model API keys, agent-CLI backends or model lists any more. This command is scheduled for removal in a later release.
 
 ```bash
 cognirepo agents list [--json]
@@ -812,6 +837,9 @@ Repo-derived context from your query is sent to that vendor and counts against y
 
 ## cognirepo models
 
+> **Deprecated since 2.6.0.** `cognirepo ask` answers from the local index and no longer calls a model, so nothing uses model
+> lists any more. This command is scheduled for removal in a later release.
+
 Opt-in model discovery: ask each provider that has an API key which models it offers, tier them, and let the router
 use a newer model than the hardcoded default. **`refresh` is the only command that touches the network**, and nothing
 runs it automatically. Design: [planning/07-model-discovery-design.md](planning/07-model-discovery-design.md).
@@ -840,8 +868,7 @@ Otherwise a retired default is replaced by the newest model of the same tier, an
 is preferred; a `model_overrides.pin` wins over everything ([CONFIGURATION.md](CONFIGURATION.md#config-json-fields)).
 A model a real call reports as not found is skipped until the next `refresh`. With no cache nothing changes.
 
-`setup` prints a one-line hint when API keys are set and, interactively, offers a refresh (default **No**). `doctor`
-prints one informational line about the cache.
+Since 2.6.0 `setup` no longer offers a refresh and `doctor` no longer reports the cache (nothing uses model lists).
 
 ---
 

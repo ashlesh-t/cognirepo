@@ -112,8 +112,9 @@ def call(
     choice = response.choices[0]
     message = choice.message
     text = message.content or ""
+    truncated = choice.finish_reason == "length"
     tool_calls: list[dict] = []
-    if message.tool_calls:
+    if message.tool_calls and not truncated:
         for tc in message.tool_calls:
             try:
                 args = json.loads(tc.function.arguments)
@@ -139,6 +140,7 @@ def call(
         tool_calls=tool_calls,
         usage=usage,
         raw=response,
+        truncated=truncated,
     )
 
 

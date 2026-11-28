@@ -92,7 +92,7 @@ ui = [
     "python-multipart>=0.0.30",
 ]
 providers = [
-    # Model routing for `cognirepo ask`. Not required for MCP index server.
+    # Deprecated: `cognirepo ask` is local-only (#269); only the deprecated model commands use these SDKs.
     # Install: pip install 'cognirepo[providers]'
     "anthropic>=0.87.0",
     "google-genai>=0.3",

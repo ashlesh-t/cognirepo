@@ -130,9 +130,8 @@ Run `cognirepo benchmark` on your own codebase to reproduce. See [docs/METRICS.m
 ### Requirements
 
 - Python 3.11+
-- API key (optional — only needed for `cognirepo ask`):
-  `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENAI_API_KEY`, or `GROK_API_KEY`.
-  Indexing, memory, summarization, and all MCP tools work fully offline.
+- No API key, account or network needed: indexing, memory, summarization, `cognirepo ask` and all MCP tools run
+  locally. CogniRepo gives your AI agent (Claude Code, Cursor, Gemini CLI, ...) context; it does not call a model itself.
 
 ### Install
 
@@ -207,8 +206,8 @@ cognirepo status                        # shows symbol count, graph nodes, signa
 cognirepo doctor                        # full health check (exit 0 healthy / 1 warnings / 2 errors)
 cognirepo doctor --resources            # where memory and disk go: processes, store sizes, leftovers
 
-# Query through multi-model orchestrator:
-cognirepo ask "why is auth slow?"
+# Ask the local index (symbols, callers, files, graph stats, history, docs; no model, no API key):
+cognirepo ask "where is verify_token defined?"
 
 # Manage background watchers (one per repo, however many sessions run):
 cognirepo watch --ensure-running        # start it if it is not running
@@ -285,7 +284,7 @@ All 36 tools are available to Claude, Cursor, and any MCP-compatible client.
 | `episodic_search(query, limit=10)` | BM25 keyword search in event history | Find past decisions or incidents |
 | `dependency_graph(module, direction="both")` | Import/dependency relationships | Module coupling analysis |
 | `explain_change(target, since="7d")` | What changed in a file/function + git cross-ref | Understanding recent changes |
-| `architecture_overview(scope="root")` | Pre-computed LLM architectural summaries | Big-picture questions |
+| `architecture_overview(scope="root")` | Pre-computed architectural summaries (built from the AST index) | Big-picture questions |
 
 ### User & session intelligence
 
@@ -510,7 +509,7 @@ Returns:
 
 ## Session history
 
-Every `cognirepo ask` exchange is persisted to `.cognirepo/sessions/`.
+The MCP server records each agent session's tool calls in `.cognirepo/sessions/`.
 Sessions are indexed by UUID and retrievable via:
 
 ```bash
@@ -521,15 +520,15 @@ cognirepo sessions
 get_session_history(limit=5)
 ```
 
-Each entry returns: session ID, created timestamp, message count, model used, and
-the last user/assistant exchange for quick context scan.
+Each entry returns: session ID, created timestamp, message count, and
+the last tool-call exchange for quick context scan.
 
 ---
 
 ## Architectural summaries
 
 `cognirepo init` automatically prompts to run `cognirepo summarize` after the first index.
-This produces a 3-level LLM summary of the entire codebase:
+This produces a 3-level summary of the entire codebase, built locally from the AST index (no LLM, no API key):
 
 - **Level 1** — repo-wide summary (what the project does, key modules, entry points)
 - **Level 2** — per-directory summaries (what each package is responsible for)
@@ -567,25 +566,28 @@ cognirepo insights --since 90d   # writes .claude/insights/<repoName>-insights.h
 
 ---
 
-## Multi-model orchestration
+## `cognirepo ask`: the local index, no model
 
-`cognirepo ask` automatically picks the right model for each query:
+`cognirepo ask` answers a question from the local index. It never calls a model and needs no API key: CogniRepo's job
+is to give the AI agent you already use better context (the MCP tools), not to be a second model client.
 
-| Tier | Score | Default model | Use case |
-|------|-------|---------------|----------|
-| **QUICK** | ≤2 | local resolver | Single-token / trivial — zero API, fastest path |
-| **STANDARD** | ≤4 | Haiku | Quick lookup, factual, single symbol |
-| **COMPLEX** | ≤9 | Sonnet | Moderate reasoning |
-| **EXPERT** | >9 | Opus | Cross-file, architectural, ambiguous — full context, best model |
+| You ask | Answered from |
+|---------|---------------|
+| `where is <symbol>` | the symbol index (file and line) |
+| `who calls <function>` | the call graph |
+| `list files` | the AST index |
+| `graph stats`, `how many nodes` | the knowledge graph |
+| `recent history`, `what did I do` | episodic memory |
+| how to use CogniRepo | the embedded docs index |
 
 ```bash
-cognirepo ask "where is verify_token defined?"       # → QUICK, answered locally
-cognirepo ask "why is auth slow?"                    # → EXPERT, Claude with full context
-cognirepo ask --verbose "explain the circuit breaker"  # show tier/score/signals
+cognirepo ask "where is verify_token defined?"
+cognirepo ask "who calls hybrid_retrieve"
+cognirepo ask --verbose "list files"      # also shows the query tier and score
 ```
 
-Provider fallback chain: Grok → Gemini → Anthropic → OpenAI.
-All errors are logged to `.cognirepo/errors/<date>.log` — no raw tracebacks shown to users.
+Exit codes: `0` answered; `1` no local answer (the reason is on stderr: ask your agent, which has `context_pack`,
+`episodic_search`, `lookup_symbol` and `who_calls`); `2` no question given.
 
 ---
 
@@ -624,7 +626,7 @@ Full details and roadmap: [docs/LANGUAGES.md](docs/LANGUAGES.md)
     ast.index              ← FAISS IndexIDMap2 for code symbols
     ast_metadata.json      ← parallel metadata for ast.index rows
     manifest.json          ← git SHA, platform info and checksums for integrity checks (`verify-index`)
-    summaries.json         ← LLM architectural summaries (Level 1–3)
+    summaries.json         ← architectural summaries (Level 1–3), built from the AST index
     last_indexed.json, endpoints.json, http_calls.json, …   ← indexing bookkeeping
   vector_db/
     chroma/                ← default semantic-memory store (ChromaDB); `semantic.index` when `vector_backend: "faiss"`
@@ -663,13 +665,13 @@ cognirepo migrate-config        # migrate deprecated config keys
 
 # Indexing
 cognirepo index-repo [path]     # AST-index a codebase
-cognirepo summarize             # generate LLM architectural summaries (auto-prompted on init)
+cognirepo summarize             # generate architectural summaries from the AST index (local; auto-prompted on init)
 cognirepo seed --from-git       # seed behaviour weights from git history
 cognirepo verify-index          # verify AST index integrity
 cognirepo coverage              # per-directory symbol counts
 
 # Querying
-cognirepo ask <query>           # route through multi-model orchestrator
+cognirepo ask <query>           # answer from the local index (no model, no API key)
 cognirepo retrieve-memory <q>   # similarity search
 cognirepo search-docs <q>       # full-text search in .md files
 cognirepo log-episode <event>   # append episodic event
@@ -721,7 +723,7 @@ some items below have since landed; each is annotated where that's the case.
   (`_extract_imports_go`/`_resolve_go_import_to_file`). Live-verified against
   `cognirepo_test_repo/advanced/moby`: 4/4 hand-verified callers resolved (100%, vs. the 90%
   target) after both fixes.
-- **`cognirepo ask`** — *done:* multi-model orchestrator (QUICK/STANDARD/COMPLEX/EXPERT tiers) is implemented and wired as a real CLI command (`_cmd_ask_local`, `interface/cli/main.py`). Streaming REPL mode (see Longer-term) is not yet built.
+- **`cognirepo ask`** — *done:* answers from the local index (symbols, call graph, files, graph stats, history, docs); local-only by design, it never calls a model.
 - **Incremental re-index on save** — *done:* the file-watcher daemon (`cognirepo watch`) debounces writes (`config.json` → `indexing.debounce_ms`, default 500ms) and batches indexer/graph saves; `tests/test_watcher_debounce.py` covers this including flush-on-shutdown.
 - **CLAUDE.md mandatory-call relaxation** — benchmark feedback (Moby tests) flagged that forcing `context_pack` before every file read adds latency under memory pressure. A `--fast` mode that skips the tool-first gate for files under 50 lines is not yet implemented.
 
@@ -744,7 +746,6 @@ some items below have since landed; each is annotated where that's the case.
 - **Cross-session memory warm-up** — Ansible benchmark noted episodic/memory retrieval is low-value on fresh sessions. `cognirepo prime` exists but is not run automatically on `init`; will make it opt-in default.
 
 ### Longer-term
-- **`cognirepo ask` streaming REPL** — full interactive session with tier routing, session persistence, and sub-agent delegation.
 - **Similarity edges in knowledge graph** — *done (COGNIREPO-202):* post-index FAISS k-NN pass over already-embedded FUNCTION/CLASS symbol vectors adds a `SIMILAR_TO` edge (cosine ≥ 0.80, max 5/node, cross-file only) between near-duplicate symbols, both directions. Gated via `config.json` → `indexing.similarity_edges` (default on below 20k candidate symbols). Weighted (discounted) into `intelligence/retrieval/hybrid.py::_graph_score`.
 - **VS Code / JetBrains extension** — surface `lookup_symbol`, `context_pack`, and `who_calls` directly in the editor sidebar without requiring an MCP-capable host.
 

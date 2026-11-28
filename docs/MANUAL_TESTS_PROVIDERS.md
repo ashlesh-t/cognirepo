@@ -1,5 +1,8 @@
 # Manual test suite — agent CLIs and model discovery (setup/init UX)
 
+> **Deprecated since 2.6.0.** `cognirepo ask` is local-only (#269) and no longer routes to a model, so the rows below that run
+> `ask` against a provider or agent CLI cannot pass. Kept until the commands behind them are removed.
+
 Covers the parts of #86/#88/#89 that automated tests cannot: real logins, real keys, real terminals.
 Automated coverage lives in `tests/test_provider_status.py`, `tests/test_cli_adapter.py`,
 `tests/test_model_discovery.py` and `tests/test_setup_latency.py`.

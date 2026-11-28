@@ -7,11 +7,9 @@
 """
 Model Router — the top-level orchestration entry point.
 
-NOTE: `cognirepo ask` uses this module only for the classifier and
-try_local_resolve() — both are zero-API. The model dispatch path (STANDARD+
-tier) requires the [providers] extra and an API key. MCP tools never touch
-this module.
-Install providers: pip install 'cognirepo[providers]'
+NOTE: `cognirepo ask` is local-only by design (#269): it uses this module only for the classifier and
+try_local_resolve(), both zero-API. route() / stream_route() and the adapters below are no longer reachable from
+the CLI and are deprecated (scheduled for removal). MCP tools never touch this module.
 
 route(query) pipeline
 ─────────────────────
@@ -238,6 +236,13 @@ def route(
         return RouteResult(
             response=response, classifier=clf, bundle=bundle,
             error=error_msg,
+        )
+
+    if response.truncated:
+        return RouteResult(
+            response=response, classifier=clf, bundle=bundle,
+            error="The model reached its output token limit before completing the reply. "
+                  "Increase the output budget or ask for a shorter answer.",
         )
 
     # ── 5. post-process ───────────────────────────────────────────────────────

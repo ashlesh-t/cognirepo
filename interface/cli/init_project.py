@@ -19,6 +19,7 @@ import shutil
 import sys
 import uuid
 from pathlib import Path
+from typing import Any
 
 try:
     import keyring  # pylint: disable=import-error
@@ -27,7 +28,7 @@ except ImportError:
     _KEYRING_AVAILABLE = False
 
 from core.config.atomic import atomic_write, atomic_json_dump
-from core.config.paths import get_path
+from core.config.paths import get_cognirepo_dir, get_path
 
 _KEYCHAIN_SERVICE = "cognirepo"
 
@@ -65,7 +66,7 @@ def _seed_dotenv() -> None:
             example = Path("")
     if example.exists() and example.is_file():
         shutil.copy(example, dotenv_dest)
-        print(".env created from .env.example — review it to tune circuit breaker limits or add API keys.")
+        print(".env created from .env.example — review it to tune circuit breaker limits.")
     else:
         # Not fatal — all settings have built-in defaults (RSS limit = 80% of
         # RAM, etc.). But say so instead of silently skipping, so users know
@@ -118,18 +119,43 @@ def _init_empty_stores(vector_backend: str = "faiss") -> None:
             pass
 
 
+# "The caller did not say" for an organisation. It is not None: None means "no organisation" (the wizard's
+# "None / Personal project"), which clears a saved one, while this keeps it.
+_UNSET: Any = object()
+
+
+def saved_config() -> dict:
+    """
+    This repo's current ``.cognirepo/config.json`` as a dict, or ``{}`` when it does not exist or cannot be read.
+
+    Reads without creating anything, so it is safe to call before the repo is initialised (the wizard does, to offer
+    the saved values as its defaults).
+    """
+    try:
+        with open(os.path.join(get_cognirepo_dir(), "config.json"), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _write_config(
     project_name: str = "",
-    org: str | None = None,
+    org: "str | None" = _UNSET,
     project: str | None = None,
-    encrypt: bool = False,
-    vector_backend: str = "chroma",
-    autosave_context: bool = True,
-    behaviour_tracking: bool = False,
+    encrypt: bool | None = None,
+    vector_backend: str | None = None,
+    autosave_context: bool | None = None,
+    behaviour_tracking: bool | None = None,
 ) -> str:
     """
     Write config.json (new) or backfill missing keys (existing).
     Returns the project_id (new or existing).
+
+    ``encrypt``, ``vector_backend``, ``autosave_context``, ``behaviour_tracking`` and ``org`` are applied only when
+    passed. Left out (``None``, or ``_UNSET`` for ``org``) a new config gets the default (no encryption, chroma,
+    autosave on, behaviour tracking off, no org) and an existing one keeps what it has, so re-running setup never
+    lowers a saved setting (#280). ``org=None`` passed on purpose still clears the org.
     """
     if not os.path.exists(get_path("config.json")):
         project_id = str(uuid.uuid4())
@@ -138,13 +164,16 @@ def _write_config(
             "schema_version": 1,
             "project_id":   project_id,
             "project_name": project_name or os.path.basename(os.getcwd()),
-            "org":          org,
+            "org":          None if org is _UNSET else org,
             "project":      project,
-            "storage":      {"encrypt": encrypt, "vector_backend": vector_backend},
+            "storage":      {
+                "encrypt": False if encrypt is None else encrypt,
+                "vector_backend": "chroma" if vector_backend is None else vector_backend,
+            },
             "retrieval_weights": {"vector": 0.5, "graph": 0.3, "behaviour": 0.2},
             "model":        DEFAULT_MODEL,
-            "autosave_context": autosave_context,
-            "behaviour_tracking": behaviour_tracking,
+            "autosave_context": True if autosave_context is None else autosave_context,
+            "behaviour_tracking": False if behaviour_tracking is None else behaviour_tracking,
         }
 
         atomic_json_dump(get_path("config.json"), config, indent=2)
@@ -162,8 +191,6 @@ def _write_config(
         ("project_name",  project_name or os.path.basename(os.getcwd())),
         ("retrieval_weights", {"vector": 0.5, "graph": 0.3, "behaviour": 0.2}),
         ("model",         DEFAULT_MODEL),
-        ("autosave_context", True),
-        ("behaviour_tracking", False),
         ("project",       None),
     ]
     for key, val in defaults:
@@ -177,19 +204,20 @@ def _write_config(
             del config[old_key]
             changed = True
 
-    # Always apply user-specified wizard settings
+    # Apply the settings the caller passed; a missing key is backfilled with its default, a present one is kept
+    # when the caller said nothing (#280).
     storage = config.setdefault("storage", {})
-    if storage.get("encrypt") != encrypt:
-        storage["encrypt"] = encrypt
-        changed = True
-    if storage.get("vector_backend") != vector_backend:
-        storage["vector_backend"] = vector_backend
-        changed = True
-
-    if config.get("autosave_context") != autosave_context:
-        config["autosave_context"] = autosave_context
-        changed = True
-    if config.get("org") != org:
+    for holder, key, given, default in (
+        (storage, "encrypt", encrypt, False),
+        (storage, "vector_backend", vector_backend, "chroma"),
+        (config, "autosave_context", autosave_context, True),
+        (config, "behaviour_tracking", behaviour_tracking, False),
+    ):
+        wanted = given if given is not None else holder.get(key, default)
+        if key not in holder or holder[key] != wanted:
+            holder[key] = wanted
+            changed = True
+    if org is not _UNSET and config.get("org") != org:
         config["org"] = org
         changed = True
     if project is not None and config.get("project") != project:
@@ -1078,13 +1106,13 @@ def init_project(
     no_graph: bool = False,
     # wizard-supplied overrides (used when interactive=False or wizard ran)
     project_name: str = "",
-    org: str | None = None,
+    org: "str | None" = _UNSET,
     project: str | None = None,
-    encrypt: bool = False,
-    vector_backend: str = "chroma",
+    encrypt: bool | None = None,
+    vector_backend: str | None = None,
     mcp_targets: list[str] | None = None,
-    autosave_context: bool = True,
-    behaviour_tracking: bool = False,
+    autosave_context: bool | None = None,
+    behaviour_tracking: bool | None = None,
     tier: "int | str | None" = None,
     # deprecated — accepted but ignored for backward compat
     multi_model: bool = True,
@@ -1115,7 +1143,6 @@ def init_project(
 
     # ── run wizard (interactive mode) ─────────────────────────────────────────
     _wizard_ran = False
-    _cli_choices: dict = {}
     if interactive  and not non_interactive:
         try:
             from interface.cli.wizard import run_wizard  # pylint: disable=import-outside-toplevel
@@ -1131,10 +1158,10 @@ def init_project(
             autosave_context = wizard_cfg.get("autosave_context", autosave_context)
             behaviour_tracking = wizard_cfg.get("behaviour_tracking", behaviour_tracking)
             tier           = wizard_cfg.get("tier", tier)
-            _cli_choices   = wizard_cfg.get("cli_backends", {})
             _wizard_ran = True
-        except (ImportError, KeyboardInterrupt):
-            # Fall back to non-interactive with defaults
+        except ImportError:
+            # Fall back to non-interactive with defaults. Ctrl-C is deliberately not caught here: it used to fall
+            # back too, which wrote a config with default answers after the user had tried to cancel (#276).
             mcp_targets = mcp_targets or []
 
     if mcp_targets is None:
@@ -1142,17 +1169,18 @@ def init_project(
 
     # ── autosave_context prompt (non-wizard interactive, wizard already asked) ─
     if not _wizard_ran and not non_interactive and sys.stdin.isatty():
+        _default_yes = saved_config().get("autosave_context", True) is not False  # a re-run keeps the saved answer
         try:
             _ans = input(
-                "\nAuto-save context for inter-agent sharing? (y/n) [y]: "
+                f"\nAuto-save context for inter-agent sharing? (y/n) [{'y' if _default_yes else 'n'}]: "
             ).strip().lower()
-            autosave_context = _ans not in ("n", "no")
+            autosave_context = _default_yes if _ans not in ("y", "yes", "n", "no") else _ans in ("y", "yes")
         except (EOFError, KeyboardInterrupt):
-            autosave_context = True  # default yes
+            autosave_context = _default_yes
 
     # ── scaffold directories and write config ─────────────────────────────────
     _scaffold_dirs()
-    _init_empty_stores(vector_backend=vector_backend)
+    _init_empty_stores(vector_backend=vector_backend or "chroma")
     _write_config(
         project_name=project_name,
         org=org,
@@ -1166,7 +1194,7 @@ def init_project(
     _seed_dotenv()
 
     # ── link to org ───────────────────────────────────────────────────────────
-    if org:
+    if org is not _UNSET and org:
         from core.config.orgs import (  # pylint: disable=import-outside-toplevel
             create_org, link_repo_to_org, create_project, link_repo_to_project,
         )
@@ -1342,7 +1370,7 @@ def init_project(
                 print(f"  Preview: {_preview}…")
         except Exception as _sum_exc:  # pylint: disable=broad-except
             print(f"  Summarization skipped ({_sum_exc}).")
-            print("  Run 'cognirepo summarize' once an LLM API key is configured.")
+            print("  Run 'cognirepo summarize' to retry (it runs locally and needs no API key).")
 
     # ── doc ingestion: embed docs/README/git-log into semantic store ──────────
     # Subprocess-isolated: ingestion in a process that just finished a heavy
@@ -1355,14 +1383,6 @@ def init_project(
             print(f"  Semantic store: {_n_chunks} doc chunks embedded.")
     except Exception:  # pylint: disable=broad-except
         pass  # best-effort — never block init
-
-    if _cli_choices:  # agent CLIs the user opted into in the wizard (config.json exists by now)
-        try:
-            from intelligence.orchestrator.provider_status import apply_choices  # pylint: disable=import-outside-toplevel
-            for _name, _ok_cli, _msg_cli in apply_choices(_cli_choices):
-                print(f"  {'✓' if _ok_cli else '✗'}  {_msg_cli}")
-        except Exception:  # pylint: disable=broad-except
-            pass  # best-effort — never block init
 
     print("\n✓ Done — CogniRepo is ready.")
 

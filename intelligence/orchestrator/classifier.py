@@ -138,17 +138,25 @@ class ClassifierResult:
     confidence: float = 1.0            # [0, 1] — see _confidence_from_score (COGNIREPO-703)
 
 
+#: Key variables that decide an "auto" provider, in priority order. They match the router's own key checks
+#: (router._available_providers). Grok comes last on purpose: an install that already had an OpenAI key keeps
+#: resolving to OpenAI. A gateway is not listed: it has no model of its own to default to (pin one, see
+#: model_overrides.pin.gateway), so the router brings it in as a fallback backend.
+_AUTO_PROVIDER_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("anthropic", ("ANTHROPIC_API_KEY",)),
+    ("gemini",    ("GEMINI_API_KEY", "GOOGLE_API_KEY")),
+    ("openai",    ("OPENAI_API_KEY",)),
+    ("grok",      ("GROK_API_KEY",)),
+)
+
+
 def _resolve_provider(provider: str) -> str:
     """Resolve 'auto' provider by checking env vars in priority order."""
     if provider != "auto":
         return provider
-    for p, env in [
-        ("anthropic", "ANTHROPIC_API_KEY"),
-        ("gemini",    "GEMINI_API_KEY"),
-        ("openai",    "OPENAI_API_KEY"),
-    ]:
-        if os.environ.get(env):
-            return p
+    for name, env_vars in _AUTO_PROVIDER_KEYS:
+        if any(os.environ.get(v) for v in env_vars):
+            return name
     return "anthropic"  # fallback
 
 
@@ -173,13 +181,12 @@ def _load_model_registry() -> dict:
             single = cfg["model"]
             provider = _resolve_provider(single.get("provider", "auto"))
             model_id = single.get("model", "auto")
-            # QUICK always stays local; other tiers use configured provider
-            expanded = {
-                "QUICK":    {"provider": "local",  "model": "local-resolver"},
-                "STANDARD": {"provider": provider, "model": model_id if model_id != "auto" else "claude-haiku-4-5"},
-                "COMPLEX":  {"provider": provider, "model": model_id if model_id != "auto" else "claude-sonnet-4-6"},
-                "EXPERT":   {"provider": provider, "model": model_id if model_id != "auto" else "claude-opus-4-6"},
-            }
+            # QUICK always stays local; other tiers use configured provider. "auto" takes each tier's model from that
+            # provider's own defaults, so a model id is never sent to a provider it does not belong to (#270).
+            expanded = {"QUICK": {"provider": "local", "model": "local-resolver"}}
+            for tier in ("STANDARD", "COMPLEX", "EXPERT"):
+                expanded[tier] = {"provider": provider,
+                                  "model": model_id if model_id != "auto" else default_model_for(provider, tier)}
             return expanded
 
         # Legacy multi-tier schema — still supported for existing installs

@@ -50,7 +50,7 @@ STORE_COVERAGE: dict[str, tuple[str, str]] = {
     "index/ast.index":               (NOT_ENCRYPTED, _EMBED),
     "index/ast.gen":                 (NOT_ENCRYPTED, _AST),
     "index/manifest.json":           (NOT_ENCRYPTED, "index checksums"),
-    "index/summaries.json":          (NOT_ENCRYPTED, "LLM-written summaries of your code"),
+    "index/summaries.json":          (NOT_ENCRYPTED, "summaries of your code (built from the AST index)"),
     "index/doc_ingest.json":         (NOT_ENCRYPTED, "ingested documentation text"),
     "index/endpoints.json":          (NOT_ENCRYPTED, "HTTP routes found in your code"),
     "index/http_calls.json":         (NOT_ENCRYPTED, "HTTP calls found in your code"),

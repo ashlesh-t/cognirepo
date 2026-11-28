@@ -40,6 +40,7 @@ class ModelResponse:
     tool_calls: list[dict] = field(default_factory=list)
     usage: dict = field(default_factory=dict)
     raw: Any = None
+    truncated: bool = False
 
 
 def call(

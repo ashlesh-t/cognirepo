@@ -333,6 +333,9 @@ def test_models_list_says_why_there_is_no_model_and_never_prints_the_url(monkeyp
 class _Stub(http.server.BaseHTTPRequestHandler):
     seen: list = []
     agents: list = []  # User-Agent of every GET
+    reply_content: str | None = "pong"
+    finish_reason = "stop"
+    output_tokens = 1
 
     def log_message(self, *_a):
         pass
@@ -363,8 +366,10 @@ class _Stub(http.server.BaseHTTPRequestHandler):
             return self._send(404, {"error": "not found"})
         return self._send(200, {
             "id": "c1", "object": "chat.completion", "created": 0, "model": body.get("model"),
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": "pong"}, "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": self.reply_content},
+                         "finish_reason": self.finish_reason}],
+            "usage": {"prompt_tokens": 3, "completion_tokens": self.output_tokens,
+                      "total_tokens": 3 + self.output_tokens},
         })
 
 
@@ -401,6 +406,25 @@ def test_refresh_pick_and_call_against_a_local_gateway(stub_gateway):
     assert sent["model"] == chosen and sent["max_tokens"] == 7
     assert sent["messages"][0] == {"role": "system", "content": "be brief"}
     assert sent["messages"][-1] == {"role": "user", "content": "ping"}
+
+
+@pytest.mark.parametrize("content", [None, "The first part of the answer"])
+def test_route_marks_token_limited_gateway_reply_incomplete(stub_gateway, monkeypatch, content):
+    model = "openai/gpt-4o-mini"
+    monkeypatch.setattr(_Stub, "reply_content", content)
+    monkeypatch.setattr(_Stub, "finish_reason", "length")
+    monkeypatch.setattr(_Stub, "output_tokens", 150)
+    monkeypatch.setattr(router, "classify", lambda *a, **kw: SimpleNamespace(
+        tier="STANDARD", provider="gateway", model=model, score=1.0))
+    monkeypatch.setattr(router, "build_context", lambda *a, **kw: SimpleNamespace(
+        system_prompt="", tool_manifest=[], ast_hits=[]))
+    monkeypatch.setattr(router, "_post_process", lambda **kw: None)
+
+    result = router.route("Write a long answer", force_model=model, max_tokens=150)
+
+    assert "token limit" in result.error
+    assert result.response.text == (content or "")
+    assert result.response.usage["output_tokens"] == 150
 
 
 def test_discovery_does_not_introduce_itself_as_python_urllib(stub_gateway):

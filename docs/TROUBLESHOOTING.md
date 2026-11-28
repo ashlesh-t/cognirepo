@@ -347,9 +347,19 @@ counts are kept; only old history is dropped. The bounds are configurable under 
 
 ### Graph is empty / "encrypted but could not be decrypted"
 
-With `storage.encrypt: true`, every interpreter that touches `.cognirepo/` (the MCP server, the
-`UserPromptSubmit` hook) needs `keyring` and `cryptography`. If one lacks them, `graph.pkl` is
-left untouched (never quarantined) and saving is refused. Fix the interpreter, no reindex needed:
+With `storage.encrypt: true`, every process that touches `.cognirepo/` (the MCP server, the
+`UserPromptSubmit` hook, `index-repo`) needs the encryption key. If it cannot get it, the files are
+left untouched (never quarantined) and saving is refused. The message says why, and the fix depends on it:
+
+| The message says | Fix |
+|---|---|
+| `Encryption requires additional packages` | install them in that interpreter (below) |
+| `there is no usable keyring backend here (<backend>)` | `keyring` and `cryptography` **are** installed; this session cannot reach the OS keychain (SSH without a desktop session, a container, another user, no D-Bus Secret Service). Run where the keychain is reachable, or install a keyring backend / set `PYTHON_KEYRING_BACKEND`. There is no other way to supply the key |
+| `the OS keychain is locked` | unlock it and retry |
+| `the key in this keychain does not decrypt this data` | the data was encrypted with another key (another machine, user or keychain); use the keychain it was created in |
+| `storage.encrypt is off ... but this data is encrypted` | set `storage.encrypt` back to `true` in `.cognirepo/config.json` (re-running `setup` used to switch it off before #280) |
+
+For the first row, fix the interpreter, no reindex needed:
 ```bash
 pipx inject cognirepo keyring cryptography   # or: pip install 'cognirepo[security]'
 cognirepo doctor                             # flags the missing packages
@@ -394,4 +404,4 @@ cognirepo index-repo .
 cognirepo doctor --verbose
 ```
 
-All lines should be ✓. Warnings (⚠) on optional API keys and language parsers are fine.
+All lines should be ✓. Warnings (⚠) on optional language parsers are fine. `doctor` does not check model API keys: CogniRepo does not call a model.
