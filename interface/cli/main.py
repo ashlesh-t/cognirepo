@@ -1875,8 +1875,14 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
 
     # ── 1. Run wizard (loops until confirmed) ────────────────────────────────
     wizard_cfg: dict | None = None
-    while wizard_cfg is None:
-        wizard_cfg = run_wizard()
+    try:
+        while wizard_cfg is None:
+            wizard_cfg = run_wizard()
+    except KeyboardInterrupt:
+        # Ctrl-C is a cancel, not an answer (#276). The wizard only asks: init_project() below is what writes,
+        # so nothing in this repo has been touched yet.
+        print("\n  Setup cancelled. Nothing was changed in this repo.")
+        sys.exit(130)
 
     child_repos       = wizard_cfg.pop("child_repos", [])
     rejected_repos    = wizard_cfg.pop("rejected_repos", [])
@@ -1900,7 +1906,7 @@ def _cmd_setup(no_index: bool = False, targets: list | None = None) -> None:
         )
     except KeyboardInterrupt:
         print("\n  Setup cancelled.")
-        return
+        sys.exit(130)
     except Exception as exc:  # pylint: disable=broad-except
         print(f"  ✗ init failed: {exc}")
         sys.exit(1)
@@ -4016,7 +4022,10 @@ def main():
         _main()
     except KeyboardInterrupt:
         print("\nInterrupted, closing gracefully.")
-        sys.exit(0)
+        # 130 = 128 + SIGINT, what a shell reports for an interrupted command. Exit 0 told `cmd && next` and CI
+        # that an interrupted command had succeeded (#276). Commands that stop on Ctrl-C by design (`watch`, the
+        # daemon, the metrics server) handle it themselves and never get here.
+        sys.exit(130)
     except LockTimeout as exc:
         # another cognirepo process holds a store lock: a retryable condition, not a crash
         print(f"cognirepo: {busy_message(exc)}", file=sys.stderr)
@@ -5670,4 +5679,4 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\nInterrupted, closing gracefully.")
-        sys.exit(0)
+        sys.exit(130)
